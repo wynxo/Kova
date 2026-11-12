@@ -73,6 +73,8 @@ Server:
 - `kova stop` — stop it
 - `kova status` — is it up, which model is active, is the model reachable
 
+Missing notes, reminders, or models and server connection failures print a red, one-line error and exit with code 1, without a traceback.
+
 ## Memory and Obsidian mode
 
 Kova's memory is plain Markdown files with a little YAML frontmatter. As you chat, it saves lasting facts about you as notes, searches them, and brings the best matches into the conversation.

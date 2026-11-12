@@ -12,15 +12,30 @@ import sys
 import threading
 from pathlib import Path
 
-import httpx
 import typer
 from rich.console import Console
+from typer.core import TyperGroup
 
-from kova.client import KovaClient, ensure_server
+from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 
 console = Console()
-app = typer.Typer(help="Kova: your own private AI.", no_args_is_help=True)
+
+
+def _fail(message: str) -> None:
+    console.print(" ".join(message.splitlines()), style="red", markup=False, soft_wrap=True)
+    raise typer.Exit(1)
+
+
+class _KovaGroup(TyperGroup):
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except KovaError as exc:
+            _fail(str(exc))
+
+
+app = typer.Typer(help="Kova: your own private AI.", no_args_is_help=True, cls=_KovaGroup)
 
 _model = typer.Typer(no_args_is_help=True, help="Manage model servers.")
 app.add_typer(_model, name="model")
@@ -181,11 +196,7 @@ def status():
     """Report whether the server is up, its version and active model."""
     cfg = load_config()
     console.print(f"Active model: [bold]{cfg.active}[/bold]")
-    try:
-        info = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home)).health()
-    except httpx.RequestError:
-        console.print("[red]Server is down.[/red]")
-        return
+    info = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home)).health()
     reachable = "yes" if info["model_ok"] else "no"
     console.print(f"[green]Server up[/green] · v{info['version']} · model {info['model']} · model reachable: {reachable}")
 
@@ -209,7 +220,12 @@ def model_add(name: str, base_url: str, model: str, key: str | None = typer.Opti
 
 @_model.command("use")
 def model_use(name: str):
-    get_client().model_use(name)
+    try:
+        get_client().model_use(name)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No model named "{name}". Run: kova model list')
+        raise
     console.print(f"[bold]{name}[/bold] is now active.")
 
 
@@ -231,7 +247,7 @@ def memory_show(slug: str):
         if note["slug"] == slug:
             console.print(f"[bold]{note['title']}[/bold]\n{note['body']}")
             return
-    raise typer.Exit(f"No note named {slug}.")
+    _fail(f'No note named "{slug}".')
 
 
 @_memory.command("add")
@@ -245,7 +261,7 @@ def memory_rm(slug: str):
     if get_client().memory_delete(slug):
         console.print(f"Removed [bold]{slug}[/bold].")
     else:
-        raise typer.Exit(f"No note named {slug}.")
+        _fail(f'No note named "{slug}".')
 
 
 @_memory.command("use")
@@ -275,4 +291,4 @@ def reminders_rm(rid: int):
     if get_client().reminder_delete(rid):
         console.print(f"Removed reminder #{rid}.")
     else:
-        raise typer.Exit(f"No reminder #{rid}.")
+        _fail(f"No reminder #{rid}.")
