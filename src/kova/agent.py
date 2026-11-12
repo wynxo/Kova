@@ -35,6 +35,20 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
 MAX_TOOL_RESULT_CHARS = 32_000
 
 
+def derive_title(text: str, limit: int = 40) -> str:
+    """A short chat title from the first user message, cut at a word boundary."""
+    words = text.split()
+    title = ""
+    for word in words:
+        candidate = f"{title} {word}".strip()
+        if len(candidate) > limit:
+            break
+        title = candidate
+    if not title:
+        title = (words[0] if words else "New chat")[:limit]
+    return title
+
+
 def repair_tool_pairs(messages: list[dict]) -> list[dict]:
     """Give every assistant tool call a tool reply, so a turn that was cut off
     (crash, disconnect) can't make the model server reject the next request."""
@@ -93,8 +107,13 @@ class Agent:
         """Persist and stream a turn, executing at most ten rounds of tools."""
         self.store.add_message(chat_id, 'user', text)
         chat = self.store.get_chat(chat_id)
-        if chat is not None and not chat['title']:
-            self.store.set_title(chat_id, text[:60])
+        needs_title = chat is not None and not chat['title']
+        title_source = text
+        if chat is not None:
+            for message in chat['messages']:
+                if message.get('role') == 'user' and message.get('content'):
+                    title_source = message['content']
+                    break
         try:
             memories = await asyncio.to_thread(self.memory.search, text, 5)
         except Exception:  # memory trouble must never block a chat
@@ -120,6 +139,10 @@ class Agent:
                 answer = ''.join(content)
                 if not calls:
                     message_id = self.store.add_message(chat_id, 'assistant', answer)
+                    if needs_title:
+                        current = self.store.get_chat(chat_id)
+                        if current is not None and not current['title']:
+                            self.store.set_title(chat_id, derive_title(title_source))
                     yield {'type': 'done', 'message_id': message_id}
                     return
                 formatted = [{'id': call['id'], 'type': 'function', 'function': {

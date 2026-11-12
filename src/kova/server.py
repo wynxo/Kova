@@ -32,6 +32,11 @@ class TurnBody(BaseModel):
     text: str
 
 
+class TitleBody(BaseModel):
+    """A new title for a chat."""
+    title: str
+
+
 class NoteBody(BaseModel):
     """A memory note to save."""
     title: str
@@ -167,6 +172,16 @@ def create_app(
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         return chat
+
+    @api.patch("/chats/{chat_id}")
+    async def rename_chat(chat_id: str, body: TitleBody) -> dict:
+        title = body.title.strip()
+        if not title:
+            raise HTTPException(status_code=422, detail="title cannot be empty")
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        app.state.store.set_title(chat_id, title)
+        return {"id": chat_id, "title": title}
 
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:

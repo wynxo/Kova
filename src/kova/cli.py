@@ -9,10 +9,13 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.table import Table
 from typer.core import TyperGroup
 
 from kova.client import KovaClient, KovaError, ensure_server
@@ -46,6 +49,16 @@ app.add_typer(_memory, name="memory")
 _reminders = typer.Typer(no_args_is_help=True, help="Manage reminders.")
 app.add_typer(_reminders, name="reminders")
 
+_chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
+app.add_typer(_chats, name="chats")
+
+
+@_chats.callback(invoke_without_command=True)
+def chats_root(ctx: typer.Context):
+    """List chats, newest first."""
+    if ctx.invoked_subcommand is None:
+        chats_list()
+
 
 def get_client() -> KovaClient:
     """Return a client, starting the server in the background if it is down."""
@@ -73,10 +86,14 @@ def ask(text: str):
 def chat(
     new: bool = typer.Option(False, "--new", help="Start a fresh chat instead of the latest."),
     chat: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
+    resume: str | None = typer.Option(None, "--resume", help="Continue a chat by its number from: kova chats"),
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
-    _run_chat(get_client(), chat_id=chat, new=new, no_think=no_think, console=console)
+    client = get_client()
+    if resume:
+        chat = _resolve_chat_id(client, resume)
+    _run_chat(client, chat_id=chat, new=new, no_think=no_think, console=console)
 
 
 @app.command()
@@ -230,3 +247,120 @@ def reminders_rm(rid: int):
         console.print(f"Removed reminder #{rid}.")
     else:
         _fail(f"No reminder #{rid}.")
+
+
+# ---------------------------------------------------------------------------
+# Chat history
+# ---------------------------------------------------------------------------
+
+def _relative_when(iso: str | None) -> str:
+    """Human-friendly age of an ISO timestamp, e.g. ``2h ago``."""
+    if not iso:
+        return ""
+    try:
+        stamp = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    seconds = max(0, int((datetime.now(timezone.utc) - stamp).total_seconds()))
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    if seconds < 7 * 86400:
+        return f"{seconds // 86400}d ago"
+    return stamp.astimezone().strftime("%Y-%m-%d")
+
+
+def _resolve_chat(client: KovaClient, ref: str) -> dict:
+    """A chat by its display number or its id, or a friendly exit."""
+    if ref.isdigit():
+        chats = client.list_chats()
+        number = int(ref)
+        if 1 <= number <= len(chats):
+            return chats[number - 1]
+        _fail(f"No chat {ref}.")
+    try:
+        chat = client.get_chat(ref)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No chat "{ref}".')
+        raise
+    if chat is None:
+        _fail(f'No chat "{ref}".')
+    return chat
+
+
+def _resolve_chat_id(client: KovaClient, ref: str) -> str:
+    return _resolve_chat(client, ref)["id"]
+
+
+@_chats.command("list")
+def chats_list():
+    """List chats, newest first."""
+    chats = get_client().list_chats()
+    if not chats:
+        console.print("[dim]No chats yet. Start one with: kova chat[/dim]")
+        return
+    table = Table(box=None, pad_edge=False)
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Title")
+    table.add_column("When", style="dim")
+    table.add_column("Messages", justify="right", style="dim")
+    for number, chat in enumerate(chats, start=1):
+        table.add_row(
+            str(number),
+            chat.get("title") or "[dim](untitled)[/dim]",
+            _relative_when(chat.get("last_message") or chat.get("created")),
+            str(chat.get("message_count", 0)),
+        )
+    console.print(table)
+
+
+@_chats.command("show")
+def chats_show(ref: str):
+    """Print a conversation. REF is the number from ``kova chats`` or a chat id."""
+    client = get_client()
+    summary = _resolve_chat(client, ref)
+    chat = summary if "messages" in summary else client.get_chat(summary["id"])
+    console.print(f"[bold]{chat.get('title') or 'Untitled chat'}[/bold]")
+    console.print(f"[dim]{chat['id']}[/dim]")
+    for message in chat.get("messages", []):
+        role, content = message.get("role"), message.get("content")
+        if not content:
+            continue
+        if role == "user":
+            console.print("\n[bold cyan]You[/bold cyan]")
+            console.print(content, markup=False, soft_wrap=True)
+        elif role == "assistant":
+            console.print("\n[bold green]Kova[/bold green]")
+            console.print(Markdown(content))
+
+
+@_chats.command("rename")
+def chats_rename(ref: str, title: str):
+    """Rename a chat. REF is the number from ``kova chats`` or a chat id."""
+    title = title.strip()
+    if not title:
+        _fail("Title cannot be empty.")
+    client = get_client()
+    chat = client.rename_chat(_resolve_chat_id(client, ref), title)
+    console.print(f'Renamed chat to "{chat["title"]}".')
+
+
+@_chats.command("rm")
+def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation.")):
+    """Delete a chat. REF is the number from ``kova chats`` or a chat id."""
+    client = get_client()
+    chat = _resolve_chat(client, ref)
+    title = chat.get("title") or "Untitled chat"
+    if not yes and not typer.confirm(f'Delete "{title}"?', default=False):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    if client.delete_chat(chat["id"]):
+        console.print(f'Deleted chat "{title}".')
+    else:
+        _fail(f'No chat "{ref}".')
