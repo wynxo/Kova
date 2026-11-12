@@ -2,6 +2,8 @@
 
 Your own private AI that lives on your computer.
 
+Want to work on it? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md) to run it from source and make it yours.
+
 ## Install
 
 Linux / macOS (as your normal user, no sudo):
