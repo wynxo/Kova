@@ -24,7 +24,8 @@
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
   function controls() {
     const busy = state.busy;
-    for (const id of ['new-chat', 'mode', 'web', 'model']) $(id).disabled = busy || !state.connected;
+    for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd']) $(id).disabled = busy || !state.connected;
+    for (const id of ['permission', 'cwd']) $(id).disabled ||= $('mode').value === 'chat';
     $('send').hidden = busy; $('stop').hidden = !busy;
     $('send').disabled = !state.connected || !$('prompt').value.trim();
     $('stop').disabled = state.stopRequested;
@@ -120,6 +121,8 @@
     state.chat = chat;
     $('chat-title').textContent = chat?.title || 'New conversation';
     $('mode').value = chat?.mode || 'work';
+    $('permission').value = chat?.permission || 'manual';
+    $('cwd').value = chat?.cwd || '';
     const web = chat?.web ?? true;
     $('web').setAttribute('aria-pressed', String(web)); $('web').lastElementChild.textContent = `Web ${web ? 'on' : 'off'}`;
     $('welcome').hidden = Boolean(chat?.messages?.some(m => m.role === 'user'));
@@ -132,6 +135,7 @@
       }
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
+    if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
   }
   async function openChat(id) { if (!state.busy) setChat(await json(`/chats/${id}`)); }
@@ -187,9 +191,64 @@
       buffer += decoder.decode(); parse();
     } finally { reader.releaseLock(); }
   }
+  function planView(items) {
+    const section = el('section', 'plan-view'); section.setAttribute('aria-label', 'Plan');
+    section.append(el('strong', '', 'Plan'));
+    const list = el('ul');
+    for (const item of items) {
+      const row = el('li', `plan-${item.status}`);
+      const symbol = item.status === 'done' ? '✓' : item.status === 'in_progress' ? '◉' : '○';
+      const icon = el('span', '', symbol); icon.setAttribute('aria-label', item.status.replace('_', ' '));
+      row.append(icon, document.createTextNode(item.text)); list.append(row);
+    }
+    section.append(list); return section;
+  }
+  function approvalCard(event) {
+    const card = el('section', 'approval-card'); card.setAttribute('aria-label', 'Tool approval');
+    const heading = el('div', 'approval-heading');
+    heading.append(el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
+    card.append(heading, el('pre', '', event.args?.command || event.summary));
+    if (event.args && event.tool !== 'run_command') {
+      const details = el('details', 'approval-arguments');
+      details.append(el('summary', '', 'Requested changes'), el('pre', '', JSON.stringify(event.args, null, 2)));
+      card.append(details);
+    }
+    if (state.chat?.cwd) card.append(el('small', 'approval-folder', state.chat.cwd));
+    const label = el('label', 'approval-message', 'Optional: what to do instead');
+    const input = el('input'); input.maxLength = 4000; label.append(input); card.append(label);
+    const actions = el('div', 'approval-actions'), status = el('div', 'approval-status');
+    status.setAttribute('role', 'status');
+    const buttons = [];
+    for (const [decision, text] of [['allow', 'Allow'], ['allow_session', 'Allow for this chat'], ['deny', 'Deny']]) {
+      const button = el('button', 'control', text); button.type = 'button';
+      if (event.risk === 'destructive' && decision === 'allow_session') {
+        button.disabled = true; button.title = 'Destructive commands always need individual approval';
+      }
+      button.onclick = () => safe(async () => {
+        buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
+        try {
+          await json(`/chats/${state.chat.id}/approvals/${event.id}`, write('POST', {decision, message: input.value || null}));
+          status.textContent = decision === 'deny' ? 'Denied' : 'Allowed';
+        } catch (error) {
+          buttons.forEach(b => { b.disabled = event.risk === 'destructive' && b === buttons[1]; });
+          input.disabled = false; throw error;
+        }
+      });
+      actions.append(button); buttons.push(button);
+    }
+    card.append(actions, status);
+    return {card, resolve(decision, message) {
+      buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
+      status.textContent = decision === 'allow_session' ? 'Allowed for this chat' : decision === 'allow' ? 'Allowed' : message || 'Denied';
+    }, finish() {
+      buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
+      if (!status.textContent) status.textContent = 'No longer pending';
+    }};
+  }
   function turnView(body) {
     let current = null, scheduled = false, finished = false;
-    const blocks = [], pendingTools = [];
+    const blocks = [], pendingTools = [], approvals = new Map();
+    let plan = null;
     const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), document.createTextNode('Thinking…')); body.append(activity);
     function paint() {
       scheduled = false;
@@ -222,6 +281,16 @@
           const row = el('div', 'tool-row'); const icon = el('span', 'spinner'); const detail = el('span', 'tool-detail', 'Running…');
           row.append(icon, el('strong', '', event.name), detail); body.insertBefore(row, activity);
           pendingTools.push({name: event.name, row, icon, detail, done: false});
+        } else if (kind === 'approval') {
+          activity.hidden = true;
+          const approval = approvalCard(event); approvals.set(event.id, approval);
+          body.insertBefore(approval.card, activity);
+        } else if (kind === 'approval_resolved') {
+          approvals.get(event.id)?.resolve(event.decision, event.message);
+        } else if (kind === 'plan') {
+          const next = planView(event.items);
+          if (plan) plan.replaceWith(next); else body.insertBefore(next, activity);
+          plan = next;
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
           if (tool) { tool.done = true; tool.icon.className = ''; tool.icon.textContent = event.ok ? '✓' : '✗'; tool.row.classList.toggle('failed', !event.ok); tool.detail.textContent = (event.summary || '').replace(/\s+/g, ' ').slice(0, 200); tool.detail.title = event.summary || ''; }
@@ -235,6 +304,7 @@
       },
       finish() {
         endReasoning(); finished = true; activity.remove();
+        for (const approval of approvals.values()) approval.finish();
         for (const tool of pendingTools.filter(t => !t.done)) { tool.icon.className = ''; tool.icon.textContent = '·'; tool.detail.textContent = 'Interrupted'; }
         for (const block of blocks) block.dirty = true;
         paint();
@@ -247,7 +317,7 @@
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn;
     try {
-      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true'}));
+      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
       $('welcome').hidden = true; message('user', text); $('prompt').value = ''; resize();
       nearBottom = true; turn = turnView(message('assistant')); follow();
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
@@ -297,8 +367,16 @@
     Object.assign(state.chat, chat); await refreshChats();
   }
   $('mode').onchange = () => safe(async () => {
-    try { await chatSetting({mode: $('mode').value}); }
+    try { await chatSetting({mode: $('mode').value}); controls(); }
     catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
+  });
+  $('permission').onchange = () => safe(async () => {
+    try { await chatSetting({permission: $('permission').value}); }
+    catch (error) { $('permission').value = state.chat?.permission || 'manual'; throw error; }
+  });
+  $('cwd').onchange = () => safe(async () => {
+    try { await chatSetting({cwd: $('cwd').value.trim()}); }
+    catch (error) { $('cwd').value = state.chat?.cwd || ''; throw error; }
   });
   $('web').onclick = () => safe(async () => {
     const web = $('web').getAttribute('aria-pressed') !== 'true';

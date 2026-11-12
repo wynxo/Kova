@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
@@ -40,6 +41,28 @@ class ChatBody(BaseModel):
     title: str | None = None
     mode: str | None = None
     web: bool | None = None
+    permission: Literal["manual", "auto", "full"] | None = None
+    cwd: str | None = None
+
+
+class ApprovalBody(BaseModel):
+    decision: Literal["allow", "allow_session", "deny"]
+    message: str | None = Field(default=None, max_length=4000)
+
+
+def working_folder(value: str) -> str:
+    if not value.strip() or "\0" in value:
+        raise HTTPException(status_code=422, detail="working folder must be a non-empty path")
+    try:
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            raise ValueError("working folder must be absolute")
+        path = path.resolve(strict=True)
+        if not path.is_dir():
+            raise ValueError("working folder is not a directory")
+        return str(path)
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class NoteBody(BaseModel):
@@ -113,7 +136,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build the app's singletons and run the reminder loop for its lifetime."""
     config: Config = app.state.config
     now: Callable[[], datetime] = app.state.now
-    store = Store(config.home / "kova.db")
+    store = Store(config.home / "kova.db", default_cwd=str(config.files_path.resolve()))
     memory = Memory(config.memory_path, config.memory_write_subdir)
     tool_context = ToolContext(config, store, memory, now)
     tools = build_tools(tool_context)
@@ -187,6 +210,8 @@ def create_app(
             body.title if body else None,
             mode=mode or DEFAULT_MODE,
             web=body.web if body is not None and body.web is not None else True,
+            permission=body.permission if body and body.permission else "manual",
+            cwd=working_folder(body.cwd) if body and body.cwd is not None else str(config.files_path.resolve()),
         )
 
     @api.get("/chats/search")
@@ -215,13 +240,21 @@ def create_app(
             changes["mode"] = body.mode
         if body.web is not None:
             changes["web"] = body.web
+        if body.permission is not None:
+            changes["permission"] = body.permission
+        if body.cwd is not None:
+            changes["cwd"] = working_folder(body.cwd)
         if not changes:
             raise HTTPException(status_code=422, detail="nothing to update")
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
         app.state.store.update_chat(chat_id, **changes)
+        if body.permission is not None or body.cwd is not None:
+            app.state.agent.approvals.sessions.discard(chat_id)
         chat = app.state.store.get_chat(chat_id)
-        return {"id": chat_id, "title": chat["title"], "mode": chat["mode"], "web": chat["web"]}
+        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
 
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:
@@ -230,6 +263,18 @@ def create_app(
         app.state.chat_locks.pop(chat_id, None)
         if not deleted:
             raise HTTPException(status_code=404, detail="chat not found")
+        app.state.agent.approvals.sessions.discard(chat_id)
+        for key in list(app.state.agent.file_sessions):
+            if key[0] == chat_id:
+                del app.state.agent.file_sessions[key]
+        return {"ok": True}
+
+    @api.post("/chats/{chat_id}/approvals/{approval_id}")
+    async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+        try:
+            app.state.agent.approvals.answer(chat_id, approval_id, body.decision, body.message)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {"ok": True}
 
     @api.post("/chats/{chat_id}/messages")
@@ -285,14 +330,15 @@ def create_app(
     async def stop_chat(chat_id: str) -> dict:
         """Cancel this chat's server-side turns, not merely its HTTP stream.
 
-        A synchronous tool already executing in a worker thread cannot be undone.
-        Cancellation stops model streaming and prevents subsequent agent steps.
+        Commands terminate their process trees; pending approvals are denied.
+        A synchronous file operation already in a worker cannot be undone.
         """
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         tasks = [task for task in app.state.chat_turns.get(chat_id, ()) if not task.done()]
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return {"stopped": bool(tasks)}
