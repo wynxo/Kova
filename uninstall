@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Remove Kova: ./uninstall [--purge | --keep-data]
+# Runs uninstall.sh with the same options. With none it asks before deleting
+# your data (chats, memory, settings).
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$here"
+
+exec "$here/uninstall.sh" "$@"

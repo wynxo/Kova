@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Install Kova from this checkout: ./install [--ref REF] [--dev]
+# Runs install.sh with the same options; with none it installs from this folder
+# so the kova command follows your checkout.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$here"
+
+if [ "$#" -eq 0 ]; then
+    exec "$here/install.sh" --dev
+fi
+exec "$here/install.sh" "$@"

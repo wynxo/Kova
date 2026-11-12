@@ -41,6 +41,16 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wyn
 
 Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --purge` on the shell pipeline, or download `uninstall.ps1` and run it with `--purge` on Windows. uv and external memory folders/files are kept.
 
+## Update, reinstall, uninstall
+
+| Do this | Installed command | From a checkout |
+| --- | --- | --- |
+| Update | `kova update` | `./update` (`update.bat`) pulls, refreshes dependencies, and updates the installed command too |
+| Reinstall | | `./reinstall` (`reinstall.bat`) removes the installed command and installs again from the checkout; chats, memory, and settings are kept |
+| Uninstall | `kova uninstall` | `./uninstall` (`uninstall.bat`); add `--keep-data` or `--purge` |
+
+`./install` (`install.bat`) installs the `kova` command from the checkout.
+
 ## Features
 
 Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
