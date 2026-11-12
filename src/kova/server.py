@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -171,6 +171,11 @@ def create_app(
     @api.post("/chats")
     async def create_chat(body: ChatBody | None = None) -> dict:
         return app.state.store.create_chat(body.title if body else None)
+
+    @api.get("/chats/search")
+    async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
+        """Chats with a user/assistant message matching ``q``, newest first."""
+        return await asyncio.to_thread(app.state.store.search_chats, q, limit)
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:

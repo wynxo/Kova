@@ -101,6 +101,11 @@ class KovaClient:
             return chats
         return [c for c in chats if not (c.get("title") or "").startswith(ASK_TITLE_PREFIX)]
 
+    def search_chats(self, query: str, limit: int = 20) -> list[dict]:
+        """Chats with a matching message, newest first, each with a snippet."""
+        params = {"q": query, "limit": limit}
+        return self._request("GET", "/chats/search", params=params).json()
+
     def get_chat(self, chat_id: str) -> dict | None:
         return self._request("GET", f"/chats/{chat_id}").json()
 

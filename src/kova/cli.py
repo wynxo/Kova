@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,9 +18,10 @@ import typer
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import onboarding
+from kova import backup, onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.ui import _run_chat
@@ -262,6 +264,85 @@ def status():
     console.print(f"[green]Server up[/green] · v{info['version']} · model {info['model']} · model reachable: {reachable}")
 
 
+def _restart_server(cfg) -> bool:
+    """Stop and start a background server after an import; True if restarted."""
+    pidfile = cfg.home / "server.pid"
+    if not pidfile.exists():
+        return False
+    try:
+        pid = int(pidfile.read_text().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        pidfile.unlink(missing_ok=True)
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    pidfile.unlink(missing_ok=True)
+    try:
+        ensure_server(cfg)
+    except KovaError as exc:
+        console.print(f"[yellow]Imported, but the server did not restart: {exc}[/yellow]")
+        return False
+    return True
+
+
+@app.command("export")
+def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Kova-backup-YYYY-MM-DD.zip).")):
+    """Write one zip with chats, memory notes, reminders and a safe config."""
+    try:
+        stats = backup.export_archive(load_config(), path)
+    except (backup.BackupError, OSError) as exc:
+        _fail(str(exc))
+    console.print(
+        f"Backup written to [bold]{stats['path']}[/bold] · "
+        f"{stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders."
+    )
+    console.print("[dim]API keys were left out of config.toml; the server token is not included.[/dim]")
+
+
+@app.command("import")
+def import_archive(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="A Kova backup zip."),
+    merge: bool = typer.Option(True, "--merge/--replace",
+                               help="Merge by default; --replace clears existing chats and Kova notes."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the replace confirmation."),
+):
+    """Restore a backup; merge is the default."""
+    if not merge and not yes:
+        if not typer.confirm("Replace all chats, Kova memory notes and reminders?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+    cfg = load_config()
+    try:
+        stats = backup.import_archive(cfg, path, merge=merge)
+    except (backup.BackupError, OSError) as exc:
+        _fail(str(exc))
+    console.print(
+        f"Imported {stats['chats']} chats · {stats['notes']} notes · "
+        f"{stats['reminders']} reminders."
+    )
+    skipped = stats["chats_skipped"] + stats["notes_skipped"] + stats["reminders_skipped"]
+    if skipped:
+        console.print(
+            f"[dim]Skipped {stats['chats_skipped']} chats, {stats['notes_skipped']} notes "
+            f"and {stats['reminders_skipped']} reminders that already existed.[/dim]"
+        )
+    if _restart_server(cfg):
+        console.print("[green]Server restarted[/green] to pick up the import.")
+    else:
+        console.print("[dim]Chats, memory and reminders are read live from disk; "
+                      "restart a foreground server if you changed its config.[/dim]")
+
+
 # ---------------------------------------------------------------------------
 # Command groups
 # ---------------------------------------------------------------------------
@@ -436,6 +517,68 @@ def chats_list():
             str(chat.get("message_count", 0)),
         )
     console.print(table)
+
+
+@_chats.command("search")
+def chats_search(words: list[str] = typer.Argument(..., help="Words to find in your chats.")):
+    """Search inside user and assistant messages."""
+    query = " ".join(words).strip()
+    if not query:
+        _fail("Give at least one word to search for.")
+    client = get_client()
+    results = client.search_chats(query)
+    if not results:
+        console.print(f'[dim]No chats match "{query}".[/dim]')
+        return
+    # Same numbering as ``kova chats`` and ``_resolve_chat``; hidden ask-chats
+    # fall back to their id, which ``chats show <id>`` also accepts.
+    numbers = {chat["id"]: number for number, chat in enumerate(client.list_chats(), start=1)}
+    table = Table(box=None, pad_edge=False)
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Title")
+    table.add_column("When", style="dim")
+    table.add_column("Snippet", overflow="fold")
+    for result in results:
+        number = numbers.get(result["id"])
+        label = str(number) if number is not None else result["id"]
+        title = Text(result.get("title") or "(untitled)")
+        if not result.get("title"):
+            title.stylize("dim")
+        snippet = Text(result.get("snippet") or "")
+        lowered = snippet.plain.casefold()
+        for word in query.split():
+            needle = word.casefold()
+            start = 0
+            while needle and (position := lowered.find(needle, start)) != -1:
+                snippet.stylize("bold yellow", position, position + len(needle))
+                start = position + len(needle)
+        table.add_row(
+            label,
+            title,
+            _relative_when(result.get("last_message") or result.get("created")),
+            snippet,
+        )
+    console.print(table)
+
+
+@_chats.command("export")
+def chats_export(
+    ref: str,
+    as_json: bool = typer.Option(False, "--json", help="Print the chat as JSON."),
+    as_md: bool = typer.Option(False, "--md", help="Print the chat as Markdown (default)."),
+):
+    """Print one chat to stdout. REF is a number from ``kova chats`` or a chat id."""
+    if as_json and as_md:
+        _fail("Choose either --md or --json.")
+    client = get_client()
+    chat = _resolve_chat(client, ref)
+    full = chat if "messages" in chat else client.get_chat(chat["id"])
+    if full is None:
+        _fail(f'No chat "{ref}".')
+    if as_json:
+        sys.stdout.write(json.dumps(full, indent=2, ensure_ascii=False) + "\n")
+    else:
+        sys.stdout.write(backup.render_chat_markdown(full))
 
 
 @_chats.command("show")
