@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import unicodedata
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from pathlib import Path
@@ -78,8 +79,20 @@ def derive_title(text: str, limit: int = 40) -> str:
             break
         title = candidate
     if not title:
-        title = (words[0] if words else "New chat")[:limit]
+        title = _cut_graphemes(words[0], limit) if words else "New chat"
     return title
+
+
+def _cut_graphemes(text: str, limit: int) -> str:
+    """Cut to ``limit`` code points without splitting an emoji sequence or an
+    accent from its letter (backs off to the start of that cluster)."""
+    if len(text) <= limit:
+        return text
+    i = limit
+    while i > 0 and (text[i - 1] == "\u200d" or text[i] in "\u200d\ufe0f"
+                     or unicodedata.combining(text[i])):
+        i -= 1
+    return text[:i] or text[:limit]
 
 
 def repair_tool_pairs(messages: list[dict]) -> list[dict]:
@@ -108,15 +121,25 @@ def repair_tool_pairs(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _message_chars(message: dict) -> int:
+    """What a message costs in the request: its text plus any tool-call arguments."""
+    size = len(message.get('content') or '')
+    for call in message.get('tool_calls') or []:
+        function = call.get('function') or {}
+        size += len(function.get('name') or '') + len(function.get('arguments') or '')
+    return size
+
+
 def trim_history(messages: list[dict], context_tokens: int, reserved_chars: int) -> list[dict]:
     """Keep recent history within the budget, retaining the latest user message."""
     budget = context_tokens * 4 * 0.75 - reserved_chars
     latest_user = next((i for i in range(len(messages) - 1, -1, -1)
                         if messages[i].get('role') == 'user'), None)
     start = 0
-    size = sum(len(m.get('content') or '') for m in messages)
+    sizes = [_message_chars(m) for m in messages]
+    size = sum(sizes)
     while start < len(messages) and size > budget and start != latest_user:
-        size -= len(messages[start].get('content') or '')
+        size -= sizes[start]
         start += 1
     while start < len(messages) and messages[start].get('role') == 'tool':
         start += 1

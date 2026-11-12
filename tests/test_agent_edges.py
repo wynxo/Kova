@@ -114,11 +114,6 @@ def test_derive_title_collapses_whitespace_and_keeps_unicode():
     assert len(title) <= 40
 
 
-@pytest.mark.xfail(
-    reason="bug: derive_title truncates by code point, so a long ZWJ emoji is cut "
-           "mid-sequence and the title ends in a dangling zero-width joiner",
-    strict=True,
-)
 def test_derive_title_does_not_split_multi_codepoint_emoji():
     title = derive_title("👨‍👩‍👧‍👦" * 10, limit=13)
     assert len(title) <= 13
@@ -249,11 +244,6 @@ def test_trim_history_with_a_negative_budget_keeps_only_the_latest_user():
     assert trim_history(messages, 0, 100) == messages[2:]
 
 
-@pytest.mark.xfail(
-    reason="bug: trim_history budgets only message content, so assistant tool_calls "
-           "arguments are free and a request can far exceed the model context",
-    strict=True,
-)
 def test_trim_history_counts_tool_call_arguments_in_the_budget():
     arguments = json.dumps({"content": "x" * 100_000})
     messages = [
