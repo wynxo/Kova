@@ -69,6 +69,6 @@ main() {
     # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
     say '  export PATH="$HOME/.local/bin:$PATH"'
     say 'Done. Run: kova setup'
-    say 'Then: kova chat'
+    say 'Then: kova'
 }
 main "$@"

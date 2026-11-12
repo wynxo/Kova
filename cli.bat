@@ -21,7 +21,7 @@ exit /b 1
 
 :run
 if "%~1"=="" (
-    uv run kova chat
+    uv run kova
 ) else (
     uv run kova %*
 )

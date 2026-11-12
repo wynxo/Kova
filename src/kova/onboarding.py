@@ -3,7 +3,7 @@
 ``kova setup`` walks a new user through picking a local (or homelab) model
 server and a model, checks that the pair actually answers, and writes the
 same config ``kova model add`` would. Nothing here is required to use Kova:
-``kova chat`` asks to run this once when no model answers.
+``kova`` asks to run this once when no model answers.
 """
 
 from __future__ import annotations
@@ -442,7 +442,7 @@ def _finish(cfg: Config, entry: ModelEntry, memory: tuple[Path, str | None] | No
     else:
         console.print(f"[green]Saved[/green] [bold]{entry.name}[/bold] to {cfg.home / 'config.toml'}.")
     console.print()
-    console.print("[green]You're set.[/green] Run: [bold]kova chat[/bold]")
+    console.print("[green]You're set.[/green] Run: [bold]kova[/bold]")
 
 
 # ---------------------------------------------------------------------------

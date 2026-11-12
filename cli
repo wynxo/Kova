@@ -32,8 +32,4 @@ EOF
     exit 1
 fi
 
-if [ "$#" -eq 0 ]; then
-    set -- chat
-fi
-
 exec "$UV" run kova "$@"
