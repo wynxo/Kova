@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Run Kova straight from this checkout, no install step: ./cli [command...]
+# With no command it starts chat. Everything else is passed to kova.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$here"
+
+find_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        command -v uv
+        return 0
+    fi
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! UV="$(find_uv)"; then
+    cat >&2 <<'EOF'
+Kova needs uv, and uv is not installed.
+
+Install it with:
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+Then run ./cli again. (./install.sh does all of this for you.)
+EOF
+    exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+    set -- chat
+fi
+
+exec "$UV" run kova "$@"

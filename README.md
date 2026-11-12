@@ -4,6 +4,30 @@ Your own private AI that lives on your computer.
 
 Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. For now you talk to it through a command line; a desktop app and a phone/web UI are coming soon.
 
+## Quick start
+
+Linux and macOS, from a clone of this repo:
+
+```bash
+./install.sh
+kova chat
+```
+
+On Windows, run `install.bat` instead, then `kova chat`.
+
+`install.sh` installs [uv](https://docs.astral.sh/uv/) if you don't have it, installs Kova's dependencies, and puts a `kova` command on your PATH, so `kova chat` works from any folder. Running it again is safe.
+
+No install needed to take a look — the launcher in the repo root runs Kova straight from the checkout:
+
+```bash
+./cli            # same as: ./cli chat
+./cli status
+```
+
+On Windows use `cli.bat`. To undo an install, run `./uninstall.sh` (`uninstall.bat` on Windows); it keeps your data unless you say otherwise.
+
+Either way, Kova needs a model server before it can talk — see [Install](#install).
+
 ## Features
 
 - Streaming chat, with the model's reasoning shown dimmed
