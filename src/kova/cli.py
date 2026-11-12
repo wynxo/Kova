@@ -19,7 +19,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 from typer.core import TyperGroup
 
-from kova import onboarding
+from kova import __version__, lifecycle, onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.ui import _run_chat
@@ -41,6 +41,51 @@ class _KovaGroup(TyperGroup):
 
 
 app = typer.Typer(help="Kova: your own private AI.", no_args_is_help=True, cls=_KovaGroup)
+
+
+def _version(value: bool) -> None:
+    if value:
+        console.print(f"Kova {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def root(
+    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True,
+                                 help="Show the installed version."),
+):
+    pass
+
+
+@app.command()
+def update(
+    ref: str | None = typer.Option(None, "--ref", help="GitHub branch, tag, or commit (default: KOVA_REF or main)."),
+    check: bool = typer.Option(False, "--check", help="Only compare installed and remote versions/commits."),
+):
+    """Check for updates or reinstall the latest Kova with uv."""
+    try:
+        target = lifecycle.selected_ref(ref)
+        if check:
+            console.print(lifecycle.check_update(target), markup=False)
+        else:
+            lifecycle.update(target, emit=lambda message: console.print(message, markup=False))
+    except (lifecycle.LifecycleError, OSError) as exc:
+        _fail(str(exc))
+
+
+@app.command()
+def uninstall(
+    purge: bool = typer.Option(False, "--purge", help="Also delete ~/.kova (or KOVA_HOME) without asking."),
+    keep_data: bool = typer.Option(False, "--keep-data", help="Keep data without asking."),
+):
+    """Stop the server and remove Kova. Data is kept unless you confirm deletion."""
+    try:
+        lifecycle.uninstall(purge=purge, keep_data=keep_data,
+                            confirm=lambda question: typer.confirm(question, default=False),
+                            emit=lambda message: console.print(message, markup=False))
+    except (lifecycle.LifecycleError, OSError) as exc:
+        _fail(str(exc))
+
 
 _model = typer.Typer(no_args_is_help=True, help="Manage model servers.")
 app.add_typer(_model, name="model")

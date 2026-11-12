@@ -194,8 +194,13 @@ def test_ensure_server_timeout_message(tmp_path, monkeypatch):
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
     monkeypatch.setattr(client_mod, "_spawn_server", lambda cfg: None)
-    with pytest.raises(KovaError) as exc:
-        ensure_server(cfg, timeout=0.5)
+    # A real local Kova may already be listening; this test must stay offline.
+    base = f"http://127.0.0.1:{cfg.port}"
+    with httpx.Client(base_url=base, transport=httpx.MockTransport(_refuse_connection)) as http:
+        client = KovaClient(base, "", http=http)
+        monkeypatch.setattr(client_mod, "KovaClient", lambda *args: client)
+        with pytest.raises(KovaError) as exc:
+            ensure_server(cfg, timeout=0.5)
     assert "server.log" in str(exc.value)
 
 
