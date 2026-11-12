@@ -42,7 +42,7 @@ def _check_response(response: httpx.Response) -> None:
 
 
 def _auth(token: str) -> dict[str, str]:
-    """Bearer header every route except ``/health`` requires."""
+    """Bearer header for CLI API requests."""
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -86,6 +86,10 @@ class KovaClient:
                 yield from _iter_events(response)
         except httpx.RequestError as exc:
             raise KovaError(None, f"Cannot reach Kova server at {self.base_url}.") from exc
+
+    def app_ticket(self) -> str:
+        """Mint a one-use browser login ticket without exposing the server token."""
+        return self._request("POST", "/app/session").json()["ticket"]
 
     def health(self) -> dict:
         return self._request("GET", "/health").json()

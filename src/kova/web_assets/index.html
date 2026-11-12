@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Kova · Your space to think</title>
+  <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app/assets/app.css">
+  <script defer src="/app/assets/vendor/marked.js"></script>
+  <script defer src="/app/assets/vendor/purify.js"></script>
+  <script defer src="/app/assets/vendor/highlight.js"></script>
+  <script defer src="/app/assets/app.js"></script>
+</head>
+<body>
+  <button id="backdrop" aria-label="Close sidebar" hidden></button>
+  <aside id="sidebar" aria-label="Conversations">
+    <a class="brand" href="/app" aria-label="Kova home"><span class="mark">k</span><span>kova<span class="brand-dot">.</span></span></a>
+    <button id="new-chat" class="new-chat"><span>＋</span> New conversation <kbd>⌘ K</kbd></button>
+    <label class="search"><span aria-hidden="true">⌕</span><input id="search" placeholder="Search your conversations" aria-label="Search conversations" type="search"></label>
+    <div class="section-label">YOUR CONVERSATIONS <span id="chat-count"></span></div>
+    <nav id="chat-list" aria-label="Chat history"></nav>
+    <div class="sidebar-footer">
+      <div class="local-note"><span class="local-icon">⌂</span><div><strong>At home on your computer</strong><small>Your conversations stay yours.</small></div></div>
+      <div class="footer-actions"><button id="theme" class="quiet">◐ <span>Light theme</span></button><button id="disconnect" class="quiet" title="Disconnect this window">Disconnect</button></div>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <button id="menu" class="icon-button" aria-label="Toggle sidebar" aria-expanded="false">☰</button>
+      <div class="breadcrumb">Your space <span>/</span> <strong id="chat-title">New conversation</strong></div>
+      <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
+    </header>
+    <div id="banner" class="banner" role="status" hidden></div>
+    <section id="scroll-area" aria-label="Conversation">
+      <div id="welcome" class="welcome">
+        <div class="welcome-symbol" aria-hidden="true">✳</div>
+        <div class="eyebrow">A LITTLE CLARITY. A LITTLE POSSIBILITY.</div>
+        <h1>Make room for<br><span>your next idea.</span></h1>
+        <p>A question, a plan, a half-formed thought.<br>Bring it here. We’ll figure it out together.</p>
+        <div class="suggestions">
+          <button data-prompt="Help me turn a half-formed idea into a clear plan."><span class="suggestion-icon">✧</span><strong>Find a starting point</strong><span>Turn a spark into a plan <b>↗</b></span></button>
+          <button data-prompt="Help me think through a decision. Ask me what I'm weighing up."><span class="suggestion-icon mint">⌘</span><strong>Think it through</strong><span>Untangle something tricky <b>↗</b></span></button>
+          <button data-prompt="Help me make space for what matters today. Ask me what's on my mind."><span class="suggestion-icon peach">☀</span><strong>Make today lighter</strong><span>A little order for your day <b>↗</b></span></button>
+        </div>
+        <div class="welcome-foot"><span>◈</span> Private by nature. Here for you.</div>
+      </div>
+      <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
+    </section>
+    <div class="compose-wrap">
+      <form id="composer" class="composer">
+        <label class="sr-only" for="prompt">Message Kova</label>
+        <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
+        <div class="compose-toolbar">
+          <div class="chat-controls">
+            <label class="control"><span aria-hidden="true">◈</span><select id="mode" aria-label="Chat mode"><option value="work">Work</option><option value="chat">Chat</option></select></label>
+            <button id="web" type="button" class="control" aria-pressed="true" title="Allow web search">◎ <span>Web on</span></button>
+          </div>
+          <div class="send-controls"><label class="model-control"><select id="model" aria-label="Model"><option>Loading models…</option></select></label><button id="send" type="submit" aria-label="Send message">↑</button><button id="stop" type="button" hidden>■ Stop</button></div>
+        </div>
+      </form>
+      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span>Enter to send <span class="hint-dot">·</span> Shift + Enter for a new line</span></div>
+    </div>
+  </main>
+  <div id="toasts" role="status" aria-live="polite"></div>
+  <dialog id="chat-dialog"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off"></label><div class="dialog-actions"><button value="cancel" class="quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="primary">Save</button></div></form></dialog>
+  <noscript>Kova needs JavaScript enabled. Open kova-app to connect.</noscript>
+</body>
+</html>

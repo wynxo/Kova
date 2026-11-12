@@ -26,6 +26,7 @@ from kova.reminders import ReminderLoop
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
+from kova.web import install_web, require_browser_session
 
 
 class TurnBody(BaseModel):
@@ -91,12 +92,20 @@ def _sse(event: dict) -> str:
     return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
 
 
-async def _require_token(request: Request) -> None:
+async def _require_bearer(request: Request) -> None:
     """Reject anything without the home's bearer token."""
     expected = request.app.state.token
     given = request.headers.get("authorization", "")
     if not hmac.compare_digest(given.encode(), f"Bearer {expected}".encode()):
         raise HTTPException(status_code=401, detail="missing or invalid token")
+
+
+async def _require_token(request: Request) -> None:
+    """Keep CLI bearer auth; browsers use a local, same-origin session."""
+    if request.headers.get("authorization"):
+        await _require_bearer(request)
+    else:
+        require_browser_session(request)
 
 
 @asynccontextmanager
@@ -136,7 +145,8 @@ def create_app(
 ) -> FastAPI:
     """Build the Kova app for one config home.
 
-    Every route except ``GET /health`` needs the home's bearer token.
+    API routes need a bearer token or a same-origin browser session.
+    The app shell and health endpoint are public; neither contains secrets.
     """
     now = now or (lambda: datetime.now().astimezone())
     app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -146,6 +156,8 @@ def create_app(
     app.state.token = ensure_token(config.home)
     app.state.turns = set()
     app.state.chat_locks = {}
+    app.state.chat_turns = {}
+    install_web(app, _require_bearer)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""
@@ -237,6 +249,9 @@ def create_app(
                         return
                     async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
                         queue.put_nowait(event)
+            except asyncio.CancelledError:
+                queue.put_nowait({"type": "stopped"})
+                raise
             except Exception as exc:  # never leave the stream without an ending
                 queue.put_nowait({"type": "error", "message": str(exc)})
             finally:
@@ -244,7 +259,17 @@ def create_app(
 
         task = asyncio.create_task(run_turn())
         app.state.turns.add(task)
-        task.add_done_callback(app.state.turns.discard)
+        tasks = app.state.chat_turns.setdefault(chat_id, set())
+        tasks.add(task)
+
+        def finished(done):
+            app.state.turns.discard(done)
+            tasks.discard(done)
+            if not tasks:
+                app.state.chat_turns.pop(chat_id, None)
+            queue.put_nowait(None)  # also handles cancellation before task startup
+
+        task.add_done_callback(finished)
 
         async def drain() -> AsyncIterator[str]:
             while True:
@@ -254,6 +279,23 @@ def create_app(
                 yield _sse(event)
 
         return StreamingResponse(drain(), media_type="text/event-stream")
+
+
+    @api.post("/chats/{chat_id}/stop")
+    async def stop_chat(chat_id: str) -> dict:
+        """Cancel this chat's server-side turns, not merely its HTTP stream.
+
+        A synchronous tool already executing in a worker thread cannot be undone.
+        Cancellation stops model streaming and prevents subsequent agent steps.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        tasks = [task for task in app.state.chat_turns.get(chat_id, ()) if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return {"stopped": bool(tasks)}
 
 
     @api.post("/memory/location")
