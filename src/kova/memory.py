@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
-_SAFE_SLUG = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9 _.-]*\Z")
+_SAFE_SLUG = re.compile(r"\A\w[\w .-]*\Z")
 
 
 def _safe(slug: str) -> bool:
@@ -20,7 +20,7 @@ def _safe(slug: str) -> bool:
 
 def slugify(title: str) -> str:
     """Turn a title into a file slug: lowercase, dashed, max 60 chars."""
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    slug = re.sub(r"[^\w]+|_", "-", title.lower()).strip("-")
     slug = slug[:60].rstrip("-")
     return slug or "note"
 
@@ -100,6 +100,8 @@ class Memory:
         updated = datetime.now().astimezone().isoformat()
         path = self.write_dir / f"{slug}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink() or not path.parent.resolve().is_relative_to(self.root.resolve()):
+            raise ValueError(f"Refusing to write memory note through a link: {path}")
         meta = {"title": title, "tags": tags, "updated": updated}
         path.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n" + body)
         return Note(slug=slug, title=title, body=body, tags=tags, updated=updated, path=path)
@@ -121,6 +123,8 @@ class Memory:
         if not _safe(slug):
             return False
         path = self.write_dir / f"{slug}.md"
+        if path.is_symlink():
+            return False
         if path.is_file():
             path.unlink()
             return True
@@ -128,7 +132,13 @@ class Memory:
 
     def list(self) -> list[Note]:
         """Every note under root, recursive, hidden dirs skipped."""
-        return [_parse(p) for p in _md_files(self.root)]
+        notes = []
+        for p in _md_files(self.root):
+            try:
+                notes.append(_parse(p))
+            except (OSError, UnicodeDecodeError):
+                continue  # one broken note must not break every chat
+        return notes
 
     def search(self, query: str, limit: int = 5) -> list[Note]:
         """Best-matching notes: title hit x3, tag hit x2, body hit x1 per query word."""

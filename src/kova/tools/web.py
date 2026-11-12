@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from ddgs import DDGS
@@ -40,12 +42,45 @@ class _TextParser(HTMLParser):
             self.parts.append(data)
 
 
+def _resolve(host: str) -> list[str]:
+    """Every address a host name resolves to (module-level so tests can replace it)."""
+    return [info[4][0] for info in socket.getaddrinfo(host, None)]
+
+
+def _check_public(url: str) -> None:
+    """Refuse non-http(s) URLs and hosts on this machine or the local network.
+
+    A web page could otherwise trick the model into reading the user's own
+    services (router, homelab, Kova's API) and leaking them.
+    """
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ToolError("Only HTTP and HTTPS URLs are supported")
+    host = parts.hostname or ""
+    try:
+        addrs = _resolve(host)
+    except OSError as exc:
+        raise ToolError(f"Can't resolve {host}") from exc
+    for addr in addrs:
+        ip = ipaddress.ip_address(addr.split("%")[0])
+        if not ip.is_global:
+            raise ToolError("Kova only fetches public web pages, not local or private addresses")
+
+
 def _fetch(args: dict) -> str:
     url = args["url"]
-    if urlsplit(url).scheme.lower() not in ("http", "https"):
-        raise ToolError("Only HTTP and HTTPS URLs are supported")
-    with httpx.Client(transport=_transport, timeout=15, follow_redirects=True) as client:
-        with client.stream("GET", url) as response:
+    with httpx.Client(transport=_transport, timeout=15, follow_redirects=False) as client:
+        for _ in range(6):  # follow up to 5 redirects, checking each hop
+            _check_public(url)
+            response = client.send(client.build_request("GET", url), stream=True)
+            if response.is_redirect and "location" in response.headers:
+                response.close()
+                url = urljoin(url, response.headers["location"])
+                continue
+            break
+        else:
+            raise ToolError("Too many redirects")
+        try:
             response.raise_for_status()
             data = bytearray()
             for chunk in response.iter_bytes():
@@ -53,6 +88,8 @@ def _fetch(args: dict) -> str:
                 if len(data) >= 1024 * 1024:
                     break
             encoding = response.encoding or "utf-8"
+        finally:
+            response.close()
     parser = _TextParser()
     parser.feed(bytes(data).decode(encoding, errors="replace"))
     return " ".join(" ".join(parser.parts).split())[:8000]

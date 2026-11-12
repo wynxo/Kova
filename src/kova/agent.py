@@ -32,6 +32,35 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     return prompt
 
 
+MAX_TOOL_RESULT_CHARS = 32_000
+
+
+def repair_tool_pairs(messages: list[dict]) -> list[dict]:
+    """Give every assistant tool call a tool reply, so a turn that was cut off
+    (crash, disconnect) can't make the model server reject the next request."""
+    out: list[dict] = []
+    for i, msg in enumerate(messages):
+        out.append(msg)
+        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+            continue
+        answered = set()
+        for later in messages[i + 1:]:
+            if later.get("role") != "tool":
+                break
+            answered.add(later.get("tool_call_id"))
+        missing = [c["id"] for c in msg["tool_calls"] if c["id"] not in answered]
+        # Insert the stand-ins right after the existing replies of this call batch.
+        j = i + 1
+        while j < len(messages) and messages[j].get("role") == "tool":
+            j += 1
+        out_tail = [{"role": "tool", "tool_call_id": cid, "content": "Error: interrupted"} for cid in missing]
+        if out_tail:
+            out.extend(messages[i + 1:j])
+            out.extend(out_tail)
+            return out + repair_tool_pairs(messages[j:])
+    return out
+
+
 def trim_history(messages: list[dict], context_tokens: int, reserved_chars: int) -> list[dict]:
     """Keep recent history within the budget, retaining the latest user message."""
     budget = context_tokens * 4 * 0.75 - reserved_chars
@@ -66,13 +95,18 @@ class Agent:
         chat = self.store.get_chat(chat_id)
         if chat is not None and not chat['title']:
             self.store.set_title(chat_id, text[:60])
-        prompt = build_system_prompt(self.now(), list(self.tools), self.memory.search(text, 5))
+        try:
+            memories = self.memory.search(text, 5)
+        except Exception:  # memory trouble must never block a chat
+            memories = []
+        prompt = build_system_prompt(self.now(), list(self.tools), memories)
         entry = self.config.active_model()
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(self.tools)
         try:
             for step in range(11):
-                history = trim_history(self.store.get_messages(chat_id), entry.context, len(prompt))
+                history = trim_history(repair_tool_pairs(self.store.get_messages(chat_id)),
+                                       entry.context, len(prompt))
                 messages = [{'role': 'system', 'content': prompt}, *history]
                 content: list[str] = []
                 calls: list[dict] = []
@@ -111,6 +145,9 @@ class Agent:
                                     result = await result
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
+                    result = str(result)
+                    if len(result) > MAX_TOOL_RESULT_CHARS:
+                        result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200]}
         except ModelError as exc:

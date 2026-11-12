@@ -17,7 +17,11 @@ def tools(ctx: ToolContext) -> list[Tool]:
             raise ToolError("Invalid reminder time; use ISO 8601") from exc
         now = ctx.now()
         if when.tzinfo is None:
-            when = when.replace(tzinfo=now.tzinfo)
+            if now.utcoffset() == datetime.now().astimezone().utcoffset():
+                # Real clock: use the system's zone rules for that date (handles summer time).
+                when = when.astimezone()
+            else:
+                when = when.replace(tzinfo=now.tzinfo)
         if when <= now:
             raise ToolError("Reminder time must be in the future")
         rid = ctx.store.add_reminder(when, args["text"])

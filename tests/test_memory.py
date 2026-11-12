@@ -107,3 +107,28 @@ def test_slug_path_traversal_refused(tmp_path):
         assert mem.delete(bad) is False
         assert mem.get(bad) is None
     assert outside.read_text() == "keep me"
+
+
+def test_unicode_titles_do_not_collide(tmp_path):
+    mem = Memory(tmp_path)
+    a, b = mem.save("猫", "cat"), mem.save("犬", "dog")
+    assert a.slug != b.slug and mem.get(a.slug).body == "cat" and mem.get(b.slug).body == "dog"
+
+
+def test_broken_note_is_skipped(tmp_path):
+    (tmp_path / "bad.md").write_bytes(b"\xff\xfe\x00bad")
+    mem = Memory(tmp_path)
+    mem.save("Good", "dog")
+    assert [n.title for n in mem.search("dog")] == ["Good"]
+
+
+def test_symlinked_note_is_not_written_through(tmp_path):
+    import pytest
+
+    vault = tmp_path / "vault"
+    (vault / "Kova").mkdir(parents=True)
+    (vault / "Dog.md").write_text("mine")
+    (vault / "Kova" / "dog.md").symlink_to(vault / "Dog.md")
+    with pytest.raises(ValueError):
+        Memory(vault, "Kova").save("Dog", "overwrite")
+    assert (vault / "Dog.md").read_text() == "mine"

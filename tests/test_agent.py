@@ -111,3 +111,20 @@ async def test_sync_tool_does_not_block_event_loop_and_awaitable_is_awaited(setu
         release.set()
     events = await task
     assert any(e.get('summary') == 'completed' and e['ok'] for e in events if e['type'] == 'tool_result')
+
+
+def test_repair_tool_pairs_fills_missing_results():
+    from kova.agent import repair_tool_pairs
+
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            {"id": "b", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "a", "content": "ok"},
+        {"role": "user", "content": "again"},
+    ]
+    fixed = repair_tool_pairs(msgs)
+    assert [m.get("tool_call_id") for m in fixed if m["role"] == "tool"] == ["a", "b"]
+    assert fixed[-1] == {"role": "user", "content": "again"}
+    assert repair_tool_pairs(fixed) == fixed

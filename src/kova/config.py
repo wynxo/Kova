@@ -100,7 +100,9 @@ def save_config(cfg: Config) -> None:
         "models": models,
     }
     cfg.home.mkdir(parents=True, exist_ok=True)
-    (cfg.home / "config.toml").write_text(tomli_w.dumps(data))
+    path = cfg.home / "config.toml"
+    path.write_text(tomli_w.dumps(data))
+    path.chmod(0o600)  # may hold model API keys
 
 
 def ensure_token(home: Path) -> str:

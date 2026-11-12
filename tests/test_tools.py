@@ -58,6 +58,7 @@ def test_web_search_formats(ctx, monkeypatch):
 def test_web_fetch_strips_html(ctx, monkeypatch):
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text='<h1>Hello</h1><script>secret</script><style>bad</style><p>world</p>'))
     monkeypatch.setattr(web, '_transport', transport)
+    monkeypatch.setattr(web, '_resolve', lambda host: ['93.184.215.14'])
     fetch = build_tools(ctx)['web_fetch'].run
     result = fetch({'url': 'https://example.com'})
     assert 'Hello' in result and 'world' in result and 'secret' not in result and 'bad' not in result
@@ -79,3 +80,22 @@ def test_memory_tools(ctx):
     tools['memory_save'].run({'title': 'Dog', 'body': 'Fido', 'tags': ['pet']})
     results = json.loads(tools['memory_search'].run({'query': 'Dog'}))
     assert results[0]['title'] == 'Dog' and results[0]['body'] == 'Fido'
+
+
+def test_web_fetch_refuses_private_and_bad_redirects(ctx, monkeypatch):
+    from kova.tools import ToolError
+
+    addresses = {'example.com': ['93.184.215.14'], 'router.lan': ['192.168.178.1'], 'localhost': ['127.0.0.1']}
+    monkeypatch.setattr(web, '_resolve', lambda host: addresses[host])
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={'location': 'http://router.lan/admin'})
+
+    monkeypatch.setattr(web, '_transport', httpx.MockTransport(handler))
+    fetch = build_tools(ctx)['web_fetch'].run
+    for url in ['http://localhost:7700/health', 'http://router.lan/', 'https://example.com/']:
+        with pytest.raises(ToolError):
+            fetch({'url': url})
+    assert seen == ['https://example.com/']  # the redirect to the LAN was never followed
