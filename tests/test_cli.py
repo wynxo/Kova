@@ -98,6 +98,117 @@ def test_model_list_and_use(runner):
     assert cfg.active == "ollama"
 
 
+def test_status_shows_a_compact_card(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+
+    class StatusClient:
+        def health(self):
+            return {"version": "0.1.0", "model": "local", "model_ok": True}
+
+        def models_list(self):
+            return [{"name": "local", "model": "qwen3:8b", "base_url": "http://localhost:11434/v1"}]
+
+        def memory_list(self):
+            return [{}, {}, {}]
+
+        def reminders_list(self):
+            return [{}]
+
+    monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: StatusClient())
+    result = cli_runner.invoke(cli.app, ["status"])
+    assert result.exit_code == 0, result.output
+    for expected in ("Kova status", "Server", "up", "v0.1.0", "local · qwen3:8b",
+                     "reachable", "3 notes", "1 upcoming"):
+        assert expected in result.output
+    assert "\x1b[" not in result.output  # plain when piped
+
+
+def test_status_card_when_the_server_is_down(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+
+    class DownClient:
+        def health(self):
+            raise KovaError(None, "Cannot reach Kova server at http://127.0.0.1:1.")
+
+    monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: DownClient())
+    result = cli_runner.invoke(cli.app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "down" in result.output
+    assert "It starts by itself when you run kova." in result.output
+
+
+def test_status_marks_an_unreachable_model(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+
+    class OfflineModel:
+        def health(self):
+            return {"version": "0.1.0", "model": "local", "model_ok": False}
+
+        def models_list(self):
+            return []
+
+        def memory_list(self):
+            return []
+
+        def reminders_list(self):
+            return []
+
+    monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: OfflineModel())
+    result = cli_runner.invoke(cli.app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "not reachable" in result.output
+    assert "kova setup" in result.output
+
+
+def test_lists_show_friendly_empty_states(runner):
+    cli_runner, client, cfg, fake = runner
+    for args, message, hint in [
+        (["chats"], "No chats yet.", "Start one with: kova"),
+        (["memory", "list"], "No memory notes yet.", "kova memory add"),
+        (["reminders", "list"], "Nothing scheduled.", "kova reminders add"),
+    ]:
+        result = cli_runner.invoke(cli.app, args)
+        assert result.exit_code == 0, result.output
+        lines = result.output.strip().splitlines()
+        assert lines[0] == f"◇ {message}"
+        assert hint in lines[1]
+
+
+def test_version_prints_a_wordmark_line():
+    result = CliRunner().invoke(cli.app, ["--version"])
+    assert result.exit_code == 0, result.output
+    first = result.output.splitlines()[0]
+    assert first.startswith("Kova")
+    assert f"v{cli.__version__}" in first
+    assert "Your own private AI" in result.output
+
+
+def test_help_and_version_are_plain_when_piped():
+    for args in (["--help"], ["--version"]):
+        result = CliRunner().invoke(cli.app, args)
+        assert result.exit_code == 0, result.output
+        assert "\x1b[" not in result.output, args
+
+
+def test_lists_have_headers_numbers_and_no_ansi_when_piped(runner):
+    cli_runner, client, cfg, fake = runner
+    client.create_chat("Numbered chat")
+    cli_runner.invoke(cli.app, ["memory", "add", "Dog", "Rex is a good dog"])
+    cli_runner.invoke(cli.app, ["reminders", "add", "2030-01-01T10:00", "Buy milk"])
+
+    for args, expected in [
+        (["chats", "list"], ["#", "Title", "Mode", "When", "Messages", "1", "Numbered chat"]),
+        (["memory", "list"], ["#", "Note", "Tags", "Updated", "About", "1", "Dog"]),
+        (["model", "list"], ["#", "Name", "Model", "Server", "1", "local", "●"]),
+        (["reminders", "list"], ["#", "When", "In", "Reminder", "1", "2030-01-01 10:00", "Buy milk"]),
+    ]:
+        result = cli_runner.invoke(cli.app, args)
+        assert result.exit_code == 0, result.output
+        for text in expected:
+            assert text in result.output, (args, text, result.output)
+        assert "\x1b[" not in result.output, args
+
+
 def test_memory_add_list_rm(runner):
     cli_runner, client, cfg, fake = runner
     added = cli_runner.invoke(cli.app, ["memory", "add", "Dog", "Rex is a good dog"])
@@ -237,29 +348,33 @@ def test_reminders_accept_natural_times_and_show_human_output(tmp_path, monkeypa
 
         listed = cli_runner.invoke(cli.app, ["reminders", "list"])
         assert listed.exit_code == 0, listed.output
-        assert "2026-11-12 22:01 (in 1m) — Stretch" in listed.output
-        assert "2026-11-13 17:00 (in 19h) — Buy milk" in listed.output
+        assert "2026-11-12 22:01" in listed.output
+        assert "in 1m" in listed.output and "Stretch" in listed.output
+        assert "2026-11-13 17:00" in listed.output
+        assert "in 19h" in listed.output and "Buy milk" in listed.output
 
 
 
 @pytest.mark.parametrize(
-    ("args", "message"),
+    ("args", "message", "hint"),
     [
-        (["memory", "rm", "nope"], 'No note named "nope".'),
-        (["memory", "show", "nope"], 'No note named "nope".'),
-        (["reminders", "rm", "999"], "No reminder #999."),
-        (["model", "use", "nope"], 'No model named "nope". Run: kova model list'),
-        (["chats", "show", "99"], "No chat 99."),
-        (["chats", "show", "nope"], 'No chat "nope".'),
-        (["chats", "rename", "99", "x"], "No chat 99."),
-        (["chats", "rm", "99", "--yes"], "No chat 99."),
+        (["memory", "rm", "nope"], 'No note named "nope".', "Run: kova memory list"),
+        (["memory", "show", "nope"], 'No note named "nope".', "Run: kova memory list"),
+        (["reminders", "rm", "999"], "No reminder #999.", "Run: kova reminders list"),
+        (["model", "use", "nope"], 'No model named "nope".', "Run: kova model list"),
+        (["chats", "show", "99"], "No chat 99.", "Run: kova chats"),
+        (["chats", "show", "nope"], 'No chat "nope".', "Run: kova chats"),
+        (["chats", "rename", "99", "x"], "No chat 99.", "Run: kova chats"),
+        (["chats", "rm", "99", "--yes"], "No chat 99.", "Run: kova chats"),
     ],
 )
-def test_missing_item_shows_friendly_error(runner, args, message):
+def test_missing_item_shows_friendly_error(runner, args, message, hint):
     cli_runner, client, cfg, fake = runner
     result = cli_runner.invoke(cli.app, args)
     assert result.exit_code == 1, result.output
-    assert result.output.strip() == message
+    lines = result.output.strip().splitlines()
+    assert lines[0] == f"✗ {message}"
+    assert lines[1] == f"  {hint}"
     assert "Traceback" not in result.output
     assert isinstance(result.exception, SystemExit)
 
@@ -285,7 +400,9 @@ def test_unreachable_server_shows_friendly_error(runner, monkeypatch):
         monkeypatch.setattr(client, "http", http)
         result = cli_runner.invoke(cli.app, ["memory", "list"])
     assert result.exit_code == 1, result.output
-    assert result.output.strip() == f"Cannot reach Kova server at {client.base_url}."
+    lines = result.output.strip().splitlines()
+    assert lines[0] == f"✗ Cannot reach Kova server at {client.base_url}."
+    assert lines[1] == "  It starts by itself when you chat; run: kova status to check."
     assert "Traceback" not in result.output
     assert isinstance(result.exception, SystemExit)
 
@@ -302,7 +419,9 @@ def test_server_start_failure_shows_friendly_error(tmp_path, monkeypatch):
     assert result.exit_code == 1, result.output
     assert "Cannot reach Kova server" in result.output
     assert "server.log" in result.output
-    assert len(result.output.splitlines()) == 1
+    lines = result.output.strip().splitlines()
+    assert lines[0].startswith("✗ ")
+    assert lines[-1] == "  It starts by itself when you chat; run: kova status to check."
     assert "Traceback" not in result.output
     assert isinstance(result.exception, SystemExit)
 
