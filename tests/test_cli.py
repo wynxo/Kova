@@ -5,6 +5,8 @@ TestClient over create_app with a scripted FakeModel, so no network is needed.
 """
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -125,6 +127,34 @@ def test_reminders_add_list(runner):
     assert "Buy milk" in listed.output
 
 
+def test_reminders_accept_natural_times_and_show_human_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    now = datetime(2026, 11, 12, 22, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    testapp = create_app(cfg, now=lambda: now)
+
+    with TestClient(testapp) as http:
+        kova_client = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=http)
+        monkeypatch.setattr(cli, "get_client", lambda: kova_client)
+        monkeypatch.setattr(cli, "_local_now", lambda: now)
+        cli_runner = CliRunner()
+
+        added = cli_runner.invoke(cli.app, ["reminders", "add", "tomorrow 5pm", "Buy milk"])
+        assert added.exit_code == 0, added.output
+        assert "⏰ Reminder #1 · tomorrow at 17:00 (in 19 h)" in added.output
+
+        # The original bug report: "in 1 minute" must work too.
+        soon = cli_runner.invoke(cli.app, ["reminders", "add", "in 1 minute", "Stretch"])
+        assert soon.exit_code == 0, soon.output
+        assert "⏰ Reminder #2 · today at 22:01 (in 1 m)" in soon.output
+
+        listed = cli_runner.invoke(cli.app, ["reminders", "list"])
+        assert listed.exit_code == 0, listed.output
+        assert "2026-11-12 22:01 (in 1m) — Stretch" in listed.output
+        assert "2026-11-13 17:00 (in 19h) — Buy milk" in listed.output
+
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [
@@ -193,6 +223,7 @@ def test_server_start_failure_shows_friendly_error(tmp_path, monkeypatch):
 def test_ensure_server_timeout_message(tmp_path, monkeypatch):
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
+    cfg.port = 1  # nothing listens here, even on a dev machine running kova serve
     monkeypatch.setattr(client_mod, "_spawn_server", lambda cfg: None)
     with pytest.raises(KovaError) as exc:
         ensure_server(cfg, timeout=0.5)
