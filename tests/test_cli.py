@@ -5,6 +5,7 @@ TestClient over create_app with a scripted FakeModel, so no network is needed.
 """
 
 import json
+import socket
 
 import httpx
 import pytest
@@ -40,6 +41,46 @@ def test_ask_prints_answer(runner):
     assert result.exit_code == 0, result.output
     assert "Hello there!" in result.output
     assert len(fake.requests) == 1
+
+
+def _ask_tools(fake, request=0):
+    """The tool names of one request the model received."""
+    return [t["function"]["name"] for t in fake.requests[request].get("tools", [])]
+
+
+def test_ask_defaults_to_work_mode(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi"])
+    assert result.exit_code == 0, result.output
+    chat_id = [c["id"] for c in client.list_chats(include_ask=True)][0]
+    assert client.get_chat(chat_id)["mode"] == "work"
+    assert "memory_save" in _ask_tools(fake) and "web_search" in _ask_tools(fake)
+
+
+def test_ask_mode_chat_limits_tools(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "--mode", "chat", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _ask_tools(fake) == ["web_search", "web_fetch"]
+    chat_id = json.loads(result.stdout)["chat_id"]
+    assert client.get_chat(chat_id)["mode"] == "chat"
+    assert "Current mode: chat" in fake.requests[0]["messages"][0]["content"]
+
+
+def test_ask_mode_applies_to_an_existing_chat(runner):
+    cli_runner, client, cfg, fake = runner
+    chat_id = client.create_chat("Ongoing")["id"]
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "--chat", chat_id, "--mode", "chat"])
+    assert result.exit_code == 0, result.output
+    assert client.get_chat(chat_id)["mode"] == "chat"
+    assert _ask_tools(fake) == ["web_search", "web_fetch"]
+
+
+def test_ask_unknown_mode_is_a_usage_error(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "--mode", "code"])
+    assert result.exit_code == 2
+    assert not fake.requests
 
 
 def test_model_list_and_use(runner):
@@ -113,6 +154,53 @@ def test_chat_model_commands_and_help(runner):
     assert "local" in result.output
     assert "qwen3" in result.output
     assert "/help" in result.output and "/think" in result.output
+    assert "Show the chat mode" in result.output  # /mode and /web are in /help
+    assert "Show web search state" in result.output
+
+
+def test_chat_mode_and_web_commands(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chat", "--new", "--mode", "chat"],
+                               input="/mode\nhi\n/mode work\n/mode bogus\n/web off\n/web\n/mode\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "mode chat" in result.output  # the header shows the chat's mode
+    assert "Current mode: chat" in result.output
+    assert "Current mode: work" in result.output
+    assert 'Unknown mode "bogus"' in result.output
+    assert "Web search is off" in result.output
+    chat = client.get_chat(client.list_chats()[0]["id"])
+    assert (chat["mode"], chat["web"]) == ("work", False)
+    assert [t["function"]["name"] for t in fake.requests[0]["tools"]] == ["web_search", "web_fetch"]
+
+
+def test_chat_no_web_flag(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chat", "--new", "--no-web"], input="hi\n/exit\n")
+    assert result.exit_code == 0, result.output
+    chat = client.get_chat(client.list_chats()[0]["id"])
+    assert chat["web"] is False
+    assert "web off" in result.output
+    names = [t["function"]["name"] for t in fake.requests[0]["tools"]]
+    assert "web_search" not in names and "web_fetch" not in names
+    assert "memory_save" in names
+
+
+def test_chat_unknown_mode_is_a_usage_error(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chat", "--mode", "code"])
+    assert result.exit_code == 2
+    assert not fake.requests
+
+
+def test_chats_list_shows_mode_column(runner):
+    cli_runner, client, cfg, fake = runner
+    client.create_chat("Deeper work")
+    client.create_chat("Small talk", mode="chat")
+    result = cli_runner.invoke(cli.app, ["chats", "list"])
+    assert result.exit_code == 0, result.output
+    assert "Mode" in result.output
+    assert result.output.index("chat") < result.output.index("work")  # the chat-mode chat is newest
+    assert "Small talk" in result.output and "Deeper work" in result.output
 
 
 def test_reminders_add_list(runner):
@@ -193,6 +281,9 @@ def test_server_start_failure_shows_friendly_error(tmp_path, monkeypatch):
 def test_ensure_server_timeout_message(tmp_path, monkeypatch):
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
+    with socket.socket() as probe:  # a port nothing listens on, even on a machine
+        probe.bind(("127.0.0.1", 0))  # running a real Kova server on the default one
+        cfg.port = probe.getsockname()[1]
     monkeypatch.setattr(client_mod, "_spawn_server", lambda cfg: None)
     with pytest.raises(KovaError) as exc:
         ensure_server(cfg, timeout=0.5)

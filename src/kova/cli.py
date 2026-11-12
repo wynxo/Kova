@@ -22,6 +22,7 @@ from typer.core import TyperGroup
 from kova import onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
+from kova.modes import MODES
 from kova.ui import _run_chat
 
 console = Console()
@@ -65,6 +66,12 @@ def chats_root(ctx: typer.Context):
 def get_client() -> KovaClient:
     """Return a client, starting the server in the background if it is down."""
     return ensure_server(load_config())
+
+
+def _check_mode(mode: str | None) -> None:
+    """Reject an unknown --mode value as a usage error."""
+    if mode is not None and mode not in MODES:
+        raise typer.BadParameter(f"must be one of: {', '.join(MODES)}", param_hint="--mode")
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +129,14 @@ def ask(
     as_json: bool = typer.Option(False, "--json", help="Print a JSON object for scripts."),
     chat_id: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
     think: bool = typer.Option(False, "--think", help="Also print the reasoning to stderr."),
+    mode: str | None = typer.Option(None, "--mode", help="Chat mode for this question: chat or work."),
 ):
     """Answer once and print it; handy for scripts.
 
     Piped stdin is sent along with the question (or is the question if none is given):
     git diff | kova ask "review this"
     """
+    _check_mode(mode)
     attached = []
     for path in files:
         with path.open("rb") as handle:
@@ -139,7 +148,9 @@ def ask(
         if chat_id is None:
             first_line = ((text or prompt).strip().splitlines() or [""])[0]
             title = ASK_TITLE_PREFIX + first_line[:54]
-            chat_id = client.create_chat(title)["id"]
+            chat_id = client.create_chat(title, mode=mode)["id"]
+        elif mode is not None:
+            client.update_chat(chat_id, mode=mode)
         pieces: list[str] = []
         tools: list[str] = []
         used_model = model
@@ -183,8 +194,11 @@ def chat(
     chat: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
     resume: str | None = typer.Option(None, "--resume", help="Continue a chat by its number from: kova chats"),
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
+    mode: str | None = typer.Option(None, "--mode", help="Start the chat in this mode: chat or work."),
+    no_web: bool = typer.Option(False, "--no-web", help="Turn web search off for this chat."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
+    _check_mode(mode)
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
         configured = any(m.model for m in cfg.models)
@@ -196,7 +210,8 @@ def chat(
     client = get_client()
     if resume:
         chat = _resolve_chat_id(client, resume)
-    _run_chat(client, chat_id=chat, new=new, no_think=no_think, console=console)
+    _run_chat(client, chat_id=chat, new=new, no_think=no_think, mode=mode,
+              web=False if no_web else None, console=console)
 
 
 @app.command()
@@ -426,12 +441,14 @@ def chats_list():
     table = Table(box=None, pad_edge=False)
     table.add_column("#", justify="right", style="dim")
     table.add_column("Title")
+    table.add_column("Mode", style="dim")
     table.add_column("When", style="dim")
     table.add_column("Messages", justify="right", style="dim")
     for number, chat in enumerate(chats, start=1):
         table.add_row(
             str(number),
             chat.get("title") or "[dim](untitled)[/dim]",
+            chat.get("mode") or "work",
             _relative_when(chat.get("last_message") or chat.get("created")),
             str(chat.get("message_count", 0)),
         )

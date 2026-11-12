@@ -90,9 +90,11 @@ class KovaClient:
     def health(self) -> dict:
         return self._request("GET", "/health").json()
 
-    def create_chat(self, title: str | None = None) -> dict:
-        kwargs = {"json": {"title": title}} if title is not None else {}
-        return self._request("POST", "/chats", **kwargs).json()
+    def create_chat(self, title: str | None = None, mode: str | None = None,
+                    web: bool | None = None) -> dict:
+        body = {"title": title, "mode": mode, "web": web}
+        body = {field: value for field, value in body.items() if value is not None}
+        return self._request("POST", "/chats", **({"json": body} if body else {})).json()
 
     def list_chats(self, include_ask: bool = False) -> list[dict]:
         """Chats, most recently used first. One-off ``kova ask`` chats are hidden unless asked for."""
@@ -104,8 +106,15 @@ class KovaClient:
     def get_chat(self, chat_id: str) -> dict | None:
         return self._request("GET", f"/chats/{chat_id}").json()
 
+    def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
+                    web: bool | None = None) -> dict:
+        """Change a chat's title, mode or web toggle; ``None`` leaves a field alone."""
+        body = {"title": title, "mode": mode, "web": web}
+        body = {field: value for field, value in body.items() if value is not None}
+        return self._request("PATCH", f"/chats/{chat_id}", json=body).json()
+
     def rename_chat(self, chat_id: str, title: str) -> dict:
-        return self._request("PATCH", f"/chats/{chat_id}", json={"title": title}).json()
+        return self.update_chat(chat_id, title=title)
 
     def delete_chat(self, chat_id: str) -> bool:
         return self._request("DELETE", f"/chats/{chat_id}", missing_ok=True).status_code == 200

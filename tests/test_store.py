@@ -1,3 +1,4 @@
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -41,6 +42,68 @@ def test_chat_roundtrip(store):
         },
         {"role": "tool", "content": None, "tool_call_id": "call_1"},
     ]
+
+
+def test_chats_default_to_work_mode_with_web(store):
+    chat = store.create_chat()
+    assert chat["mode"] == "work" and chat["web"] is True
+
+    fetched = store.get_chat(chat["id"])
+    assert fetched["mode"] == "work" and fetched["web"] is True
+
+    listed = store.list_chats()[0]
+    assert listed["mode"] == "work" and listed["web"] is True
+
+
+def test_create_chat_with_mode_and_web(store):
+    chat = store.create_chat("Small talk", mode="chat", web=False)
+    assert chat["mode"] == "chat" and chat["web"] is False
+
+    fetched = store.get_chat(chat["id"])
+    assert fetched["mode"] == "chat" and fetched["web"] is False
+
+    listed = store.list_chats()[0]
+    assert listed["mode"] == "chat" and listed["web"] is False
+
+
+def test_create_chat_rejects_unknown_mode(store):
+    with pytest.raises(ValueError, match="unknown mode 'code'"):
+        store.create_chat(mode="code")
+
+
+def test_update_chat_changes_mode_web_and_title(store):
+    chat = store.create_chat()
+    cid = chat["id"]
+
+    store.update_chat(cid, mode="chat", web=False)
+    assert store.get_chat(cid)["mode"] == "chat"
+    assert store.get_chat(cid)["web"] is False
+
+    store.update_chat(cid, mode="work", web=True, title="Renamed")
+    fetched = store.get_chat(cid)
+    assert (fetched["title"], fetched["mode"], fetched["web"]) == ("Renamed", "work", True)
+
+    with pytest.raises(ValueError, match="unknown mode 'bogus'"):
+        store.update_chat(cid, mode="bogus")
+
+
+def test_migration_adds_mode_and_web_to_existing_chats(tmp_path):
+    path = tmp_path / "kova.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE chats (id TEXT PRIMARY KEY, title TEXT, created TEXT NOT NULL);"
+        "INSERT INTO chats (id, title, created) "
+        "VALUES ('legacy', 'Old chat', '2026-01-01T00:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    legacy = store.get_chat("legacy")
+    assert (legacy["mode"], legacy["web"]) == ("work", True)  # today's behaviour is kept
+
+    store.update_chat("legacy", mode="chat", web=False)
+    assert (store.get_chat("legacy")["mode"], store.get_chat("legacy")["web"]) == ("chat", False)
 
 
 def test_list_newest_first(store):

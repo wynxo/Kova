@@ -95,3 +95,24 @@ def test_connection_error_preserves_partial_reply_and_propagates():
         _render_turn(SimpleNamespace(stream_message=stream), "chat", "hi", False, Console(file=out))
     assert "Partial answer" in out.getvalue()
     assert closed == [True]
+
+
+def test_slash_completion_covers_mode_and_web():
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+
+    from kova.ui import _COMMANDS, _CommandCompleter
+
+    completer = _CommandCompleter()
+
+    def completes(text):
+        return {c.text for c in completer.get_completions(Document(text), CompleteEvent())}
+
+    assert set(_COMMANDS) <= completes("")  # every command is completable
+    assert "/mode" in completes("/m") and "/model" in completes("/m")
+    assert "/web" in completes("/w")
+    assert completes("/mode ") == {"chat", "work"}  # arguments complete too
+    assert completes("/mode wo") == {"work"}
+    assert completes("/web ") == {"on", "off"}
+    assert completes("/web of") == {"off"}
+    assert completes("/mode chat ") == set()  # nothing further to complete

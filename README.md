@@ -30,9 +30,10 @@ Either way, Kova needs a model server before it can talk — see [Install](#inst
 
 ## Features
 
+- Two modes per chat: **work** (default) with every tool, and **chat** for plain conversation with nothing but web search
 - Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning
 - Remembers facts about you and brings the relevant ones into every chat
-- Web search and page reading
+- Web search and page reading, with a per-chat on/off toggle
 - Reads and writes files in its own folder (`~/Kova Files` by default)
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
@@ -68,10 +69,12 @@ For example, a local llama.cpp or PolyStrata server, Ollama at `http://localhost
 The CLI starts the server for you in the background, so normally you don't have to think about it.
 
 - `kova chat [--new | --chat ID]` — interactive chat with a compact model/server/memory header, live Markdown replies, and tool status lines. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides reasoning and its timing until you enable `/think`.
+  - `--mode chat|work` starts the chat in that mode (default work); `--no-web` turns web search off for it.
 - `kova ask "question"` — one question, one answer, printed to stdout. Good for scripts:
   - Pipe text in: `git diff | kova ask "review this"`, or `cat question.txt | kova ask` to use the input as the question. Input over 100 KB is cut off with a warning on stderr.
   - `-f/--file PATH` attaches a file (repeatable); the model sees its name.
   - `-m/--model NAME` uses another configured model for this question only.
+  - `--mode chat|work` runs the question in that mode (default work).
   - `--json` prints `{"answer", "chat_id", "model", "tools"}`.
   - `--chat ID` continues a chat; otherwise each ask gets its own chat titled `[ask] …`.
   - `--think` shows the reasoning on stderr, so stdout stays clean.
@@ -81,6 +84,8 @@ The CLI starts the server for you in the background, so normally you don't have 
 Inside `kova chat`:
 
 - `/new` — start a fresh chat
+- `/mode` — show the chat's mode; `/mode chat` or `/mode work` switches it
+- `/web` — show whether web search is on; `/web on` or `/web off` toggles it
 - `/model` — list models and mark the active one; `/model <name>` switches models
 - `/think` — toggle full reasoning; by default you see a spinner, then a compact elapsed-time summary
 - `/clear` — clear the screen without resetting the conversation
@@ -117,6 +122,15 @@ Server:
 - `kova status` — is it up, which model is active, is the model reachable
 
 Missing notes, reminders, or models and server connection failures print a red, one-line error and exit with code 1, without a traceback.
+
+## Chat modes
+
+Every chat runs in one of two modes, shown in the chat header and in `kova chats`:
+
+- **work** (default) — all of Kova's tools: web search, files, reminders and memory.
+- **chat** — plain conversation. No tools except web search (and `/web off` turns that off too), and no saving new memories — though what Kova already remembers about you is still part of the conversation.
+
+Switch with `/mode` inside a chat, or start one with `kova chat --mode chat`. `kova ask --mode chat` does the same for one-off questions.
 
 ## Memory and Obsidian mode
 
