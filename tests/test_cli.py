@@ -130,6 +130,10 @@ def test_reminders_add_list(runner):
         (["memory", "show", "nope"], 'No note named "nope".'),
         (["reminders", "rm", "999"], "No reminder #999."),
         (["model", "use", "nope"], 'No model named "nope". Run: kova model list'),
+        (["chats", "show", "99"], "No chat 99."),
+        (["chats", "show", "nope"], 'No chat "nope".'),
+        (["chats", "rename", "99", "x"], "No chat 99."),
+        (["chats", "rm", "99", "--yes"], "No chat 99."),
     ],
 )
 def test_missing_item_shows_friendly_error(runner, args, message):
@@ -198,6 +202,72 @@ def test_chat_streams_reply(runner):
     result = cli_runner.invoke(cli.app, ["chat", "--new"], input="hi\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "Hello there!" in result.output
+
+
+def test_chats_list_show_rename_and_rm(runner):
+    cli_runner, client, cfg, fake = runner
+    older = client.create_chat()["id"]
+    list(client.stream_message(older, "zebra question"))
+    newer = client.create_chat()["id"]
+    list(client.stream_message(newer, "apple question"))
+
+    listed = cli_runner.invoke(cli.app, ["chats"])
+    assert listed.exit_code == 0, listed.output
+    assert "apple question" in listed.output and "zebra question" in listed.output
+    assert "Just now".lower() in listed.output.lower()
+    assert listed.output.index("apple question") < listed.output.index("zebra question")
+
+    shown = cli_runner.invoke(cli.app, ["chats", "show", "2"])
+    assert shown.exit_code == 0, shown.output
+    assert "zebra question" in shown.output
+    assert "Hello there!" in shown.output
+    assert "You" in shown.output and "Kova" in shown.output
+
+    renamed = cli_runner.invoke(cli.app, ["chats", "rename", "2", "Greeting"])
+    assert renamed.exit_code == 0, renamed.output
+    assert "Greeting" in cli_runner.invoke(cli.app, ["chats", "list"]).output
+
+    removed = cli_runner.invoke(cli.app, ["chats", "rm", "2"], input="y\n")
+    assert removed.exit_code == 0, removed.output
+    assert "Deleted" in removed.output
+    remaining = cli_runner.invoke(cli.app, ["chats", "list"]).output
+    assert "Greeting" not in remaining and "apple question" in remaining
+
+
+def test_chats_rm_can_be_cancelled_and_yes_skips_prompt(runner):
+    cli_runner, client, cfg, fake = runner
+    chat_id = client.create_chat()["id"]
+    client.rename_chat(chat_id, "Keep me")
+
+    cancelled = cli_runner.invoke(cli.app, ["chats", "rm", "1"], input="n\n")
+    assert cancelled.exit_code == 0, cancelled.output
+    assert "Cancelled" in cancelled.output
+    assert [c["id"] for c in client.list_chats()] == [chat_id]
+
+    removed = cli_runner.invoke(cli.app, ["chats", "rm", "1", "--yes"])
+    assert removed.exit_code == 0, removed.output
+    assert client.list_chats() == []
+
+
+def test_chats_list_empty(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chats"])
+    assert result.exit_code == 0, result.output
+    assert "No chats yet" in result.output
+
+
+def test_chat_resume_accepts_number_or_id(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+    chat_id = client.create_chat()["id"]
+    client.create_chat()
+    seen = []
+    monkeypatch.setattr(cli, "_run_chat", lambda c, cid, no_think: seen.append(cid))
+
+    by_number = cli_runner.invoke(cli.app, ["chat", "--resume", "2"])
+    assert by_number.exit_code == 0, by_number.output
+    by_id = cli_runner.invoke(cli.app, ["chat", "--resume", chat_id])
+    assert by_id.exit_code == 0, by_id.output
+    assert seen == [chat_id, chat_id]
 
 
 def test_render_turn_streams_reasoning_then_answer(tmp_path, monkeypatch):

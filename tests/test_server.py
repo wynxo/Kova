@@ -46,6 +46,7 @@ def test_auth_required(server):
         ("get", "/chats", None),
         ("post", "/chats", None),
         ("get", "/chats/abc", None),
+        ("patch", "/chats/abc", {"title": "Hi"}),
         ("delete", "/chats/abc", None),
         ("post", "/chats/abc/messages", {"text": "hi"}),
         ("get", "/memory", None),
@@ -158,6 +159,41 @@ def test_models_switch(server):
     response = client.post(f"/chats/{chat_id}/messages", json={"text": "hi"}, headers=headers)
     assert _parse_sse(response.text)[-1]["type"] == "done"
     assert fake.requests[-1]["model"] == "qwen3"
+
+
+def test_first_reply_sets_trimmed_title(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post("/chats", headers=headers).json()["id"]
+    text = "This is a fairly long first message that should be trimmed at a word boundary"
+    response = client.post(f"/chats/{chat_id}/messages", json={"text": text}, headers=headers)
+    assert _parse_sse(response.text)[-1]["type"] == "done"
+
+    chat = client.get(f"/chats/{chat_id}", headers=headers).json()
+    assert chat["title"] == "This is a fairly long first message that"
+
+
+def test_list_chats_reports_title_when_and_count(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post("/chats", headers=headers).json()["id"]
+    response = client.post(f"/chats/{chat_id}/messages", json={"text": "hello"}, headers=headers)
+    assert _parse_sse(response.text)[-1]["type"] == "done"
+
+    listed = client.get("/chats", headers=headers).json()
+    assert listed[0]["id"] == chat_id
+    assert listed[0]["title"] == "hello"
+    assert listed[0]["message_count"] == 2
+    assert listed[0]["last_message"] >= listed[0]["created"]
+
+
+def test_rename_chat(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post("/chats", headers=headers).json()["id"]
+    response = client.patch(f"/chats/{chat_id}", json={"title": "  Groceries  "}, headers=headers)
+    assert response.json() == {"id": chat_id, "title": "Groceries"}
+    assert client.get("/chats", headers=headers).json()[0]["title"] == "Groceries"
+
+    assert client.patch("/chats/abc", json={"title": "x"}, headers=headers).status_code == 404
+    assert client.patch(f"/chats/{chat_id}", json={"title": "  "}, headers=headers).status_code == 422
 
 
 def test_unknown_chat_404(server):

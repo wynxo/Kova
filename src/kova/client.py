@@ -96,6 +96,9 @@ class KovaClient:
     def get_chat(self, chat_id: str) -> dict | None:
         return self._request("GET", f"/chats/{chat_id}").json()
 
+    def rename_chat(self, chat_id: str, title: str) -> dict:
+        return self._request("PATCH", f"/chats/{chat_id}", json={"title": title}).json()
+
     def delete_chat(self, chat_id: str) -> bool:
         return self._request("DELETE", f"/chats/{chat_id}", missing_ok=True).status_code == 200
 

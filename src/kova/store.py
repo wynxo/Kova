@@ -46,7 +46,8 @@ class Store:
                 role TEXT NOT NULL,
                 content TEXT,
                 tool_calls TEXT,
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                created TEXT
             );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +56,16 @@ class Store:
                 done INTEGER NOT NULL DEFAULT 0
             );
             """
+        )
+        # Older databases predate message timestamps; add and backfill them so
+        # ``list_chats`` can show when a chat was last used.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(messages)")}
+        if "created" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN created TEXT")
+        self._conn.execute(
+            "UPDATE messages SET created = "
+            "(SELECT created FROM chats WHERE chats.id = messages.chat_id) "
+            "WHERE created IS NULL"
         )
         self._conn.commit()
 
@@ -73,10 +84,21 @@ class Store:
     def list_chats(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, title, created FROM chats ORDER BY created DESC, id DESC"
+                "SELECT c.id, c.title, c.created, COUNT(m.id) AS message_count, "
+                "COALESCE(MAX(m.created), c.created) AS last_message "
+                "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+                "GROUP BY c.id "
+                "ORDER BY last_message DESC, c.created DESC, c.id DESC"
             ).fetchall()
         return [
-            {"id": r["id"], "title": r["title"], "created": r["created"]} for r in rows
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "created": r["created"],
+                "last_message": r["last_message"],
+                "message_count": r["message_count"],
+            }
+            for r in rows
         ]
 
     def get_chat(self, chat_id: str) -> dict | None:
@@ -119,14 +141,15 @@ class Store:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO messages "
-                "(chat_id, role, content, tool_calls, tool_call_id) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(chat_id, role, content, tool_calls, tool_call_id, created) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     chat_id,
                     role,
                     content,
                     json.dumps(tool_calls) if tool_calls is not None else None,
                     tool_call_id,
+                    _utc_now_iso(),
                 ),
             )
             self._conn.commit()

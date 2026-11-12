@@ -60,6 +60,23 @@ def test_list_newest_first(store):
     ]
 
 
+def test_list_chats_includes_title_last_message_and_count(store):
+    old = store.create_chat()
+    store.create_chat("newer but empty")
+    time.sleep(0.001)
+    store.add_message(old["id"], "user", "hello there")
+    store.add_message(old["id"], "assistant", "hi")
+    store.set_title(old["id"], "Greeting")
+
+    listed = store.list_chats()
+    assert listed[0]["id"] == old["id"]  # newest activity comes first
+    assert listed[0]["title"] == "Greeting"
+    assert listed[0]["message_count"] == 2
+    assert listed[0]["last_message"] >= listed[0]["created"]
+    assert listed[1]["message_count"] == 0
+    assert listed[1]["last_message"] == listed[1]["created"]
+
+
 def test_delete_chat_removes_messages(store):
     chat = store.create_chat()
     cid = chat["id"]
