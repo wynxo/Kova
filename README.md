@@ -2,33 +2,46 @@
 
 Your own private AI that lives on your computer.
 
-Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. For now you talk to it through a command line; a desktop app and a phone/web UI are coming soon.
+## Install
 
-## Quick start
+Linux / macOS (as your normal user, no sudo):
 
-Linux and macOS, from a clone of this repo:
+```sh
+curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh
+```
 
-```bash
-./install.sh
+Windows (PowerShell, not Administrator):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/install.ps1 | iex"
+```
+
+Then set up a model server and chat:
+
+```sh
+kova setup
 kova chat
 ```
 
-On Windows, run `install.bat` instead, then `kova chat`.
+The installer adds the `kova` command using [uv](https://docs.astral.sh/uv/) (installed automatically if needed). On Linux/macOS, follow its printed PATH line or add it to your shell profile. On Windows it updates your user PATH and adds Kova to Settings → Apps. No clone needed; installs currently come from GitHub as **kova-ai**, not PyPI.
 
-`install.sh` installs [uv](https://docs.astral.sh/uv/) if you don't have it, installs Kova's dependencies, and puts a `kova` command on your PATH, so `kova chat` works from any folder. Running it again is safe.
+Update: `kova update` (or rerun the installer). Check first: `kova update --check`. Pin a tag/commit with `kova update --ref v0.2.0`, or `KOVA_REF=v0.2.0` for the installer (`$env:KOVA_REF='v0.2.0'` on Windows). Tags shown here are examples, not published releases.
 
-No install needed to take a look — the launcher in the repo root runs Kova straight from the checkout:
+Uninstall: `kova uninstall` (asks before deleting data), `kova uninstall --keep-data`, or `kova uninstall --purge`. Without the command:
 
-```bash
-./cli            # same as: ./cli chat
-./cli status
+```sh
+curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.sh | sh
 ```
 
-On Windows use `cli.bat`. To undo an install, run `./uninstall.sh` (`uninstall.bat` on Windows); it keeps your data unless you say otherwise.
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.ps1 | iex"
+```
 
-Either way, Kova needs a model server before it can talk — see [Install](#install).
+Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --purge` on the shell pipeline, or download `uninstall.ps1` and run it with `--purge` on Windows. uv and external memory folders/files are kept.
 
 ## Features
+
+Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. For now you talk to it through a command line; a desktop app and a phone/web UI are coming soon.
 
 - Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning
 - Remembers facts about you and brings the relevant ones into every chat
@@ -38,30 +51,11 @@ Either way, Kova needs a model server before it can talk — see [Install](#inst
 - Memory notes as plain Markdown, with an Obsidian mode
 - Works with any OpenAI-compatible model server
 
-## Install
+## Model setup
 
-You need [uv](https://docs.astral.sh/uv/).
+`kova setup` finds a local model server, tests it, and saves it. For another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL` (add `--key KEY` if needed).
 
-```bash
-git clone https://github.com/wynxo/Kova.git
-cd Kova
-uv tool install .
-```
-
-Kova needs a model to talk to. The setup wizard looks for model servers on your computer, checks that one answers, and saves it:
-
-```bash
-kova setup
-```
-
-It can also point at a server on another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL`. Or add one by hand:
-
-```bash
-kova model add NAME URL MODEL
-kova model use NAME
-```
-
-For example, a local llama.cpp or PolyStrata server, Ollama at `http://localhost:11434/v1`, or LM Studio at `http://localhost:1234/v1`. If your server needs an API key, pass `--key KEY`.
+Kova works with OpenAI-compatible servers, including llama.cpp / PolyStrata, Ollama (`http://localhost:11434/v1`), and LM Studio (`http://localhost:1234/v1`). You can also add one manually with `kova model add NAME URL MODEL` then `kova model use NAME`.
 
 ## Usage
 
@@ -137,6 +131,10 @@ Everything Kova keeps — config, the chat database, memory notes — lives in `
 The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and every request needs a token that's generated on your machine on first run. 🔒
 
 ## Development
+
+From a checkout, `./cli` starts chat and `./cli status` checks the server (`cli.bat` on Windows). For an editable `kova` command, use `./install.sh --dev` (`install.bat --dev` on Windows), or `uv tool install --force --editable .`. The import package stays `kova`; the distribution is `kova-ai`.
+
+Installer smoke tests can set `KOVA_SOURCE=/absolute/path/to/checkout` to avoid fetching GitHub. Use a disposable HOME and unset KOVA_HOME so no real install/data is touched.
 
 ```bash
 uv run pytest
