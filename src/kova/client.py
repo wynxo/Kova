@@ -95,8 +95,8 @@ class KovaClient:
         return self._request("GET", "/health").json()
 
     def create_chat(self, title: str | None = None, mode: str | None = None,
-                    web: bool | None = None) -> dict:
-        body = {"title": title, "mode": mode, "web": web}
+                    web: bool | None = None, permission: str | None = None, cwd: str | None = None) -> dict:
+        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
         body = {field: value for field, value in body.items() if value is not None}
         return self._request("POST", "/chats", **({"json": body} if body else {})).json()
 
@@ -116,9 +116,9 @@ class KovaClient:
         return self._request("GET", f"/chats/{chat_id}").json()
 
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
-                    web: bool | None = None) -> dict:
-        """Change a chat's title, mode or web toggle; ``None`` leaves a field alone."""
-        body = {"title": title, "mode": mode, "web": web}
+                    web: bool | None = None, permission: str | None = None, cwd: str | None = None) -> dict:
+        """Change chat settings; ``None`` leaves a field alone."""
+        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
         body = {field: value for field, value in body.items() if value is not None}
         return self._request("PATCH", f"/chats/{chat_id}", json=body).json()
 
@@ -132,6 +132,12 @@ class KovaClient:
         """Stream one turn's events; ``model`` overrides the active model for this turn only."""
         payload = {"text": text} if model is None else {"text": text, "model": model}
         yield from self._stream("POST", f"/chats/{chat_id}/messages", json=payload)
+
+    def answer_approval(self, chat_id: str, approval_id: str, decision: str,
+                        message: str | None = None) -> dict:
+        """Answer a pending tool approval, using another request while streaming."""
+        return self._request("POST", f"/chats/{chat_id}/approvals/{approval_id}",
+                             json={"decision": decision, "message": message}).json()
 
     def events(self) -> Iterator[dict]:
         """Stream background events (currently reminders) from the server."""

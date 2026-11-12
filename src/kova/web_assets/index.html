@@ -54,6 +54,8 @@
         <div class="compose-toolbar">
           <div class="chat-controls">
             <label class="control"><span aria-hidden="true">◈</span><select id="mode" aria-label="Chat mode"><option value="work">Work</option><option value="chat">Chat</option></select></label>
+            <label class="control"><select id="permission" aria-label="Permission mode" title="Manual: approve commands and project writes. Auto: ask for destructive commands. Full: never ask."><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select></label>
+            <label class="control folder-control"><span aria-hidden="true">⌂</span><input id="cwd" aria-label="Working folder" placeholder="Kova files folder (default)" title="Absolute path to an existing working folder" autocomplete="off"></label>
             <button id="web" type="button" class="control" aria-pressed="true" title="Allow web search">◎ <span>Web on</span></button>
           </div>
           <div class="send-controls"><label class="model-control"><select id="model" aria-label="Model"><option>Loading models…</option></select></label><button id="send" type="submit" aria-label="Send message">↑</button><button id="stop" type="button" hidden>■ Stop</button></div>

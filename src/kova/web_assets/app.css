@@ -1020,3 +1020,26 @@ dialog input {
     scroll-behavior:auto!important;
   }
 }
+
+/* Server-owned work tools: approvals and concise, streamed checklists. */
+.chat-controls {flex-wrap:wrap; min-width:0}
+.compose-toolbar {flex-wrap:wrap; gap:8px}
+.folder-control {min-width:100px; max-width:220px; flex:1}
+.folder-control input {width:100%; min-width:0; border:0; background:transparent; color:inherit; font-size:12px}
+.approval-card,.plan-view {border:1px solid var(--border); border-radius:12px; padding:16px; margin:14px 0; background:var(--surface)}
+.approval-heading {display:flex; align-items:center; justify-content:space-between; gap:12px}
+.risk-badge {font-size:11px; border:1px solid var(--border); border-radius:20px; padding:3px 9px}
+.risk-destructive {color:#e89583; border-color:currentColor}
+.approval-card pre {white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; font-size:13px}
+.approval-folder {display:block; overflow-wrap:anywhere; color:var(--muted); margin-bottom:12px}
+.approval-message {display:grid; gap:7px; font-size:12px; color:var(--muted)}
+.approval-message input {background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px; width:100%}
+.approval-actions {display:flex; flex-wrap:wrap; gap:8px; margin-top:12px}
+.approval-actions button {border:1px solid var(--border); padding:7px 12px; border-radius:8px}
+.approval-actions button:first-child {background:var(--accent); color:white}
+.approval-status {font-size:12px; margin-top:8px; color:var(--muted)}
+.plan-view ul {list-style:none; padding:0; margin:10px 0 0}
+.plan-view li {display:flex; align-items:baseline; gap:9px; margin:8px 0; font-size:13px}
+.plan-done {color:var(--muted); text-decoration:line-through}
+.plan-in_progress {color:var(--accent-soft)}
+@media (max-width:600px) {.folder-control {max-width:160px} .chat-controls {width:100%}}

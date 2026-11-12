@@ -150,3 +150,16 @@ def test_offline_model_does_not_block_app_or_browser_login(tmp_path, monkeypatch
         assert response.status_code == 200
         assert 'event: error' in response.text
         assert client.get("/chats").status_code == 200
+
+
+def test_agent_core_frontend_behavior():
+    """Exercise the actual app.js handlers; no browser/package downloads needed."""
+    from pathlib import Path
+    import shutil
+    import subprocess
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is optional; needed only for frontend DOM behavior checks')
+    result = subprocess.run([node, str(Path(__file__).with_name('web_core.mjs'))],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr

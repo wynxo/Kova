@@ -347,6 +347,12 @@ def ask(
                     sys.stdout.flush()
             elif kind == "tool_call":
                 tools.append(event["name"])
+            elif kind == "approval":
+                # `ask` is the noninteractive/script interface. Do not silently
+                # leave it waiting ten minutes for an approval it cannot show.
+                guidance = "This action needs approval. Continue in interactive Kova chat to approve it."
+                client.answer_approval(chat_id, event["id"], "deny", guidance)
+                _stderr.print(guidance, style=theme.WARNING, markup=False)
             elif kind == "error":
                 if pieces and not as_json:
                     print()
