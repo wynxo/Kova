@@ -4,13 +4,14 @@ The client under test is a KovaClient whose http transport is a FastAPI
 TestClient over create_app with a scripted FakeModel, so no network is needed.
 """
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 import kova.cli as cli
 import kova.client as client_mod
-from kova.client import KovaClient, ensure_server
+from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config
 from kova.server import create_app
 from tests.fake_model import FakeModel, text
@@ -122,11 +123,72 @@ def test_reminders_add_list(runner):
     assert "Buy milk" in listed.output
 
 
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["memory", "rm", "nope"], 'No note named "nope".'),
+        (["memory", "show", "nope"], 'No note named "nope".'),
+        (["reminders", "rm", "999"], "No reminder #999."),
+        (["model", "use", "nope"], 'No model named "nope". Run: kova model list'),
+    ],
+)
+def test_missing_item_shows_friendly_error(runner, args, message):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, args)
+    assert result.exit_code == 1, result.output
+    assert result.output.strip() == message
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_client_http_errors_and_missing_deletes(runner):
+    cli_runner, client, cfg, fake = runner
+    with pytest.raises(KovaError) as exc:
+        client.model_use("nope")
+    assert exc.value.status == 404
+    assert exc.value.message == "unknown model 'nope'"
+    assert client.memory_delete("nope") is False
+    assert client.reminder_delete(999) is False
+    assert client.delete_chat("nope") is False
+
+
+def _refuse_connection(request):
+    raise httpx.ConnectError("Connection refused", request=request)
+
+
+def test_unreachable_server_shows_friendly_error(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+    with httpx.Client(base_url=client.base_url, transport=httpx.MockTransport(_refuse_connection)) as http:
+        monkeypatch.setattr(client, "http", http)
+        result = cli_runner.invoke(cli.app, ["memory", "list"])
+    assert result.exit_code == 1, result.output
+    assert result.output.strip() == f"Cannot reach Kova server at {client.base_url}."
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_server_start_failure_shows_friendly_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    base = f"http://127.0.0.1:{load_config().port}"
+    with httpx.Client(base_url=base, transport=httpx.MockTransport(_refuse_connection)) as http:
+        client = KovaClient(base, "", http=http)
+        monkeypatch.setattr(client_mod, "KovaClient", lambda *args: client)
+        monkeypatch.setattr(client_mod, "_spawn_server", lambda cfg: None)
+        monkeypatch.setattr(cli, "ensure_server", lambda cfg: ensure_server(cfg, timeout=0))
+        result = CliRunner().invoke(cli.app, ["memory", "list"])
+    assert result.exit_code == 1, result.output
+    assert "Cannot reach Kova server" in result.output
+    assert "server.log" in result.output
+    assert len(result.output.splitlines()) == 1
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_ensure_server_timeout_message(tmp_path, monkeypatch):
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
     monkeypatch.setattr(client_mod, "_spawn_server", lambda cfg: None)
-    with pytest.raises(RuntimeError) as exc:
+    with pytest.raises(KovaError) as exc:
         ensure_server(cfg, timeout=0.5)
     assert "server.log" in str(exc.value)
 
