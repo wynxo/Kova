@@ -5,7 +5,7 @@ from datetime import datetime
 import httpx
 import pytest
 
-from kova.agent import Agent, trim_history
+from kova.agent import Agent, select_tools, trim_history
 from kova.config import load_config
 from kova.memory import Memory
 from kova.store import Store
@@ -29,6 +29,70 @@ async def run(setup, scripts, message='hello'):
     agent = Agent(cfg, store, memory, tools, transport=fake.transport)
     events = [event async for event in agent.run_turn(chat_id, message)]
     return events, fake
+
+
+def _sent_tools(fake, request=0):
+    """The tool names of one request the model received."""
+    return [t['function']['name'] for t in fake.requests[request].get('tools', [])]
+
+
+def test_select_tools():
+    tools = {name: Tool(name, 'test', {'type': 'object'}, lambda args: 'ok')
+             for name in ('web_search', 'web_fetch', 'write_file', 'memory_save')}
+    assert list(select_tools('work', True, tools)) == list(tools)
+    assert list(select_tools('work', False, tools)) == ['write_file', 'memory_save']
+    assert list(select_tools('chat', True, tools)) == ['web_search', 'web_fetch']
+    assert select_tools('chat', False, tools) == {}
+
+
+async def test_work_mode_sends_all_tools(setup):
+    _, fake = await run(setup, [text('Hi')])
+    assert _sent_tools(fake) == ['web_search', 'web_fetch', 'list_files', 'read_file',
+                                 'write_file', 'reminder_add', 'reminder_list',
+                                 'memory_save', 'memory_search']
+    assert 'Current mode: work' in fake.requests[0]['messages'][0]['content']
+
+
+async def test_chat_mode_sends_only_web_tools(setup):
+    setup[1].update_chat(setup[4], mode='chat')
+    _, fake = await run(setup, [text('Hi')])
+    assert _sent_tools(fake) == ['web_search', 'web_fetch']
+    prompt = fake.requests[0]['messages'][0]['content']
+    assert 'Current mode: chat' in prompt
+    assert 'chat mode' in prompt
+
+
+async def test_chat_mode_without_web_sends_no_tools(setup):
+    setup[1].update_chat(setup[4], mode='chat', web=False)
+    _, fake = await run(setup, [text('Hi')])
+    assert 'tools' not in fake.requests[0]
+
+
+async def test_work_mode_without_web_keeps_other_tools(setup):
+    setup[1].update_chat(setup[4], web=False)
+    _, fake = await run(setup, [text('Hi')])
+    assert 'web_search' not in _sent_tools(fake) and 'web_fetch' not in _sent_tools(fake)
+    assert 'write_file' in _sent_tools(fake) and 'memory_save' in _sent_tools(fake)
+
+
+async def test_chat_mode_remembers_but_never_saves(setup):
+    setup[2].save('Dog', 'Rex is my dog')
+    setup[1].update_chat(setup[4], mode='chat')
+    _, fake = await run(setup, [text('Hi')], 'dog')
+    prompt = fake.requests[0]['messages'][0]['content']
+    assert '## Dog\nRex is my dog' in prompt  # memory is still read into the prompt
+    assert 'memory_save' not in prompt
+
+
+async def test_chat_mode_rejects_work_tools(setup):
+    setup[1].update_chat(setup[4], mode='chat')
+    cfg, store, memory, tools, chat_id = setup
+    fake = FakeModel([tool('memory_save', {'title': 'Dog', 'body': 'Rex'}), text('Ok')])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    events = [event async for event in agent.run_turn(chat_id, 'hello')]
+    assert any(e.get('summary') == 'Error: unknown tool memory_save' and not e['ok']
+               for e in events if e['type'] == 'tool_result')
+    assert memory.get('dog') is None  # nothing was actually saved
 
 
 async def test_plain_answer(setup):

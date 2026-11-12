@@ -189,11 +189,54 @@ def test_rename_chat(server):
     client, headers, cfg, fake = server
     chat_id = client.post("/chats", headers=headers).json()["id"]
     response = client.patch(f"/chats/{chat_id}", json={"title": "  Groceries  "}, headers=headers)
-    assert response.json() == {"id": chat_id, "title": "Groceries"}
+    assert response.json() == {"id": chat_id, "title": "Groceries", "mode": "work", "web": True}
     assert client.get("/chats", headers=headers).json()[0]["title"] == "Groceries"
 
     assert client.patch("/chats/abc", json={"title": "x"}, headers=headers).status_code == 404
     assert client.patch(f"/chats/{chat_id}", json={"title": "  "}, headers=headers).status_code == 422
+
+
+def test_create_chat_with_mode_and_web(server):
+    client, headers, cfg, fake = server
+    default = client.post("/chats", headers=headers).json()
+    assert (default["mode"], default["web"]) == ("work", True)
+
+    created = client.post("/chats", json={"title": "Small talk", "mode": "chat", "web": False},
+                          headers=headers).json()
+    assert (created["mode"], created["web"]) == ("chat", False)
+    fetched = client.get(f"/chats/{created['id']}", headers=headers).json()
+    assert (fetched["mode"], fetched["web"]) == ("chat", False)
+    listed = client.get("/chats", headers=headers).json()
+    assert (listed[0]["mode"], listed[0]["web"]) == ("chat", False)
+
+    assert client.post("/chats", json={"mode": "code"}, headers=headers).status_code == 422
+
+
+def test_patch_chat_mode_and_web(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post("/chats", headers=headers).json()["id"]
+
+    patched = client.patch(f"/chats/{chat_id}", json={"mode": "chat", "web": False}, headers=headers)
+    assert (patched.json()["mode"], patched.json()["web"]) == ("chat", False)
+    fetched = client.get(f"/chats/{chat_id}", headers=headers).json()
+    assert (fetched["mode"], fetched["web"]) == ("chat", False)
+
+    back = client.patch(f"/chats/{chat_id}", json={"mode": "work", "web": True}, headers=headers)
+    assert (back.json()["mode"], back.json()["web"]) == ("work", True)
+
+    assert client.patch(f"/chats/{chat_id}", json={"mode": "code"}, headers=headers).status_code == 422
+    assert client.patch("/chats/abc", json={"mode": "chat"}, headers=headers).status_code == 404
+    assert client.patch(f"/chats/{chat_id}", json={}, headers=headers).status_code == 422
+
+
+def test_chat_mode_turn_limits_tools_and_names_mode(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post("/chats", json={"mode": "chat", "web": False}, headers=headers).json()["id"]
+    response = client.post(f"/chats/{chat_id}/messages", json={"text": "hello"}, headers=headers)
+    assert _parse_sse(response.text)[-1]["type"] == "done"
+    assert "tools" not in fake.requests[0]
+    prompt = fake.requests[0]["messages"][0]["content"]
+    assert "Current mode: chat" in prompt
 
 
 def test_unknown_chat_404(server):

@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from kova.modes import DEFAULT_MODE, MODES
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -110,7 +112,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
                 title TEXT,
-                created TEXT NOT NULL
+                created TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'work',
+                web INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +143,13 @@ class Store:
             "(SELECT created FROM chats WHERE chats.id = messages.chat_id) "
             "WHERE created IS NULL"
         )
+        # Same for chat modes and the web-search toggle; existing chats keep
+        # today's behaviour (work mode, web on).
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
+        if "mode" not in columns:
+            self._conn.execute(f"ALTER TABLE chats ADD COLUMN mode TEXT NOT NULL DEFAULT '{DEFAULT_MODE}'")
+        if "web" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN web INTEGER NOT NULL DEFAULT 1")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -203,21 +214,24 @@ class Store:
             self.fts_enabled = False
 
     # -- chats ------------------------------------------------------------
-    def create_chat(self, title: str | None = None) -> dict:
+    def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
+                    web: bool = True) -> dict:
+        if mode not in MODES:
+            raise ValueError(f"unknown mode '{mode}'")
         with self._lock:
             cid = uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
-                "INSERT INTO chats (id, title, created) VALUES (?, ?, ?)",
-                (cid, title, created),
+                "INSERT INTO chats (id, title, created, mode, web) VALUES (?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web}
 
     def list_chats(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.id, c.title, c.created, COUNT(m.id) AS message_count, "
+                "SELECT c.id, c.title, c.created, c.mode, c.web, COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "GROUP BY c.id "
@@ -228,6 +242,8 @@ class Store:
                 "id": r["id"],
                 "title": r["title"],
                 "created": r["created"],
+                "mode": r["mode"],
+                "web": bool(r["web"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
             }
@@ -237,7 +253,7 @@ class Store:
     def get_chat(self, chat_id: str, include_created: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -245,15 +261,29 @@ class Store:
             "id": row["id"],
             "title": row["title"],
             "created": row["created"],
+            "mode": row["mode"],
+            "web": bool(row["web"]),
             "messages": self.get_messages(chat_id, include_created=include_created),
         }
 
-    def set_title(self, chat_id: str, title: str) -> None:
+    def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
+                    web: bool | None = None) -> None:
+        """Change a chat's title, mode or web toggle; ``None`` leaves a field alone."""
+        if mode is not None and mode not in MODES:
+            raise ValueError(f"unknown mode '{mode}'")
+        fields = {"title": title, "mode": mode, "web": web}
+        changes = {name: value for name, value in fields.items() if value is not None}
+        if not changes:
+            return
+        assignments = ", ".join(f"{name} = ?" for name in changes)
         with self._lock:
             self._conn.execute(
-                "UPDATE chats SET title = ? WHERE id = ?", (title, chat_id)
+                f"UPDATE chats SET {assignments} WHERE id = ?", (*changes.values(), chat_id)
             )
             self._conn.commit()
+
+    def set_title(self, chat_id: str, title: str) -> None:
+        self.update_chat(chat_id, title=title)
 
     def delete_chat(self, chat_id: str) -> bool:
         with self._lock:
@@ -284,10 +314,15 @@ class Store:
             ).fetchone():
                 return False
             created = chat.get("created") or _utc_now_iso()
+            mode = chat.get("mode")
+            if mode not in MODES:
+                mode = DEFAULT_MODE
+            web = chat.get("web")
+            web = 1 if web is None else int(bool(web))
             try:
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created) VALUES (?, ?, ?)",
-                    (chat_id, chat.get("title"), created),
+                    "INSERT INTO chats (id, title, created, mode, web) VALUES (?, ?, ?, ?, ?)",
+                    (chat_id, chat.get("title"), created, mode, web),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):

@@ -21,6 +21,7 @@ from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.events import EventBus
 from kova.memory import Memory, Note
 from kova.models import ModelClient
+from kova.modes import DEFAULT_MODE, MODES
 from kova.reminders import ReminderLoop
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
@@ -34,13 +35,10 @@ class TurnBody(BaseModel):
 
 
 class ChatBody(BaseModel):
-    """Optional fields for a new chat."""
+    """Optional fields for a new or updated chat; every field may be omitted."""
     title: str | None = None
-
-
-class TitleBody(BaseModel):
-    """A new title for a chat."""
-    title: str
+    mode: str | None = None
+    web: bool | None = None
 
 
 class NoteBody(BaseModel):
@@ -170,7 +168,14 @@ def create_app(
 
     @api.post("/chats")
     async def create_chat(body: ChatBody | None = None) -> dict:
-        return app.state.store.create_chat(body.title if body else None)
+        mode = body.mode if body else None
+        if mode is not None and mode not in MODES:
+            raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
+        return app.state.store.create_chat(
+            body.title if body else None,
+            mode=mode or DEFAULT_MODE,
+            web=body.web if body is not None and body.web is not None else True,
+        )
 
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
@@ -185,14 +190,26 @@ def create_app(
         return chat
 
     @api.patch("/chats/{chat_id}")
-    async def rename_chat(chat_id: str, body: TitleBody) -> dict:
-        title = body.title.strip()
-        if not title:
-            raise HTTPException(status_code=422, detail="title cannot be empty")
+    async def update_chat(chat_id: str, body: ChatBody) -> dict:
+        changes: dict[str, str | bool] = {}
+        if body.title is not None:
+            title = body.title.strip()
+            if not title:
+                raise HTTPException(status_code=422, detail="title cannot be empty")
+            changes["title"] = title
+        if body.mode is not None:
+            if body.mode not in MODES:
+                raise HTTPException(status_code=422, detail=f"unknown mode '{body.mode}'")
+            changes["mode"] = body.mode
+        if body.web is not None:
+            changes["web"] = body.web
+        if not changes:
+            raise HTTPException(status_code=422, detail="nothing to update")
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        app.state.store.set_title(chat_id, title)
-        return {"id": chat_id, "title": title}
+        app.state.store.update_chat(chat_id, **changes)
+        chat = app.state.store.get_chat(chat_id)
+        return {"id": chat_id, "title": chat["title"], "mode": chat["mode"], "web": chat["web"]}
 
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:

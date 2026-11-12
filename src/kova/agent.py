@@ -13,19 +13,45 @@ import httpx
 from kova.config import Config
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
+from kova.modes import DEFAULT_MODE
 from kova.store import Store
 from kova.tools import Tool, openai_schemas
 
 
-_IDENTITY = """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
+_IDENTITIES = {
+    "work": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
 Be warm, direct and genuinely helpful. Use tools when they help: search the web for current facts, work with files in the Kova files folder, and set reminders.
 When you learn a lasting fact about the user (name, preferences, projects, people), save it with memory_save.
-Never say you are a different assistant or made by another company. You are Kova."""
+Never say you are a different assistant or made by another company. You are Kova.""",
+    "chat": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
+Be warm, direct and genuinely helpful. Keep replies short and conversational.
+You are in chat mode: a plain conversation. You cannot read or write files, set reminders, or save memories, so never claim to have done anything like that. You can only search and read the web.
+If a task needs more than that, say so and suggest switching to work mode with /mode work.
+Never say you are a different assistant or made by another company. You are Kova.""",
+}
+
+_WEB_TOOLS = ("web_search", "web_fetch")
 
 
-def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Note]) -> str:
+def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool]:
+    """The tools a chat may use: everything in work mode, web only in chat mode.
+
+    The web toggle applies to both modes; a future code mode would add its own
+    branch here.
+    """
+    allowed = set(tools) if mode != "chat" else set(_WEB_TOOLS)
+    if not web:
+        allowed -= set(_WEB_TOOLS)
+    return {name: tool for name, tool in tools.items() if name in allowed}
+
+
+def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Note],
+                        mode: str = DEFAULT_MODE) -> str:
     """Build the identity, current context, and relevant memory prompt."""
-    prompt = f"{_IDENTITY}\nCurrent time: {now.isoformat()}\nAvailable tools: {', '.join(tool_names)}"
+    identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
+    tools = ", ".join(tool_names) if tool_names else "none"
+    prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
+              f"Available tools: {tools}")
     if memories:
         notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in memories)
         prompt += f"\n\nWhat you remember about the user:\n{notes}"
@@ -110,6 +136,9 @@ class Agent:
         """
         self.store.add_message(chat_id, 'user', text)
         chat = self.store.get_chat(chat_id)
+        mode = (chat or {}).get('mode') or DEFAULT_MODE
+        web = (chat or {}).get('web', True)
+        tools = select_tools(mode, web, self.tools)
         needs_title = chat is not None and not chat['title']
         title_source = text
         if chat is not None:
@@ -121,14 +150,14 @@ class Agent:
             memories = await asyncio.to_thread(self.memory.search, text, 5)
         except Exception:  # memory trouble must never block a chat
             memories = []
-        prompt = build_system_prompt(self.now(), list(self.tools), memories)
+        prompt = build_system_prompt(self.now(), list(tools), memories, mode)
         entry = (next(m for m in self.config.models if m.name == model)
                  if model is not None else self.config.active_model())
         if not entry.model:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         client = ModelClient(entry, transport=self.transport)
-        schemas = openai_schemas(self.tools)
+        schemas = openai_schemas(tools) or None
         try:
             for step in range(11):
                 history = trim_history(repair_tool_pairs(self.store.get_messages(chat_id)),
@@ -166,11 +195,11 @@ class Agent:
                         result, ok = '', True
                     yield {'type': 'tool_call', 'name': name, 'args': args}
                     if ok:
-                        if name not in self.tools:
+                        if name not in tools:
                             result, ok = f'Error: unknown tool {name}', False
                         else:
                             try:
-                                result = await asyncio.to_thread(self.tools[name].run, args)
+                                result = await asyncio.to_thread(tools[name].run, args)
                                 if inspect.isawaitable(result):
                                     result = await result
                             except Exception as exc:

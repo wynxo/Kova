@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from time import perf_counter
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import CompleteEvent, Completion, Completer, WordCompleter
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -23,16 +24,37 @@ from rich.text import Text
 
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
+from kova.modes import MODES
 
 _COMMANDS = {
     "/help": "Show commands and keyboard shortcuts",
     "/new": "Start a fresh conversation",
+    "/mode": "Show the chat mode; /mode chat|work switches",
+    "/web": "Show web search state; /web on|off toggles it",
     "/model": "List models; /model <name> switches",
     "/think": "Toggle full reasoning (collapsed by default)",
     "/clear": "Clear the screen, keeping this conversation",
     "/exit": "Leave Kova (also /quit)",
     "/quit": "Leave Kova",
 }
+
+# Arguments the commands offer for Tab completion, if any.
+_COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off")}
+
+
+class _CommandCompleter(Completer):
+    """Complete slash commands, and the argument of /mode and /web."""
+
+    def __init__(self) -> None:
+        self._commands = WordCompleter(list(_COMMANDS), sentence=True)
+        self._arguments = {name: WordCompleter(list(words), sentence=True)
+                           for name, words in _COMMAND_ARGUMENTS.items()}
+
+    def get_completions(self, document: Document, event: CompleteEvent) -> list[Completion]:
+        command, space, rest = document.text_before_cursor.lstrip().partition(" ")
+        if space and command in self._arguments:
+            return list(self._arguments[command].get_completions(Document(rest), event))
+        return list(self._commands.get_completions(document, event))
 
 
 def _short(text: str, limit: int = 100) -> str:
@@ -148,7 +170,7 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
         console.print()
 
 
-def _header(client: KovaClient, console: Console) -> None:
+def _header(client: KovaClient, console: Console, chat_id: str | None = None) -> None:
     health = client.health()
     cfg = load_config()
     notes = len(client.memory_list())
@@ -157,8 +179,14 @@ def _header(client: KovaClient, console: Console) -> None:
     status.append(str(health["model"]), style="bold")
     if not health["model_ok"]:
         status.append(" (unreachable)", style="red")
+    chat = client.get_chat(chat_id) if chat_id else None
+    if chat is not None:
+        status.append("  ·  mode ", style="dim")
+        status.append(chat.get("mode") or "work", style="bold")
+        if not chat.get("web", True):
+            status.append(" · web off", style="dim")
     memory = Text(f"Memory  {cfg.memory_path}  ·  {notes} {'note' if notes == 1 else 'notes'}", style="dim")
-    hint = Text("/help commands   /think reasoning   Ctrl+D leave", style="dim")
+    hint = Text("/mode /web settings   /help commands   /think reasoning   Ctrl+D leave", style="dim")
     console.print(Panel(Group(status, memory, hint), title=Text("Kova", style="bold cyan"),
                         title_align="left", border_style="bright_black", padding=(0, 1)))
     console.print()
@@ -200,16 +228,22 @@ def _watch_reminders(client: KovaClient, console: Console) -> None:
 
 
 def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = False,
-              *, new: bool = False, console: Console) -> None:
+              *, new: bool = False, mode: str | None = None, web: bool | None = None,
+              console: Console) -> None:
     if chat_id is None:
         chats = client.list_chats() if not new else []
-        chat_id = chats[0]["id"] if chats else client.create_chat()["id"]
-    _header(client, console)
+        if chats:
+            chat_id = chats[0]["id"]
+            if mode is not None or web is not None:  # explicit flags win over stored settings
+                client.update_chat(chat_id, mode=mode, web=web)
+        else:
+            chat_id = client.create_chat(mode=mode, web=web)["id"]
+    _header(client, console, chat_id)
     interactive = sys.stdin.isatty() and console.is_terminal
     session = None
     if interactive:
         session = PromptSession(history=InMemoryHistory(),
-                                completer=WordCompleter(list(_COMMANDS), sentence=True),
+                                completer=_CommandCompleter(),
                                 complete_while_typing=False)
         threading.Thread(target=_watch_reminders, args=(client, console), daemon=True).start()
     show_thinking = False
@@ -232,18 +266,40 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         if command in ("/exit", "/quit") and not args:
             break
         if command == "/new" and not args:
-            chat_id = client.create_chat()["id"]
+            current = client.get_chat(chat_id) or {}
+            chat_id = client.create_chat(mode=current.get("mode"), web=current.get("web"))["id"]
             console.print("Started a new chat.", style="dim")
         elif command == "/help" and not args:
             _help(console)
         elif command == "/clear" and not args:
             if console.is_terminal:
                 console.clear()
-            _header(client, console)
+            _header(client, console, chat_id)
         elif command == "/think" and not args:
             show_thinking = not show_thinking
             no_think = False
             console.print("Reasoning expanded." if show_thinking else "Reasoning collapsed.", style="dim")
+        elif command == "/mode":
+            if not args:
+                chat = client.get_chat(chat_id) or {}
+                console.print(f"Current mode: {chat.get('mode') or 'work'}. "
+                              f"Switch with /mode {' or '.join(MODES)}.", style="dim")
+            elif args[0] in MODES:
+                client.update_chat(chat_id, mode=args[0])
+                console.print(f"Mode: {args[0]}. Takes effect on your next message.",
+                              style="dim")
+            else:
+                console.print(f'Unknown mode "{args[0]}". Use /mode {" or ".join(MODES)}.', style="red")
+        elif command == "/web":
+            if not args:
+                chat = client.get_chat(chat_id) or {}
+                state = "on" if chat.get("web", True) else "off"
+                console.print(f"Web search is {state}. Toggle with /web on or /web off.", style="dim")
+            elif args[0] in ("on", "off"):
+                client.update_chat(chat_id, web=args[0] == "on")
+                console.print(f"Web search {args[0]}. Takes effect on your next message.", style="dim")
+            else:
+                console.print("Use /web on or /web off.", style="red")
         elif command == "/model":
             if not args:
                 _models(client, console)
