@@ -16,6 +16,7 @@ import typer
 from rich.console import Console
 from typer.core import TyperGroup
 
+from kova import onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 
@@ -160,6 +161,10 @@ def chat(
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
+    cfg = load_config()
+    if sys.stdin.isatty() and onboarding.needs_setup(cfg):
+        if typer.confirm("Kova isn't set up yet. Run the setup wizard first?", default=True):
+            onboarding.run_setup(cfg)
     client = get_client()
     if chat:
         chat_id = chat
@@ -167,6 +172,21 @@ def chat(
         chats = client.list_chats()
         chat_id = chats[0]["id"] if (chats and not new) else client.create_chat()["id"]
     _run_chat(client, chat_id, no_think)
+
+
+@app.command()
+def setup(
+    url: str | None = typer.Option(None, "--url", help="Model server URL, for example http://192.168.1.20:8080."),
+    model: str | None = typer.Option(None, "--model", help="Model name to use."),
+    name: str | None = typer.Option(None, "--name", help="Name to save this model under."),
+    key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Save it even if the test message fails."),
+):
+    """Find a model server and get Kova ready to chat."""
+    try:
+        onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
+    except onboarding.SetupError as exc:
+        _fail(str(exc))
 
 
 @app.command()
