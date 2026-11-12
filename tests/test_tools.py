@@ -21,7 +21,7 @@ def ctx(tmp_path):
 
 def test_build_tools_names_and_schemas(ctx):
     tools = build_tools(ctx)
-    assert set(tools) == {'web_search', 'web_fetch', 'list_files', 'read_file', 'write_file', 'reminder_add', 'reminder_list', 'memory_save', 'memory_search'}
+    assert set(tools) == {'web_search', 'web_fetch', 'list_files', 'read_file', 'write_file', 'reminder_add', 'reminder_list', 'memory_save', 'memory_search', 'system_info'}
     assert all(s['function']['parameters']['type'] == 'object' for s in openai_schemas(tools))
 
 
