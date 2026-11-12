@@ -33,10 +33,10 @@ class ToolContext:
 
 def build_tools(ctx: ToolContext) -> dict[str, Tool]:
     """Build the tools bound to a server context."""
-    from . import files, memory, reminders, system_info, web
+    from . import core, files, memory, reminders, system_info, web
 
     tools = [*web.tools(), *files.tools(ctx), *reminders.tools(ctx), *memory.tools(ctx),
-             *system_info.tools(ctx)]
+             *system_info.tools(ctx), *core.tools(ctx.config.files_path)]
     return {tool.name: tool for tool in tools}
 
 

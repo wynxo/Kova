@@ -16,6 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from kova.modes import DEFAULT_MODE, MODES
+from kova.permissions import PERMISSIONS
 
 
 def _utc_now_iso() -> str:
@@ -95,6 +96,7 @@ def _like_snippet(content: str, terms: list[str], before: int = 60, after: int =
 @dataclass
 class Store:
     path: Path
+    default_cwd: str | None = None
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
@@ -150,6 +152,13 @@ class Store:
             self._conn.execute(f"ALTER TABLE chats ADD COLUMN mode TEXT NOT NULL DEFAULT '{DEFAULT_MODE}'")
         if "web" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN web INTEGER NOT NULL DEFAULT 1")
+        if "permission" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN permission TEXT NOT NULL DEFAULT 'manual'")
+        if "cwd" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN cwd TEXT")
+        self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
+        if "plan" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -215,23 +224,26 @@ class Store:
 
     # -- chats ------------------------------------------------------------
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
-                    web: bool = True) -> dict:
+                    web: bool = True, permission: str = "manual", cwd: str | None = None) -> dict:
         if mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
+        if permission not in PERMISSIONS:
+            raise ValueError(f"unknown permission '{permission}'")
+        cwd = cwd or self.default_cwd or str(Path.home() / "Kova Files")
         with self._lock:
             cid = uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
-                "INSERT INTO chats (id, title, created, mode, web) VALUES (?, ?, ?, ?, ?)",
-                (cid, title, created, mode, web),
+                "INSERT INTO chats (id, title, created, mode, web, permission, cwd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web, permission, cwd),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": []}
 
     def list_chats(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.id, c.title, c.created, c.mode, c.web, COUNT(m.id) AS message_count, "
+                "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "GROUP BY c.id "
@@ -244,6 +256,8 @@ class Store:
                 "created": r["created"],
                 "mode": r["mode"],
                 "web": bool(r["web"]),
+                "permission": r["permission"],
+                "cwd": r["cwd"],
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
             }
@@ -253,7 +267,7 @@ class Store:
     def get_chat(self, chat_id: str, include_created: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -263,15 +277,22 @@ class Store:
             "created": row["created"],
             "mode": row["mode"],
             "web": bool(row["web"]),
+            "permission": row["permission"],
+            "cwd": row["cwd"],
+            "plan": json.loads(row["plan"]),
             "messages": self.get_messages(chat_id, include_created=include_created),
         }
 
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
-                    web: bool | None = None) -> None:
-        """Change a chat's title, mode or web toggle; ``None`` leaves a field alone."""
+                    web: bool | None = None, permission: str | None = None,
+                    cwd: str | None = None, plan: list[dict] | None = None) -> None:
+        """Change chat settings or its latest plan; ``None`` leaves a field alone."""
         if mode is not None and mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
-        fields = {"title": title, "mode": mode, "web": web}
+        if permission is not None and permission not in PERMISSIONS:
+            raise ValueError(f"unknown permission '{permission}'")
+        fields = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
+                  "plan": json.dumps(plan) if plan is not None else None}
         changes = {name: value for name, value in fields.items() if value is not None}
         if not changes:
             return
@@ -319,10 +340,13 @@ class Store:
                 mode = DEFAULT_MODE
             web = chat.get("web")
             web = 1 if web is None else int(bool(web))
+            # A restored chat starts at Manual; backup data cannot silently
+            # grant unattended command access on this machine.
             try:
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web) VALUES (?, ?, ?, ?, ?)",
-                    (chat_id, chat.get("title"), created, mode, web),
+                    "INSERT INTO chats (id, title, created, mode, web, cwd) VALUES (?, ?, ?, ?, ?, ?)",
+                    (chat_id, chat.get("title"), created, mode, web,
+                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files")),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):

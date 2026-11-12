@@ -189,7 +189,7 @@ def test_rename_chat(server):
     client, headers, cfg, fake = server
     chat_id = client.post("/chats", headers=headers).json()["id"]
     response = client.patch(f"/chats/{chat_id}", json={"title": "  Groceries  "}, headers=headers)
-    assert response.json() == {"id": chat_id, "title": "Groceries", "mode": "work", "web": True}
+    assert response.json() == {"id": chat_id, "title": "Groceries", "mode": "work", "web": True, "permission": "manual", "cwd": str(cfg.files_path)}
     assert client.get("/chats", headers=headers).json()[0]["title"] == "Groceries"
 
     assert client.patch("/chats/abc", json={"title": "x"}, headers=headers).status_code == 404

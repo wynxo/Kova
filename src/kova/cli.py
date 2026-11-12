@@ -347,6 +347,12 @@ def ask(
                     sys.stdout.flush()
             elif kind == "tool_call":
                 tools.append(event["name"])
+            elif kind == "approval":
+                # `ask` is the noninteractive/script interface. Do not silently
+                # leave it waiting ten minutes for an approval it cannot show.
+                guidance = "This action needs approval. Continue in interactive Kova chat to approve it."
+                client.answer_approval(chat_id, event["id"], "deny", guidance)
+                _stderr.print(guidance, style=theme.WARNING, markup=False)
             elif kind == "error":
                 if pieces and not as_json:
                     print()
@@ -627,9 +633,40 @@ def model_list():
 
 
 @_model.command("add")
-def model_add(name: str, base_url: str, model: str, key: str | None = typer.Option(None, "--key")):
-    get_client().model_add(name, base_url, model, key)
-    _ok(f"Added model {name}.")
+def model_add(
+    name: str,
+    address: str = typer.Argument(..., help="Server address: 192.168.1.50, homelab:8080, a URL, or openrouter."),
+    model: str | None = typer.Argument(None, help="Model id; optional when the server has only one."),
+    key: str | None = typer.Option(None, "--key"),
+):
+    """Add a model server. Loose addresses work; Kova finds the right URL."""
+    from kova import server_finder
+
+    try:
+        found = server_finder.connect(address, api_key=key)
+    except ValueError as exc:
+        _fail(str(exc))
+    if not found.answered:
+        if model and "://" in address:
+            # Offline right now but fully spelled out: save it as given.
+            get_client().model_add(name, server_finder.normalize_base(address), model, key)
+            _ok(f"Added model {name}. Its server didn't answer just now ({found.error}).")
+            return
+        _fail(found.error)
+    if found.needs_key and not key:
+        _fail(f"{found.base_url} wants an API key. Add it with --key.")
+    if model is None:
+        if len(found.models) == 1:
+            model = found.models[0]
+        elif not found.models:
+            _fail(f"{found.base_url} lists no models. Name one: kova model add {name} {address} MODEL")
+        else:
+            for item in found.models[:30]:
+                console.print(f"  {item}")
+            _fail(f"{found.base_url} has {len(found.models)} models; pick one from the list above.",
+                  hint=f"Then run: kova model add {name} {address} MODEL")
+    get_client().model_add(name, found.base_url, model, key)
+    _ok(f"Added model {name}: {model} at {found.base_url}.")
 
 
 @_model.command("use")

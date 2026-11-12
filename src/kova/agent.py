@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import unicodedata
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
@@ -15,12 +17,18 @@ from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE
 from kova.store import Store
-from kova.tools import Tool, openai_schemas
+from kova.tools import Tool, ToolError, openai_schemas
+from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
+from kova.tools import core
+from kova.permissions import Approvals, needs_approval
+from kova.project_instructions import project_instructions
 
 
 _IDENTITIES = {
     "work": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
-Be warm, direct and genuinely helpful. Use tools when they help: search the web for current facts, work with files in the Kova files folder, and set reminders.
+Be warm, direct and genuinely helpful. Use tools when they help: search the web for current facts, work with code and files in the working folder, run commands, and set reminders.
+Use update_plan for genuine multi-step work; keep the checklist updated as you progress.
+Never retry a denied action without new user authorization. Commands can access the system as the current user; file tools stay inside the working folder.
 When you learn a lasting fact about the user (name, preferences, projects, people), save it with memory_save.
 Never say you are a different assistant or made by another company. You are Kova.""",
     "chat": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
@@ -71,8 +79,20 @@ def derive_title(text: str, limit: int = 40) -> str:
             break
         title = candidate
     if not title:
-        title = (words[0] if words else "New chat")[:limit]
+        title = _cut_graphemes(words[0], limit) if words else "New chat"
     return title
+
+
+def _cut_graphemes(text: str, limit: int) -> str:
+    """Cut to ``limit`` code points without splitting an emoji sequence or an
+    accent from its letter (backs off to the start of that cluster)."""
+    if len(text) <= limit:
+        return text
+    i = limit
+    while i > 0 and (text[i - 1] == "\u200d" or text[i] in "\u200d\ufe0f"
+                     or unicodedata.combining(text[i])):
+        i -= 1
+    return text[:i] or text[:limit]
 
 
 def repair_tool_pairs(messages: list[dict]) -> list[dict]:
@@ -101,15 +121,25 @@ def repair_tool_pairs(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _message_chars(message: dict) -> int:
+    """What a message costs in the request: its text plus any tool-call arguments."""
+    size = len(message.get('content') or '')
+    for call in message.get('tool_calls') or []:
+        function = call.get('function') or {}
+        size += len(function.get('name') or '') + len(function.get('arguments') or '')
+    return size
+
+
 def trim_history(messages: list[dict], context_tokens: int, reserved_chars: int) -> list[dict]:
     """Keep recent history within the budget, retaining the latest user message."""
     budget = context_tokens * 4 * 0.75 - reserved_chars
     latest_user = next((i for i in range(len(messages) - 1, -1, -1)
                         if messages[i].get('role') == 'user'), None)
     start = 0
-    size = sum(len(m.get('content') or '') for m in messages)
+    sizes = [_message_chars(m) for m in messages]
+    size = sum(sizes)
     while start < len(messages) and size > budget and start != latest_user:
-        size -= len(messages[start].get('content') or '')
+        size -= sizes[start]
         start += 1
     while start < len(messages) and messages[start].get('role') == 'tool':
         start += 1
@@ -128,6 +158,8 @@ class Agent:
         self.tools = tools
         self.transport = transport
         self.now = now
+        self.approvals = Approvals()
+        self.file_sessions: dict[tuple[str, str], FileSession] = {}
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
@@ -138,7 +170,19 @@ class Agent:
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
+        cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
         tools = select_tools(mode, web, self.tools)
+        files = None
+        if mode != 'chat':
+            if cwd == self.config.files_path.resolve():
+                cwd.mkdir(parents=True, exist_ok=True)
+            elif not cwd.is_dir():
+                yield {'type': 'error', 'message': 'Working folder no longer exists. Choose an existing folder.'}
+                return
+            files = self.file_sessions.setdefault((chat_id, str(cwd)), FileSession(cwd))
+            # Bind per-chat state, never mutate the server-wide registry.
+            replacements = [*files.tools(), *core.tools(cwd)]
+            tools.update({tool.name: tool for tool in replacements if tool.name in tools})
         needs_title = chat is not None and not chat['title']
         title_source = text
         if chat is not None:
@@ -151,6 +195,13 @@ class Agent:
         except Exception:  # memory trouble must never block a chat
             memories = []
         prompt = build_system_prompt(self.now(), list(tools), memories, mode)
+        if mode != 'chat':
+            prompt += f"\nWorking folder: {cwd}\nPermission mode: {(chat or {}).get('permission', 'manual')}"
+            instructions = await asyncio.to_thread(project_instructions, cwd)
+            if instructions:
+                prompt += f"\n\n{instructions}"
+            if (chat or {}).get('plan'):
+                prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
         entry = (next(m for m in self.config.models if m.name == model)
                  if model is not None else self.config.active_model())
         if not entry.model:
@@ -199,13 +250,50 @@ class Agent:
                             result, ok = f'Error: unknown tool {name}', False
                         else:
                             try:
-                                result = await asyncio.to_thread(tools[name].run, args)
-                                if inspect.isawaitable(result):
-                                    result = await result
+                                if not isinstance(args, dict):
+                                    raise ToolError('arguments must be an object')
+                                if name in CORE_TOOLS:
+                                    validate(tools[name].parameters, args)
+                                prepared = None
+                                if name in FILE_TOOLS:
+                                    prepared = await asyncio.to_thread(files.prepare, name, args)
+                                if needs_approval(name, args, (chat or {}).get('permission', 'manual'),
+                                                  cwd, self.config.files_path,
+                                                  chat_id in self.approvals.sessions):
+                                    approval = self.approvals.create(chat_id, name, args)
+                                    try:
+                                        yield approval
+                                        decision = await self.approvals.wait(approval['id'])
+                                    finally:
+                                        # Also clean up if the async generator is closed at yield.
+                                        pending = self.approvals.pending.pop(approval['id'], None)
+                                        if pending and not pending.future.done():
+                                            pending.future.cancel()
+                                    yield {'type': 'approval_resolved', 'id': approval['id'], **decision}
+                                    if decision['decision'] == 'deny':
+                                        raise ToolError('Action denied. Do not retry without new authorization.' +
+                                                        (f" User guidance: {decision['message']}" if decision.get('message') else ''))
+                                if prepared is not None:
+                                    await asyncio.to_thread(files.check, args, prepared)
+                                if inspect.iscoroutinefunction(tools[name].run):
+                                    result = await tools[name].run(args)
+                                else:
+                                    result = await asyncio.to_thread(tools[name].run, args)
+                                    if inspect.isawaitable(result):
+                                        result = await result
+                                if name == 'update_plan':
+                                    items = args['items']
+                                    self.store.update_chat(chat_id, plan=items)
+                                    yield {'type': 'plan', 'items': items}
+                                if name == 'run_command':
+                                    ok = json.loads(result)['ok']
+                            except asyncio.CancelledError:
+                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=call['id'])
+                                raise
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
                     result = str(result)
-                    if len(result) > MAX_TOOL_RESULT_CHARS:
+                    if name != 'run_command' and len(result) > MAX_TOOL_RESULT_CHARS:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200]}

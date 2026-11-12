@@ -23,10 +23,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from kova import theme
+from kova import server_finder, theme
 from kova.client import KovaClient, KovaError
 from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.models import ModelClient, ModelError
+from kova.server_finder import normalize_base  # re-exported: the base URL every probe builds on
 
 console = Console()
 
@@ -122,42 +123,6 @@ def _pretty_path(path: Path) -> str:
 # Probing
 # ---------------------------------------------------------------------------
 
-def normalize_base(url: str) -> str:
-    """Turn what a user types into the ``.../v1`` base URL Kova stores."""
-    url = url.strip().rstrip("/")
-    if not url:
-        return ""
-    if not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    if url.endswith("/models"):
-        url = url[: -len("/models")].rstrip("/")
-    if not url.endswith("/v1"):
-        url += "/v1"
-    return url
-
-
-def _headers(api_key: str | None) -> dict[str, str]:
-    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
-
-
-def _model_ids(payload: object) -> list[str]:
-    """Pull model ids out of an OpenAI-style or Ollama-style listing."""
-    if not isinstance(payload, dict):
-        return []
-    raw = payload.get("data", payload.get("models"))
-    if not isinstance(raw, list):
-        return []
-    ids: list[str] = []
-    for item in raw:
-        if isinstance(item, str):
-            ids.append(item)
-        elif isinstance(item, dict):
-            value = item.get("id") or item.get("name") or item.get("model")
-            if value:
-                ids.append(str(value))
-    return ids
-
-
 def _label_for(base_url: str) -> str:
     for known in KNOWN_SERVERS:
         if normalize_base(known.url) == base_url:
@@ -195,24 +160,14 @@ def probe_url(
     base = normalize_base(url)
     if not base:
         return None
+    found = server_finder.probe(base, api_key=api_key, timeout=timeout, transport=transport)
+    if found.error:
+        return None
     try:
         name = label or _label_for(base)
     except httpx.InvalidURL:
         name = base
-    try:
-        with httpx.Client(transport=transport, timeout=timeout, headers=_headers(api_key), trust_env=False) as client:
-            response = client.get(f"{base}/models")
-    except (httpx.HTTPError, httpx.InvalidURL, OSError):
-        return None
-    if response.status_code == 401:
-        return DetectedServer(name, base, [], needs_key=True)
-    if response.status_code != 200:
-        return None
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = None
-    return DetectedServer(name, base, _model_ids(payload))
+    return DetectedServer(name, base, found.models, needs_key=found.needs_key)
 
 
 def detect_servers(
@@ -370,23 +325,52 @@ def _print_found(found: list[DetectedServer]) -> None:
     console.print(table)
 
 
+def _found_to_detected(found: server_finder.Found) -> DetectedServer:
+    label = found.label or found.kind or _label_for(found.base_url)
+    return DetectedServer(label, found.base_url, list(found.models), needs_key=found.needs_key)
+
+
+def _scan_network(transport: httpx.BaseTransport | None) -> DetectedServer | None:
+    """Look for model servers on this computer and the local network, then let
+    the user pick one. Returns None when nothing was found."""
+    with _working("Scanning this computer and your network (takes a few seconds)…"):
+        found = server_finder.discover(transport=transport)
+    if not found:
+        console.print(Text("No model servers found on your network.", style=theme.WARNING))
+        return None
+    servers = [_found_to_detected(item) for item in found]
+    _print_found(servers)
+    index = _choose(f"Which server? [bold]1-{len(servers)}[/bold], Enter = 1:", len(servers))
+    return servers[index - 1]
+
+
 def _ask_for_server(
     *,
     timeout: float,
     transport: httpx.BaseTransport | None,
 ) -> DetectedServer:
-    """Prompt for a URL on another machine until one answers."""
-    console.print(Text("Type its URL, for example http://192.168.1.20:8080", style=theme.MUTED))
+    """Prompt for an address until one answers; "scan" searches the network."""
+    console.print(Text("Type its address the way you think of it: 192.168.1.50, homelab:8080,", style=theme.MUTED))
+    console.print(Text("http://10.0.0.5:8080/v1 or openrouter. Or type scan to search your network.",
+                       style=theme.MUTED))
     while True:
-        raw = _ask("Server URL (blank to cancel):")
+        raw = _ask("Server address, scan, or blank to cancel:")
         if not raw:
             raise SetupError("Setup cancelled. Run kova setup again any time.")
-        with _working(f"Checking {raw}…"):
-            server = probe_url(raw, timeout=timeout, transport=transport)
-        if server is not None:
-            return server
-        _error(f"Couldn't reach a model server at {raw}/v1/models.")
-        console.print(Text("  Check the address and port, and that the server is running.", style=theme.MUTED))
+        if raw.strip().lower() == "scan":
+            server = _scan_network(transport)
+            if server is not None:
+                return server
+            continue
+        try:
+            with _working(f"Looking for a model server at {raw}…"):
+                found = server_finder.connect(raw, timeout=timeout, transport=transport)
+        except ValueError as exc:
+            _error(str(exc))
+            continue
+        if found.answered:
+            return _found_to_detected(found)
+        _error(found.error)
 
 
 def _ask_for_key(
