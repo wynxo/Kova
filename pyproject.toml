@@ -1,5 +1,5 @@
 [project]
-name = "kova"
+name = "kova-ai"
 version = "0.1.0"
 description = "Your own private AI that lives on your computer"
 readme = "README.md"
@@ -38,3 +38,6 @@ dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
 ]
+
+[tool.uv.build-backend]
+module-name = "kova"

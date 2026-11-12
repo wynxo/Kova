@@ -21,9 +21,10 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import backup, onboarding
+from kova import __version__, backup, lifecycle, onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
+from kova.tools.reminders import format_relative, format_when
 from kova.ui import _run_chat
 
 console = Console()
@@ -43,6 +44,51 @@ class _KovaGroup(TyperGroup):
 
 
 app = typer.Typer(help="Kova: your own private AI.", no_args_is_help=True, cls=_KovaGroup)
+
+
+def _version(value: bool) -> None:
+    if value:
+        console.print(f"Kova {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def root(
+    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True,
+                                 help="Show the installed version."),
+):
+    pass
+
+
+@app.command()
+def update(
+    ref: str | None = typer.Option(None, "--ref", help="GitHub branch, tag, or commit (default: KOVA_REF or main)."),
+    check: bool = typer.Option(False, "--check", help="Only compare installed and remote versions/commits."),
+):
+    """Check for updates or reinstall the latest Kova with uv."""
+    try:
+        target = lifecycle.selected_ref(ref)
+        if check:
+            console.print(lifecycle.check_update(target), markup=False)
+        else:
+            lifecycle.update(target, emit=lambda message: console.print(message, markup=False))
+    except (lifecycle.LifecycleError, OSError) as exc:
+        _fail(str(exc))
+
+
+@app.command()
+def uninstall(
+    purge: bool = typer.Option(False, "--purge", help="Also delete ~/.kova (or KOVA_HOME) without asking."),
+    keep_data: bool = typer.Option(False, "--keep-data", help="Keep data without asking."),
+):
+    """Stop the server and remove Kova. Data is kept unless you confirm deletion."""
+    try:
+        lifecycle.uninstall(purge=purge, keep_data=keep_data,
+                            confirm=lambda question: typer.confirm(question, default=False),
+                            emit=lambda message: console.print(message, markup=False))
+    except (lifecycle.LifecycleError, OSError) as exc:
+        _fail(str(exc))
+
 
 _model = typer.Typer(no_args_is_help=True, help="Manage model servers.")
 app.add_typer(_model, name="model")
@@ -428,16 +474,49 @@ def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
     console.print(f"Memory folder set to {path}{suffix}.")
 
 
+def _local_now() -> datetime:
+    """Current local time; a separate helper so tests can freeze the clock."""
+    return datetime.now().astimezone()
+
+
+def _reminder_time(when: str, now: datetime) -> datetime:
+    parsed = datetime.fromisoformat(when)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=now.tzinfo)
+    return parsed
+
+
 @_reminders.command("list")
 def reminders_list():
-    for reminder in get_client().reminders_list():
-        console.print(f"[bold]#{reminder['id']}[/bold] {reminder['when']} — {reminder['text']}")
+    now = _local_now()
+    reminders = get_client().reminders_list()
+    if not reminders:
+        console.print("[dim]No upcoming reminders.[/dim]")
+        return
+    for reminder in reminders:
+        try:
+            when = _reminder_time(reminder["when"], now)
+        except (TypeError, ValueError):
+            console.print(f"[bold]#{reminder['id']}[/bold] {reminder['when']} — {reminder['text']}")
+            continue
+        local = when.strftime("%Y-%m-%d %H:%M")
+        relative = format_relative(when, now)
+        console.print(f"[bold]#{reminder['id']}[/bold] {local} ({relative}) — {reminder['text']}")
 
 
 @_reminders.command("add")
 def reminders_add(when: str, text: str):
     result = get_client().reminder_add(when, text)
-    console.print(f"Reminder #{result['id']} set for {result['when']}.")
+    now = _local_now()
+    try:
+        parsed = _reminder_time(result["when"], now)
+    except (TypeError, ValueError):
+        console.print(f"⏰ Reminder #{result['id']} · {result['when']}")
+        return
+    console.print(
+        f"⏰ Reminder #{result['id']} · {format_when(parsed, now)} "
+        f"({format_relative(parsed, now, spaces=True)})"
+    )
 
 
 @_reminders.command("rm")
