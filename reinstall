@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Reinstall Kova from this checkout: ./reinstall
+# Stops the server, removes the installed `kova` command, and installs it again
+# from this folder. Your chats, memory and settings (~/.kova) are kept.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$here"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'Could not reinstall Kova: %s\n' "$*" >&2; exit 1; }
+
+kova="$HOME/.local/bin/kova"
+if [ -x "$kova" ]; then
+    say "→ Stopping Kova and removing the installed command (your data is kept) ..."
+    "$kova" uninstall --keep-data || die "uninstall failed; your data was kept."
+else
+    say "→ No installed kova command found; skipping the uninstall step."
+fi
+
+say "→ Installing Kova from this folder ..."
+./install.sh --dev || die "install failed. Run ./install to see why."
+say "Done. Your chats and memory are still in ${KOVA_HOME:-$HOME/.kova}."

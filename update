@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Update Kova from this checkout: ./update
+# Pulls the latest code (fast-forward only), refreshes the dependencies, and
+# updates the installed `kova` command too if you have one.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$here"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'Could not update Kova: %s\n' "$*" >&2; exit 1; }
+
+find_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        command -v uv
+        return 0
+    fi
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+UV="$(find_uv)" || die "uv is not installed. Run ./install first."
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "this is not a git checkout. Run: kova update"
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    die "you have local changes that would block the pull. Commit or stash them, then run ./update again."
+fi
+git symbolic-ref -q HEAD >/dev/null || die "you are on a detached HEAD. Check out a branch (git switch main) first."
+
+say "→ Pulling the latest Kova ..."
+before="$(git rev-parse HEAD)"
+git pull --ff-only >/dev/null 2>&1 || die "git pull failed (no upstream, offline, or your branch has diverged). Try: git pull --ff-only"
+after="$(git rev-parse HEAD)"
+if [ "$before" = "$after" ]; then
+    say "✓ Already up to date ($(git rev-parse --short HEAD))."
+else
+    say "✓ Updated $(git rev-parse --short "$before") → $(git rev-parse --short "$after")."
+fi
+
+say "→ Refreshing dependencies ..."
+"$UV" sync >/dev/null 2>&1 || die "uv sync failed. Run 'uv sync' to see why."
+say "✓ Dependencies are current."
+
+# If Kova is also installed as a uv tool, update that copy too.
+if [ -x "$HOME/.local/bin/kova" ]; then
+    say "→ Updating the installed kova command ..."
+    "$HOME/.local/bin/kova" update || die "the installed kova command could not be updated. Try: kova update"
+fi
+
+say "Done. Run ./cli to chat."
