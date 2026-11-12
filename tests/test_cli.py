@@ -89,3 +89,23 @@ def test_chat_streams_reply(runner):
     result = cli_runner.invoke(cli.app, ["chat", "--new"], input="hi\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "Hello there!" in result.output
+
+
+def test_render_turn_streams_reasoning_then_answer(tmp_path, monkeypatch):
+    """Regression: reasoning used to crash (Console.print(dim=...)) and ran into the answer."""
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    fake = FakeModel([[{"reasoning_content": "thinking hard"}, {"content": "The answer"}]])
+    with TestClient(create_app(cfg, transport=fake.transport)) as http:
+        client = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=http)
+        chat_id = client.create_chat()["id"]
+        out = io.StringIO()
+        cli._render_turn(client, chat_id, "zebra question", False, Console(file=out, width=200))
+    lines = [l for l in out.getvalue().splitlines() if l.strip()]
+    assert "thinking hard" in lines[0]
+    assert "The answer" in lines[1]
+    assert "zebra" not in out.getvalue()  # the user's line is not echoed back

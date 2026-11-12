@@ -54,14 +54,20 @@ def _watch_reminders(client: KovaClient) -> None:
 
 def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool, console: Console) -> None:
     """Stream one turn, rendering reasoning, tools and replies live."""
-    console.print(f"[cyan]{text}[/cyan]")
+    last = None  # kind of the last streamed chunk, to break lines between thinking and answer
     for event in client.stream_message(chat_id, text):
         kind = event["type"]
-        if kind == "reasoning" and not no_think:
-            console.print(event["text"], end="", markup=False, soft_wrap=True, dim=True)
+        if kind in ("reasoning", "text") and last in ("reasoning", "text") and kind != last:
+            console.print()
+        if kind == "reasoning":
+            if no_think:
+                continue
+            console.print(event["text"], end="", markup=False, soft_wrap=True, style="dim")
         elif kind == "text":
             console.print(event["text"], end="", markup=False, soft_wrap=True)
         elif kind == "tool_call":
+            if last in ("reasoning", "text"):
+                console.print()
             console.print(f"[bold yellow]⚙ {event['name']}[/bold yellow]")
         elif kind == "tool_result":
             summary = event["summary"][:100]
@@ -73,6 +79,7 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool, co
             console.print(f"[red]Error: {event['message']}[/red]")
         elif kind == "done":
             break
+        last = kind
     console.print()
 
 
