@@ -41,7 +41,7 @@ Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --
 
 ## Features
 
-Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. For now you talk to it through a command line; a desktop app and a phone/web UI are coming soon.
+Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
 
 - Two modes per chat: **work** (default) with every tool, and **chat** for plain conversation with nothing but web search
 - Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning
@@ -51,6 +51,34 @@ Kova is an assistant you run yourself, so it's private, free, and has no usage l
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
 - Works with any OpenAI-compatible model server
+
+## Desktop app
+
+Run `kova-app` (or `./desktop-app` from a checkout; `desktop-app.bat` on Windows).
+It starts the same local server as the CLI and opens your chats in a native window
+when **pywebview** is installed, otherwise in your default browser. Force the browser
+with `kova-app --browser`. No Node, CDN, account, or token pasting is needed.
+
+Native windows are optional: from a checkout, run `uv sync --extra app`, then
+`./desktop-app`. For a tool install, use
+`uv tool install --force 'kova-ai[app] @ git+https://github.com/wynxo/Kova.git'`.
+The `app` extra keeps GUI dependencies out of the base install; Linux also needs a
+working [GTK or Qt webview backend](https://pywebview.flowrl.com/guide/installation).
+If the backend is unavailable, Kova falls back to your browser.
+
+The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
+live tool status, chat history/search, modes, web search, model selection, Stop,
+reminder popups, and dark/light themes. The UI loads even when the model is offline;
+run `kova setup` or start your model server to chat.
+
+The launcher trades the local server token for a **single-use, 60-second ticket**
+in the URL fragment, which never goes into HTTP access logs. The page removes it
+and exchanges it for an **HttpOnly, SameSite=Strict cookie** valid for 12 hours.
+Browser API calls enforce a loopback host and same origin (including port).
+Disconnect revokes the cookie; restarting the server revokes all sessions.
+The server still binds only to `127.0.0.1`; phone/network access is not enabled.
+Stop cancels the model turn, but cannot undo a file write or synchronous tool that
+has already started.
 
 ## Model setup
 
@@ -146,7 +174,7 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. There is no cloud service and no account.
 
-The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and every request needs a token that's generated on your machine on first run. 🔒
+The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and API requests need a local bearer token or an authenticated browser session. The app shell and health check are public, but contain no chat data or credentials. 🔒
 
 ## Development
 
