@@ -28,8 +28,14 @@ from kova.tools.reminders import parse_when
 
 
 class TurnBody(BaseModel):
-    """A user message that starts one chat turn."""
+    """A user message that starts one chat turn, optionally on a named model."""
     text: str
+    model: str | None = None
+
+
+class ChatBody(BaseModel):
+    """Optional fields for a new chat."""
+    title: str | None = None
 
 
 class TitleBody(BaseModel):
@@ -163,8 +169,8 @@ def create_app(
         return app.state.store.list_chats()
 
     @api.post("/chats")
-    async def create_chat() -> dict:
-        return app.state.store.create_chat()
+    async def create_chat(body: ChatBody | None = None) -> dict:
+        return app.state.store.create_chat(body.title if body else None)
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
@@ -196,6 +202,8 @@ def create_app(
     async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        if body.model is not None and not any(m.name == body.model for m in config.models):
+            raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
@@ -205,7 +213,7 @@ def create_app(
                     if app.state.store.get_chat(chat_id) is None:
                         queue.put_nowait({"type": "error", "message": "chat was deleted"})
                         return
-                    async for event in app.state.agent.run_turn(chat_id, body.text):
+                    async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
                         queue.put_nowait(event)
             except Exception as exc:  # never leave the stream without an ending
                 queue.put_nowait({"type": "error", "message": str(exc)})

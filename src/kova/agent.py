@@ -103,8 +103,11 @@ class Agent:
         self.transport = transport
         self.now = now
 
-    async def run_turn(self, chat_id: str, text: str) -> AsyncIterator[dict]:
-        """Persist and stream a turn, executing at most ten rounds of tools."""
+    async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
+        """Persist and stream a turn, executing at most ten rounds of tools.
+
+        ``model`` names a configured model for this turn only; the active one otherwise.
+        """
         self.store.add_message(chat_id, 'user', text)
         chat = self.store.get_chat(chat_id)
         needs_title = chat is not None and not chat['title']
@@ -119,7 +122,8 @@ class Agent:
         except Exception:  # memory trouble must never block a chat
             memories = []
         prompt = build_system_prompt(self.now(), list(self.tools), memories)
-        entry = self.config.active_model()
+        entry = (next(m for m in self.config.models if m.name == model)
+                 if model is not None else self.config.active_model())
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(self.tools)
         try:
@@ -143,7 +147,7 @@ class Agent:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
                             self.store.set_title(chat_id, derive_title(title_source))
-                    yield {'type': 'done', 'message_id': message_id}
+                    yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
                 formatted = [{'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]

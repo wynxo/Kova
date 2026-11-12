@@ -6,6 +6,7 @@ server on demand; the commands render chat replies with Rich.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sys
@@ -67,19 +68,112 @@ def get_client() -> KovaClient:
 
 # ---------------------------------------------------------------------------
 
+ASK_INPUT_LIMIT = 100_000  # bytes per piped input or attached file
+from kova.client import ASK_TITLE_PREFIX  # marks throwaway ask-chats so history can hide them
+
+_stderr = Console(stderr=True, highlight=False, soft_wrap=True)
+
+
+def _read_capped(stream, label: str) -> str:
+    """Read at most ``ASK_INPUT_LIMIT`` bytes, warning on stderr if there was more."""
+    data = stream.read(ASK_INPUT_LIMIT + 1)
+    if len(data) > ASK_INPUT_LIMIT:
+        data = data[:ASK_INPUT_LIMIT]
+        _stderr.print(f"Warning: {label} is over {ASK_INPUT_LIMIT // 1000} KB; only the first "
+                      f"{ASK_INPUT_LIMIT // 1000} KB was sent.", style="yellow", markup=False)
+    return data.decode("utf-8", errors="replace")
+
+
+def _piped_stdin() -> str | None:
+    """Return piped stdin, or None when stdin is a terminal or empty."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return None
+    piped = _read_capped(typer.get_binary_stream("stdin"), "piped input")
+    return piped if piped.strip() else None
+
+
+def _ask_prompt(question: str | None, piped: str | None, files: list[tuple[str, str]]) -> str:
+    """Join the question with clearly delimited piped input and attached files."""
+    if not (question and question.strip()):
+        if piped is None:
+            raise typer.BadParameter("give a question, or pipe some text in.", param_hint="TEXT")
+        question, piped = piped.strip(), None
+    parts = [question]
+    if piped is not None:
+        parts.append(f"<stdin>\n{piped.rstrip()}\n</stdin>")
+    for name, content in files:
+        parts.append(f'<file name="{name}">\n{content.rstrip()}\n</file>')
+    return "\n\n".join(parts)
+
+
+def _ask_error(message: str) -> None:
+    print(f"Error: {' '.join(message.splitlines())}", file=sys.stderr)
+    raise typer.Exit(1)
+
+
 @app.command("ask")
-def ask(text: str):
-    """Answer once and print it; handy for scripts."""
-    client = get_client()
-    chat = client.create_chat()
-    pieces = []
-    for event in client.stream_message(chat["id"], text):
-        if event["type"] == "text":
-            pieces.append(event["text"])
-        elif event["type"] == "error":
-            print(f"Error: {event['message']}", file=sys.stderr)
-            raise typer.Exit(1)
-    print("".join(pieces))
+def ask(
+    text: str | None = typer.Argument(None, help="The question. Optional if you pipe text in."),
+    files: list[Path] = typer.Option([], "--file", "-f", exists=True, dir_okay=False, readable=True,
+                                     help="Attach a file's contents (repeatable)."),
+    model: str | None = typer.Option(None, "--model", "-m",
+                                     help="Use this model for this question only."),
+    as_json: bool = typer.Option(False, "--json", help="Print a JSON object for scripts."),
+    chat_id: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
+    think: bool = typer.Option(False, "--think", help="Also print the reasoning to stderr."),
+):
+    """Answer once and print it; handy for scripts.
+
+    Piped stdin is sent along with the question (or is the question if none is given):
+    git diff | kova ask "review this"
+    """
+    attached = []
+    for path in files:
+        with path.open("rb") as handle:
+            attached.append((path.name, _read_capped(handle, str(path))))
+    prompt = _ask_prompt(text, _piped_stdin(), attached)
+
+    try:
+        client = get_client()
+        if chat_id is None:
+            first_line = ((text or prompt).strip().splitlines() or [""])[0]
+            title = ASK_TITLE_PREFIX + first_line[:54]
+            chat_id = client.create_chat(title)["id"]
+        pieces: list[str] = []
+        tools: list[str] = []
+        used_model = model
+        reasoning = False
+        for event in client.stream_message(chat_id, prompt, model=model):
+            kind = event["type"]
+            if kind == "reasoning" and think:
+                reasoning = True
+                _stderr.print(event["text"], style="dim", end="", markup=False)
+            elif kind == "text":
+                if reasoning:
+                    reasoning = False
+                    _stderr.print()
+                pieces.append(event["text"])
+                if not as_json:
+                    sys.stdout.write(event["text"])
+                    sys.stdout.flush()
+            elif kind == "tool_call":
+                tools.append(event["name"])
+            elif kind == "error":
+                if pieces and not as_json:
+                    print()
+                _ask_error(event["message"])
+            elif kind == "done":
+                used_model = event.get("model", used_model)
+                break
+    except KovaError as exc:
+        _ask_error(str(exc))
+    if reasoning:
+        _stderr.print()
+    if as_json:
+        print(json.dumps({"answer": "".join(pieces), "chat_id": chat_id,
+                          "model": used_model, "tools": tools}, ensure_ascii=False))
+    else:
+        print()
 
 
 @app.command()

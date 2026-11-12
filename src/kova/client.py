@@ -17,6 +17,9 @@ import httpx
 from kova.config import Config, ensure_token
 
 
+ASK_TITLE_PREFIX = "[ask] "
+
+
 class KovaError(RuntimeError):
     """A server error, or a connection failure when ``status`` is None."""
 
@@ -87,11 +90,16 @@ class KovaClient:
     def health(self) -> dict:
         return self._request("GET", "/health").json()
 
-    def create_chat(self) -> dict:
-        return self._request("POST", "/chats").json()
+    def create_chat(self, title: str | None = None) -> dict:
+        kwargs = {"json": {"title": title}} if title is not None else {}
+        return self._request("POST", "/chats", **kwargs).json()
 
-    def list_chats(self) -> list[dict]:
-        return self._request("GET", "/chats").json()
+    def list_chats(self, include_ask: bool = False) -> list[dict]:
+        """Chats, most recently used first. One-off ``kova ask`` chats are hidden unless asked for."""
+        chats = self._request("GET", "/chats").json()
+        if include_ask:
+            return chats
+        return [c for c in chats if not (c.get("title") or "").startswith(ASK_TITLE_PREFIX)]
 
     def get_chat(self, chat_id: str) -> dict | None:
         return self._request("GET", f"/chats/{chat_id}").json()
@@ -102,9 +110,10 @@ class KovaClient:
     def delete_chat(self, chat_id: str) -> bool:
         return self._request("DELETE", f"/chats/{chat_id}", missing_ok=True).status_code == 200
 
-    def stream_message(self, chat_id: str, text: str) -> Iterator[dict]:
-        """Stream one turn's events from the server."""
-        yield from self._stream("POST", f"/chats/{chat_id}/messages", json={"text": text})
+    def stream_message(self, chat_id: str, text: str, model: str | None = None) -> Iterator[dict]:
+        """Stream one turn's events; ``model`` overrides the active model for this turn only."""
+        payload = {"text": text} if model is None else {"text": text, "model": model}
+        yield from self._stream("POST", f"/chats/{chat_id}/messages", json=payload)
 
     def events(self) -> Iterator[dict]:
         """Stream background events (currently reminders) from the server."""
