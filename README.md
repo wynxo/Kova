@@ -84,7 +84,7 @@ has already started.
 
 ## Model setup
 
-`kova setup` finds a local model server, tests it, and saves it. For another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL` (add `--key KEY` if needed).
+`kova setup` finds a local model server, tests it, and saves it. No server on this computer? Type its address the way you think of it (`192.168.1.50`, `homelab:8080`, `openrouter`) and Kova tries the usual ports, or type `scan` to search your network (only when you ask). `kova model add NAME ADDRESS [MODEL]` takes the same loose addresses and picks the model if the server has only one. For another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL` (add `--key KEY` if needed).
 
 Kova works with OpenAI-compatible servers, including llama.cpp / PolyStrata, Ollama (`http://localhost:11434/v1`), and LM Studio (`http://localhost:1234/v1`). You can also add one manually with `kova model add NAME URL MODEL` then `kova model use NAME`.
 

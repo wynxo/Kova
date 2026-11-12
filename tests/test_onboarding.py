@@ -239,7 +239,7 @@ def test_wizard_retries_a_bad_typed_url(home, monkeypatch, no_live, capsys):
     onboarding.run_setup(load_config(), transport=fake.transport)
 
     out = capsys.readouterr().out
-    assert "Couldn't reach a model server at http://127.0.0.1:9999/v1/models." in out
+    assert "Nothing is listening on 127.0.0.1:9999 on this computer." in out
     assert load_config().active_model().base_url == "http://192.168.1.20:8080/v1"
 
 
