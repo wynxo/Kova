@@ -43,8 +43,9 @@ The CLI starts the server for you in the background, so normally you don't have 
 Inside `kova chat`:
 
 - `/new` — start a fresh chat
-- `/model` — switch model
-- `/exit` — leave the chat
+- `/model` — list models and mark the active one; `/model <name>` switches models
+- `/help` — list chat commands
+- `/exit` or `/quit` — leave the chat
 
 Memory:
 
@@ -53,7 +54,7 @@ Memory:
 - `kova memory show <slug>` — print one note
 - `kova memory add` — add a note
 - `kova memory rm <slug>` — delete a note
-- `kova memory use <path>` — switch the memory folder
+- `kova memory use <path> [--obsidian]` — switch the memory folder immediately, even while the server is running
 
 Models:
 

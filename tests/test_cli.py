@@ -65,6 +65,53 @@ def test_memory_add_list_rm(runner):
     assert removed.exit_code == 0, removed.output
 
 
+@pytest.mark.parametrize("obsidian", [False, True])
+def test_memory_use_updates_running_server(runner, tmp_path, monkeypatch, obsidian):
+    cli_runner, client, cfg, fake = runner
+    monkeypatch.setattr(cli, "KovaClient", lambda *args: client)
+    folder = tmp_path / "new-memory"
+    args = ["memory", "use", str(folder)] + (["--obsidian"] if obsidian else [])
+    result = cli_runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert load_config().memory_path == folder
+    assert cli_runner.invoke(cli.app, ["memory", "add", "New note", "new body"]).exit_code == 0
+    target = folder / "Kova" if obsidian else folder
+    assert (target / "new-note.md").is_file()
+    app = client.http.app
+    app.state.agent.tools["memory_save"].run({"title": "Tool note", "body": "tool body"})
+    assert (target / "tool-note.md").is_file()
+    assert app.state.agent.memory.search("Tool note")[0].title == "Tool note"
+
+
+def test_memory_use_offline(tmp_path, monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    def offline(*args):
+        raise httpx.ConnectError("offline")
+    monkeypatch.setattr(KovaClient, "memory_use", offline)
+    folder = tmp_path / "vault"
+    result = CliRunner().invoke(cli.app, ["memory", "use", str(folder), "--obsidian"])
+    assert result.exit_code == 0, result.output
+    cfg = load_config()
+    assert cfg.memory_path == folder
+    assert cfg.memory_write_subdir == "Kova"
+
+
+def test_chat_model_commands_and_help(runner):
+    cli_runner, client, cfg, fake = runner
+    client.model_add("other", "http://localhost:11434/v1", "qwen3")
+    result = cli_runner.invoke(cli.app, ["chat", "--new"],
+                               input="/model\n/model other\n/model missing\n/model\n/help\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "tiel —" in result.output and "tiel" in result.output
+    assert "Now using other." in result.output
+    assert "unknown model 'missing'" in result.output
+    assert "other — qwen3 @ http://localhost:11434/v1 (active)" in result.output
+    assert "Commands: /help, /new, /model [name], /exit, /quit" in result.output
+    assert cfg.active == "other"
+
+
 def test_reminders_add_list(runner):
     cli_runner, client, cfg, fake = runner
     added = cli_runner.invoke(cli.app, ["reminders", "add", "2030-01-01T10:00", "Buy milk"])
