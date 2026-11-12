@@ -30,7 +30,7 @@ Either way, Kova needs a model server before it can talk — see [Install](#inst
 
 ## Features
 
-- Streaming chat, with the model's reasoning shown dimmed
+- Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning
 - Remembers facts about you and brings the relevant ones into every chat
 - Web search and page reading
 - Reads and writes files in its own folder (`~/Kova Files` by default)
@@ -61,15 +61,19 @@ For example, a local llama.cpp or PolyStrata server, Ollama at `http://localhost
 
 The CLI starts the server for you in the background, so normally you don't have to think about it.
 
-- `kova chat [--new | --chat ID]` — interactive chat. Replies stream in, tool calls show as one-line badges, and reminders pop in while you chat. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides the model's reasoning.
+- `kova chat [--new | --chat ID]` — interactive chat with a compact model/server/memory header, live Markdown replies, and tool status lines. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides reasoning and its timing until you enable `/think`.
 - `kova ask "question"` — one question, one answer, printed to stdout. Good for scripts.
 
 Inside `kova chat`:
 
 - `/new` — start a fresh chat
 - `/model` — list models and mark the active one; `/model <name>` switches models
+- `/think` — toggle full reasoning; by default you see a spinner, then a compact elapsed-time summary
+- `/clear` — clear the screen without resetting the conversation
 - `/help` — list chat commands
 - `/exit` or `/quit` — leave the chat
+
+Use **↑** for this session's input history and **Tab** to complete slash commands. **Ctrl+C** stops the current reply and returns to the prompt (or clears unfinished input); **Ctrl+D** leaves. Piped input uses plain input without terminal animations.
 
 Memory:
 

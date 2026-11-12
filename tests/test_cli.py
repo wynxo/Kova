@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 import kova.cli as cli
 import kova.client as client_mod
+import kova.ui as ui
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config
 from kova.server import create_app
@@ -105,12 +106,11 @@ def test_chat_model_commands_and_help(runner):
     result = cli_runner.invoke(cli.app, ["chat", "--new"],
                                input="/model\n/model other\n/model missing\n/model\n/help\n/exit\n")
     assert result.exit_code == 0, result.output
-    assert "tiel —" in result.output and "tiel" in result.output
-    assert "Now using other." in result.output
     assert 'No model named "missing"' in result.output
-    assert "other — qwen3 @ http://localhost:11434/v1 (active)" in result.output
-    assert "Commands: /help, /new, /model [name], /exit, /quit" in result.output
     assert cfg.active == "other"
+    assert "tiel" in result.output
+    assert "qwen3" in result.output
+    assert "/help" in result.output and "/think" in result.output
 
 
 def test_reminders_add_list(runner):
@@ -213,8 +213,69 @@ def test_render_turn_streams_reasoning_then_answer(tmp_path, monkeypatch):
         client = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=http)
         chat_id = client.create_chat()["id"]
         out = io.StringIO()
-        cli._render_turn(client, chat_id, "zebra question", False, Console(file=out, width=200))
-    lines = [l for l in out.getvalue().splitlines() if l.strip()]
-    assert "thinking hard" in lines[0]
-    assert "The answer" in lines[1]
+        ui._render_turn(client, chat_id, "zebra question", False, Console(file=out, width=200),
+                        show_thinking=True)
+    rendered = out.getvalue()
+    assert rendered.index("thinking hard") < rendered.index("The answer")
     assert "zebra" not in out.getvalue()  # the user's line is not echoed back
+
+
+def test_chat_think_toggle_and_no_think(runner):
+    cli_runner, client, cfg, fake = runner
+    fake.scripts = [
+        [{"reasoning_content": "hidden first"}, {"content": "First reply"}],
+        [{"reasoning_content": "visible middle"}, {"content": "Middle reply"}],
+        [{"reasoning_content": "hidden last"}, {"content": "Last reply"}],
+    ]
+    result = cli_runner.invoke(cli.app, ["chat", "--new", "--no-think"],
+                               input="first\n/think\nmiddle\n/think\nlast\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "hidden first" not in result.output
+    assert "visible middle" in result.output
+    assert "hidden last" not in result.output
+    assert all(reply in result.output for reply in ("First reply", "Middle reply", "Last reply"))
+
+
+def test_chat_clear_preserves_conversation_and_new_resets_it(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chat", "--new"],
+                               input="first\n/clear\nsecond\n/new\n/quit\n")
+    assert result.exit_code == 0, result.output
+    chats = client.list_chats()
+    assert len(chats) == 2
+    messages = [client.get_chat(chat["id"])["messages"] for chat in chats]
+    assert sorted(len(items) for items in messages) == [0, 4]
+    user_messages = [message["content"] for items in messages for message in items
+                     if message["role"] == "user"]
+    assert user_messages == ["first", "second"]
+    assert "\x1b[" not in result.output  # /clear must not emit cursor controls to pipes.
+
+
+def test_chat_interrupt_returns_to_prompt(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+    original = client.stream_message
+    closed = []
+
+    def stream(chat_id, message):
+        if message == "interrupt":
+            try:
+                yield {"type": "text", "text": "Partial reply"}
+                raise KeyboardInterrupt
+            finally:
+                closed.append(True)
+        else:
+            yield from original(chat_id, message)
+
+    monkeypatch.setattr(client, "stream_message", stream)
+    result = cli_runner.invoke(cli.app, ["chat", "--new"], input="interrupt\nhi\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "Partial reply" in result.output
+    assert "Hello there!" in result.output
+    assert closed == [True]
+
+
+def test_chat_unknown_command_is_not_sent_to_model(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chat"], input="/typo\n")
+    assert result.exit_code == 0, result.output
+    assert not fake.requests

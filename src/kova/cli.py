@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import signal
 import sys
-import threading
 from pathlib import Path
 
 import typer
@@ -18,6 +17,7 @@ from typer.core import TyperGroup
 
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
+from kova.ui import _run_chat
 
 console = Console()
 
@@ -53,90 +53,6 @@ def get_client() -> KovaClient:
 
 
 # ---------------------------------------------------------------------------
-# Chat rendering
-# ---------------------------------------------------------------------------
-
-def _watch_reminders(client: KovaClient) -> None:
-    """Background thread: print reminder events as they arrive."""
-    watch_console = Console()
-    try:
-        for event in client.events():
-            if event.get("type") == "reminder":
-                watch_console.print(f"[green]⏰ {event['text']}[/green]")
-    except Exception:  # a dead server must never crash the chat
-        pass
-
-
-def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool, console: Console) -> None:
-    """Stream one turn, rendering reasoning, tools and replies live."""
-    last = None  # kind of the last streamed chunk, to break lines between thinking and answer
-    for event in client.stream_message(chat_id, text):
-        kind = event["type"]
-        if kind in ("reasoning", "text") and last in ("reasoning", "text") and kind != last:
-            console.print()
-        if kind == "reasoning":
-            if no_think:
-                continue
-            console.print(event["text"], end="", markup=False, soft_wrap=True, style="dim")
-        elif kind == "text":
-            console.print(event["text"], end="", markup=False, soft_wrap=True)
-        elif kind == "tool_call":
-            if last in ("reasoning", "text"):
-                console.print()
-            console.print(f"[bold yellow]⚙ {event['name']}[/bold yellow]")
-        elif kind == "tool_result":
-            summary = event["summary"][:100]
-            if event["ok"]:
-                console.print(f"[yellow]⚙ {event['name']} →[/yellow] {summary}")
-            else:
-                console.print(f"[red]✗ {event['name']}:[/red] {summary}")
-        elif kind == "error":
-            console.print(f"[red]Error: {event['message']}[/red]")
-        elif kind == "done":
-            break
-        last = kind
-    console.print()
-
-
-def _run_chat(client: KovaClient, chat_id: str, no_think: bool) -> None:
-    console.print("[dim]Type a message. Commands: /help, /new, /model, /model <name>, /exit, /quit.[/dim]")
-    threading.Thread(target=_watch_reminders, args=(client,), daemon=True).start()
-    while True:
-        try:
-            line = console.input("[cyan]⚡ [/cyan]")
-        except (EOFError, KeyboardInterrupt):
-            break
-        stripped = line.strip()
-        if stripped in ("/exit", "/quit"):
-            break
-        if stripped == "/new":
-            chat_id = client.create_chat()["id"]
-            console.print("[dim]Started a new chat.[/dim]")
-            continue
-        if stripped == "/help":
-            console.print("Commands: /help, /new, /model [name], /exit, /quit", markup=False)
-            continue
-        if stripped == "/model" or stripped.startswith("/model "):
-            parts = stripped.split(maxsplit=1)
-            if len(parts) == 1:
-                _list_models(client)
-            else:
-                try:
-                    client.model_use(parts[1])
-                    console.print(f"[dim]Now using {parts[1]}.[/dim]")
-                except KovaError as exc:
-                    if exc.status != 404:
-                        raise
-                    console.print(f'[red]No model named "{parts[1]}". Type /model to see them.[/red]')
-            continue
-        if not stripped:
-            continue
-        _render_turn(client, chat_id, stripped, no_think, console)
-
-
-# ---------------------------------------------------------------------------
-# Top-level commands
-# ---------------------------------------------------------------------------
 
 @app.command("ask")
 def ask(text: str):
@@ -160,13 +76,7 @@ def chat(
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
-    client = get_client()
-    if chat:
-        chat_id = chat
-    else:
-        chats = client.list_chats()
-        chat_id = chats[0]["id"] if (chats and not new) else client.create_chat()["id"]
-    _run_chat(client, chat_id, no_think)
+    _run_chat(get_client(), chat_id=chat, new=new, no_think=no_think, console=console)
 
 
 @app.command()
