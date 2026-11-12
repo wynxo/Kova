@@ -124,6 +124,9 @@ class Agent:
         prompt = build_system_prompt(self.now(), list(self.tools), memories)
         entry = (next(m for m in self.config.models if m.name == model)
                  if model is not None else self.config.active_model())
+        if not entry.model:
+            yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
+            return
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(self.tools)
         try:

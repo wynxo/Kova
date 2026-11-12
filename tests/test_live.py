@@ -1,7 +1,7 @@
-"""End-to-end smoke test against the real local Tiel model.
+"""End-to-end smoke test against a real local model server.
 
 Runs the FastAPI server in-process (via ``create_app`` + ``TestClient``) over a
-throwaway ``KOVA_HOME`` whose default model points at the homelab Tiel. Skipped
+throwaway ``KOVA_HOME`` pointed at the server in KOVA_LIVE_URL. Skipped
 unless ``KOVA_LIVE=1``. Does not need a GPU; it only needs the model reachable.
 """
 
@@ -14,7 +14,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from kova.config import ensure_token, load_config
+from kova.config import ModelEntry, ensure_token, load_config
 from kova.server import create_app
 
 # The real model can take a while to think, so give the in-process server and
@@ -75,8 +75,13 @@ def _new_chat(client: TestClient, token: str) -> str:
 
 @pytest.fixture
 def live(tmp_path):
-    """A live server over a fresh KOVA_HOME wired to the real default Tiel model."""
+    """A live server over a fresh KOVA_HOME wired to a real model server.
+
+    Point it at yours with KOVA_LIVE_URL (e.g. http://127.0.0.1:11434/v1) and KOVA_LIVE_MODEL.
+    """
     cfg = load_config(tmp_path)
+    cfg.models = [ModelEntry("live", os.environ["KOVA_LIVE_URL"], os.environ["KOVA_LIVE_MODEL"])]
+    cfg.active = "live"
     token = ensure_token(tmp_path)
     with TestClient(create_app(cfg)) as client:
         yield client, token
@@ -85,7 +90,7 @@ def live(tmp_path):
 @pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("KOVA_LIVE") != "1",
-    reason="set KOVA_LIVE=1 to run against the real Tiel model",
+    reason="set KOVA_LIVE=1 to run against a real model (also set KOVA_LIVE_URL and KOVA_LIVE_MODEL)",
 )
 def test_live_identity_contains_kova(live):
     client, token = live
@@ -96,7 +101,7 @@ def test_live_identity_contains_kova(live):
 @pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("KOVA_LIVE") != "1",
-    reason="set KOVA_LIVE=1 to run against the real Tiel model",
+    reason="set KOVA_LIVE=1 to run against a real model (also set KOVA_LIVE_URL and KOVA_LIVE_MODEL)",
 )
 def test_live_memory_recall_across_chats(live):
     client, token = live

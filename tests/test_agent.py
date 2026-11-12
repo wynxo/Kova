@@ -128,3 +128,17 @@ def test_repair_tool_pairs_fills_missing_results():
     assert [m.get("tool_call_id") for m in fixed if m["role"] == "tool"] == ["a", "b"]
     assert fixed[-1] == {"role": "user", "content": "again"}
     assert repair_tool_pairs(fixed) == fixed
+
+
+@pytest.mark.real_default
+async def test_fresh_install_asks_for_setup_instead_of_calling_a_model(tmp_path):
+    from kova.agent import Agent
+    from kova.config import load_config
+    from kova.memory import Memory
+    from kova.store import Store
+
+    cfg = load_config(tmp_path)
+    agent = Agent(cfg, Store(tmp_path / "kova.db"), Memory(tmp_path / "memory"), {})
+    chat = agent.store.create_chat()
+    events = [e async for e in agent.run_turn(chat["id"], "hi")]
+    assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]

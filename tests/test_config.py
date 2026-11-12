@@ -1,15 +1,18 @@
+import pytest
+
 from kova.config import ModelEntry, ensure_token, kova_home, load_config, save_config
 
 
+@pytest.mark.real_default
 def test_default_config_created(tmp_path):
     cfg = load_config(tmp_path)
     assert (tmp_path / "config.toml").exists()
     m = cfg.active_model()
     assert (m.name, m.base_url, m.model, m.context) == (
-        "tiel",
-        "http://192.168.178.29:8080/v1",
-        "cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs",
-        131072,
+        "local",
+        "http://127.0.0.1:11434/v1",
+        "",
+        32768,
     )
     assert cfg.port == 7700
     assert cfg.memory_path == tmp_path / "memory"

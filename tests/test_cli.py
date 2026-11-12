@@ -46,7 +46,7 @@ def test_model_list_and_use(runner):
     cli_runner, client, cfg, fake = runner
     listed = cli_runner.invoke(cli.app, ["model", "list"])
     assert listed.exit_code == 0, listed.output
-    assert "tiel" in listed.output
+    assert "local" in listed.output
 
     added = cli_runner.invoke(cli.app, ["model", "add", "ollama", "http://localhost:11434/v1", "qwen3"])
     assert added.exit_code == 0, added.output
@@ -110,7 +110,7 @@ def test_chat_model_commands_and_help(runner):
     assert result.exit_code == 0, result.output
     assert 'No model named "missing"' in result.output
     assert cfg.active == "other"
-    assert "tiel" in result.output
+    assert "local" in result.output
     assert "qwen3" in result.output
     assert "/help" in result.output and "/think" in result.output
 
@@ -423,8 +423,8 @@ def test_ask_model_override_is_one_shot(runner):
     assert result.exit_code == 0, result.output
     assert fake.requests[0]["model"] == "qwen3"
     assert json.loads(result.stdout)["model"] == "other"
-    assert cfg.active == "tiel"
-    assert client.health()["model"] == "tiel"
+    assert cfg.active == "local"
+    assert client.health()["model"] == "local"
 
 
 def test_ask_unknown_model_fails_on_stderr(runner):
@@ -443,7 +443,7 @@ def test_ask_json_output(runner):
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
     assert data["answer"] == "Rex!"
-    assert data["model"] == "tiel"
+    assert data["model"] == "local"
     assert data["tools"] == ["memory_search"]
     assert client.get_chat(data["chat_id"]) is not None
 

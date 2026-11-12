@@ -10,11 +10,13 @@ from pathlib import Path
 
 import tomli_w
 
+# A placeholder until `kova setup` picks a real server and model: Ollama's usual
+# address, no model chosen yet. The agent asks the user to run setup until then.
 DEFAULT_MODEL = {
-    "name": "tiel",
-    "base_url": "http://192.168.178.29:8080/v1",
-    "model": "cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs",
-    "context": 131072,
+    "name": "local",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "model": "",
+    "context": 32768,
 }
 
 

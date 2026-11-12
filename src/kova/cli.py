@@ -187,10 +187,11 @@ def chat(
     """Chat with Kova; replies stream live. Type /exit to leave."""
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
+        configured = any(m.model for m in cfg.models)
         question = (f"Can't reach your model \"{cfg.active}\" right now. Run the setup wizard?"
-                    if cfg.models else "Kova isn't set up yet. Run the setup wizard first?")
+                    if configured else "Kova isn't set up yet. Run the setup wizard first?")
         # An offline homelab is common: default to "no" so chat still opens.
-        if typer.confirm(question, default=not cfg.models):
+        if typer.confirm(question, default=not configured):
             onboarding.run_setup(cfg)
     client = get_client()
     if resume:

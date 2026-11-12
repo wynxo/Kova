@@ -98,7 +98,7 @@ class FakeServers:
 def test_detect_servers_probes_in_parallel_and_ignores_silence():
     fake = FakeServers({
         "http://127.0.0.1:11434": ["qwen3:8b", "llama3.2"],
-        "http://127.0.0.1:8080": ["tiel"],
+        "http://127.0.0.1:8080": ["local"],
     })
     found = onboarding.detect_servers(transport=fake.transport)
     assert [server.label for server in found] == ["Ollama", "llama.cpp / PolyStrata"]
@@ -217,13 +217,13 @@ def test_wizard_enter_picks_first_model(home, monkeypatch, no_live):
 
 
 def test_wizard_accepts_typed_url_when_nothing_found(home, monkeypatch, no_live, capsys):
-    fake = FakeServers({"http://192.168.1.20:8080": ["tiel"]})
+    fake = FakeServers({"http://192.168.1.20:8080": ["local"]})
     feed(monkeypatch, "http://192.168.1.20:8080", "", "", "")
 
     onboarding.run_setup(load_config(), transport=fake.transport)
 
     saved = load_config()
-    assert saved.active_model().model == "tiel"
+    assert saved.active_model().model == "local"
     assert saved.active_model().base_url == "http://192.168.1.20:8080/v1"
     assert saved.active_model().name == "192-168-1-20-8080"
     out = capsys.readouterr().out
@@ -232,7 +232,7 @@ def test_wizard_accepts_typed_url_when_nothing_found(home, monkeypatch, no_live,
 
 
 def test_wizard_retries_a_bad_typed_url(home, monkeypatch, no_live, capsys):
-    fake = FakeServers({"http://192.168.1.20:8080": ["tiel"]})
+    fake = FakeServers({"http://192.168.1.20:8080": ["local"]})
     feed(monkeypatch, "http://127.0.0.1:9999", "http://192.168.1.20:8080", "", "")
 
     onboarding.run_setup(load_config(), transport=fake.transport)
@@ -297,7 +297,7 @@ def test_wizard_declining_a_failed_test_saves_nothing(home, monkeypatch, no_live
     with pytest.raises(onboarding.SetupError, match="Nothing saved"):
         onboarding.run_setup(load_config(), transport=fake.transport)
 
-    assert load_config().active == "tiel"
+    assert load_config().active == "local"
 
 
 # ---------------------------------------------------------------------------
@@ -307,12 +307,12 @@ def test_wizard_declining_a_failed_test_saves_nothing(home, monkeypatch, no_live
 
 def test_flags_do_it_without_prompts(home, monkeypatch, no_live, capsys):
     no_input(monkeypatch)
-    fake = FakeServers({"http://192.168.1.20:8080": ["tiel"]})
+    fake = FakeServers({"http://192.168.1.20:8080": ["local"]})
 
     onboarding.run_setup(
         load_config(),
         url="http://192.168.1.20:8080",
-        model="tiel",
+        model="local",
         name="homelab",
         api_key="sk-x",
         yes=True,
@@ -324,10 +324,10 @@ def test_flags_do_it_without_prompts(home, monkeypatch, no_live, capsys):
     entry = saved.active_model()
     assert (entry.base_url, entry.model, entry.api_key) == (
         "http://192.168.1.20:8080/v1",
-        "tiel",
+        "local",
         "sk-x",
     )
-    assert fake.chat_requests[0]["model"] == "tiel"
+    assert fake.chat_requests[0]["model"] == "local"
     assert "Bearer sk-x" in fake.auth
     assert "You're set. Run: kova chat" in capsys.readouterr().out
 
@@ -365,7 +365,7 @@ def test_flags_fail_clearly_when_nothing_answers(home, no_live):
     fake = FakeServers({})
 
     with pytest.raises(onboarding.SetupError, match="Couldn't reach"):
-        onboarding.run_setup(load_config(), url="http://192.168.1.20:8080", model="tiel", transport=fake.transport)
+        onboarding.run_setup(load_config(), url="http://192.168.1.20:8080", model="local", transport=fake.transport)
 
 
 def test_flags_need_model_when_server_lists_none(home, no_live):
@@ -381,7 +381,7 @@ def test_flags_refuse_to_save_a_failing_test_without_yes(home, no_live):
     with pytest.raises(onboarding.SetupError, match="--yes"):
         onboarding.run_setup(load_config(), url="http://127.0.0.1:11434", model="qwen3", transport=fake.transport)
 
-    assert load_config().active == "tiel"
+    assert load_config().active == "local"
 
 
 def test_flags_save_a_failing_test_with_yes(home, monkeypatch, no_live, capsys):
@@ -399,7 +399,7 @@ def test_flags_save_a_failing_test_with_yes(home, monkeypatch, no_live, capsys):
 
 def test_flags_reject_model_or_name_without_url(home, no_live):
     with pytest.raises(onboarding.SetupError, match="--url"):
-        onboarding.run_setup(load_config(), model="tiel")
+        onboarding.run_setup(load_config(), model="local")
     with pytest.raises(onboarding.SetupError, match="--url"):
         onboarding.run_setup(load_config(), name="homelab")
 
@@ -438,7 +438,7 @@ def test_live_server_takes_the_change_without_rewriting_config(home, monkeypatch
     assert live.added == ("ollama", "http://127.0.0.1:11434/v1", "qwen3", None)
     assert live.used == "ollama"
     assert live.memory is None
-    assert load_config().active == "tiel"  # the live server owns the config, not this process
+    assert load_config().active == "local"  # the live server owns the config, not this process
 
 
 def test_live_server_gets_the_obsidian_folder(home, monkeypatch, tmp_path):
@@ -460,7 +460,7 @@ def test_live_server_gets_the_obsidian_folder(home, monkeypatch, tmp_path):
 
 
 def test_cli_setup_forwards_flags(home, monkeypatch, no_live, capsys):
-    fake = FakeServers({"http://192.168.1.20:8080": ["tiel"]})
+    fake = FakeServers({"http://192.168.1.20:8080": ["local"]})
     calls = {}
     real = onboarding.run_setup
 
@@ -471,14 +471,14 @@ def test_cli_setup_forwards_flags(home, monkeypatch, no_live, capsys):
     monkeypatch.setattr(onboarding, "run_setup", spy)
     result = CliRunner().invoke(
         cli.app,
-        ["setup", "--url", "http://192.168.1.20:8080", "--model", "tiel",
+        ["setup", "--url", "http://192.168.1.20:8080", "--model", "local",
          "--name", "homelab", "--key", "sk-x", "--yes"],
     )
 
     assert result.exit_code == 0, result.output
     assert calls == {
         "url": "http://192.168.1.20:8080",
-        "model": "tiel",
+        "model": "local",
         "name": "homelab",
         "api_key": "sk-x",
         "yes": True,
@@ -491,7 +491,7 @@ def test_cli_setup_shows_a_friendly_error(home, monkeypatch):
         raise onboarding.SetupError("Couldn't reach a model server.")
 
     monkeypatch.setattr(onboarding, "run_setup", explode)
-    result = CliRunner().invoke(cli.app, ["setup", "--url", "http://192.168.1.20:8080", "--model", "tiel"])
+    result = CliRunner().invoke(cli.app, ["setup", "--url", "http://192.168.1.20:8080", "--model", "local"])
 
     assert result.exit_code == 1, result.output
     assert result.output.strip() == "Couldn't reach a model server."

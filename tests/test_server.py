@@ -77,7 +77,7 @@ def test_health_ok_when_model_down(tmp_path, monkeypatch):
     with TestClient(app) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"version": __version__, "model": "tiel", "model_ok": False}
+    assert response.json() == {"version": __version__, "model": "local", "model_ok": False}
 
 
 def test_chat_stream_events(server):
