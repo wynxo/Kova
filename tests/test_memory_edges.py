@@ -62,11 +62,6 @@ def test_search_limit_zero_and_one(tmp_path):
     assert [n.body for n in mem.search("dog", limit=1)] == ["two"]  # title hit x3 wins
 
 
-@pytest.mark.xfail(
-    reason="bug: Memory.search splits the query on whitespace only, so punctuation "
-           "attached to a word (\"dog's\", \"Rex!\") never matches the note text",
-    strict=True,
-)
 def test_search_matches_words_with_attached_punctuation(tmp_path):
     mem = Memory(tmp_path)
     mem.save("Dog", "Rex is my dog")
@@ -96,11 +91,6 @@ def test_save_roundtrips_emoji_and_unicode(tmp_path):
     assert [n.title for n in mem.search("pets")] == ["🐶 Dog walk"]
 
 
-@pytest.mark.xfail(
-    reason="bug: emoji-only titles both slugify to 'note', so saving a second one "
-           "silently overwrites the first (data loss)",
-    strict=True,
-)
 def test_emoji_only_titles_are_saved_separately(tmp_path):
     mem = Memory(tmp_path)
     mem.save("🐶", "dog note")
@@ -135,13 +125,6 @@ def test_body_may_contain_frontmatter_delimiters(tmp_path):
         "\ufeff---\ntitle: Secret\ntags:\n  - x\n---\nbody\n",
     ],
     ids=["frontmatter-at-end-of-file", "frontmatter-after-utf8-bom"],
-)
-@pytest.mark.xfail(
-    reason="bug: frontmatter is only detected when the file starts with exactly "
-           "'---\\n' and the closing '---' is followed by a newline, so a UTF-8 BOM "
-           "or a note ending with its frontmatter loses its title/tags and leaks "
-           "the YAML into the body",
-    strict=True,
 )
 def test_frontmatter_variants_are_parsed(tmp_path, text):
     (tmp_path / "note.md").write_text(text)
