@@ -84,7 +84,7 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool, co
 
 
 def _run_chat(client: KovaClient, chat_id: str, no_think: bool) -> None:
-    console.print("[dim]Type a message. Commands: /new, /model <name>, /exit.[/dim]")
+    console.print("[dim]Type a message. Commands: /help, /new, /model, /model <name>, /exit, /quit.[/dim]")
     threading.Thread(target=_watch_reminders, args=(client,), daemon=True).start()
     while True:
         try:
@@ -98,11 +98,19 @@ def _run_chat(client: KovaClient, chat_id: str, no_think: bool) -> None:
             chat_id = client.create_chat()["id"]
             console.print("[dim]Started a new chat.[/dim]")
             continue
-        if stripped.startswith("/model"):
+        if stripped == "/help":
+            console.print("Commands: /help, /new, /model [name], /exit, /quit", markup=False)
+            continue
+        if stripped == "/model" or stripped.startswith("/model "):
             parts = stripped.split(maxsplit=1)
-            if len(parts) == 2:
-                client.model_use(parts[1])
-                console.print(f"[dim]Now using {parts[1]}.[/dim]")
+            if len(parts) == 1:
+                _list_models(client)
+            else:
+                result = client.model_use(parts[1])
+                if "detail" in result:
+                    console.print(f"[red]{result['detail']}[/red]")
+                else:
+                    console.print(f"[dim]Now using {parts[1]}.[/dim]")
             continue
         if not stripped:
             continue
@@ -195,10 +203,16 @@ def status():
 # ---------------------------------------------------------------------------
 
 
+def _list_models(client: KovaClient) -> None:
+    active = client.health()["model"]
+    for entry in client.models_list():
+        marker = " (active)" if entry["name"] == active else ""
+        console.print(f"[bold]{entry['name']}[/bold] — {entry['model']} @ {entry['base_url']}{marker}")
+
+
 @_model.command("list")
 def model_list():
-    for entry in get_client().models_list():
-        console.print(f"[bold]{entry['name']}[/bold] — {entry['model']} @ {entry['base_url']}")
+    _list_models(get_client())
 
 
 @_model.command("add")
@@ -251,9 +265,13 @@ def memory_rm(slug: str):
 @_memory.command("use")
 def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
     cfg = load_config()
-    cfg.memory_path = Path(path)
+    cfg.memory_path = Path(path).expanduser().resolve()
     cfg.memory_write_subdir = "Kova" if obsidian else None
-    save_config(cfg)
+    client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
+    try:
+        client.memory_use(str(cfg.memory_path), obsidian)
+    except httpx.ConnectError:
+        save_config(cfg)
     suffix = " (Obsidian mode)" if obsidian else ""
     console.print(f"Memory folder set to {path}{suffix}.")
 

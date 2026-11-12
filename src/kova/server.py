@@ -8,6 +8,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -36,6 +37,12 @@ class NoteBody(BaseModel):
     title: str
     body: str
     tags: list[str] = Field(default_factory=list)
+
+
+class MemoryLocationBody(BaseModel):
+    """The root and write mode for memory."""
+    path: str
+    obsidian: bool = False
 
 
 class ReminderBody(BaseModel):
@@ -90,11 +97,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     now: Callable[[], datetime] = app.state.now
     store = Store(config.home / "kova.db")
     memory = Memory(config.memory_path, config.memory_write_subdir)
-    tools = build_tools(ToolContext(config, store, memory, now))
+    tool_context = ToolContext(config, store, memory, now)
+    tools = build_tools(tool_context)
     agent = Agent(config, store, memory, tools, transport=app.state.transport, now=now)
     bus = EventBus()
     app.state.store = store
     app.state.memory = memory
+    app.state.tool_context = tool_context
     app.state.agent = agent
     app.state.bus = bus
     reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
@@ -201,6 +210,18 @@ def create_app(
 
         return StreamingResponse(drain(), media_type="text/event-stream")
 
+
+    @api.post("/memory/location")
+    async def memory_use(body: MemoryLocationBody) -> dict:
+        memory = Memory(Path(body.path), "Kova" if body.obsidian else None)
+        config.memory_path = memory.root
+        config.memory_write_subdir = memory.write_subdir
+        save_config(config)
+        # No await: requests and new tool calls see the replacement together.
+        app.state.memory = memory
+        app.state.agent.memory = memory
+        app.state.tool_context.memory = memory
+        return {"ok": True}
     @api.get("/memory")
     async def memory_list(q: str | None = None) -> list[dict]:
         mem = app.state.memory
