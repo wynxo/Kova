@@ -1,67 +1,74 @@
-#!/usr/bin/env bash
-# Install Kova: uv, its dependencies, and the `kova` command on your PATH.
-# Safe to run again: it updates what is already there.
-set -euo pipefail
-
-cd -- "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-say() { printf '%s\n' "$*"; }
-
-find_uv() {
-    if command -v uv >/dev/null 2>&1; then
-        command -v uv
-        return 0
-    fi
-    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
-        if [ -x "$candidate" ]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
+#!/bin/sh
+# curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh
+# Keep all executable work inside main: an incomplete download cannot install.
+main() {
+    set -eu
+    say() { printf '%s\n' "$*"; }
+    die() { say "Error: $*" >&2; exit 1; }
+    ref=${KOVA_REF-main}
+    dev=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --ref) [ "$#" -ge 2 ] || die '--ref needs a value'; ref=$2; shift 2 ;;
+            --dev) dev=1; shift ;;
+            -h|--help) say 'Usage: install.sh [--ref REF] [--dev]'; return 0 ;;
+            *) die "Unknown option: $1" ;;
+        esac
     done
-    return 1
-}
+    case "$ref" in ''|-*|*[!a-zA-Z0-9_./-]*) die 'Invalid ref: use a branch, tag, or commit SHA.' ;; esac
+    [ "$(id -u)" != 0 ] && [ -z "${SUDO_USER-}" ] && [ -z "${SUDO_UID-}" ] ||
+        die 'Run as your normal user, without root or sudo.'
+    [ -n "${HOME-}" ] && [ "$HOME" != / ] || die 'HOME must be your user home directory.'
 
-say "Kova installer"
-say ""
-
-UV="$(find_uv || true)"
-if [ -z "$UV" ]; then
-    say "uv is not installed. Installing it now from https://astral.sh/uv ..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    UV="$(find_uv || true)"
-    if [ -z "$UV" ]; then
-        say "uv's installer ran, but uv still was not found."
-        say "Close this terminal, open a new one, and run ./install.sh again."
-        exit 1
+    # Explicit user paths: never write to a global/XDG tool or Python location.
+    UV_TOOL_BIN_DIR="$HOME/.local/bin"
+    UV_TOOL_DIR="$HOME/.local/share/uv/tools"
+    UV_PYTHON_INSTALL_DIR="$HOME/.local/share/uv/python"
+    UV_CACHE_DIR="$HOME/.cache/uv"
+    export UV_TOOL_BIN_DIR UV_TOOL_DIR UV_PYTHON_INSTALL_DIR UV_CACHE_DIR
+    uv=''
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        if [ -x "$candidate" ]; then uv=$candidate; break; fi
+    done
+    if [ -z "$uv" ]; then uv=$(command -v uv || true); fi
+    if [ -z "$uv" ]; then
+        say 'Installing uv from https://astral.sh/uv/install.sh ...'
+        command -v curl >/dev/null 2>&1 || die 'curl is required to install uv.'
+        # Download completely before executing; never edit shell startup files.
+        mkdir -p "$HOME/.local/bin"
+        uv_installer=$(mktemp "$HOME/.local/bin/.uv-install.XXXXXX")
+        trap 'rm -f "$uv_installer"' 0
+        curl -fsSL https://astral.sh/uv/install.sh -o "$uv_installer"
+        UV_UNMANAGED_INSTALL="$HOME/.local/bin" sh "$uv_installer"
+        rm -f "$uv_installer"
+        trap - 0
+        uv="$HOME/.local/bin/uv"
+        [ -x "$uv" ] || die 'uv was not found after installation.'
     fi
-    say "Installed uv at $UV."
-else
-    say "Using uv at $UV."
-fi
-
-PATH="$(dirname -- "$UV"):$PATH"
-export PATH
-
-say ""
-say "Installing Kova's dependencies (uv sync) ..."
-"$UV" sync
-
-say ""
-if "$UV" tool list 2>/dev/null | grep -q '^kova '; then
-    say "Updating the kova command ..."
-    "$UV" tool install --editable . --force
-else
-    say "Installing the kova command ..."
-    "$UV" tool install --editable .
-fi
-
-say ""
-if ! command -v kova >/dev/null 2>&1; then
-    say "Note: the kova command was installed, but its folder is not on your PATH."
-    say "Add this to your shell profile and restart the terminal:"
-    say "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-    say ""
-fi
-
-say "Done. Now run: kova chat"
-say "First time? Point Kova at a model server: kova model add NAME URL MODEL"
+    say "Using uv at $uv."
+    if [ "$dev" -eq 1 ]; then
+        # --dev is a checkout-only path; piped installs use GitHub by default.
+        source=${KOVA_SOURCE-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}
+        [ -f "$source/pyproject.toml" ] || die '--dev needs a checkout (or KOVA_SOURCE).'
+    elif [ -n "${KOVA_SOURCE-}" ]; then
+        source=$KOVA_SOURCE
+    elif command -v git >/dev/null 2>&1; then
+        source="kova-ai @ git+https://github.com/wynxo/Kova@$ref"
+    else
+        say 'git was not found; using the GitHub source archive.'
+        source="kova-ai @ https://github.com/wynxo/Kova/archive/$ref.tar.gz"
+    fi
+    # Future PyPI switch: replace source above with source='kova-ai==VERSION'.
+    say "Installing/updating Kova: $source"
+    if [ "$dev" -eq 1 ]; then
+        "$uv" tool install --force --refresh --python 3.12 --editable "$source"
+    else
+        "$uv" tool install --force --refresh --python 3.12 "$source"
+    fi
+    say 'To use kova in this terminal, run (or add to your shell profile):'
+    # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
+    say '  export PATH="$HOME/.local/bin:$PATH"'
+    say 'Done. Run: kova setup'
+    say 'Then: kova chat'
+}
+main "$@"

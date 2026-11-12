@@ -1,0 +1,158 @@
+"""Backup export/import: contents, secrets, Obsidian scope and round-trips."""
+
+import json
+import zipfile
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from kova.backup import BackupError, export_archive, import_archive
+from kova.config import ensure_token, load_config, save_config
+from kova.memory import Memory
+from kova.store import Store
+
+
+def _home(tmp_path, name="home"):
+    cfg = load_config(tmp_path / name)
+    cfg.models[0].api_key = "top-secret-key"
+    save_config(cfg)
+    ensure_token(cfg.home)
+    return cfg
+
+
+def _seed(cfg):
+    store = Store(cfg.home / "kova.db")
+    chat = store.create_chat("Apple pie")
+    store.add_message(chat["id"], "user", "How do I bake an apple pie?")
+    store.add_message(chat["id"], "assistant", "Use apples, flour and butter.")
+    Memory(cfg.memory_path).save("Dog", "Rex is a good dog")
+    store.add_reminder(datetime.now(timezone.utc) + timedelta(days=1), "Buy milk")
+    return store, chat["id"]
+
+
+def test_export_contains_chats_notes_reminders_and_safe_config(tmp_path):
+    cfg = _home(tmp_path)
+    _, chat_id = _seed(cfg)
+    target = tmp_path / "backup.zip"
+
+    stats = export_archive(cfg, target)
+
+    assert stats["chats"] == 1 and stats["notes"] == 1 and stats["reminders"] == 1
+    with zipfile.ZipFile(target) as archive:
+        names = set(archive.namelist())
+        assert "token" not in names
+        assert f"chats/{chat_id}.json" in names
+        assert f"chats/{chat_id}.md" in names
+        assert "memory/dog.md" in names
+        assert "reminders.json" in names
+        assert "config.toml" in names and "manifest.json" in names
+
+        config_text = archive.read("config.toml").decode()
+        assert "top-secret-key" not in config_text
+        assert "api_key" not in config_text
+        assert "local" in config_text
+
+        readme = archive.read("README.txt").decode()
+        assert "without API keys" in readme
+        assert "token" in readme
+
+        chat = json.loads(archive.read(f"chats/{chat_id}.json"))
+        assert chat["title"] == "Apple pie"
+        assert [m["role"] for m in chat["messages"]] == ["user", "assistant"]
+        assert "created" in chat["messages"][0]
+
+        markdown = archive.read(f"chats/{chat_id}.md").decode()
+        assert "# Apple pie" in markdown
+        assert "## You" in markdown and "## Kova" in markdown
+        assert "Use apples, flour and butter." in markdown
+
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["format"] == "kova-backup"
+        assert manifest["api_keys"] == "omitted"
+        assert manifest["token"] == "omitted"
+
+
+def test_export_in_obsidian_mode_only_includes_kova_folder(tmp_path):
+    cfg = load_config(tmp_path / "home")
+    vault = tmp_path / "vault"
+    cfg.memory_path = vault
+    cfg.memory_write_subdir = "Kova"
+    save_config(cfg)
+    Memory(vault, "Kova").save("Kova note", "mine")
+    (vault / "Personal.md").write_text("# Personal\nnot Kova's\n")
+
+    target = tmp_path / "backup.zip"
+    export_archive(cfg, target)
+
+    with zipfile.ZipFile(target) as archive:
+        names = set(archive.namelist())
+    assert "memory/kova-note.md" in names
+    assert "memory/personal.md" not in names
+    assert all("Personal" not in name for name in names)
+
+
+def test_import_round_trip_and_merge_skips_existing(tmp_path):
+    source = _home(tmp_path, "source")
+    _, chat_id = _seed(source)
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+
+    target = load_config(tmp_path / "target")
+    assert not (target.home / "token").exists()
+    stats = import_archive(target, backup)
+    assert (stats["chats"], stats["notes"], stats["reminders"]) == (1, 1, 1)
+
+    store = Store(target.home / "kova.db")
+    chat = store.get_chat(chat_id)
+    assert chat["title"] == "Apple pie"
+    assert [m["content"] for m in chat["messages"]] == [
+        "How do I bake an apple pie?",
+        "Use apples, flour and butter.",
+    ]
+    notes = Memory(target.memory_path).list()
+    assert [note.slug for note in notes] == ["dog"]
+    assert [reminder["text"] for reminder in store.list_reminders()] == ["Buy milk"]
+    assert not (target.home / "token").exists()
+    assert target.models[0].api_key is None
+    assert [result["id"] for result in store.search_chats("apple")] == [chat_id]
+
+    again = import_archive(target, backup)
+    assert (again["chats"], again["notes"], again["reminders"]) == (0, 0, 0)
+    assert (again["chats_skipped"], again["notes_skipped"], again["reminders_skipped"]) == (1, 1, 1)
+    assert len(store.list_chats()) == 1
+    assert len(Memory(target.memory_path).list()) == 1
+    assert len(store.list_reminders()) == 1
+
+
+def test_replace_clears_local_data_and_restores_config_keys(tmp_path):
+    source = _home(tmp_path, "source")
+    _, chat_id = _seed(source)
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+
+    target = load_config(tmp_path / "target")
+    target.models[0].api_key = "keep-this-local-key"
+    save_config(target)
+    store = Store(target.home / "kova.db")
+    extra = store.create_chat("extra")
+    store.add_message(extra["id"], "user", "extra chat")
+    Memory(target.memory_path).save("Extra", "delete me")
+    store.add_reminder(datetime.now(timezone.utc) + timedelta(days=2), "extra reminder")
+
+    stats = import_archive(target, backup, merge=False)
+    assert stats["chats"] == 1 and stats["notes"] == 1 and stats["reminders"] == 1
+    assert stats["config_restored"] is True
+
+    assert [c["id"] for c in store.list_chats()] == [chat_id]
+    assert [note.slug for note in Memory(target.memory_path).list()] == ["dog"]
+    assert [reminder["text"] for reminder in store.list_reminders()] == ["Buy milk"]
+    reloaded = load_config(target.home)
+    assert reloaded.models[0].api_key == "keep-this-local-key"
+
+
+def test_import_rejects_a_non_kova_zip(tmp_path):
+    path = tmp_path / "random.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("hello.txt", "not a backup")
+    with pytest.raises(BackupError):
+        import_archive(load_config(tmp_path / "home"), path)

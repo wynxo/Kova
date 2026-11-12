@@ -183,3 +183,13 @@ def test_reminders_sorted_by_real_time_across_timezones(tmp_path):
     a = store.add_reminder(datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc), "later")
     b = store.add_reminder(datetime(2026, 11, 12, 10, 0, tzinfo=berlin), "earlier")
     assert [r["id"] for r in store.list_reminders()] == [b, a]
+
+
+def test_import_chat_keeps_mode_and_web(tmp_path):
+    store = Store(tmp_path / "kova.db")
+    assert store.import_chat({"id": "abc", "title": "t", "mode": "chat", "web": False, "messages": []})
+    chat = store.get_chat("abc")
+    assert chat["mode"] == "chat" and chat["web"] is False
+    assert store.import_chat({"id": "old", "messages": []})  # backups from before modes
+    old = store.get_chat("old")
+    assert old["mode"] == "work" and old["web"] is True
