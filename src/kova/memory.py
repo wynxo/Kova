@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import tempfile
@@ -12,7 +13,8 @@ from pathlib import Path
 
 import yaml
 
-_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+# Tolerates a UTF-8 BOM, CRLF line ends, and a note that ends right after its frontmatter.
+_FRONTMATTER = re.compile(r"\A\ufeff?---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 _SAFE_SLUG = re.compile(r"\A\w[\w .-]*\Z")
 
 
@@ -25,7 +27,12 @@ def slugify(title: str) -> str:
     """Turn a title into a file slug: lowercase, dashed, max 60 chars."""
     slug = re.sub(r"[^\w]+|_", "-", title.lower()).strip("-")
     slug = slug[:60].rstrip("-")
-    return slug or "note"
+    if slug:
+        return slug
+    # Titles with no letters or digits (e.g. only emoji) get a stable, distinct
+    # slug, so two such notes never overwrite each other.
+    digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8] if title.strip() else ""
+    return f"note-{digest}" if digest else "note"
 
 
 @dataclass
@@ -161,7 +168,8 @@ class Memory:
 
     def search(self, query: str, limit: int = 5) -> list[Note]:
         """Best-matching notes: title hit x3, tag hit x2, body hit x1 per query word."""
-        words = [w for w in query.lower().split() if len(w) >= 2]
+        # Words only, so punctuation ("dog's", "Rex!") never hides a match.
+        words = [w for w in re.findall(r"\w+", query.lower()) if len(w) >= 2]
         if not words:
             return []
         scored: list[tuple[int, Note]] = []
