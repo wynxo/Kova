@@ -4,6 +4,8 @@ The client under test is a KovaClient whose http transport is a FastAPI
 TestClient over create_app with a scripted FakeModel, so no network is needed.
 """
 
+import json
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +17,7 @@ import kova.ui as ui
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config
 from kova.server import create_app
-from tests.fake_model import FakeModel, text
+from tests.fake_model import FakeModel, text, tool
 
 
 @pytest.fixture
@@ -279,3 +281,153 @@ def test_chat_unknown_command_is_not_sent_to_model(runner):
     result = cli_runner.invoke(cli.app, ["chat"], input="/typo\n")
     assert result.exit_code == 0, result.output
     assert not fake.requests
+
+
+# ---------------------------------------------------------------------------
+# kova ask: piping, files, model override, JSON, chats, reasoning, errors
+# ---------------------------------------------------------------------------
+
+
+def _user_text(fake) -> str:
+    """The latest user message the model received."""
+    return [m for m in fake.requests[-1]["messages"] if m["role"] == "user"][-1]["content"]
+
+
+def test_ask_sends_piped_stdin_with_question(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "summarize this"], input="line one\nline two\n")
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Hello there!\n"
+    sent = _user_text(fake)
+    assert sent.startswith("summarize this\n\n<stdin>\nline one\nline two\n</stdin>")
+
+
+def test_ask_uses_piped_stdin_as_question(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask"], input="what is 2+2?\n")
+    assert result.exit_code == 0, result.output
+    assert _user_text(fake) == "what is 2+2?"
+
+
+def test_ask_without_question_or_input_is_a_usage_error(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask"])
+    assert result.exit_code == 2
+    assert "pipe some text in" in result.stderr
+    assert not fake.requests
+
+
+def test_ask_truncates_huge_input_with_warning(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "count"], input="x" * (cli.ASK_INPUT_LIMIT + 5000))
+    assert result.exit_code == 0, result.output
+    assert "Warning: piped input is over 100 KB" in result.stderr
+    assert "Warning" not in result.stdout
+    assert _user_text(fake).count("x") == cli.ASK_INPUT_LIMIT
+
+
+def test_ask_attaches_files(runner, tmp_path):
+    cli_runner, client, cfg, fake = runner
+    first, second = tmp_path / "notes.txt", tmp_path / "todo.md"
+    first.write_text("buy milk")
+    second.write_text("- ship kova")
+    result = cli_runner.invoke(cli.app, ["ask", "what's in these?", "-f", str(first), "--file", str(second)])
+    assert result.exit_code == 0, result.output
+    sent = _user_text(fake)
+    assert '<file name="notes.txt">\nbuy milk\n</file>' in sent
+    assert '<file name="todo.md">\n- ship kova\n</file>' in sent
+    assert sent.index("what's in these?") < sent.index("notes.txt") < sent.index("todo.md")
+
+
+def test_ask_missing_file_is_a_usage_error(runner, tmp_path):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "-f", str(tmp_path / "nope.txt")])
+    assert result.exit_code == 2
+    assert not fake.requests
+
+
+def test_ask_model_override_is_one_shot(runner):
+    cli_runner, client, cfg, fake = runner
+    client.model_add("other", "http://localhost:11434/v1", "qwen3")
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "--model", "other", "--json"])
+    assert result.exit_code == 0, result.output
+    assert fake.requests[0]["model"] == "qwen3"
+    assert json.loads(result.stdout)["model"] == "other"
+    assert cfg.active == "tiel"
+    assert client.health()["model"] == "tiel"
+
+
+def test_ask_unknown_model_fails_on_stderr(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "-m", "missing"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == "Error: unknown model 'missing'"
+    assert not fake.requests
+
+
+def test_ask_json_output(runner):
+    cli_runner, client, cfg, fake = runner
+    fake.scripts = [tool("memory_search", {"query": "dog"}), text("Rex!")]
+    result = cli_runner.invoke(cli.app, ["ask", "my dog?", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["answer"] == "Rex!"
+    assert data["model"] == "tiel"
+    assert data["tools"] == ["memory_search"]
+    assert client.get_chat(data["chat_id"]) is not None
+
+
+def test_ask_marks_its_chat_and_continues_existing_ones(runner):
+    cli_runner, client, cfg, fake = runner
+    first = cli_runner.invoke(cli.app, ["ask", "remember 42", "--json"])
+    chat_id = json.loads(first.stdout)["chat_id"]
+    assert client.get_chat(chat_id)["title"] == "[ask] remember 42"
+
+    second = cli_runner.invoke(cli.app, ["ask", "what number?", "--chat", chat_id, "--json"])
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.stdout)["chat_id"] == chat_id
+    assert len(client.list_chats()) == 1
+    users = [m["content"] for m in fake.requests[-1]["messages"] if m["role"] == "user"]
+    assert users == ["remember 42", "what number?"]
+
+
+def test_ask_unknown_chat_fails_on_stderr(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["ask", "hi", "--chat", "nope"])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Error: chat not found"
+
+
+@pytest.mark.parametrize("think", [False, True])
+def test_ask_think_prints_reasoning_to_stderr_only(runner, think):
+    cli_runner, client, cfg, fake = runner
+    fake.scripts = [[{"reasoning_content": "pondering"}, {"content": "The answer"}]]
+    result = cli_runner.invoke(cli.app, ["ask", "q"] + (["--think"] if think else []))
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "The answer\n"
+    assert ("pondering" in result.stderr) is think
+
+
+def test_ask_model_error_exits_1_on_stderr(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+
+    def broken(chat_id, text, model=None):
+        yield {"type": "text", "text": "Part"}
+        yield {"type": "error", "message": "model server said no"}
+
+    monkeypatch.setattr(client, "stream_message", broken)
+    result = cli_runner.invoke(cli.app, ["ask", "hi"])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Error: model server said no"
+    assert "Error" not in result.stdout
+
+
+def test_ask_unreachable_server_exits_1_on_stderr(runner, monkeypatch):
+    cli_runner, client, cfg, fake = runner
+    with httpx.Client(base_url=client.base_url, transport=httpx.MockTransport(_refuse_connection)) as http:
+        monkeypatch.setattr(client, "http", http)
+        result = cli_runner.invoke(cli.app, ["ask", "hi"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Cannot reach Kova server" in result.stderr

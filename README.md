@@ -62,7 +62,14 @@ For example, a local llama.cpp or PolyStrata server, Ollama at `http://localhost
 The CLI starts the server for you in the background, so normally you don't have to think about it.
 
 - `kova chat [--new | --chat ID]` — interactive chat with a compact model/server/memory header, live Markdown replies, and tool status lines. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides reasoning and its timing until you enable `/think`.
-- `kova ask "question"` — one question, one answer, printed to stdout. Good for scripts.
+- `kova ask "question"` — one question, one answer, printed to stdout. Good for scripts:
+  - Pipe text in: `git diff | kova ask "review this"`, or `cat question.txt | kova ask` to use the input as the question. Input over 100 KB is cut off with a warning on stderr.
+  - `-f/--file PATH` attaches a file (repeatable); the model sees its name.
+  - `-m/--model NAME` uses another configured model for this question only.
+  - `--json` prints `{"answer", "chat_id", "model", "tools"}`.
+  - `--chat ID` continues a chat; otherwise each ask gets its own chat titled `[ask] …`.
+  - `--think` shows the reasoning on stderr, so stdout stays clean.
+  - Exit code 0 on success, 1 on a model or server error (message on stderr).
 
 Inside `kova chat`:
 
