@@ -11,6 +11,7 @@ dependencies = [
     "ddgs>=9.16.1",
     "fastapi>=0.162.5",
     "httpx>=0.28.1",
+    "prompt-toolkit>=3.0.53",
     "pydantic>=2.14.3",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
