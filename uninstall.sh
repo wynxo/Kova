@@ -46,6 +46,9 @@ find_uv() {
 say "Stopping the Kova server (if running) ..."
 if command -v kova >/dev/null 2>&1; then
     kova stop >/dev/null 2>&1 || true
+elif command -v uv >/dev/null 2>&1 || [ -x "$HOME/.local/bin/uv" ]; then
+    # Only ever ran from this checkout with ./cli: stop that server too.
+    "$(command -v uv || echo "$HOME/.local/bin/uv")" run kova stop >/dev/null 2>&1 || true
 else
     say "The kova command is not installed; nothing to stop."
 fi
