@@ -44,7 +44,8 @@ class _KovaGroup(TyperGroup):
             _fail(str(exc))
 
 
-app = typer.Typer(help="Kova: your own private AI.", no_args_is_help=True, cls=_KovaGroup)
+app = typer.Typer(help="Kova: your own private AI. Run kova on its own to chat.", no_args_is_help=False,
+                  cls=_KovaGroup)
 
 
 def _version(value: bool) -> None:
@@ -53,12 +54,21 @@ def _version(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def root(
+    ctx: typer.Context,
     version: bool = typer.Option(False, "--version", callback=_version, is_eager=True,
                                  help="Show the installed version."),
+    new: bool = typer.Option(False, "--new", help="Start a fresh chat instead of the latest."),
+    chat: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
+    resume: str | None = typer.Option(None, "--resume", help="Continue a chat by its number from: kova chats"),
+    no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
+    mode: str | None = typer.Option(None, "--mode", help="Start the chat in this mode: chat or work."),
+    no_web: bool = typer.Option(False, "--no-web", help="Turn web search off for this chat."),
 ):
-    pass
+    """Chat with Kova; replies stream live. Type /exit to leave."""
+    if ctx.invoked_subcommand is None:
+        _start_chat(new, chat, resume, no_think, mode, no_web)
 
 
 @app.command()
@@ -236,7 +246,7 @@ def ask(
         print()
 
 
-@app.command()
+@app.command(hidden=True)
 def chat(
     new: bool = typer.Option(False, "--new", help="Start a fresh chat instead of the latest."),
     chat: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
@@ -245,7 +255,12 @@ def chat(
     mode: str | None = typer.Option(None, "--mode", help="Start the chat in this mode: chat or work."),
     no_web: bool = typer.Option(False, "--no-web", help="Turn web search off for this chat."),
 ):
-    """Chat with Kova; replies stream live. Type /exit to leave."""
+    """Old name for plain ``kova``; kept so existing habits and scripts still work."""
+    _start_chat(new, chat, resume, no_think, mode, no_web)
+
+
+def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
+                mode: str | None, no_web: bool) -> None:
     _check_mode(mode)
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
@@ -319,7 +334,7 @@ def status():
     except KovaError as exc:
         if exc.status is not None:
             raise
-        console.print("[red]Server is down.[/red] It starts by itself when you run kova chat.")
+        console.print("[red]Server is down.[/red] It starts by itself when you run kova.")
         return
     reachable = "yes" if info["model_ok"] else "no"
     console.print(f"[green]Server up[/green] · v{info['version']} · model {info['model']} · model reachable: {reachable}")
@@ -596,7 +611,7 @@ def chats_list():
     """List chats, newest first."""
     chats = get_client().list_chats()
     if not chats:
-        console.print("[dim]No chats yet. Start one with: kova chat[/dim]")
+        console.print("[dim]No chats yet. Start one with: kova[/dim]")
         return
     table = Table(box=None, pad_edge=False)
     table.add_column("#", justify="right", style="dim")

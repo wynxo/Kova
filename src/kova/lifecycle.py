@@ -118,7 +118,7 @@ def update(ref: str, emit=print) -> None:
         subprocess.run(command, check=True, env=tool_env())
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
-    emit("Updated Kova. Run: kova chat")
+    emit("Updated Kova. Run: kova")
 
 
 def stop_server(home: Path) -> None:

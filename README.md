@@ -20,7 +20,7 @@ Then set up a model server and chat:
 
 ```sh
 kova setup
-kova chat
+kova
 ```
 
 The installer adds the `kova` command using [uv](https://docs.astral.sh/uv/) (installed automatically if needed). On Linux/macOS, follow its printed PATH line or add it to your shell profile. On Windows it updates your user PATH and adds Kova to Settings → Apps. No clone needed; installs currently come from GitHub as **kova-ai**, not PyPI.
@@ -62,7 +62,7 @@ Kova works with OpenAI-compatible servers, including llama.cpp / PolyStrata, Oll
 
 The CLI starts the server for you in the background, so normally you don't have to think about it.
 
-- `kova chat [--new | --chat ID]` — interactive chat with a compact model/server/memory header, live Markdown replies, and tool status lines. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides reasoning and its timing until you enable `/think`.
+- `kova [--new | --chat ID]` — just type `kova` to chat: interactive chat with a compact model/server/memory header, live Markdown replies, and tool status lines. `--new` starts fresh, `--chat ID` continues an old chat, and `--no-think` hides reasoning and its timing until you enable `/think`.
   - `--mode chat|work` starts the chat in that mode (default work); `--no-web` turns web search off for it.
 - `kova ask "question"` — one question, one answer, printed to stdout. Good for scripts:
   - Pipe text in: `git diff | kova ask "review this"`, or `cat question.txt | kova ask` to use the input as the question. Input over 100 KB is cut off with a warning on stderr.
@@ -79,7 +79,7 @@ The CLI starts the server for you in the background, so normally you don't have 
 - `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
 - `kova import PATH [--merge|--replace]` — restore a backup. Merge is the default and skips chats/notes that already exist; `--replace` asks first, then replaces chats, Kova's memory notes, and reminders.
 
-Inside `kova chat`:
+Inside a chat:
 
 - `/new` — start a fresh chat
 - `/mode` — show the chat's mode; `/mode chat` or `/mode work` switches it
@@ -128,7 +128,7 @@ Every chat runs in one of two modes, shown in the chat header and in `kova chats
 - **work** (default) — all of Kova's tools: web search, files, reminders and memory.
 - **chat** — plain conversation. No tools except web search (and `/web off` turns that off too), and no saving new memories — though what Kova already remembers about you is still part of the conversation.
 
-Switch with `/mode` inside a chat, or start one with `kova chat --mode chat`. `kova ask --mode chat` does the same for one-off questions.
+Switch with `/mode` inside a chat, or start one with `kova --mode chat`. `kova ask --mode chat` does the same for one-off questions.
 
 ## Memory and Obsidian mode
 

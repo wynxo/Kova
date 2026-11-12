@@ -106,6 +106,6 @@ function Install-Kova {
     foreach ($Name in 'NoModify', 'NoRepair') { New-ItemProperty -Path $Key -Name $Name -Value 1 -PropertyType DWord -Force | Out-Null }
     Write-Host 'Registered Kova in Settings > Apps (current user only).'
     Write-Host 'Done. Run: kova setup'
-    Write-Host 'Then: kova chat'
+    Write-Host 'Then: kova'
 }
 Install-Kova -InstallArgs $args

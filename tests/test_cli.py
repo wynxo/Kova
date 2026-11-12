@@ -147,7 +147,7 @@ def test_memory_use_offline(tmp_path, monkeypatch):
 def test_chat_model_commands_and_help(runner):
     cli_runner, client, cfg, fake = runner
     client.model_add("other", "http://localhost:11434/v1", "qwen3")
-    result = cli_runner.invoke(cli.app, ["chat", "--new"],
+    result = cli_runner.invoke(cli.app, ["--new"],
                                input="/model\n/model other\n/model missing\n/model\n/help\n/exit\n")
     assert result.exit_code == 0, result.output
     assert 'No model named "missing"' in result.output
@@ -161,7 +161,7 @@ def test_chat_model_commands_and_help(runner):
 
 def test_chat_mode_and_web_commands(runner):
     cli_runner, client, cfg, fake = runner
-    result = cli_runner.invoke(cli.app, ["chat", "--new", "--mode", "chat"],
+    result = cli_runner.invoke(cli.app, ["--new", "--mode", "chat"],
                                input="/mode\nhi\n/mode work\n/mode bogus\n/web off\n/web\n/mode\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "mode chat" in result.output  # the header shows the chat's mode
@@ -176,7 +176,7 @@ def test_chat_mode_and_web_commands(runner):
 
 def test_chat_no_web_flag(runner):
     cli_runner, client, cfg, fake = runner
-    result = cli_runner.invoke(cli.app, ["chat", "--new", "--no-web"], input="hi\n/exit\n")
+    result = cli_runner.invoke(cli.app, ["--new", "--no-web"], input="hi\n/exit\n")
     assert result.exit_code == 0, result.output
     chat = client.get_chat(client.list_chats()[0]["id"])
     assert chat["web"] is False
@@ -188,7 +188,7 @@ def test_chat_no_web_flag(runner):
 
 def test_chat_unknown_mode_is_a_usage_error(runner):
     cli_runner, client, cfg, fake = runner
-    result = cli_runner.invoke(cli.app, ["chat", "--mode", "code"])
+    result = cli_runner.invoke(cli.app, ["--mode", "code"])
     assert result.exit_code == 2
     assert not fake.requests
 
@@ -324,7 +324,7 @@ def test_ensure_server_timeout_message(tmp_path, monkeypatch):
 
 def test_chat_streams_reply(runner):
     cli_runner, client, cfg, fake = runner
-    result = cli_runner.invoke(cli.app, ["chat", "--new"], input="hi\n/exit\n")
+    result = cli_runner.invoke(cli.app, ["--new"], input="hi\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "Hello there!" in result.output
 
@@ -388,9 +388,9 @@ def test_chat_resume_accepts_number_or_id(runner, monkeypatch):
     seen = []
     monkeypatch.setattr(cli, "_run_chat", lambda c, chat_id=None, **kw: seen.append(chat_id))
 
-    by_number = cli_runner.invoke(cli.app, ["chat", "--resume", "2"])
+    by_number = cli_runner.invoke(cli.app, ["--resume", "2"])
     assert by_number.exit_code == 0, by_number.output
-    by_id = cli_runner.invoke(cli.app, ["chat", "--resume", chat_id])
+    by_id = cli_runner.invoke(cli.app, ["--resume", chat_id])
     assert by_id.exit_code == 0, by_id.output
     assert seen == [chat_id, chat_id]
 
@@ -422,7 +422,7 @@ def test_chat_think_toggle_and_no_think(runner):
         [{"reasoning_content": "visible middle"}, {"content": "Middle reply"}],
         [{"reasoning_content": "hidden last"}, {"content": "Last reply"}],
     ]
-    result = cli_runner.invoke(cli.app, ["chat", "--new", "--no-think"],
+    result = cli_runner.invoke(cli.app, ["--new", "--no-think"],
                                input="first\n/think\nmiddle\n/think\nlast\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "hidden first" not in result.output
@@ -433,7 +433,7 @@ def test_chat_think_toggle_and_no_think(runner):
 
 def test_chat_clear_preserves_conversation_and_new_resets_it(runner):
     cli_runner, client, cfg, fake = runner
-    result = cli_runner.invoke(cli.app, ["chat", "--new"],
+    result = cli_runner.invoke(cli.app, ["--new"],
                                input="first\n/clear\nsecond\n/new\n/quit\n")
     assert result.exit_code == 0, result.output
     chats = client.list_chats()
@@ -462,7 +462,7 @@ def test_chat_interrupt_returns_to_prompt(runner, monkeypatch):
             yield from original(chat_id, message)
 
     monkeypatch.setattr(client, "stream_message", stream)
-    result = cli_runner.invoke(cli.app, ["chat", "--new"], input="interrupt\nhi\n/exit\n")
+    result = cli_runner.invoke(cli.app, ["--new"], input="interrupt\nhi\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "Partial reply" in result.output
     assert "Hello there!" in result.output
@@ -636,3 +636,15 @@ def test_ask_chats_are_hidden_from_history_and_default_chat(runner):
     assert real in ids
     assert all(not (c.get("title") or "").startswith("[ask]") for c in client.list_chats())
     assert any((c.get("title") or "").startswith("[ask]") for c in client.list_chats(include_ask=True))
+
+
+def test_bare_kova_opens_chat_and_old_name_still_works(monkeypatch):
+    cli_runner = CliRunner()
+    calls = []
+    monkeypatch.setattr(cli, "_start_chat", lambda *args: calls.append(args))
+    assert cli_runner.invoke(cli.app, []).exit_code == 0
+    assert cli_runner.invoke(cli.app, ["--new"]).exit_code == 0
+    assert cli_runner.invoke(cli.app, ["chat", "--new"]).exit_code == 0
+    assert [c[0] for c in calls] == [False, True, True]
+    help_text = cli_runner.invoke(cli.app, ["--help"]).output
+    assert "--new" in help_text and "│ chat " not in help_text

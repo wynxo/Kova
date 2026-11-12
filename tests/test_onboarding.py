@@ -204,7 +204,7 @@ def test_wizard_picks_server_and_model_and_saves(home, monkeypatch, no_live, cap
     assert "Model servers found" in out
     assert "Ollama" in out and "11434" in out
     assert "It works!" in out
-    assert "You're set. Run: kova chat" in out
+    assert "You're set. Run: kova" in out
 
 
 def test_wizard_enter_picks_first_model(home, monkeypatch, no_live):
@@ -329,7 +329,7 @@ def test_flags_do_it_without_prompts(home, monkeypatch, no_live, capsys):
     )
     assert fake.chat_requests[0]["model"] == "local"
     assert "Bearer sk-x" in fake.auth
-    assert "You're set. Run: kova chat" in capsys.readouterr().out
+    assert "You're set. Run: kova" in capsys.readouterr().out
 
 
 def test_flags_use_first_model_when_model_is_omitted(home, monkeypatch, no_live):
@@ -509,5 +509,5 @@ def test_cli_setup_runs_the_wizard(home, monkeypatch, no_live):
     result = CliRunner().invoke(cli.app, ["setup"])
 
     assert result.exit_code == 0, result.output
-    assert "You're set. Run: kova chat" in result.output
+    assert "You're set. Run: kova" in result.output
     assert load_config().active == "ollama"
