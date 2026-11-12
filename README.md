@@ -101,7 +101,7 @@ Models:
 Reminders:
 
 - `kova reminders list` — upcoming reminders
-- `kova reminders add "<when>" "<text>"` — add one; `when` is ISO 8601 local time
+- `kova reminders add "<when>" "<text>"` — add one; `when` can be natural local time (`in 10 min`, `tomorrow 5pm`, `monday 9am`, `morgen 9 Uhr`) or ISO 8601
 - `kova reminders rm ID` — delete one
 
 Server:

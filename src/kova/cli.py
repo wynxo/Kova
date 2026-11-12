@@ -22,6 +22,7 @@ from typer.core import TyperGroup
 from kova import __version__, lifecycle, onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
+from kova.tools.reminders import format_relative, format_when
 from kova.ui import _run_chat
 
 console = Console()
@@ -392,16 +393,49 @@ def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
     console.print(f"Memory folder set to {path}{suffix}.")
 
 
+def _local_now() -> datetime:
+    """Current local time; a separate helper so tests can freeze the clock."""
+    return datetime.now().astimezone()
+
+
+def _reminder_time(when: str, now: datetime) -> datetime:
+    parsed = datetime.fromisoformat(when)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=now.tzinfo)
+    return parsed
+
+
 @_reminders.command("list")
 def reminders_list():
-    for reminder in get_client().reminders_list():
-        console.print(f"[bold]#{reminder['id']}[/bold] {reminder['when']} — {reminder['text']}")
+    now = _local_now()
+    reminders = get_client().reminders_list()
+    if not reminders:
+        console.print("[dim]No upcoming reminders.[/dim]")
+        return
+    for reminder in reminders:
+        try:
+            when = _reminder_time(reminder["when"], now)
+        except (TypeError, ValueError):
+            console.print(f"[bold]#{reminder['id']}[/bold] {reminder['when']} — {reminder['text']}")
+            continue
+        local = when.strftime("%Y-%m-%d %H:%M")
+        relative = format_relative(when, now)
+        console.print(f"[bold]#{reminder['id']}[/bold] {local} ({relative}) — {reminder['text']}")
 
 
 @_reminders.command("add")
 def reminders_add(when: str, text: str):
     result = get_client().reminder_add(when, text)
-    console.print(f"Reminder #{result['id']} set for {result['when']}.")
+    now = _local_now()
+    try:
+        parsed = _reminder_time(result["when"], now)
+    except (TypeError, ValueError):
+        console.print(f"⏰ Reminder #{result['id']} · {result['when']}")
+        return
+    console.print(
+        f"⏰ Reminder #{result['id']} · {format_when(parsed, now)} "
+        f"({format_relative(parsed, now, spaces=True)})"
+    )
 
 
 @_reminders.command("rm")
