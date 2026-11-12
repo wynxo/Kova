@@ -48,7 +48,13 @@ cd Kova
 uv tool install .
 ```
 
-Kova needs a model to talk to. Point it at any OpenAI-compatible server:
+Kova needs a model to talk to. The setup wizard looks for model servers on your computer, checks that one answers, and saves it:
+
+```bash
+kova setup
+```
+
+It can also point at a server on another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL`. Or add one by hand:
 
 ```bash
 kova model add NAME URL MODEL
@@ -70,6 +76,7 @@ The CLI starts the server for you in the background, so normally you don't have 
   - `--chat ID` continues a chat; otherwise each ask gets its own chat titled `[ask] …`.
   - `--think` shows the reasoning on stderr, so stdout stays clean.
   - Exit code 0 on success, 1 on a model or server error (message on stderr).
+- `kova setup` — find a model server, test it, and pick a memory folder.
 
 Inside `kova chat`:
 

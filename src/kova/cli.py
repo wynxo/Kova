@@ -19,6 +19,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 from typer.core import TyperGroup
 
+from kova import onboarding
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.ui import _run_chat
@@ -184,10 +185,32 @@ def chat(
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
+    cfg = load_config()
+    if sys.stdin.isatty() and onboarding.needs_setup(cfg):
+        question = (f"Can't reach your model \"{cfg.active}\" right now. Run the setup wizard?"
+                    if cfg.models else "Kova isn't set up yet. Run the setup wizard first?")
+        # An offline homelab is common: default to "no" so chat still opens.
+        if typer.confirm(question, default=not cfg.models):
+            onboarding.run_setup(cfg)
     client = get_client()
     if resume:
         chat = _resolve_chat_id(client, resume)
     _run_chat(client, chat_id=chat, new=new, no_think=no_think, console=console)
+
+
+@app.command()
+def setup(
+    url: str | None = typer.Option(None, "--url", help="Model server URL, for example http://192.168.1.20:8080."),
+    model: str | None = typer.Option(None, "--model", help="Model name to use."),
+    name: str | None = typer.Option(None, "--name", help="Name to save this model under."),
+    key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Save it even if the test message fails."),
+):
+    """Find a model server and get Kova ready to chat."""
+    try:
+        onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
+    except onboarding.SetupError as exc:
+        _fail(str(exc))
 
 
 @app.command()
