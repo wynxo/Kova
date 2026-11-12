@@ -132,3 +132,24 @@ def test_symlinked_note_is_not_written_through(tmp_path):
     with pytest.raises(ValueError):
         Memory(vault, "Kova").save("Dog", "overwrite")
     assert (vault / "Dog.md").read_text() == "mine"
+
+
+def test_delete_refuses_symlinked_write_dir(tmp_path):
+    vault, elsewhere = tmp_path / "vault", tmp_path / "elsewhere"
+    vault.mkdir(); elsewhere.mkdir()
+    (elsewhere / "foo.md").write_text("keep")
+    (vault / "Kova").symlink_to(elsewhere)
+    assert Memory(vault, "Kova").delete("foo") is False
+    assert (elsewhere / "foo.md").read_text() == "keep"
+
+
+def test_concurrent_saves_leave_a_whole_note(tmp_path):
+    import threading
+
+    mem = Memory(tmp_path)
+    bodies = [f"body {i} " * 2000 for i in range(8)]
+    threads = [threading.Thread(target=mem.save, args=("Same", b)) for b in bodies]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert mem.get("same").body in bodies
+    assert not list(tmp_path.glob(".kova-*.tmp"))

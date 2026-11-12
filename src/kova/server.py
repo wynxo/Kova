@@ -101,6 +101,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        bus.publish(None)  # end every open /events stream
         reminders.cancel()
         for turn in list(app.state.turns):
             turn.cancel()
@@ -126,6 +127,11 @@ def create_app(
     app.state.now = now
     app.state.token = ensure_token(config.home)
     app.state.turns = set()
+    app.state.chat_locks = {}
+
+    def chat_lock(chat_id: str) -> asyncio.Lock:
+        """One turn at a time per chat; deleting a chat waits for its turn."""
+        return app.state.chat_locks.setdefault(chat_id, asyncio.Lock())
 
     @app.get("/health")
     async def health() -> dict:
@@ -155,7 +161,10 @@ def create_app(
 
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:
-        if not app.state.store.delete_chat(chat_id):
+        async with chat_lock(chat_id):
+            deleted = app.state.store.delete_chat(chat_id)
+        app.state.chat_locks.pop(chat_id, None)
+        if not deleted:
             raise HTTPException(status_code=404, detail="chat not found")
         return {"ok": True}
 
@@ -168,8 +177,12 @@ def create_app(
         async def run_turn() -> None:
             """Drive the turn to completion even if the client disconnects."""
             try:
-                async for event in app.state.agent.run_turn(chat_id, body.text):
-                    queue.put_nowait(event)
+                async with chat_lock(chat_id):
+                    if app.state.store.get_chat(chat_id) is None:
+                        queue.put_nowait({"type": "error", "message": "chat was deleted"})
+                        return
+                    async for event in app.state.agent.run_turn(chat_id, body.text):
+                        queue.put_nowait(event)
             except Exception as exc:  # never leave the stream without an ending
                 queue.put_nowait({"type": "error", "message": str(exc)})
             finally:
@@ -190,12 +203,17 @@ def create_app(
 
     @api.get("/memory")
     async def memory_list(q: str | None = None) -> list[dict]:
-        notes = app.state.memory.search(q) if q else app.state.memory.list()
+        mem = app.state.memory
+        notes = await asyncio.to_thread(mem.search, q) if q else await asyncio.to_thread(mem.list)
         return [_note_dict(note) for note in notes]
 
     @api.post("/memory")
     async def memory_add(body: NoteBody) -> dict:
-        return _note_dict(app.state.memory.save(body.title, body.body, body.tags))
+        try:
+            note = await asyncio.to_thread(app.state.memory.save, body.title, body.body, body.tags)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _note_dict(note)
 
     @api.delete("/memory/{slug}")
     async def memory_delete(slug: str) -> dict:
@@ -250,7 +268,10 @@ def create_app(
         async def stream() -> AsyncIterator[str]:
             try:
                 while True:
-                    yield _sse(await queue.get())
+                    event = await queue.get()
+                    if event is None:  # server shutting down
+                        return
+                    yield _sse(event)
             finally:
                 app.state.bus.unsubscribe(queue)
 

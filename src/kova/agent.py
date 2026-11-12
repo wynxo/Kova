@@ -96,7 +96,7 @@ class Agent:
         if chat is not None and not chat['title']:
             self.store.set_title(chat_id, text[:60])
         try:
-            memories = self.memory.search(text, 5)
+            memories = await asyncio.to_thread(self.memory.search, text, 5)
         except Exception:  # memory trouble must never block a chat
             memories = []
         prompt = build_system_prompt(self.now(), list(self.tools), memories)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -82,6 +85,21 @@ def _mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()
 
 
+_WRITE_LOCK = threading.Lock()
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write via a temp file + rename, so a crash or race never leaves half a note."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".kova-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 class Memory:
     """Markdown notes under ``root``; writes go to ``root/write_subdir`` when set."""
 
@@ -103,7 +121,8 @@ class Memory:
         if path.is_symlink() or not path.parent.resolve().is_relative_to(self.root.resolve()):
             raise ValueError(f"Refusing to write memory note through a link: {path}")
         meta = {"title": title, "tags": tags, "updated": updated}
-        path.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n" + body)
+        with _WRITE_LOCK:
+            _atomic_write(path, "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n" + body)
         return Note(slug=slug, title=title, body=body, tags=tags, updated=updated, path=path)
 
     def get(self, slug: str) -> Note | None:
@@ -123,7 +142,7 @@ class Memory:
         if not _safe(slug):
             return False
         path = self.write_dir / f"{slug}.md"
-        if path.is_symlink():
+        if path.is_symlink() or not path.parent.resolve().is_relative_to(self.root.resolve()):
             return False
         if path.is_file():
             path.unlink()
