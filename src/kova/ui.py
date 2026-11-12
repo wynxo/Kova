@@ -1,4 +1,10 @@
-"""Interactive terminal chat; the script-friendly ``ask`` command stays separate."""
+"""Interactive terminal chat; the script-friendly ``ask`` command stays separate.
+
+In a real terminal (POSIX, stdin and stdout both terminals) the chat is the
+full-screen :class:`kova.tui.app.ChatApp`. Everywhere else, piped input,
+Windows consoles, ``KOVA_SIMPLE=1``, the plain loop below runs instead: a
+line prompt, Rich rendering, and no cursor tricks when output is a pipe.
+"""
 
 from __future__ import annotations
 
@@ -26,21 +32,13 @@ from kova import theme
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
 from kova.modes import MODES
+from kova.tui.app import COMMANDS, PERMISSIONS
 
-_COMMANDS = {
-    "/help": "Show commands and keyboard shortcuts",
-    "/new": "Start a fresh conversation",
-    "/mode": "Show the chat mode; /mode chat|work switches",
-    "/web": "Show web search state; /web on|off toggles it",
-    "/model": "List models; /model <name> switches",
-    "/think": "Toggle full reasoning (collapsed by default)",
-    "/clear": "Clear the screen, keeping this conversation",
-    "/exit": "Leave Kova (also /quit)",
-    "/quit": "Leave Kova",
-}
+_COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
 
 # Arguments the commands offer for Tab completion, if any.
-_COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off")}
+_COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off"), "/permissions": tuple(PERMISSIONS)}
+_PLAN_MARKS = {"done": "☑", "in_progress": "◐", "pending": "☐"}
 
 # Prompt_toolkit styling for the input line, the completion menu and the
 # bottom toolbar. Hex colours mirror kova.theme; prompt_toolkit parses them.
@@ -99,6 +97,7 @@ class _Block:
     ok: bool | None = None
     started: float = field(default_factory=lambda: perf_counter())
     elapsed: float | None = None
+    items: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -141,6 +140,11 @@ class _Turn:
             block.chunks = [_short(event["summary"])]
         elif kind == "error":
             self.blocks.append(_Block("error", [_short(event["message"])]))
+        elif kind == "plan":
+            self.blocks.append(_Block("plan", items=[item for item in event.get("items") or []
+                                                     if isinstance(item, dict)]))
+        elif kind == "stopped":
+            self.blocks.append(_Block("stopped"))
 
     def render(self) -> Group:
         items: list = [Text("● Kova", style=f"bold {theme.ACCENT}")]
@@ -185,6 +189,16 @@ class _Turn:
             elif block.kind == "error":
                 # Plain "red" for the same committed-test reason as above.
                 items.append(Text(f"  Error: {text}", style="red"))
+            elif block.kind == "plan":
+                items.append(Text.assemble(("  ● ", theme.ACCENT), ("Update Todos", "bold")))
+                for item in block.items:
+                    status = item.get("status")
+                    style = {"done": f"strike {theme.MUTED}", "in_progress": f"bold {theme.ACCENT}"}
+                    items.append(Text(f"    {_PLAN_MARKS.get(status, '☐')} "
+                                      f"{_short(str(item.get('text', '')))}",
+                                      style=style.get(status, "")))
+            elif block.kind == "stopped":
+                items.append(Text("  Interrupted.", style=theme.MUTED))
         # Keep activity visible before the first token and between tool calls.
         if not self.finished and (not self.blocks or
                                   (self.blocks[-1].kind == "tool" and self.blocks[-1].ok is not None)):
@@ -193,6 +207,53 @@ class _Turn:
                 Text(f"Thinking… {age:.1f}s", style=theme.MUTED)
             items.append(Spinner("dots", text=thinking, style=theme.ACCENT))
         return Group(*items)
+
+
+def _approve(client: KovaClient, chat_id: str, event: dict, console: Console,
+             live: Live | None) -> None:
+    """Answer an approval event: ask when someone is at a terminal, else decline."""
+    tool = str(event.get("tool", "a tool"))
+    destructive = event.get("risk") == "destructive"
+    summary = _short(str(event.get("summary") or _format_args(event.get("args"))), 160)
+    decision, message = "deny", None
+    if sys.stdin.isatty() and console.is_terminal:
+        if live is not None:
+            live.stop()
+        console.print(Text.assemble(("  ? ", f"bold {theme.WARNING}"), (f"Allow {tool}", "bold"),
+                                    (f"  {summary}", theme.MUTED)))
+        if destructive:
+            console.print("    Destructive: can delete data or change the system for good",
+                          style=theme.ERROR)
+        choices = "[y]es · [n]o" if destructive else "[y]es · [a]lways this chat · [n]o"
+        try:
+            answer = console.input(f"    {choices} › ").strip().lower()
+            if answer in ("y", "yes"):
+                decision = "allow"
+            elif answer in ("a", "always") and not destructive:
+                decision = "allow_session"
+            else:
+                message = console.input("    What should Kova do instead? (Enter to skip) › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            pass
+        if live is not None:
+            live.start()
+    else:
+        console.print(f"  Declined {tool}: approvals need an interactive terminal.",
+                      style=theme.MUTED)
+    answer_approval = getattr(client, "answer_approval", None)
+    if answer_approval is not None:
+        answer_approval(chat_id, str(event.get("id", "")), decision, message or None)
+
+
+def _stop_reply(client: KovaClient, chat_id: str) -> None:
+    """Cancel the turn on the server too, so the model stops working on it."""
+    stop = getattr(client, "stop_chat", None)
+    if stop is None:
+        return
+    try:
+        stop(chat_id)
+    except KovaError:
+        pass
 
 
 def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
@@ -205,16 +266,20 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
     live = (Live(console=console, get_renderable=lambda: Text("") if turn.finished else turn.render(),
                  refresh_per_second=10,
                  transient=True, vertical_overflow="ellipsis")
-            if console.is_terminal else nullcontext())
+            if console.is_terminal else None)
     try:
-        with live:
+        with live or nullcontext():
             try:
                 for event in events:
+                    if event["type"] == "approval":
+                        _approve(client, chat_id, event, console, live)
+                        continue
                     turn.accept(event)
                     if event["type"] == "done":
                         break
             except KeyboardInterrupt:
                 interrupted = True
+                _stop_reply(client, chat_id)
             finally:
                 turn.end_reasoning()
                 turn.finished = True
@@ -292,6 +357,13 @@ def _watch_reminders(client: KovaClient, console: Console) -> None:
         pass
 
 
+def _full_screen(console: Console) -> bool:
+    """The full-screen chat needs a POSIX terminal on both ends; KOVA_SIMPLE=1 opts out."""
+    return (os.name == "posix" and sys.stdin.isatty() and sys.stdout.isatty()
+            and console.is_terminal and os.environ.get("TERM") != "dumb"
+            and not os.environ.get("KOVA_SIMPLE"))
+
+
 def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = False,
               *, new: bool = False, mode: str | None = None, web: bool | None = None,
               console: Console) -> None:
@@ -302,7 +374,14 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
             if mode is not None or web is not None:  # explicit flags win over stored settings
                 client.update_chat(chat_id, mode=mode, web=web)
         else:
-            chat_id = client.create_chat(mode=mode, web=web)["id"]
+            chat_id = client.create_chat(mode=mode, web=web, cwd=os.getcwd())["id"]
+    if _full_screen(console):
+        from kova.tui.app import ChatApp
+
+        cfg = load_config()
+        ChatApp(client, chat_id, no_think=no_think, history_path=cfg.home / "chat_history.jsonl",
+                memory_path=str(cfg.memory_path)).run()
+        return
     _header(client, console, chat_id)
     current = client.get_chat(chat_id) or {}
     toolbar_state = {"mode": current.get("mode") or "work",
@@ -345,7 +424,9 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
             break
         if command == "/new" and not args:
             current = client.get_chat(chat_id) or {}
-            chat_id = client.create_chat(mode=current.get("mode"), web=current.get("web"))["id"]
+            chat_id = client.create_chat(mode=current.get("mode"), web=current.get("web"),
+                                         permission=current.get("permission"),
+                                         cwd=current.get("cwd") or os.getcwd())["id"]
             toolbar_state["mode"] = current.get("mode") or "work"
             toolbar_state["web"] = current.get("web", True)
             console.print("Started a new chat.", style=theme.MUTED)
@@ -399,6 +480,44 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                         raise
                     console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
                                        style=theme.ERROR))
+        elif command == "/permissions":
+            chat = client.get_chat(chat_id) or {}
+            if not args:
+                current_level = chat.get("permission")
+                state = f"Permissions: {current_level}. " if current_level else ""
+                console.print(f"{state}Switch with /permissions {' | '.join(PERMISSIONS)}.",
+                              style=theme.MUTED)
+            elif args[0] in PERMISSIONS:
+                updated = client.update_chat(chat_id, permission=args[0])
+                if "permission" in updated:
+                    console.print(f"Permissions: {args[0]} · {PERMISSIONS[args[0]]}.",
+                                  style=theme.MUTED)
+                else:
+                    console.print("This Kova server doesn't support permission modes yet.",
+                                  style=theme.ERROR)
+            else:
+                console.print(f"Use /permissions {' | '.join(PERMISSIONS)}.", style=theme.ERROR)
+        elif command == "/cd":
+            target = os.path.abspath(os.path.expanduser(args[0] if args else "~"))
+            if os.path.isdir(target):
+                client.update_chat(chat_id, cwd=target)
+                console.print(f"Folder: {target}", style=theme.MUTED)
+            else:
+                console.print(f"Not a folder: {target}", style=theme.ERROR)
+        elif command == "/resume":
+            chats = client.list_chats()[:15]
+            if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):
+                chat_id = chats[int(args[0]) - 1]["id"]
+                resumed = client.get_chat(chat_id) or {}
+                toolbar_state["mode"] = resumed.get("mode") or "work"
+                toolbar_state["web"] = resumed.get("web", True)
+                console.print(f"Resumed {chats[int(args[0]) - 1].get('title') or 'Untitled'}.",
+                              style=theme.MUTED)
+            else:
+                for index, chat in enumerate(chats, 1):
+                    mark = "›" if chat["id"] == chat_id else " "
+                    console.print(Text(f"{mark}{index:>3}  {chat.get('title') or 'Untitled'}"))
+                console.print("/resume <n> opens one.", style=theme.MUTED)
         elif stripped.startswith("/"):
             console.print("Unknown command. Type /help to see commands.", style=theme.ERROR)
         else:
