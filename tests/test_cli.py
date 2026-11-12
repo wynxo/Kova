@@ -85,11 +85,11 @@ def test_memory_use_updates_running_server(runner, tmp_path, monkeypatch, obsidi
 
 
 def test_memory_use_offline(tmp_path, monkeypatch):
-    import httpx
+    from kova.client import KovaError
 
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     def offline(*args):
-        raise httpx.ConnectError("offline")
+        raise KovaError(None, "offline")
     monkeypatch.setattr(KovaClient, "memory_use", offline)
     folder = tmp_path / "vault"
     result = CliRunner().invoke(cli.app, ["memory", "use", str(folder), "--obsidian"])
@@ -107,7 +107,7 @@ def test_chat_model_commands_and_help(runner):
     assert result.exit_code == 0, result.output
     assert "tiel —" in result.output and "tiel" in result.output
     assert "Now using other." in result.output
-    assert "unknown model 'missing'" in result.output
+    assert 'No model named "missing"' in result.output
     assert "other — qwen3 @ http://localhost:11434/v1 (active)" in result.output
     assert "Commands: /help, /new, /model [name], /exit, /quit" in result.output
     assert cfg.active == "other"

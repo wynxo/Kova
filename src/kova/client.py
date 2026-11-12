@@ -119,11 +119,7 @@ class KovaClient:
         return self._request("DELETE", f"/memory/{slug}", missing_ok=True).status_code == 200
 
     def memory_use(self, path: str, obsidian: bool) -> None:
-        response = self.http.post(
-            "/memory/location", json={"path": path, "obsidian": obsidian},
-            headers=_auth(self.token), timeout=5,
-        )
-        response.raise_for_status()
+        self._request("POST", "/memory/location", json={"path": path, "obsidian": obsidian}, timeout=5)
 
     def reminders_list(self) -> list[dict]:
         return self._request("GET", "/reminders").json()

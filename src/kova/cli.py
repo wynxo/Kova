@@ -121,11 +121,13 @@ def _run_chat(client: KovaClient, chat_id: str, no_think: bool) -> None:
             if len(parts) == 1:
                 _list_models(client)
             else:
-                result = client.model_use(parts[1])
-                if "detail" in result:
-                    console.print(f"[red]{result['detail']}[/red]")
-                else:
+                try:
+                    client.model_use(parts[1])
                     console.print(f"[dim]Now using {parts[1]}.[/dim]")
+                except KovaError as exc:
+                    if exc.status != 404:
+                        raise
+                    console.print(f'[red]No model named "{parts[1]}". Type /model to see them.[/red]')
             continue
         if not stripped:
             continue
@@ -204,7 +206,13 @@ def status():
     """Report whether the server is up, its version and active model."""
     cfg = load_config()
     console.print(f"Active model: [bold]{cfg.active}[/bold]")
-    info = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home)).health()
+    try:
+        info = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home)).health()
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        console.print("[red]Server is down.[/red] It starts by itself when you run kova chat.")
+        return
     reachable = "yes" if info["model_ok"] else "no"
     console.print(f"[green]Server up[/green] · v{info['version']} · model {info['model']} · model reachable: {reachable}")
 
@@ -286,8 +294,10 @@ def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
     client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
     try:
         client.memory_use(str(cfg.memory_path), obsidian)
-    except httpx.ConnectError:
-        save_config(cfg)
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        save_config(cfg)  # server not running: it reads the new folder on next start
     suffix = " (Obsidian mode)" if obsidian else ""
     console.print(f"Memory folder set to {path}{suffix}.")
 
