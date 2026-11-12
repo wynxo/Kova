@@ -125,7 +125,7 @@ class ModelClient:
     async def ping(self) -> bool:
         """Check whether the model server responds successfully."""
         try:
-            async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=self._headers()) as client:
+            async with httpx.AsyncClient(transport=self.transport, timeout=min(self.timeout, 3), headers=self._headers()) as client:
                 response = await client.get(self._url("models"))
                 return response.status_code == 200
         except httpx.HTTPError:
