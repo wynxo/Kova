@@ -49,7 +49,7 @@ async def test_work_mode_sends_all_tools(setup):
     _, fake = await run(setup, [text('Hi')])
     assert _sent_tools(fake) == ['web_search', 'web_fetch', 'list_files', 'read_file',
                                  'write_file', 'reminder_add', 'reminder_list',
-                                 'memory_save', 'memory_search']
+                                 'memory_save', 'memory_search', 'system_info']
     assert 'Current mode: work' in fake.requests[0]['messages'][0]['content']
 
 
