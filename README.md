@@ -71,6 +71,10 @@ The CLI starts the server for you in the background, so normally you don't have 
   - `--think` shows the reasoning on stderr, so stdout stays clean.
   - Exit code 0 on success, 1 on a model or server error (message on stderr).
 - `kova setup` — find a model server, test it, and pick a memory folder.
+- `kova chats search <words>` — search inside your chats; results show the chat number, title, when, and a snippet with the match highlighted.
+- `kova chats export <#|id> [--md|--json]` — print one chat to stdout, as Markdown (default) or JSON.
+- `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
+- `kova import PATH [--merge|--replace]` — restore a backup. Merge is the default and skips chats/notes that already exist; `--replace` asks first, then replaces chats, Kova's memory notes, and reminders.
 
 Inside `kova chat`:
 
