@@ -15,13 +15,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, backup, lifecycle, onboarding
+from kova import __version__, backup, lifecycle, onboarding, theme
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.modes import MODES
@@ -30,10 +32,92 @@ from kova.ui import _run_chat
 
 console = Console()
 
+SYMBOL_OK = "✓"
+SYMBOL_ERROR = "✗"
+SYMBOL_BULLET = "◇"
+SYMBOL_ARROW = "→"
 
-def _fail(message: str) -> None:
-    console.print(" ".join(message.splitlines()), style="red", markup=False, soft_wrap=True)
+
+def _hint_for(message: str) -> str | None:
+    """One short fix-it line that matches this error, or None for plain errors."""
+    text = message.casefold()
+    if "no note named" in text:
+        return "Run: kova memory list"
+    if "no reminder" in text:
+        return "Run: kova reminders list"
+    if "no model named" in text:
+        return "Run: kova model list"
+    if "no chat" in text:
+        return "Run: kova chats"
+    if "either --md or --json" in text:
+        return "Pick one, for example: kova chats export 3 --md"
+    if "title cannot be empty" in text:
+        return "Usage: kova chats rename <#|id> TITLE"
+    if "at least one word" in text:
+        return "Usage: kova chats search <words>"
+    if "cannot reach kova server" in text:
+        return "It starts by itself when you chat; run: kova status to check."
+    if "couldn't reach a model server" in text:
+        return "Check the address and that the model server is running, then: kova setup"
+    if "--key" in text:
+        return "Add the key, for example: kova setup --url URL --model MODEL --key KEY"
+    if "--model" in text and ("didn't list" in text or "pass --model" in text):
+        return "Name one, for example: kova setup --url URL --model MODEL"
+    if "--url" in text:
+        return "Add the server, for example: kova setup --url http://127.0.0.1:11434"
+    return None
+
+
+def _error_line(message: str) -> None:
+    """One styled error line, without exiting (for commands that keep going)."""
+    text = " ".join(message.splitlines())
+    console.print(Text.assemble((f"{SYMBOL_ERROR} ", f"bold {theme.ERROR}"), (text, theme.ERROR)))
+
+
+def _fail(message: str, hint: str | None = None) -> None:
+    """Print one consistent error line, plus an optional dim hint, and exit 1."""
+    text = " ".join(message.splitlines())
+    _error_line(text)
+    hint = hint if hint is not None else _hint_for(text)
+    if hint:
+        console.print(Text(f"  {hint}", style=theme.MUTED))
     raise typer.Exit(1)
+
+
+def _ok(message: str) -> None:
+    console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (message, "")))
+
+
+def _muted(message: str) -> None:
+    console.print(Text(message, style=theme.MUTED))
+
+
+def _table(*, title: str | None = None, caption: str | None = None) -> Table:
+    """A Kova table: muted header rule, accent title, no outer box."""
+    return Table(
+        box=box.SIMPLE_HEAD,
+        border_style=theme.BORDER,
+        header_style=f"bold {theme.MUTED}",
+        title=Text(title, style=f"bold {theme.ACCENT}") if title else None,
+        title_justify="left",
+        caption=Text(caption, style=theme.MUTED) if caption else None,
+        caption_justify="left",
+        pad_edge=False,
+        show_edge=False,
+        expand=False,
+    )
+
+
+def _empty(message: str, hint: str) -> None:
+    """A friendly empty state: one line, then a dim hint on how to fill it."""
+    console.print(Text.assemble((f"{SYMBOL_BULLET} ", f"bold {theme.ACCENT_SOFT}"), (message, "")))
+    console.print(Text(f"  {hint}", style=theme.MUTED))
+
+
+def _clip(value: str, limit: int = 60) -> str:
+    """Collapse whitespace and shortens to one tidy table cell."""
+    text = " ".join((value or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 class _KovaGroup(TyperGroup):
@@ -44,13 +128,23 @@ class _KovaGroup(TyperGroup):
             _fail(str(exc))
 
 
-app = typer.Typer(help="Kova: your own private AI. Run kova on its own to chat.", no_args_is_help=False,
-                  cls=_KovaGroup)
+app = typer.Typer(
+    help="Kova: your own private AI that lives on your computer.",
+    epilog=f"[{theme.MUTED}]Start a chat with [bold]kova[/bold]. "
+           "Add [bold]--help[/bold] to any command for its flags.[/]",
+    no_args_is_help=False,
+    cls=_KovaGroup,
+)
 
 
 def _version(value: bool) -> None:
     if value:
-        console.print(f"Kova {__version__}")
+        console.print(Text.assemble(
+            ("Kova", f"bold {theme.ACCENT}"),
+            ("  ·  ", theme.BORDER),
+            (f"v{__version__}", theme.MUTED),
+        ))
+        console.print(Text("Your own private AI that lives on your computer.", style=f"italic {theme.MUTED}"))
         raise typer.Exit()
 
 
@@ -71,6 +165,31 @@ def root(
         _start_chat(new, chat, resume, no_think, mode, no_web)
 
 
+def _lifecycle_line(message: str) -> Text:
+    """Style one lifecycle (update/uninstall) line: ✓ success, → step, else muted."""
+    text = message.strip()
+    if text.startswith(f"{SYMBOL_OK} "):
+        return Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (text[2:], ""))
+    if text.startswith(f"{SYMBOL_ARROW} "):
+        return Text.assemble((f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT), (text[2:], theme.MUTED))
+    return Text(text, style=theme.MUTED)
+
+
+def _lifecycle_emit(message: str) -> None:
+    console.print(_lifecycle_line(message))
+
+
+def _print_update_check(message: str) -> None:
+    """Give the update check a ✓ / ↑ / • line that matches the rest of the CLI."""
+    lowered = message.casefold()
+    if lowered.startswith("up to date"):
+        console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (message, theme.SUCCESS)))
+    elif lowered.startswith("update available"):
+        console.print(Text.assemble(("↑ ", f"bold {theme.WARNING}"), (message, "")))
+    else:
+        console.print(Text.assemble((f"{SYMBOL_BULLET} ", theme.ACCENT_SOFT), (message, theme.MUTED)))
+
+
 @app.command()
 def update(
     ref: str | None = typer.Option(None, "--ref", help="GitHub branch, tag, or commit (default: KOVA_REF or main)."),
@@ -80,9 +199,9 @@ def update(
     try:
         target = lifecycle.selected_ref(ref)
         if check:
-            console.print(lifecycle.check_update(target), markup=False)
+            _print_update_check(lifecycle.check_update(target))
         else:
-            lifecycle.update(target, emit=lambda message: console.print(message, markup=False))
+            lifecycle.update(target, emit=_lifecycle_emit)
     except (lifecycle.LifecycleError, OSError) as exc:
         _fail(str(exc))
 
@@ -96,7 +215,7 @@ def uninstall(
     try:
         lifecycle.uninstall(purge=purge, keep_data=keep_data,
                             confirm=lambda question: typer.confirm(question, default=False),
-                            emit=lambda message: console.print(message, markup=False))
+                            emit=_lifecycle_emit)
     except (lifecycle.LifecycleError, OSError) as exc:
         _fail(str(exc))
 
@@ -146,7 +265,7 @@ def _read_capped(stream, label: str) -> str:
     if len(data) > ASK_INPUT_LIMIT:
         data = data[:ASK_INPUT_LIMIT]
         _stderr.print(f"Warning: {label} is over {ASK_INPUT_LIMIT // 1000} KB; only the first "
-                      f"{ASK_INPUT_LIMIT // 1000} KB was sent.", style="yellow", markup=False)
+                      f"{ASK_INPUT_LIMIT // 1000} KB was sent.", style=theme.WARNING, markup=False)
     return data.decode("utf-8", errors="replace")
 
 
@@ -217,7 +336,7 @@ def ask(
             kind = event["type"]
             if kind == "reasoning" and think:
                 reasoning = True
-                _stderr.print(event["text"], style="dim", end="", markup=False)
+                _stderr.print(event["text"], style=theme.MUTED, end="", markup=False)
             elif kind == "text":
                 if reasoning:
                     reasoning = False
@@ -307,7 +426,7 @@ def stop():
     """Stop a background Kova server."""
     pidfile = load_config().home / "server.pid"
     if not pidfile.exists():
-        console.print("[dim]No running server recorded.[/dim]")
+        _muted("No running server recorded.")
         return
     try:
         pid = int(pidfile.read_text().strip())
@@ -316,28 +435,92 @@ def stop():
         return
     try:
         os.kill(pid, signal.SIGTERM)
-        console.print("Server stopped.")
+        _ok("Server stopped.")
     except ProcessLookupError:
         pidfile.unlink(missing_ok=True)
-        console.print("[dim]Server was not running.[/dim]")
-    except OSError:
-        console.print("[red]Could not stop the server.[/red]")
+        _muted("Server was not running.")
+    except OSError as exc:
+        _error_line(f"Could not stop the server: {exc}")
+
+
+def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | None) -> Table:
+    """The two-column label/value grid inside the status card."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(no_wrap=True)
+    grid.add_column(no_wrap=True)
+
+    def dot(style: str) -> Text:
+        return Text("●", style=style)
+
+    if info is None:
+        server = Text.assemble(dot(theme.ERROR), ("  down", ""), ("  ·  is the server running?", theme.MUTED))
+        model = Text(cfg.active or "none", style=theme.MUTED)
+    else:
+        server = Text.assemble(dot(theme.SUCCESS), ("  up", ""), (f"  ·  v{info['version']}", theme.MUTED))
+        entry = next((m for m in info.get("models", []) if m.get("name") == info.get("model")), None)
+        name = f"{info['model']}" + (f" · {entry['model']}" if entry and entry.get("model") else "")
+        model = Text.assemble(
+            dot(theme.SUCCESS if info.get("model_ok") else theme.WARNING),
+            ("  " + name, ""),
+            ("  ·  reachable" if info.get("model_ok") else "  ·  not reachable", theme.SUCCESS if info.get("model_ok") else theme.WARNING),
+        )
+    note_word = "note" if notes == 1 else "notes"
+    memory = Text(f"{notes} {note_word}" if notes is not None else "—", style=theme.MUTED)
+    upcoming = Text(f"{reminders} upcoming" if reminders is not None else "—", style=theme.MUTED)
+    for label, value in (("Server", server), ("Model", model), ("Memory", memory), ("Reminders", upcoming)):
+        grid.add_row(Text(label, style=theme.MUTED), value)
+    return grid
 
 
 @app.command()
 def status():
     """Report whether the server is up, its version and active model."""
     cfg = load_config()
-    console.print(f"Active model: [bold]{cfg.active}[/bold]")
+    client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
     try:
-        info = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home)).health()
+        info = client.health()
     except KovaError as exc:
         if exc.status is not None:
             raise
-        console.print("[red]Server is down.[/red] It starts by itself when you run kova.")
+        panel = Panel(
+            _status_rows(cfg, None, notes=None, reminders=None),
+            title=Text.assemble(("Kova", f"bold {theme.ACCENT}"), (" status", theme.MUTED)),
+            title_align="left",
+            border_style=theme.BORDER,
+            box=box.ROUNDED,
+            padding=(0, 1),
+            expand=False,
+        )
+        console.print(panel)
+        _muted("It starts by itself when you run kova.")
         return
-    reachable = "yes" if info["model_ok"] else "no"
-    console.print(f"[green]Server up[/green] · v{info['version']} · model {info['model']} · model reachable: {reachable}")
+
+    try:
+        models = client.models_list()
+    except KovaError:
+        models = []
+    info["models"] = models
+    try:
+        notes = len(client.memory_list())
+    except KovaError:
+        notes = None
+    try:
+        reminders = len(client.reminders_list())
+    except KovaError:
+        reminders = None
+
+    panel = Panel(
+        _status_rows(cfg, info, notes=notes, reminders=reminders),
+        title=Text.assemble(("Kova", f"bold {theme.ACCENT}"), (" status", theme.MUTED)),
+        title_align="left",
+        border_style=theme.BORDER,
+        box=box.ROUNDED,
+        padding=(0, 1),
+        expand=False,
+    )
+    console.print(panel)
+    if not info.get("model_ok"):
+        _muted("The model server isn't answering; run: kova setup")
 
 
 def _restart_server(cfg) -> bool:
@@ -366,7 +549,7 @@ def _restart_server(cfg) -> bool:
     try:
         ensure_server(cfg)
     except KovaError as exc:
-        console.print(f"[yellow]Imported, but the server did not restart: {exc}[/yellow]")
+        console.print(Text(f"Imported, but the server did not restart: {exc}", style=theme.WARNING))
         return False
     return True
 
@@ -378,11 +561,9 @@ def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Ko
         stats = backup.export_archive(load_config(), path)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
-    console.print(
-        f"Backup written to [bold]{stats['path']}[/bold] · "
-        f"{stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders."
-    )
-    console.print("[dim]API keys were left out of config.toml; the server token is not included.[/dim]")
+    _ok(f"Backup written to {stats['path']}")
+    _muted(f"  {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
+    _muted("API keys were left out of config.toml; the server token is not included.")
 
 
 @app.command("import")
@@ -395,28 +576,23 @@ def import_archive(
     """Restore a backup; merge is the default."""
     if not merge and not yes:
         if not typer.confirm("Replace all chats, Kova memory notes and reminders?", default=False):
-            console.print("[dim]Cancelled.[/dim]")
+            _muted("Cancelled.")
             return
     cfg = load_config()
     try:
         stats = backup.import_archive(cfg, path, merge=merge)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
-    console.print(
-        f"Imported {stats['chats']} chats · {stats['notes']} notes · "
-        f"{stats['reminders']} reminders."
-    )
+    _ok(f"Imported {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
     skipped = stats["chats_skipped"] + stats["notes_skipped"] + stats["reminders_skipped"]
     if skipped:
-        console.print(
-            f"[dim]Skipped {stats['chats_skipped']} chats, {stats['notes_skipped']} notes "
-            f"and {stats['reminders_skipped']} reminders that already existed.[/dim]"
-        )
+        _muted(f"Skipped {stats['chats_skipped']} chats, {stats['notes_skipped']} notes "
+               f"and {stats['reminders_skipped']} reminders that already existed.")
     if _restart_server(cfg):
-        console.print("[green]Server restarted[/green] to pick up the import.")
+        _muted("Server restarted to pick up the import.")
     else:
-        console.print("[dim]Chats, memory and reminders are read live from disk; "
-                      "restart a foreground server if you changed its config.[/dim]")
+        _muted("Chats, memory and reminders are read live from disk; "
+               "restart a foreground server if you changed its config.")
 
 
 # ---------------------------------------------------------------------------
@@ -426,9 +602,23 @@ def import_archive(
 
 def _list_models(client: KovaClient) -> None:
     active = client.health()["model"]
-    for entry in client.models_list():
-        marker = " (active)" if entry["name"] == active else ""
-        console.print(f"[bold]{entry['name']}[/bold] — {entry['model']} @ {entry['base_url']}{marker}")
+    models = client.models_list()
+    if not models:
+        _empty("No models configured.", "Run: kova setup to find a model server.")
+        return
+    table = _table(caption=f"{len(models)} configured · active: {active}")
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Name", no_wrap=True)
+    table.add_column("Model", no_wrap=True)
+    table.add_column("Server", style=theme.MUTED, overflow="fold")
+    for number, entry in enumerate(models, start=1):
+        selected = entry["name"] == active
+        badge = Text.assemble(
+            ("● " if selected else "  ", theme.SUCCESS if selected else ""),
+            (entry["name"], f"bold {theme.ACCENT}" if selected else ""),
+        )
+        table.add_row(str(number), badge, entry["model"], entry["base_url"])
+    console.print(table)
 
 
 @_model.command("list")
@@ -439,7 +629,7 @@ def model_list():
 @_model.command("add")
 def model_add(name: str, base_url: str, model: str, key: str | None = typer.Option(None, "--key")):
     get_client().model_add(name, base_url, model, key)
-    console.print(f"Added model [bold]{name}[/bold].")
+    _ok(f"Added model {name}.")
 
 
 @_model.command("use")
@@ -448,28 +638,61 @@ def model_use(name: str):
         get_client().model_use(name)
     except KovaError as exc:
         if exc.status == 404:
-            _fail(f'No model named "{name}". Run: kova model list')
+            _fail(f'No model named "{name}".')
         raise
-    console.print(f"[bold]{name}[/bold] is now active.")
+    _ok(f"{name} is now active.")
+
+
+def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
+    table = _table(caption=caption)
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Note", no_wrap=True, max_width=32, overflow="ellipsis")
+    table.add_column("Tags", style=theme.MUTED, no_wrap=True, max_width=24, overflow="ellipsis")
+    table.add_column("Updated", style=theme.MUTED, no_wrap=True)
+    table.add_column("About", max_width=52, overflow="fold")
+    for number, note in enumerate(notes, start=1):
+        table.add_row(
+            str(number),
+            Text(note["title"], style="bold"),
+            ", ".join(note.get("tags") or []) or "—",
+            _relative_when(note.get("updated")),
+            _clip(note.get("body", "")),
+        )
+    return table
 
 
 @_memory.command("list")
 def memory_list(q: str | None = typer.Argument(None)):
-    for note in get_client().memory_list(q):
-        console.print(f"[bold]{note['title']}[/bold] — {note['body']}")
+    notes = get_client().memory_list(q)
+    if not notes:
+        if q:
+            _empty(f'No notes match "{q}".', "Try a different word, or run: kova memory list")
+        else:
+            _empty("No memory notes yet.", "Kova writes them as you chat, or add one with: kova memory add")
+        return
+    word = "note" if len(notes) == 1 else "notes"
+    caption = f'{len(notes)} {word} · matching "{q}"' if q else f"{len(notes)} {word}"
+    console.print(_memory_table(notes, caption=caption))
 
 
 @_memory.command("search")
 def memory_search(q: str):
-    for note in get_client().memory_list(q):
-        console.print(f"[bold]{note['title']}[/bold] — {note['body']}")
+    notes = get_client().memory_list(q)
+    if not notes:
+        _empty(f'No notes match "{q}".', "Try a different word, or run: kova memory list")
+        return
+    word = "note" if len(notes) == 1 else "notes"
+    console.print(_memory_table(notes, caption=f'{len(notes)} {word} · matching "{q}"'))
 
 
 @_memory.command("show")
 def memory_show(slug: str):
     for note in get_client().memory_list():
         if note["slug"] == slug:
-            console.print(f"[bold]{note['title']}[/bold]\n{note['body']}")
+            console.print(Text(note["title"], style=f"bold {theme.ACCENT}"))
+            console.print(Text(note["slug"], style=theme.MUTED))
+            console.print()
+            console.print(note["body"], markup=False, soft_wrap=True)
             return
     _fail(f'No note named "{slug}".')
 
@@ -477,13 +700,13 @@ def memory_show(slug: str):
 @_memory.command("add")
 def memory_add(title: str, body: str, tags: list[str] = typer.Option([], "--tags")):
     note = get_client().memory_add(title, body, tags)
-    console.print(f"Saved [bold]{note['title']}[/bold].")
+    _ok(f"Saved {note['title']}.")
 
 
 @_memory.command("rm")
 def memory_rm(slug: str):
     if get_client().memory_delete(slug):
-        console.print(f"Removed [bold]{slug}[/bold].")
+        _ok(f"Removed {slug}.")
     else:
         _fail(f'No note named "{slug}".')
 
@@ -501,7 +724,7 @@ def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
             raise
         save_config(cfg)  # server not running: it reads the new folder on next start
     suffix = " (Obsidian mode)" if obsidian else ""
-    console.print(f"Memory folder set to {path}{suffix}.")
+    _ok(f"Memory folder set to {path}{suffix}.")
 
 
 def _local_now() -> datetime:
@@ -521,17 +744,23 @@ def reminders_list():
     now = _local_now()
     reminders = get_client().reminders_list()
     if not reminders:
-        console.print("[dim]No upcoming reminders.[/dim]")
+        _empty("Nothing scheduled.", 'Add one with: kova reminders add "in 10 min" "Stretch"')
         return
+    table = _table(caption=f"{len(reminders)} upcoming")
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("When", no_wrap=True)
+    table.add_column("In", style=theme.MUTED, no_wrap=True)
+    table.add_column("Reminder", overflow="ellipsis")
     for reminder in reminders:
         try:
             when = _reminder_time(reminder["when"], now)
         except (TypeError, ValueError):
-            console.print(f"[bold]#{reminder['id']}[/bold] {reminder['when']} — {reminder['text']}")
+            table.add_row(str(reminder["id"]), Text(reminder["when"], style=theme.WARNING), "—",
+                          _clip(reminder["text"]))
             continue
-        local = when.strftime("%Y-%m-%d %H:%M")
-        relative = format_relative(when, now)
-        console.print(f"[bold]#{reminder['id']}[/bold] {local} ({relative}) — {reminder['text']}")
+        table.add_row(str(reminder["id"]), when.strftime("%Y-%m-%d %H:%M"),
+                      format_relative(when, now), _clip(reminder["text"]))
+    console.print(table)
 
 
 @_reminders.command("add")
@@ -541,18 +770,19 @@ def reminders_add(when: str, text: str):
     try:
         parsed = _reminder_time(result["when"], now)
     except (TypeError, ValueError):
-        console.print(f"⏰ Reminder #{result['id']} · {result['when']}")
+        console.print(Text(f"⏰ Reminder #{result['id']} · {result['when']}"))
         return
-    console.print(
-        f"⏰ Reminder #{result['id']} · {format_when(parsed, now)} "
-        f"({format_relative(parsed, now, spaces=True)})"
-    )
+    console.print(Text.assemble(
+        ("⏰ ", ""),
+        (f"Reminder #{result['id']}", f"bold {theme.ACCENT}"),
+        (f" · {format_when(parsed, now)} ({format_relative(parsed, now, spaces=True)})", ""),
+    ))
 
 
 @_reminders.command("rm")
 def reminders_rm(rid: int):
     if get_client().reminder_delete(rid):
-        console.print(f"Removed reminder #{rid}.")
+        _ok(f"Removed reminder #{rid}.")
     else:
         _fail(f"No reminder #{rid}.")
 
@@ -611,19 +841,25 @@ def chats_list():
     """List chats, newest first."""
     chats = get_client().list_chats()
     if not chats:
-        console.print("[dim]No chats yet. Start one with: kova[/dim]")
+        _empty("No chats yet.", "Start one with: kova")
         return
-    table = Table(box=None, pad_edge=False)
-    table.add_column("#", justify="right", style="dim")
-    table.add_column("Title")
-    table.add_column("Mode", style="dim")
-    table.add_column("When", style="dim")
-    table.add_column("Messages", justify="right", style="dim")
+    word = "conversation" if len(chats) == 1 else "conversations"
+    table = _table(caption=f"{len(chats)} {word} · newest first")
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Title", no_wrap=True, max_width=40, overflow="ellipsis")
+    table.add_column("Mode", no_wrap=True)
+    table.add_column("When", style=theme.MUTED, no_wrap=True)
+    table.add_column("Messages", justify="right", style=theme.MUTED, no_wrap=True)
     for number, chat in enumerate(chats, start=1):
+        title = Text(chat.get("title") or "(untitled)")
+        if not chat.get("title"):
+            title.stylize(theme.MUTED)
+        mode = Text(chat.get("mode") or "work",
+                    style=theme.USER if (chat.get("mode") or "work") == "chat" else theme.ACCENT_SOFT)
         table.add_row(
             str(number),
-            chat.get("title") or "[dim](untitled)[/dim]",
-            chat.get("mode") or "work",
+            title,
+            mode,
             _relative_when(chat.get("last_message") or chat.get("created")),
             str(chat.get("message_count", 0)),
         )
@@ -639,29 +875,30 @@ def chats_search(words: list[str] = typer.Argument(..., help="Words to find in y
     client = get_client()
     results = client.search_chats(query)
     if not results:
-        console.print(f'[dim]No chats match "{query}".[/dim]')
+        _empty(f'No chats match "{_clip(query, 40)}".', "Try fewer or different words.")
         return
     # Same numbering as ``kova chats`` and ``_resolve_chat``; hidden ask-chats
     # fall back to their id, which ``chats show <id>`` also accepts.
     numbers = {chat["id"]: number for number, chat in enumerate(client.list_chats(), start=1)}
-    table = Table(box=None, pad_edge=False)
-    table.add_column("#", justify="right", style="dim")
-    table.add_column("Title")
-    table.add_column("When", style="dim")
+    word = "match" if len(results) == 1 else "matches"
+    table = _table(caption=f'{len(results)} {word} for "{_clip(query, 40)}"')
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Title", no_wrap=True, max_width=32, overflow="ellipsis")
+    table.add_column("When", style=theme.MUTED, no_wrap=True)
     table.add_column("Snippet", overflow="fold")
     for result in results:
         number = numbers.get(result["id"])
         label = str(number) if number is not None else result["id"]
         title = Text(result.get("title") or "(untitled)")
         if not result.get("title"):
-            title.stylize("dim")
+            title.stylize(theme.MUTED)
         snippet = Text(result.get("snippet") or "")
         lowered = snippet.plain.casefold()
         for word in query.split():
             needle = word.casefold()
             start = 0
             while needle and (position := lowered.find(needle, start)) != -1:
-                snippet.stylize("bold yellow", position, position + len(needle))
+                snippet.stylize(f"bold {theme.WARNING}", position, position + len(needle))
                 start = position + len(needle)
         table.add_row(
             label,
@@ -698,17 +935,19 @@ def chats_show(ref: str):
     client = get_client()
     summary = _resolve_chat(client, ref)
     chat = summary if "messages" in summary else client.get_chat(summary["id"])
-    console.print(f"[bold]{chat.get('title') or 'Untitled chat'}[/bold]")
-    console.print(f"[dim]{chat['id']}[/dim]")
+    console.print(Text(chat.get("title") or "Untitled chat", style=f"bold {theme.ACCENT}"))
+    console.print(Text(chat["id"], style=theme.MUTED))
     for message in chat.get("messages", []):
         role, content = message.get("role"), message.get("content")
         if not content:
             continue
         if role == "user":
-            console.print("\n[bold cyan]You[/bold cyan]")
+            console.print()
+            console.print(Text("You", style=f"bold {theme.USER}"))
             console.print(content, markup=False, soft_wrap=True)
         elif role == "assistant":
-            console.print("\n[bold green]Kova[/bold green]")
+            console.print()
+            console.print(Text("Kova", style=f"bold {theme.ACCENT}"))
             console.print(Markdown(content))
 
 
@@ -720,7 +959,7 @@ def chats_rename(ref: str, title: str):
         _fail("Title cannot be empty.")
     client = get_client()
     chat = client.rename_chat(_resolve_chat_id(client, ref), title)
-    console.print(f'Renamed chat to "{chat["title"]}".')
+    _ok(f'Renamed chat to "{chat["title"]}".')
 
 
 @_chats.command("rm")
@@ -730,9 +969,9 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
     chat = _resolve_chat(client, ref)
     title = chat.get("title") or "Untitled chat"
     if not yes and not typer.confirm(f'Delete "{title}"?', default=False):
-        console.print("[dim]Cancelled.[/dim]")
+        _muted("Cancelled.")
         return
     if client.delete_chat(chat["id"]):
-        console.print(f'Deleted chat "{title}".')
+        _ok(f'Deleted chat "{title}".')
     else:
         _fail(f'No chat "{ref}".')

@@ -113,12 +113,13 @@ def check_update(ref: str) -> str:
 def update(ref: str, emit=print) -> None:
     source = source_spec(ref)
     command = [find_uv(), "tool", "install", "--force", "--refresh", "--python", "3.12", source]
-    emit(f"Installing/updating Kova: {source}")
+    where = source if os.environ.get("KOVA_SOURCE") else ref
+    emit(f"→ Installing or updating Kova from {where}")
     try:
         subprocess.run(command, check=True, env=tool_env())
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
-    emit("Updated Kova. Run: kova")
+    emit("✓ Updated Kova. Run: kova")
 
 
 def stop_server(home: Path) -> None:
@@ -177,22 +178,22 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
         purge = confirm(f"Delete your Kova data in {home} (chats, memory, model settings, token)?")
     if purge:
         validate_purge(home)
-    emit("Stopping the Kova server (if running) ...")
+    emit("→ Stopping the Kova server (if running) ...")
     stop_server(home)
     uv = find_uv()
-    emit("Removing the kova command: uv tool uninstall kova-ai")
+    emit("→ Removing the kova command: uv tool uninstall kova-ai")
     try:
         if sys.platform == "win32":
             _windows_uninstall(uv, home, purge and home.exists())
-            emit("Uninstall scheduled; it completes when this command exits.")
+            emit("✓ Uninstall scheduled; it completes when this command exits.")
             return
         subprocess.run([uv, "tool", "uninstall", "kova-ai"], check=True, env=tool_env())
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova uninstall failed; your data was kept: {exc}") from exc
     if purge and home.exists():
         shutil.rmtree(home)
-        emit(f"Deleted {home}.")
+        emit(f"✓ Deleted {home}.")
     elif home.exists():
-        emit(f"Keeping your data in {home}. Use --purge to delete it.")
-    emit("External memory folders and files are left alone.")
-    emit("Done. Kova is removed.")
+        emit(f"✓ Keeping your data in {home}. Use --purge to delete it.")
+    emit("✓ External memory folders and files are left alone.")
+    emit("✓ Done. Kova is removed.")

@@ -204,7 +204,8 @@ def test_wizard_picks_server_and_model_and_saves(home, monkeypatch, no_live, cap
     assert "Model servers found" in out
     assert "Ollama" in out and "11434" in out
     assert "It works!" in out
-    assert "You're set. Run: kova" in out
+    assert "You're set" in out
+    assert "Run" in out and "kova" in out
 
 
 def test_wizard_enter_picks_first_model(home, monkeypatch, no_live):
@@ -329,7 +330,8 @@ def test_flags_do_it_without_prompts(home, monkeypatch, no_live, capsys):
     )
     assert fake.chat_requests[0]["model"] == "local"
     assert "Bearer sk-x" in fake.auth
-    assert "You're set. Run: kova" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "You're set" in out and "Run" in out and "homelab" in out
 
 
 def test_flags_use_first_model_when_model_is_omitted(home, monkeypatch, no_live):
@@ -494,7 +496,9 @@ def test_cli_setup_shows_a_friendly_error(home, monkeypatch):
     result = CliRunner().invoke(cli.app, ["setup", "--url", "http://192.168.1.20:8080", "--model", "local"])
 
     assert result.exit_code == 1, result.output
-    assert result.output.strip() == "Couldn't reach a model server."
+    lines = result.output.strip().splitlines()
+    assert lines[0] == "✗ Couldn't reach a model server."
+    assert "kova setup" in lines[1]
     assert "Traceback" not in result.output
 
 
@@ -509,5 +513,6 @@ def test_cli_setup_runs_the_wizard(home, monkeypatch, no_live):
     result = CliRunner().invoke(cli.app, ["setup"])
 
     assert result.exit_code == 0, result.output
-    assert "You're set. Run: kova" in result.output
+    assert "You're set" in result.output and "Run" in result.output
+    assert "Step 1 of 3" in result.output and "Step 3 of 3" in result.output
     assert load_config().active == "ollama"

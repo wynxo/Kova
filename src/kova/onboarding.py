@@ -12,19 +12,26 @@ import asyncio
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
+from kova import theme
 from kova.client import KovaClient, KovaError
 from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.models import ModelClient, ModelError
 
 console = Console()
+
+SYMBOL_OK = "✓"
+SYMBOL_ERROR = "✗"
 
 PROBE_TIMEOUT = 0.8   # seconds for one GET /v1/models
 CHAT_TIMEOUT = 20.0   # seconds for the one test completion
@@ -70,7 +77,45 @@ class ChatTest:
 
 
 class SetupError(RuntimeError):
-    """Setup could not finish; the message is shown to the user in red."""
+    """Setup could not finish; the CLI shows the message as one styled error line."""
+
+
+def _ok(message: str) -> None:
+    console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (message, "")))
+
+
+def _error(message: str) -> None:
+    console.print(Text.assemble((f"{SYMBOL_ERROR} ", f"bold {theme.ERROR}"), (message, theme.ERROR)))
+
+
+def _step(number: int, total: int, title: str) -> None:
+    """One clear wizard section header, e.g. ``Step 1 of 3 · Model server``."""
+    console.print()
+    console.print(Text.assemble(
+        (f"Step {number} of {total}", f"bold {theme.ACCENT}"),
+        (" · ", theme.MUTED),
+        (title, "bold"),
+    ))
+    console.print(Text("─" * 60, style=theme.BORDER))
+
+
+@contextmanager
+def _working(message: str):
+    """A spinner while probing; a plain dim line when output is piped."""
+    if console.is_terminal:
+        with console.status(Text(message, style=theme.MUTED), spinner="dots"):
+            yield
+    else:
+        console.print(Text(message, style=theme.MUTED))
+        yield
+
+
+def _pretty_path(path: Path) -> str:
+    """Show paths under the home folder with a friendly ``~``."""
+    try:
+        return "~/" + str(Path(path).relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -283,11 +328,11 @@ def _choose(prompt: str, count: int, default: int = 1) -> int:
         try:
             choice = int(answer)
         except ValueError:
-            console.print("[red]Type a number, please.[/red]")
+            _error("Type a number, please.")
             continue
         if 1 <= choice <= count:
             return choice
-        console.print(f"[red]Pick a number from 1 to {count}.[/red]")
+        _error(f"Pick a number from 1 to {count}.")
 
 
 def _ask_required(prompt: str) -> str:
@@ -295,7 +340,7 @@ def _ask_required(prompt: str) -> str:
         answer = _ask(prompt)
         if answer:
             return answer
-        console.print("[red]That can't be empty.[/red]")
+        _error("That can't be empty.")
 
 
 # ---------------------------------------------------------------------------
@@ -304,18 +349,23 @@ def _ask_required(prompt: str) -> str:
 
 def _print_found(found: list[DetectedServer]) -> None:
     table = Table(
-        title="Model servers found",
+        title=Text("Model servers found", style=f"bold {theme.ACCENT}"),
         title_justify="left",
-        box=box.SIMPLE,
+        caption=Text(f"{len(found)} reachable · pick one below", style=theme.MUTED),
+        caption_justify="left",
+        box=box.SIMPLE_HEAD,
+        border_style=theme.BORDER,
+        header_style=f"bold {theme.MUTED}",
         pad_edge=False,
         show_edge=False,
+        expand=False,
     )
-    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
     table.add_column("Server", style="bold", no_wrap=True)
-    table.add_column("URL", style="dim", overflow="fold")
+    table.add_column("URL", style=theme.MUTED, overflow="fold")
     table.add_column("Models", justify="right", no_wrap=True)
     for index, server in enumerate(found, 1):
-        count = "needs key" if server.needs_key else str(len(server.models))
+        count = Text("needs key", style=theme.WARNING) if server.needs_key else Text(str(len(server.models)))
         table.add_row(str(index), server.label, server.base_url, count)
     console.print(table)
 
@@ -326,17 +376,17 @@ def _ask_for_server(
     transport: httpx.BaseTransport | None,
 ) -> DetectedServer:
     """Prompt for a URL on another machine until one answers."""
-    console.print("[dim]Type its URL, for example http://192.168.1.20:8080[/dim]")
+    console.print(Text("Type its URL, for example http://192.168.1.20:8080", style=theme.MUTED))
     while True:
         raw = _ask("Server URL (blank to cancel):")
         if not raw:
             raise SetupError("Setup cancelled. Run kova setup again any time.")
-        console.print(f"[dim]Checking {raw}…[/dim]")
-        server = probe_url(raw, timeout=timeout, transport=transport)
+        with _working(f"Checking {raw}…"):
+            server = probe_url(raw, timeout=timeout, transport=transport)
         if server is not None:
             return server
-        console.print(f"[red]Couldn't reach a model server at {raw}/v1/models.[/red]")
-        console.print("[dim]Check the address and port, and that the server is running.[/dim]")
+        _error(f"Couldn't reach a model server at {raw}/v1/models.")
+        console.print(Text("  Check the address and port, and that the server is running.", style=theme.MUTED))
 
 
 def _ask_for_key(
@@ -346,33 +396,33 @@ def _ask_for_key(
     transport: httpx.BaseTransport | None,
 ) -> tuple[DetectedServer, str]:
     """Ask for the key a 401 server wants, then look at its models again."""
-    console.print(f"[yellow]{server.label} at {server.base_url} wants an API key.[/yellow]")
+    console.print(Text(f"{server.label} at {server.base_url} wants an API key.", style=theme.WARNING))
     key = _ask_required("Paste the API key:")
-    again = probe_url(server.base_url, label=server.label, api_key=key, timeout=timeout, transport=transport)
+    with _working("Checking the key…"):
+        again = probe_url(server.base_url, label=server.label, api_key=key, timeout=timeout, transport=transport)
     if again is not None and not again.needs_key:
-        console.print("[green]✓ Key accepted.[/green]")
+        _ok("Key accepted.")
         return again, key
-    console.print("[red]The server still said no.[/red] You can save it now and fix the key later.")
+    _error("The server still said no. You can save it now and fix the key later.")
     return DetectedServer(server.label, server.base_url, [], needs_key=True), key
 
 
 def _pick_model(server: DetectedServer) -> str:
     if server.models:
-        console.print()
-        console.print(f"[bold]Models on {server.label}[/bold]")
+        console.print(Text(f"Models on {server.label}", style=f"bold {theme.ACCENT}"))
         for index, name in enumerate(server.models, 1):
-            console.print(f"  [dim]{index}.[/dim] {name}")
+            console.print(Text.assemble((f"  {index}.", theme.ACCENT_SOFT), (f" {name}", "")))
         choice = _choose(f"Which model? [bold]1-{len(server.models)}[/bold], Enter = 1:", len(server.models))
         return server.models[choice - 1]
-    console.print("[yellow]That server didn't list any models.[/yellow]")
+    console.print(Text("That server didn't list any models.", style=theme.WARNING))
     return _ask_required("Model name (for example qwen3:8b):")
 
 
 def _ask_memory(cfg: Config) -> tuple[Path, str | None] | None:
-    console.print()
-    console.print("[bold]Where should Kova keep its memory?[/bold]")
-    console.print(f"  [dim]1.[/dim] Default ({cfg.memory_path})")
-    console.print("  [dim]2.[/dim] An Obsidian vault (Kova only writes inside <vault>/Kova/)")
+    console.print(Text("Where should Kova keep its memory?", style="bold"))
+    console.print(Text.assemble(("  1.", theme.ACCENT_SOFT), (f" Default ({_pretty_path(cfg.memory_path)})", "")))
+    console.print(Text.assemble(("  2.", theme.ACCENT_SOFT),
+                                (" An Obsidian vault (Kova only writes inside <vault>/Kova/)", "")))
     answer = _ask("Pick 1 or 2, Enter = 1:", default="1")
     if not answer.strip().startswith("2"):
         return None
@@ -380,10 +430,10 @@ def _ask_memory(cfg: Config) -> tuple[Path, str | None] | None:
         raw = _ask("Path to your vault:")
         if raw:
             break
-        console.print("[red]Type the vault path, or press Ctrl+C to cancel.[/red]")
+        _error("Type the vault path, or press Ctrl+C to cancel.")
     path = Path(raw).expanduser().resolve()
     if not path.is_dir():
-        console.print(f"[dim]{path} doesn't exist yet; Kova will create it.[/dim]")
+        console.print(Text(f"{_pretty_path(path)} doesn't exist yet; Kova will create it.", style=theme.MUTED))
     return path, "Kova"
 
 
@@ -438,11 +488,32 @@ def _save(
 def _finish(cfg: Config, entry: ModelEntry, memory: tuple[Path, str | None] | None) -> None:
     live = _save(cfg, entry, memory)
     if live:
-        console.print(f"[green]Saved.[/green] The running Kova server is using [bold]{entry.name}[/bold] now.")
+        _ok(f"Saved. The running Kova server is using {entry.name} now.")
     else:
-        console.print(f"[green]Saved[/green] [bold]{entry.name}[/bold] to {cfg.home / 'config.toml'}.")
+        _ok(f"Saved {entry.name} to {_pretty_path(cfg.home / 'config.toml')}.")
+
+    memory_path = memory[0] if memory is not None else cfg.memory_path
+    rows = Table.grid(padding=(0, 2))
+    rows.add_column(no_wrap=True)
+    rows.add_column(no_wrap=True)
+    rows.add_row(Text("Model", style=theme.MUTED), Text(f"{entry.name} · {entry.model}"))
+    rows.add_row(Text("Server", style=theme.MUTED), Text(entry.base_url))
+    rows.add_row(Text("Memory", style=theme.MUTED),
+                 Text(_pretty_path(memory_path) + (" (Obsidian)" if memory and memory[1] else "")))
+    rows.add_row(Text("Config", style=theme.MUTED), Text(_pretty_path(cfg.home / "config.toml")))
+    rows.add_row(Text("Run", style=theme.MUTED), Text("kova", style=f"bold {theme.ACCENT}"))
     console.print()
-    console.print("[green]You're set.[/green] Run: [bold]kova[/bold]")
+    console.print(Panel(
+        rows,
+        title=Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), ("You're set.", f"bold {theme.SUCCESS}")),
+        title_align="left",
+        subtitle=Text("Chat any time; /help lists the commands.", style=theme.MUTED),
+        subtitle_align="left",
+        border_style=theme.SUCCESS,
+        box=box.ROUNDED,
+        padding=(0, 1),
+        expand=False,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +533,8 @@ def _run_quick(
     chat_timeout: float,
 ) -> None:
     """The flag-driven path: ``kova setup --url ... --model ...``."""
-    console.print(f"[dim]Checking {url}…[/dim]")
-    server = probe_url(url, api_key=api_key, timeout=timeout, transport=transport)
+    with _working(f"Checking {url}…"):
+        server = probe_url(url, api_key=api_key, timeout=timeout, transport=transport)
     if server is None:
         raise SetupError(f"Couldn't reach a model server at {url}. Check the URL and that the server is running.")
     if server.needs_key:
@@ -478,12 +549,13 @@ def _run_quick(
         model=chosen,
         api_key=api_key,
     )
-    result = test_chat(entry, timeout=chat_timeout, transport=transport)
+    with _working(f"Sending one quick test message to {chosen}…"):
+        result = test_chat(entry, timeout=chat_timeout, transport=transport)
     if result.ok:
-        console.print(f"[green]✓ Works![/green] Answered in {result.seconds:.2f}s.")
+        _ok(f"Works! Answered in {result.seconds:.2f}s.")
     elif yes:
-        console.print(f"[yellow]The test message failed:[/yellow] {result.error}")
-        console.print("[dim]Saving it anyway because --yes was given.[/dim]")
+        _error(f"The test message failed. {result.error}")
+        console.print(Text("  Saving it anyway because --yes was given.", style=theme.MUTED))
     else:
         raise SetupError(f"The test message failed: {result.error} Re-run with --yes to save it anyway.")
     _finish(cfg, entry, None)
@@ -498,23 +570,26 @@ def _run_wizard(
     chat_timeout: float,
 ) -> None:
     console.print()
-    console.print("[bold]Welcome to Kova.[/bold] Let's connect a model server so you can chat.")
-    console.print("[dim]Looking for model servers on this computer…[/dim]")
+    console.print(Text("Welcome to Kova.", style=f"bold {theme.ACCENT}"))
+    console.print(Text("Let's connect a model server so you can chat.", style=theme.MUTED))
 
-    found = detect_servers(timeout=timeout, transport=transport)
+    _step(1, 3, "Model server")
+    with _working("Looking for model servers on this computer…"):
+        found = detect_servers(timeout=timeout, transport=transport)
     if found:
         _print_found(found)
         index = _choose(f"Which server? [bold]1-{len(found)}[/bold], Enter = 1:", len(found))
         server = found[index - 1]
     else:
-        console.print("[yellow]No model server found on this computer.[/yellow]")
-        console.print("[dim]That's fine if your server runs on another machine.[/dim]")
+        console.print(Text("No model server found on this computer.", style=theme.WARNING))
+        console.print(Text("That's fine if your server runs on another machine.", style=theme.MUTED))
         server = _ask_for_server(timeout=timeout, transport=transport)
 
     api_key: str | None = None
     if server.needs_key:
         server, api_key = _ask_for_key(server, timeout=timeout, transport=transport)
 
+    _step(2, 3, "Model")
     model_name = _pick_model(server)
     default_name = _default_name(server.base_url)
     console.print()
@@ -530,20 +605,26 @@ def _run_wizard(
     )
 
     console.print()
-    console.print(f"[dim]Sending one quick test message to {model_name}…[/dim]")
-    result = test_chat(entry, timeout=chat_timeout, transport=transport)
+    with _working(f"Sending one quick test message to {model_name}…"):
+        result = test_chat(entry, timeout=chat_timeout, transport=transport)
     if result.ok:
-        console.print(f"[green]✓ It works![/green] The model answered in {result.seconds:.2f}s.")
+        _ok(f"It works! The model answered in {result.seconds:.2f}s.")
         if result.reply:
-            console.print(f"[dim]It said: {result.reply}[/dim]")
+            console.print(Text(f"  It said: {_clip_reply(result.reply)}", style=theme.MUTED))
     else:
-        console.print(f"[red]The test message failed.[/red] {result.error}")
+        _error(f"The test message failed. {result.error}")
         if not (yes or _confirm("Save it anyway?", default=False)):
             raise SetupError("Nothing saved. Run kova setup again when the server is ready.")
 
+    _step(3, 3, "Memory")
     memory = _ask_memory(cfg)
-    console.print()
     _finish(cfg, entry, memory)
+
+
+def _clip_reply(reply: str, limit: int = 80) -> str:
+    """Keep the model's test reply to one tidy line."""
+    text = " ".join(reply.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def run_setup(
