@@ -203,10 +203,18 @@ class LoginAttempt:
 
 
 def login(provider: ProviderEntry) -> None:
-    attempt = LoginAttempt(provider)
-    webbrowser.open(attempt.url)
-    # No tokens or authorization-code URLs printed. Browser was opened after binding.
     try:
+        attempt = LoginAttempt(provider)
+    except OSError:
+        raise ProviderError('Cannot open the local sign-in callback. Check loopback access, then retry kova setup.') from None
+    # No tokens or authorization-code URLs printed.
+    try:
+        try:
+            opened = webbrowser.open(attempt.url)
+        except webbrowser.Error:
+            opened = False
+        if not opened:
+            raise ProviderError('Could not open a browser. Configure a default browser, then retry kova setup.')
         if not attempt.done.wait(300) or attempt.error or not attempt.result:
             raise ProviderError(attempt.error or 'Sign-in timed out. Please retry.')
         provider.auth = attempt.result

@@ -59,6 +59,7 @@ async def stream_native(client, url, payload, adapter):
     from kova.models import ModelError, ModelEvent
     calls = {}
     complete = False
+    has_text = False
     async with client.stream('POST', url, json=payload) as response:
         if response.status_code >= 400:
             raise ModelError(f'Provider refused the request: HTTP {response.status_code}')
@@ -69,6 +70,8 @@ async def stream_native(client, url, payload, adapter):
                 event = json.loads(line[5:])
             except ValueError:
                 continue
+            if not isinstance(event, dict):
+                raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.')
             kind = event.get('type', '')
             if kind in ('error', 'response.failed', 'response.incomplete'):
                 raise ModelError('Provider could not complete the response. Check access and usage limits.')
@@ -83,6 +86,7 @@ async def stream_native(client, url, payload, adapter):
                 if delta.get('type') == 'input_json_delta' and index in calls:
                     calls[index]['arguments'] += delta.get('partial_json', '')
                 if delta.get('type') == 'text_delta':
+                    has_text = has_text or bool(delta.get('text', '').strip())
                     yield ModelEvent('text', delta.get('text', ''))
                 if delta.get('type') == 'thinking_delta':
                     yield ModelEvent('reasoning', delta.get('thinking', ''))
@@ -96,11 +100,14 @@ async def stream_native(client, url, payload, adapter):
                 elif kind == 'response.output_item.done' and item.get('type') == 'function_call':
                     calls[index] = {'id': item['call_id'], 'name': item['name'], 'arguments': item.get('arguments', '{}')}
                 elif kind == 'response.output_text.delta':
+                    has_text = has_text or bool(event.get('delta', '').strip())
                     yield ModelEvent('text', event.get('delta', ''))
                 elif kind in ('response.reasoning_text.delta', 'response.reasoning_summary_text.delta'):
                     yield ModelEvent('reasoning', event.get('delta', ''))
     if not complete:
         raise ModelError('Provider stream ended before the response completed. Please retry.')
+    if not has_text and not calls:
+        raise ModelError('Provider returned an empty reply. Choose a chat model with kova setup, then retry.')
     for call in calls.values():
         initial = call.pop('_input', {})
         if not call['arguments']:

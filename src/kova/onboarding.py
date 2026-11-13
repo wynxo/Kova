@@ -14,8 +14,13 @@ from rich.text import Text
 from kova import server_finder
 from kova.client import KovaClient, KovaError
 from kova.config import Config, ensure_token, save_config
-from kova.providers import CATALOG, ProviderError, install_provider, list_models, make_provider
-from kova.server_finder import normalize_base
+from kova.providers import (
+    CATALOG,
+    ProviderError,
+    install_provider,
+    list_models,
+    make_provider,
+)
 
 console = Console()
 
@@ -143,7 +148,7 @@ def _identifier(cfg: Config, default: str) -> str:
 def needs_setup(cfg: Config, **kwargs) -> bool:
     """Do not auto-discover or fetch catalogs on chat startup."""
     try:
-        return not bool(cfg.active_model().model)
+        return not bool(cfg.active_model().model.strip())
     except KeyError:
         return True
 
@@ -180,10 +185,19 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
         else:
             spec = CATALOG[_select('Provider', [s.name for s in CATALOG], default=None)]
         if spec.id == 'local':
-            address = _ask('Server address (for example homelab:8080):')
+            address = _ask('Server address (Enter = detect local Ollama / LM Studio / llama.cpp / PolyStrata):')
             if not address:
-                raise SetupError('Setup cancelled. Nothing saved.')
-            found = server_finder.connect(address, transport=transport, timeout=timeout)
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    found_servers = list(pool.map(
+                        lambda port: server_finder.probe(f'http://127.0.0.1:{port}/v1', transport=transport, timeout=min(timeout, 2)),
+                        (11434, 1234, 8080)))
+                found_servers = [f for f in found_servers if f.answered]
+                if not found_servers:
+                    raise SetupError('No local model server found. Start Ollama (ollama serve), LM Studio, or llama.cpp / PolyStrata, then run kova setup.')
+                found = found_servers[_select('Local servers', [f.summary for f in found_servers])]
+            else:
+                found = server_finder.connect(address, transport=transport, timeout=timeout)
             if not found.answered:
                 raise SetupError('Could not reach that server. Check the address and try again.')
             key = _secret('API key:') if found.needs_key else None
@@ -219,8 +233,19 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
             provider.api_key = _secret('API key:')
             if not provider.api_key:
                 raise SetupError('An API key is required for this provider.')
-        models = list_models(provider, transport=transport, timeout=timeout)
+        while True:
+            try:
+                models = list_models(provider, transport=transport, timeout=timeout)
+                if not models:
+                    raise ProviderError('No models available. Load a model or check provider access, then retry.')
+                break
+            except ProviderError as exc:
+                console.print(Text(str(exc)))
+                if _ask('Retry connection? [y/N]:').lower() != 'y':
+                    raise SetupError('Nothing saved. Run kova setup to try again.') from None
+                if spec.key_url or provider.api_key:
+                    provider.api_key = _secret('API key:')
         selected, active = _pick_models(models)
         _save_provider(cfg, provider, selected, active)
-    except (ProviderError, KovaError) as exc:
+    except (ProviderError, KovaError, ValueError, OSError) as exc:
         raise SetupError(str(exc)) from None
