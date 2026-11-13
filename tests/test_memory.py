@@ -146,7 +146,7 @@ def test_delete_refuses_symlinked_write_dir(tmp_path):
 def test_concurrent_saves_leave_a_whole_note(tmp_path):
     import threading
 
-    mem = Memory(tmp_path)
+    mem = Memory(tmp_path, budget=0)
     bodies = [f"body {i} " * 2000 for i in range(8)]
     threads = [threading.Thread(target=mem.save, args=("Same", b)) for b in bodies]
     for t in threads: t.start()

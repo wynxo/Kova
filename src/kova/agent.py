@@ -21,6 +21,7 @@ from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
+from kova.tools.sessions import set_current_chat
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
 
@@ -55,15 +56,30 @@ def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool
 
 
 def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Note],
-                        mode: str = DEFAULT_MODE) -> str:
+                        mode: str = DEFAULT_MODE, *,
+                        memory_usage: int | None = None,
+                        memory_budget: int | None = None) -> str:
     """Build the identity, current context, and relevant memory prompt."""
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
     tools = ", ".join(tool_names) if tool_names else "none"
     prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
               f"Available tools: {tools}")
-    if memories:
-        notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in memories)
-        prompt += f"\n\nWhat you remember about the user:\n{notes}"
+    if memories or memory_budget is not None:
+        if memory_budget:
+            used = memory_usage or 0
+            percent = round(used * 100 / memory_budget)
+            header = (f"What you remember about the user (memory {used:,} of "
+                      f"{memory_budget:,} chars used, {percent}% full; over-budget "
+                      "writes fail, so patch or remove notes to free space):")
+        elif memory_budget == 0:
+            header = "What you remember about the user (memory size is unlimited):"
+        else:
+            header = "What you remember about the user:"
+        if memories:
+            notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in memories)
+            prompt += f"\n\n{header}\n{notes}"
+        else:
+            prompt += f"\n\n{header} nothing yet."
     return prompt
 
 
@@ -168,6 +184,7 @@ class Agent:
         ``model`` names a configured model for this turn only; the active one otherwise.
         """
         self.store.add_message(chat_id, 'user', text)
+        set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
@@ -195,7 +212,13 @@ class Agent:
             memories = await asyncio.to_thread(self.memory.search, text, 5)
         except Exception:  # memory trouble must never block a chat
             memories = []
-        prompt = build_system_prompt(self.now(), list(tools), memories, mode)
+        try:
+            memory_usage = await asyncio.to_thread(self.memory.usage)
+        except Exception:  # a broken note must not block the prompt either
+            memory_usage = 0
+        prompt = build_system_prompt(self.now(), list(tools), memories, mode,
+                                     memory_usage=memory_usage,
+                                     memory_budget=getattr(self.memory, 'budget', 0))
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {(chat or {}).get('permission', 'manual')}"
             instructions = await asyncio.to_thread(project_instructions, cwd)

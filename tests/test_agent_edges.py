@@ -321,6 +321,28 @@ def test_build_system_prompt_formats_unicode_memories_in_order():
     assert "What you remember about the user:\n## Café ☕\nnaïve résumé 🐶\n\n## Empty\n" in prompt
 
 
+def test_build_system_prompt_shows_memory_budget_even_with_no_notes():
+    now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    prompt = build_system_prompt(now, ["memory_add"], [], memory_usage=0, memory_budget=8000)
+    assert ("What you remember about the user (memory 0 of 8,000 chars used, 0% full; "
+            "over-budget writes fail, so patch or remove notes to free space): nothing yet."
+            in prompt)
+
+
+def test_build_system_prompt_shows_usage_percent_and_over_budget_notes():
+    now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    prompt = build_system_prompt(now, [], [_note("Dog", "Rex")],
+                                 memory_usage=9000, memory_budget=8000)
+    assert "memory 9,000 of 8,000 chars used, 112% full" in prompt
+    assert "## Dog\nRex" in prompt
+
+
+def test_build_system_prompt_memory_unlimited_wording():
+    now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    prompt = build_system_prompt(now, [], [], memory_usage=500, memory_budget=0)
+    assert "memory size is unlimited" in prompt
+
+
 def test_build_system_prompt_unknown_mode_uses_the_work_identity():
     now = datetime(2026, 11, 13, tzinfo=timezone.utc)
     prompt = build_system_prompt(now, [], [], mode="bogus")
@@ -471,7 +493,10 @@ async def test_run_turn_memory_search_failure_does_not_block_the_chat(setup):
     agent = Agent(cfg, store, memory, tools, transport=fake.transport)
     events = [event async for event in agent.run_turn(chat_id, "hello")]
     assert events[-1]["type"] == "done"
-    assert "What you remember" not in fake.requests[0]["messages"][0]["content"]
+    # No notes injected, but the budget header still explains the empty state.
+    prompt = fake.requests[0]["messages"][0]["content"]
+    assert "What you remember about the user" in prompt
+    assert "nothing yet" in prompt
     assert store.get_messages(chat_id)[-1]["content"] == "Still here"
 
 

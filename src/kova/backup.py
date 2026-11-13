@@ -368,7 +368,9 @@ def import_archive(
         else:
             chats_skipped += 1
 
-    memory = Memory(cfg.memory_path, cfg.memory_write_subdir)
+    # A restore must not reject a backup that predates or exceeds the budget:
+    # it reproduces what was saved, and later writes enforce the cap again.
+    memory = Memory(cfg.memory_path, cfg.memory_write_subdir, budget=0)
     memory.write_dir.mkdir(parents=True, exist_ok=True)
     if not merge:
         _clear_managed_notes(memory)

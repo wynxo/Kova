@@ -17,6 +17,36 @@ import yaml
 _FRONTMATTER = re.compile(r"\A\ufeff?---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 _SAFE_SLUG = re.compile(r"\A\w[\w .-]*\Z")
 
+#: Default cap on the whole memory store, in characters. Small enough to stay
+#: cheap in the prompt, large enough for a useful set of facts (~2k tokens).
+DEFAULT_MEMORY_BUDGET = 8000
+
+
+class MemoryStoreError(ValueError):
+    """A memory write the store refuses; the message is safe to show the model."""
+
+
+class MemoryExistsError(MemoryStoreError):
+    """An ``add`` would overwrite an existing note."""
+
+
+class MemoryBudgetError(MemoryStoreError):
+    """A write would push the store over its character budget."""
+
+    def __init__(self, overflow: int, used: int, budget: int) -> None:
+        self.overflow = overflow
+        self.used = used
+        self.budget = budget
+        super().__init__(
+            f"Memory over budget by {overflow} characters: {used} used, {budget} allowed. "
+            "Remove or shorten an existing note, then retry."
+        )
+
+
+def note_chars(title: str, body: str, tags: list[str] | None = None) -> int:
+    """What one note costs against the budget: title, tags and body text."""
+    return len(title) + sum(len(tag) for tag in tags or []) + len(body)
+
 
 def _safe(slug: str) -> bool:
     """A slug may never contain path separators or start with a dot."""
@@ -92,7 +122,8 @@ def _mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()
 
 
-_WRITE_LOCK = threading.Lock()
+# Re-entrant: patch reads and then writes under the same guard.
+_WRITE_LOCK = threading.RLock()
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -108,29 +139,120 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 class Memory:
-    """Markdown notes under ``root``; writes go to ``root/write_subdir`` when set."""
+    """Markdown notes under ``root``; writes go to ``root/write_subdir`` when set.
 
-    def __init__(self, root: Path, write_subdir: str | None = None) -> None:
+    ``budget`` caps the whole store in characters (title + tags + body). A
+    write that would exceed it raises :class:`MemoryBudgetError` with the exact
+    overflow; nothing is ever silently truncated. ``None`` or ``0`` disables
+    the cap, which backup restores use.
+    """
+
+    def __init__(self, root: Path, write_subdir: str | None = None,
+                 budget: int | None = DEFAULT_MEMORY_BUDGET) -> None:
         self.root = Path(root)
         self.write_subdir = write_subdir
+        self.budget = budget or 0
 
     @property
     def write_dir(self) -> Path:
         return self.root / self.write_subdir if self.write_subdir else self.root
 
-    def save(self, title: str, body: str, tags: list[str] | None = None) -> Note:
-        """Write ``<write dir>/<slug>.md``; the same slug overwrites."""
-        slug = slugify(title)
-        tags = list(tags) if tags else []
-        updated = datetime.now().astimezone().isoformat()
-        path = self.write_dir / f"{slug}.md"
+    def usage(self) -> int:
+        """Characters currently used by every note, against :attr:`budget`."""
+        return sum(note_chars(note.title, note.body, note.tags) for note in self.list())
+
+    def stats(self) -> dict:
+        """Usage and capacity, for the prompt header and the list tool."""
+        notes = self.list()
+        used = sum(note_chars(note.title, note.body, note.tags) for note in notes)
+        budget = self.budget
+        return {
+            "used": used,
+            "budget": budget,
+            "percent": round(used * 100 / budget) if budget else 0,
+            "notes": len(notes),
+        }
+
+    def _enforce_budget(self, used: int, old_chars: int, new_chars: int) -> None:
+        """Refuse a write whose result would exceed the budget."""
+        total = used - old_chars + new_chars
+        if self.budget and total > self.budget:
+            raise MemoryBudgetError(total - self.budget, used, self.budget)
+
+    def _write_note(self, path: Path, title: str, body: str, tags: list[str],
+                    *, refuse_existing: bool) -> Note:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_symlink() or not path.parent.resolve().is_relative_to(self.root.resolve()):
-            raise ValueError(f"Refusing to write memory note through a link: {path}")
-        meta = {"title": title, "tags": tags, "updated": updated}
+            raise MemoryStoreError(f"Refusing to write memory note through a link: {path}")
         with _WRITE_LOCK:
+            if refuse_existing and path.is_file():
+                raise MemoryExistsError(
+                    f'A memory note named "{path.stem}" already exists. '
+                    "Use memory_patch for a targeted change instead of replacing it."
+                )
+            try:
+                existing = _parse(path) if path.is_file() else None
+            except (OSError, UnicodeDecodeError):
+                existing = None  # a broken note is replaced, not counted twice
+            self._enforce_budget(
+                self.usage(),
+                note_chars(existing.title, existing.body, existing.tags) if existing else 0,
+                note_chars(title, body, tags),
+            )
+            updated = datetime.now().astimezone().isoformat()
+            meta = {"title": title, "tags": tags, "updated": updated}
             _atomic_write(path, "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---\n" + body)
-        return Note(slug=slug, title=title, body=body, tags=tags, updated=updated, path=path)
+        return Note(slug=path.stem, title=title, body=body, tags=tags, updated=updated, path=path)
+
+    def save(self, title: str, body: str, tags: list[str] | None = None) -> Note:
+        """Write ``<write dir>/<slug>.md``; the same slug overwrites.
+
+        This is the CLI/API "add" operation and keeps its historic upsert
+        behaviour. Model-facing writes use :meth:`add`/:meth:`patch`, which
+        never replace a whole note by accident.
+        """
+        return self._write_note(self.write_dir / f"{slugify(title)}.md", title, body,
+                                list(tags) if tags else [], refuse_existing=False)
+
+    def add(self, title: str, body: str, tags: list[str] | None = None) -> Note:
+        """Create a new note; refuse to replace one that already exists."""
+        return self._write_note(self.write_dir / f"{slugify(title)}.md", title, body,
+                                list(tags) if tags else [], refuse_existing=True)
+
+    def patch(self, slug: str, old_text: str, new_text: str) -> Note:
+        """Replace one span inside one note; ``old_text`` must match exactly once.
+
+        Patching is deliberately narrow: it never replaces a whole entry, and it
+        only touches notes Kova itself wrote (inside the write dir).
+        """
+        if not old_text:
+            raise MemoryStoreError("old_text must not be empty; use memory_remove to delete a note.")
+        if not _safe(slug):
+            raise MemoryStoreError(f'No note named "{slug}".')
+        path = self.write_dir / f"{slug}.md"
+        if not path.is_file():
+            if self.get(slug) is not None:
+                raise MemoryStoreError(
+                    f'Note "{slug}" is outside Kova\'s write folder, so it cannot be patched.'
+                )
+            raise MemoryStoreError(f'No note named "{slug}". Run memory_list to see the slugs.')
+        note = _parse(path)
+        count = note.body.count(old_text)
+        if count == 0:
+            raise MemoryStoreError(
+                f'old_text was not found in "{slug}". Copy the text exactly, or add a new note.'
+            )
+        if count > 1:
+            raise MemoryStoreError(
+                f'old_text matches {count} times in "{slug}"; include more surrounding text '
+                "so it matches exactly once."
+            )
+        return self._write_note(path, note.title, note.body.replace(old_text, new_text, 1),
+                                note.tags, refuse_existing=False)
+
+    def remove(self, slug: str) -> bool:
+        """Delete one note from the write dir; see :meth:`delete`."""
+        return self.delete(slug)
 
     def get(self, slug: str) -> Note | None:
         """Find a note: the write dir first, then the rest of root."""

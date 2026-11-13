@@ -11,6 +11,8 @@ from pathlib import Path
 
 import tomli_w
 
+from kova.memory import DEFAULT_MEMORY_BUDGET
+
 DEFAULT_MODEL = {"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "", "context": 32768}
 
 
@@ -49,6 +51,7 @@ class Config:
     port: int = 7700
     compact_threshold: float = 0.75
     memory_write_subdir: str | None = None
+    memory_budget: int = DEFAULT_MEMORY_BUDGET
     providers: list[ProviderEntry] = field(default_factory=list)
     oauth_host_id: str = field(default_factory=lambda: 'urn:uuid:' + str(uuid.uuid4()))
     _extra: dict = field(default_factory=dict, repr=False)
@@ -112,6 +115,7 @@ def load_config(home: Path | None = None) -> Config:
                  active=data.get('active', models[0].name if models else ''),
                  memory_path=Path(mem.get('path', str(home / 'memory'))).expanduser(),
                  memory_write_subdir=mem.get('write_subdir') or None,
+                 memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),
                  files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
                  port=int(data.get('port', 7700)),
                  compact_threshold=float(data.get('compact_threshold', 0.75)),
@@ -143,7 +147,7 @@ def save_config(cfg: Config) -> None:
         if m._provider is not None and m.api_key != m._bound_api_key:
             m._provider.api_key = m.api_key
     cfg.bind_providers()
-    memory = {'path': str(cfg.memory_path)}
+    memory = {'path': str(cfg.memory_path), 'budget': cfg.memory_budget}
     if cfg.memory_write_subdir:
         memory['write_subdir'] = cfg.memory_write_subdir
     providers = []

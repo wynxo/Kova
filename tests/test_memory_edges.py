@@ -100,7 +100,7 @@ def test_emoji_only_titles_are_saved_separately(tmp_path):
 
 
 def test_save_roundtrips_a_very_long_title_and_body(tmp_path):
-    mem = Memory(tmp_path)
+    mem = Memory(tmp_path, budget=0)  # this test is about text handling, not the cap
     title = "A very long title " * 50
     body = "long body line\n" * 8000
     note = mem.save(title, body)
