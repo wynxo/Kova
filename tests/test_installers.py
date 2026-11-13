@@ -26,16 +26,16 @@ def installer(tmp_path):
     fake_id = path / "id"
     fake_id.write_text('#!/bin/sh\nprintf "%s\\n" "${FAKE_UID:-1000}"\n')
     fake_id.chmod(0o755)
-    # Only the commands the script needs; no git or uv leaks from the real PATH.
-    for command in ("rm", "dirname"):
+    # Only the commands the scripts need; no git, curl or uv leaks from the real PATH.
+    for command in ("rm", "dirname", "mkdir", "cp", "basename", "uname"):
         (path / command).symlink_to(shutil.which(command))
     env = {**os.environ, "HOME": str(home), "PATH": str(path)}
     for key in ("SUDO_USER", "SUDO_UID", "KOVA_SOURCE", "KOVA_REF", "KOVA_HOME"):
         env.pop(key, None)
 
-    def run(script, *args, content=None):
+    def run(script, *args, content=None, cwd=None):
         command = ["/bin/sh", str(REPO / script), *args] if content is None else ["/bin/sh"]
-        return subprocess.run(command, input=content, capture_output=True, text=True, env=env)
+        return subprocess.run(command, input=content, capture_output=True, text=True, env=env, cwd=cwd)
 
     return home, path, env, run
 
@@ -65,6 +65,37 @@ def test_installer_editable_checkout(installer):
     result = run("install.sh", "--dev")
     assert result.returncode == 0, result.stderr
     assert (home / "uv-args").read_text().splitlines()[-2:] == ["--editable", str(REPO)]
+
+
+def test_installer_stages_the_desktop_app_and_names_both_clients(installer):
+    home, path, env, run = installer
+    result = run("install.sh")
+    assert result.returncode == 0, result.stderr
+    staged = home / ".kova/desktop"
+    assert (staged / "package.json").is_file()
+    assert (staged / "main.js").is_file()
+    assert not (staged / "node_modules").exists()  # kova-app installs these itself
+    assert "Desktop app: kova-app" in result.stdout
+    assert "Web UI in your browser: kova-web" in result.stdout
+
+
+def test_installer_skips_the_desktop_app_without_download_tools(installer, tmp_path):
+    home, path, env, run = installer
+    # Piped from a directory that is not a checkout, with no curl/tar/mktemp on PATH.
+    result = run("install.sh", content=(REPO / "install.sh").read_text(), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not (home / ".kova/desktop").exists()
+    assert "desktop app files were not installed" in result.stdout
+    assert "Web UI in your browser: kova-web" in result.stdout
+
+
+def test_installer_registers_the_installed_desktop_command(installer):
+    home, path, env, run = installer
+    result = run("install.sh", "--desktop")
+    assert result.returncode == 0, result.stderr
+    entry = (home / ".local/share/applications/kova.desktop").read_text()
+    assert f'Exec="{home}/.local/bin/kova-app"' in entry
+    assert (home / ".local/share/icons/hicolor/512x512/apps/kova.png").is_file()
 
 
 @pytest.mark.parametrize("script", ["install.sh", "uninstall.sh"])
@@ -99,6 +130,20 @@ def test_standalone_uninstall_without_launcher(installer, purge):
     assert result.returncode == 0, result.stderr
     assert (home / "uv-args").read_text().splitlines() == ["tool", "uninstall", "kova-ai"]
     assert data.exists() is not purge
+
+
+def test_standalone_uninstall_removes_the_staged_desktop_app(installer):
+    home, path, env, run = installer
+    data = home / ".kova"
+    staged = data / "desktop"
+    (staged / "node_modules").mkdir(parents=True)
+    (staged / "package.json").write_text("{}")
+    (data / "chat.db").write_text("chats")
+    result = run("uninstall.sh", "--keep-data")
+    assert result.returncode == 0, result.stderr
+    assert (data / "chat.db").is_file()
+    assert not staged.exists()
+    assert "Removed the desktop app files" in result.stdout
 
 
 def test_standalone_uninstall_refuses_purging_home(installer):

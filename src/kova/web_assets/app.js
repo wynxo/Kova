@@ -39,7 +39,7 @@
     state.events?.close();
     $('connection').className = 'connection';
     $('connection').lastElementChild.textContent = 'Disconnected';
-    banner(message || 'Open kova-app on this computer to connect. No token or account needed.');
+    banner(message || 'Open kova-web on this computer to connect. No token or account needed.');
     controls();
   }
   async function api(path, options = {}) {
@@ -50,7 +50,7 @@
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
       try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; else if (Array.isArray(body.detail)) message = body.detail.map(item => `${item.loc?.slice(1).join('.') || 'Field'}: ${item.msg}`).join('; '); } catch (_) {}
-      if (response.status === 401) disconnected('Your connection expired. Open kova-app again to reconnect.');
+      if (response.status === 401) disconnected('Your connection expired. Open kova-web again to reconnect.');
       throw new Error(message);
     }
     return response;
@@ -183,7 +183,7 @@
       if (!state.connected) return;
       retry.hidden = false;
       $('connection').className = 'connection'; $('connection').lastElementChild.textContent = 'Server offline';
-      banner('Cannot reach Kova. Open kova-app to restart the server, then reload this window.');
+      banner('Cannot reach Kova. Open kova-web to restart the server, then reload this window.');
     }
   }
   // Frames may split across network chunks, including multibyte Unicode tokens.
@@ -413,7 +413,7 @@
   }
   $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
   try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
-  $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-app to reconnect.'); });
+  $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   document.querySelectorAll('[data-prompt]').forEach(button => { button.onclick = () => { $('prompt').value = button.dataset.prompt; resize(); $('prompt').focus(); }; });
   async function start() {
     if (state.starting) return;

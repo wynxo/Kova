@@ -165,3 +165,15 @@ def test_agent_core_frontend_behavior():
     result = subprocess.run([node, str(Path(__file__).with_name('web_core.mjs'))],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_installed_commands_and_menu_entry_name_real_launchers():
+    """pyproject and the reference menu entry must agree on the command names."""
+    from pathlib import Path
+    import tomllib
+    repo = Path(__file__).resolve().parents[1]
+    scripts = tomllib.loads((repo / "pyproject.toml").read_text())["project"]["scripts"]
+    assert scripts == {"kova": "kova.cli:app", "kova-app": "kova.app:main",
+                       "kova-web": "kova.app:web_main"}
+    entry = (repo / "desktop" / "kova.desktop").read_text().splitlines()
+    assert "Exec=kova-app" in entry

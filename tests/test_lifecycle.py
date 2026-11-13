@@ -143,6 +143,21 @@ def test_uninstall_data_choices(lifecycle, monkeypatch, tmp_path, args, answer, 
     assert events[1] == ["/test/uv", "tool", "uninstall", "kova-ai"]
 
 
+def test_uninstall_keep_data_removes_only_the_staged_desktop_app(lifecycle, monkeypatch, tmp_path):
+    home = tmp_path / ".kova"
+    staged = home / "desktop"
+    (staged / "node_modules").mkdir(parents=True)
+    (staged / "package.json").write_text("{}")
+    (home / "chat.db").write_text("chats")
+    monkeypatch.setattr(lifecycle.subprocess, "run",
+                        Mock(return_value=subprocess.CompletedProcess([], 0)))
+    result = CliRunner().invoke(app, ["uninstall", "--keep-data"])
+    assert result.exit_code == 0, result.output
+    assert (home / "chat.db").is_file()
+    assert not staged.exists()
+    assert "Removed the desktop app files" in result.output
+
+
 def test_uninstall_refuses_conflicting_flags(lifecycle, monkeypatch):
     run = Mock()
     monkeypatch.setattr(lifecycle.subprocess, "run", run)

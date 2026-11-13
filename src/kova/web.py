@@ -49,7 +49,7 @@ def require_browser_session(request: Request) -> None:
     sessions = request.app.state.web_sessions
     _prune(sessions)
     if request.cookies.get(COOKIE, "") not in sessions:
-        raise HTTPException(401, "Open kova-app to connect this window.")
+        raise HTTPException(401, "Open kova-web to connect this window.")
     require_same_origin(request)
 
 
@@ -92,7 +92,7 @@ def install_web(app, require_bearer) -> None:
         require_same_origin(request)
         _prune(app.state.web_tickets)
         if app.state.web_tickets.pop(body.ticket, None) is None:
-            raise HTTPException(401, "Connection link expired. Open kova-app again.")
+            raise HTTPException(401, "Connection link expired. Open kova-web again.")
         sessions = app.state.web_sessions
         _prune(sessions)
         if len(sessions) >= 64:

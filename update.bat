@@ -50,7 +50,20 @@ if not errorlevel 1 (
     )
 )
 
-echo Done. Run cli.bat to chat.
+rem Keep the desktop app files current, so kova-app runs this checkout's desktop\.
+set "KOVA_DATA=%USERPROFILE%\.kova"
+if defined KOVA_HOME set "KOVA_DATA=%KOVA_HOME%"
+if exist "%~dp0desktop\package.json" (
+    echo - Refreshing the desktop app files ...
+    robocopy "%~dp0desktop" "%KOVA_DATA%\desktop" /E /XD node_modules dist /NFL /NDL /NJH /NJS /NP /R:1 /W:1 >nul
+    if errorlevel 8 (
+        echo Could not update Kova: copying the desktop app files failed.
+        exit /b 1
+    )
+    echo + Desktop app files: %KOVA_DATA%\desktop
+)
+
+echo Done. Run cli.bat to chat, kova-app for the desktop app, or kova-web in your browser.
 endlocal & exit /b 0
 
 :no_uv

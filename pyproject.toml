@@ -22,12 +22,10 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
-[project.optional-dependencies]
-app = ["pywebview>=6.0"]
-
 [project.scripts]
 kova = "kova.cli:app"
 kova-app = "kova.app:main"
+kova-web = "kova.app:web_main"
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]

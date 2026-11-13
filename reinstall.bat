@@ -26,4 +26,5 @@ if errorlevel 1 (
     exit /b 1
 )
 echo Done. Your chats and memory are still in %USERPROFILE%\.kova.
+echo Run kova to chat, kova-app for the desktop app, or kova-web in your browser.
 endlocal & exit /b 0

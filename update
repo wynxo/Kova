@@ -52,4 +52,19 @@ if [ -x "$HOME/.local/bin/kova" ]; then
     "$HOME/.local/bin/kova" update || die "the installed kova command could not be updated. Try: kova update"
 fi
 
-say "Done. Run ./cli to chat."
+# Keep the desktop app files current, so kova-app runs this checkout's desktop/.
+dest=${KOVA_HOME:-$HOME/.kova}/desktop
+if [ -f "$here/desktop/package.json" ]; then
+    say "→ Refreshing the desktop app files ..."
+    mkdir -p "$dest"
+    for item in "$here"/desktop/*; do
+        [ -e "$item" ] || continue
+        name=$(basename -- "$item")
+        case $name in node_modules|dist) continue ;; esac
+        rm -rf -- "$dest/$name"
+        cp -R -- "$item" "$dest/$name"
+    done
+    say "✓ Desktop app files: $dest"
+fi
+
+say "Done. Run ./cli to chat, kova-app for the desktop app, or kova-web in your browser."

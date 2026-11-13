@@ -25,7 +25,7 @@ kova setup
 kova
 ```
 
-The installer adds the `kova` command using [uv](https://docs.astral.sh/uv/) (installed automatically if needed). On Linux/macOS, follow its printed PATH line or add it to your shell profile. On Windows it updates your user PATH and adds Kova to Settings → Apps. No clone needed; installs currently come from GitHub as **kova-ai**, not PyPI.
+The installer adds the `kova` command using [uv](https://docs.astral.sh/uv/) (installed automatically if needed). It also installs the desktop app: `kova-app` opens the Electron window and `kova-web` opens the same chats in your browser. On Linux/macOS, follow its printed PATH line or add it to your shell profile. On Windows it updates your user PATH and adds Kova to Settings → Apps. No clone needed; installs currently come from GitHub as **kova-ai**, not PyPI.
 
 Update: `kova update` (or rerun the installer). Check first: `kova update --check`. Pin a tag/commit with `kova update --ref v0.2.0`, or `KOVA_REF=v0.2.0` for the installer (`$env:KOVA_REF='v0.2.0'` on Windows). Tags shown here are examples, not published releases.
 
@@ -49,7 +49,7 @@ Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --
 | Reinstall | | `./reinstall` (`reinstall.bat`) removes the installed command and installs again from the checkout; chats, memory, and settings are kept |
 | Uninstall | `kova uninstall` | `./uninstall` (`uninstall.bat`); add `--keep-data` or `--purge` |
 
-`./install` (`install.bat`) installs the `kova` command from the checkout.
+`./install` (`install.bat`) installs the `kova`, `kova-app` and `kova-web` commands from the checkout.
 
 ## Features
 
@@ -68,17 +68,22 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 
 ## Desktop app
 
-Run `kova-app` (or `./desktop-app` from a checkout; `desktop-app.bat` on Windows).
-It starts the same local server as the CLI and opens your chats in a native window
-when **pywebview** is installed, otherwise in your default browser. Force the browser
-with `kova-app --browser`. No Node or CDN is needed, and Kova itself requires no account.
+`kova-app` opens your chats in the desktop app: an Electron window over the same
+local server as the CLI. It installs its Node dependencies with `npm ci` on first
+run, so it needs Node.js 22+ and npm; if they are missing it says so and opens the
+web UI instead. `kova-web` opens that same UI in your default browser
+(`kova-app --browser` is the older spelling of the same thing). From a checkout,
+`./desktop-app` (`desktop-app.bat` on Windows) runs exactly what `kova-app` does.
 
-Native windows are optional: from a checkout, run `uv sync --extra app`, then
-`./desktop-app`. For a tool install, use
-`uv tool install --force 'kova-ai[app] @ git+https://github.com/wynxo/Kova.git'`.
-The `app` extra keeps GUI dependencies out of the base install; Linux also needs a
-working [GTK or Qt webview backend](https://pywebview.flowrl.com/guide/installation).
-If the backend is unavailable, Kova falls back to your browser.
+The installer keeps a copy of the desktop app in `~/.kova/desktop` (or your
+`KOVA_HOME`), so the commands work from a plain install with no checkout. On Linux,
+`./install.sh --desktop` also registers Kova in your application menu.
+
+The Electron shell starts the server when it is down, reads the local token, and
+exchanges it for a one-use ticket; its caches and remembered window bounds live
+under `KOVA_HOME`. Closing the window hides it to the tray. Packaged builds
+(AppImage/deb, NSIS, DMG) are configured in [desktop/README.md](desktop/README.md);
+they are built per platform and need the Kova Python CLI installed separately.
 
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
 live tool status, approval cards, plan checklists, working-folder and permission
@@ -312,9 +317,10 @@ Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in
 
 ### Electron desktop app
 
-Run `./desktop-app` (Windows: `desktop-app.bat`) with Node.js/npm installed.
-The launcher installs Electron dependencies on first run; without npm it uses
-the original Python launcher. `--browser` always selects the browser path.
-Linux users can register a checkout with `./install.sh --dev --desktop`.
+`kova-app` runs the Electron app in `desktop/` (from a checkout, `./desktop-app`;
+Windows: `desktop-app.bat`) with Node.js/npm installed. It runs `npm ci` there on
+first use; without Node/npm it says so and opens the web UI with `kova-web`.
+The installers keep a copy of `desktop/` in `~/.kova/desktop`, so `kova-app` works
+without a checkout; Linux can register the menu entry with `./install.sh --desktop`.
 AppImage/deb, NSIS and DMG builds are configured in [desktop/README.md](desktop/README.md).
 Packaged Electron builds require the Kova Python CLI installed separately.

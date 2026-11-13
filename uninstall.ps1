@@ -56,11 +56,17 @@ function Uninstall-Kova {
         $Uv = if ($Found) { $Found.Source } else { $null }
     }
     if ($Uv) {
-        Write-Host 'Removing the kova command: uv tool uninstall kova-ai'
+        Write-Host 'Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai'
         & $Uv tool uninstall kova-ai
         if ($LASTEXITCODE -ne 0) { throw 'uv uninstall failed; your data was kept.' }
     } else {
         Write-Host 'uv was not found; no uv tool can be removed.'
+    }
+    # Staged desktop app files are reinstalled by install.ps1, unlike data.
+    $Desktop = Join-Path $Data 'desktop'
+    if (Test-Path -LiteralPath (Join-Path $Desktop 'package.json')) {
+        Remove-Item -LiteralPath $Desktop -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed the desktop app files in $Desktop."
     }
     if (Test-Path -LiteralPath $Data) {
         if (-not $Purge -and -not $Keep -and -not [Console]::IsInputRedirected) {

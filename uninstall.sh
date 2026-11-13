@@ -57,10 +57,16 @@ main() {
     fi
     if [ -n "$uv" ]; then
         # uv treats an already-absent tool as a successful no-op.
-        say 'Removing the kova command: uv tool uninstall kova-ai'
+        say 'Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai'
         "$uv" tool uninstall kova-ai
     else
         say 'uv was not found; no uv tool can be removed.'
+    fi
+    desktop="$data/desktop"
+    if [ -f "$desktop/package.json" ] && [ ! -L "$desktop" ]; then
+        # Staged desktop app files are reinstalled by install.sh, unlike data.
+        rm -rf -- "$desktop"
+        say "Removed the desktop app files in $desktop."
     fi
     if [ -d "$data" ]; then
         if [ "$purge" -eq 0 ] && [ "$keep" -eq 0 ] && [ -t 0 ]; then
