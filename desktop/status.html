@@ -1,10 +1,25 @@
 <!doctype html>
 <html lang="en"><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self'">
+<meta name="theme-color" content="#0d0d10">
 <title>Kova</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#131419;color:#eeeef4;font:16px system-ui;min-height:100vh;display:grid;place-items:center}
-main{max-width:540px;padding:48px}img{width:80px;height:80px;margin-bottom:24px}h1{font-size:36px;letter-spacing:-1.5px;margin:0 0 14px}p{color:#a5a6b6;line-height:1.7}button{background:#a997ef;border:0;border-radius:10px;padding:12px 24px;color:#131419;font:600 15px system-ui;cursor:pointer}code{overflow-wrap:anywhere;color:#ccc7df}.pulse{height:3px;background:#a997ef;width:64px;margin-top:28px;animation:pulse 1.4s infinite}@keyframes pulse{50%{opacity:.2}}
+*{box-sizing:border-box}
+html{height:100%}
+body{margin:0;min-height:100%;display:grid;place-items:center;background:#0d0d10;color:#ededf2;font:15px/1.6 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{width:min(440px,100%);padding:32px;text-align:center}
+img{display:block;width:72px;height:72px;margin:0 auto 24px}
+h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:620;letter-spacing:-.02em}
+p{margin:0;color:#a6a6b3}
+.bar{position:relative;width:120px;height:3px;margin:28px auto 0;border-radius:3px;background:rgb(255 255 255 / .08);overflow:hidden}
+.bar::after{content:"";position:absolute;inset:0;width:40%;border-radius:3px;background:#a897ff;animation:slide 1.3s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+section{margin-top:20px}
+code{display:block;margin:12px 0 22px;padding:9px 12px;border:1px solid rgb(255 255 255 / .08);border-radius:10px;background:#141418;color:#cfc8ee;font:12.5px/1.5 ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;overflow-wrap:anywhere;user-select:all}
+button{height:38px;padding:0 18px;border:0;border-radius:10px;background:#a897ff;color:#0d0d10;font:600 14px/1 inherit;font-family:inherit;cursor:pointer;transition:background .12s}
+button:hover{background:#bcaeff}
+button:focus-visible{outline:2px solid #a897ff;outline-offset:3px}
+@media (prefers-reduced-motion:reduce){.bar::after{animation-duration:3s}}
 </style>
-<main><img src="assets/icon.png" alt=""><h1 id="title">Starting Kova</h1><p id="message">Your private space is waking up. Connecting to your local assistant…</p><div class="pulse" id="pulse"></div><section id="error" hidden><p>Check that Kova or uv is installed. Server output is in<br><code id="log"></code></p><button id="retry">Retry connection</button></section></main>
+<main><img src="assets/icon.png" alt=""><h1 id="title">Starting Kova</h1><p id="message">Your private space is waking up. Connecting to your local assistant…</p><div class="bar" id="pulse"></div><section id="error" hidden><p>Check that Kova or uv is installed. Server output is in</p><code id="log"></code><button id="retry">Retry connection</button></section></main>
 <script src="status.js"></script></html>

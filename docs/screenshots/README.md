@@ -1,13 +1,16 @@
-# Web app screenshots
+# Web and desktop app screenshots
 
-Before/after pairs for the web app visual pass. Both sides were captured the
-same way: `uv run kova serve` on an isolated `KOVA_HOME` with port 7813, a
-local OpenAI-compatible stub model, and a real WebKit browser engine with a
-1440x900 or 360x740 CSS viewport, the same seeded conversation in each pair.
-The files are saved at 1.25x the CSS viewport (1800x1125 and 450x925).
+Captured from the real app: the Kova server on an isolated `KOVA_HOME`
+(port 7813), a local OpenAI-compatible stub model, and headless Chromium at a
+1440x900 or 360x740 CSS viewport, in both themes. Files are saved at 1.25x.
 
-- `before-*`: the working tree at `main` (7134c54).
-- `after-*`: the same views with this change.
+- `web-welcome-*`: the start screen, with the Work/Chat switch in the composer.
+- `web-menu-*`: the permission menu (the model picker uses the same component).
+- `web-chat-*`: a reply with reasoning, a code block and a table.
+- `web-approval-*`: a plan, a tool row and an approval prompt.
+- `web-sidebar-360x740-dark.png`: the drawer on a phone.
+- `web-provider-1440x900-dark.png`, `web-memory-1440x900-light.png`: dialogs.
+- `desktop-starting.png`: the Electron shell's start-up screen.
+- `app-icon.png`: the app icon from 160px down to 16px, on light and dark.
 
-`docs/screenshots/after-mobile-sidebar-360x740.png` is the drawer after
-tapping the menu button.
+The `cli-*` and `tui-*` files are the terminal screenshots from earlier work.

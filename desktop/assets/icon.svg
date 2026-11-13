@@ -1,1 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#8b7cff"/><path d="M22 16v32m0-14 20-16M22 34l21 14" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Kova">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1d24"/>
+      <stop offset="1" stop-color="#070709"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".2"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".09"/>
+    </linearGradient>
+    <linearGradient id="arm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#cbbfff"/>
+      <stop offset="1" stop-color="#8672ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#tile)"/>
+  <rect x="26" y="26" width="460" height="460" rx="110" fill="none" stroke="url(#edge)" stroke-width="4"/>
+  <!-- The Kova mark: a steady stem and an open chevron that never quite touch. -->
+  <path d="M180 150v212" fill="none" stroke="#f4f2ed" stroke-width="46" stroke-linecap="round"/>
+  <path d="M344 150 252 256l92 106" fill="none" stroke="url(#arm)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

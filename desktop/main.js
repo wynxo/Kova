@@ -6,6 +6,7 @@ const path = require('node:path');
 const {settings, executable, external} = require('./core');
 let win, tray, child, quitting = false, starting = false, origin, home;
 const icon = path.join(__dirname, 'assets/icon.png');
+const trayIcon = path.join(__dirname, 'assets/icon-64.png');
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => show());
@@ -34,11 +35,15 @@ async function create() {
     }
   } catch {}
   win = new BrowserWindow({...bounds, minWidth: 760, minHeight: 540,
-    backgroundColor: '#131419', icon, autoHideMenuBar: true, show: false,
+    backgroundColor: '#0d0d10', icon, title: 'Kova', autoHideMenuBar: true, show: false,
     webPreferences: {contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, 'preload.js')}});
   Menu.setApplicationMenu(null);
   win.once('ready-to-show', show);
+  // The page publishes its theme as <meta name="theme-color">; no bridge needed.
+  win.webContents.on('did-change-theme-color', (_event, color) => {
+    if (/^#[0-9a-f]{6}$/i.test(color || '')) win.setBackgroundColor(color);
+  });
   win.on('close', e => { saveBounds(); if (!quitting && tray) { e.preventDefault(); win.hide(); } });
   win.webContents.setWindowOpenHandler(({url}) => {
     if (external(url) && new URL(url).origin !== origin) shell.openExternal(url);
@@ -61,7 +66,7 @@ async function create() {
     if (input.key === 'F11') win.setFullScreen(!win.isFullScreen());
   });
   try {
-    tray = new Tray(icon); tray.setToolTip('Kova');
+    tray = new Tray(trayIcon); tray.setToolTip('Kova');
     tray.setContextMenu(Menu.buildFromTemplate([{label: 'Open Kova', click: show},
       {type: 'separator'}, {label: 'Quit', click: () => app.quit()}]));
     tray.on('click', show);
