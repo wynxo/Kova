@@ -428,3 +428,18 @@ headings while keeping stable model aliases as the selection value.
 
 Fresh browser authorization and hosted API-key inference require actual user
 accounts and are covered by mocked HTTP/JWT tests, not automatic paid calls.
+
+### Packaged Electron shell
+
+`desktop/main.js` owns a single-instance Electron window and tray around the
+unchanged /app client. It reads the configured KOVA_HOME and port, reuses an
+authenticated server or spawns the installed CLI (uv from source as fallback),
+then mints /app/session tickets for the existing fragment/login flow.
+The bearer token never enters renderer code. Context isolation, sandboxing,
+disabled Node integration, blocked remote resources/navigation and denied
+permissions keep the shell local. Startup/error pages are bundled files.
+
+Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
+tray; Quit terminates only the shell's own server child. Logs use server.log.
+electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
+remains a separately installed prerequisite. See desktop/README.md.

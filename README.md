@@ -309,3 +309,12 @@ KOVA_LIVE=1 uv run pytest -m live
 ## Credits
 
 Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in [AI-TOOLS.md](AI-TOOLS.md).
+
+### Electron desktop app
+
+Run `./desktop-app` (Windows: `desktop-app.bat`) with Node.js/npm installed.
+The launcher installs Electron dependencies on first run; without npm it uses
+the original Python launcher. `--browser` always selects the browser path.
+Linux users can register a checkout with `./install.sh --dev --desktop`.
+AppImage/deb, NSIS and DMG builds are configured in [desktop/README.md](desktop/README.md).
+Packaged Electron builds require the Kova Python CLI installed separately.

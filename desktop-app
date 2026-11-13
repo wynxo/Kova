@@ -5,6 +5,16 @@ set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd -- "$here"
 
+export PATH="$HOME/.openclaw/tools/node/bin:$HOME/.local/bin:$PATH"
+if [ "${1-}" != "--browser" ] && command -v npm >/dev/null 2>&1 && [ -f desktop/package.json ]; then
+    if [ -x desktop/node_modules/.bin/electron ] || (cd desktop && npm ci); then
+        cd desktop
+        unset ELECTRON_RUN_AS_NODE
+        exec npm start -- "$@"
+    fi
+    printf '%s\n' 'Electron dependencies unavailable; using the Python launcher.' >&2
+fi
+
 find_uv() {
     if command -v uv >/dev/null 2>&1; then
         command -v uv

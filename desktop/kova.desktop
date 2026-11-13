@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kova
+Comment=Private local AI assistant
+Exec=kova-desktop
+Icon=kova
+Terminal=false
+Categories=Utility;
+StartupWMClass=Kova

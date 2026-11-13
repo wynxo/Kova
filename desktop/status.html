@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self'">
+<title>Kova</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#131419;color:#eeeef4;font:16px system-ui;min-height:100vh;display:grid;place-items:center}
+main{max-width:540px;padding:48px}img{width:80px;height:80px;margin-bottom:24px}h1{font-size:36px;letter-spacing:-1.5px;margin:0 0 14px}p{color:#a5a6b6;line-height:1.7}button{background:#a997ef;border:0;border-radius:10px;padding:12px 24px;color:#131419;font:600 15px system-ui;cursor:pointer}code{overflow-wrap:anywhere;color:#ccc7df}.pulse{height:3px;background:#a997ef;width:64px;margin-top:28px;animation:pulse 1.4s infinite}@keyframes pulse{50%{opacity:.2}}
+</style>
+<main><img src="assets/icon.png" alt=""><h1 id="title">Starting Kova</h1><p id="message">Your private space is waking up. Connecting to your local assistant…</p><div class="pulse" id="pulse"></div><section id="error" hidden><p>Check that Kova or uv is installed. Server output is in<br><code id="log"></code></p><button id="retry">Retry connection</button></section></main>
+<script src="status.js"></script></html>
