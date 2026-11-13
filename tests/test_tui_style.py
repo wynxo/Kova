@@ -3,7 +3,9 @@ setup pickers and the branded ``--help``."""
 from __future__ import annotations
 
 import re
+from unittest.mock import patch
 
+from rich.console import Console
 from typer.testing import CliRunner
 
 from kova import cli, theme
@@ -133,3 +135,36 @@ def test_help_groups_commands_under_the_wordmark():
         assert f"─ {panel} " in text, panel
     assert text.index("─ Chat ") < text.index("─ Server & updates ")
     assert "\x1b[" not in text
+
+
+def test_light_palette_changes_foreground_and_background_before_downscaling():
+    dark = Palette(3, theme_name='dark')
+    light = Palette(3, theme_name='light')
+    codes = fg(theme.ACCENT) + ';48;2;30;29;40'
+    assert dark.paint(codes, 'x') != light.paint(codes, 'x')
+    assert '38;2;' in light.paint(codes, 'x') and '48;2;' in light.paint(codes, 'x')
+    assert '38;5;' in Palette(2, theme_name='light').paint(codes, 'x')
+    assert light.gradient('Kova') != dark.gradient('Kova')
+
+
+def test_light_palette_at_16_colours_keeps_the_pinned_roles():
+    # Hand-pinned basic colours stay meaningful; the translation would only
+    # turn dark text into unreadable near-black, so it waits for 256+.
+    pinned = Palette(1, theme_name='light').paint(fg(theme.ACCENT), 'x')
+    assert pinned == Palette(1, theme_name='dark').paint(fg(theme.ACCENT), 'x')
+
+
+def test_brand_uses_the_chosen_assistant_name(tmp_path):
+    from kova.config import load_config, save_config
+    console = Console(record=True, width=100)
+    with patch("kova.config.kova_home", return_value=tmp_path):
+        brand.setup_banner(console, "1.0.0")
+        assert "Kova talks to a model server" in console.export_text()
+        assert brand.assistant_name() == "Kova"
+        cfg = load_config(tmp_path)
+        cfg.persona_name = "Nova"
+        save_config(cfg)
+        console = Console(record=True, width=100)
+        brand.setup_banner(console, "1.0.0")
+        assert "Nova talks to a model server" in console.export_text()
+        assert brand.assistant_name() == "Nova"

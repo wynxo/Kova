@@ -110,6 +110,20 @@ def style_help(group) -> None:
     commands.update(ranked)
 
 
+def assistant_name() -> str:
+    """The name the user gave their assistant, or ``Kova`` when unset.
+
+    Used where the assistant speaks for itself outside the chat: the setup
+    banner and the plain-chat header. Product labels (``kova --version``,
+    ``Kova status``) keep the app's own name.
+    """
+    try:
+        from kova.config import load_config
+        return load_config().persona_name or "Kova"
+    except (OSError, ValueError, KeyError):
+        return "Kova"
+
+
 def setup_banner(console, version: str) -> None:
     """The first thing ``kova setup`` shows: the wordmark and what happens next."""
     console.print()
@@ -117,10 +131,10 @@ def setup_banner(console, version: str) -> None:
     console.print()
     console.print(Text.assemble(
         ("  Let's connect a model. ", "bold"),
-        (("Kova talks to a model server on your machine or your network,\n"
+        ((f"{assistant_name()} talks to a model server on your machine or your network,\n"
           "  or to a provider you have an account with. Nothing is sent until you chat."),
          theme.MUTED)))
 
 
-__all__ = ["HELP_PANELS", "TAGLINE", "card", "gradient_text", "heading", "setup_banner",
-           "style_help", "wordmark"]
+__all__ = ["HELP_PANELS", "TAGLINE", "assistant_name", "card", "gradient_text", "heading",
+           "setup_banner", "style_help", "wordmark"]

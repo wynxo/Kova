@@ -128,6 +128,11 @@ class KovaClient:
     def get_chat(self, chat_id: str) -> dict | None:
         return self._request("GET", f"/chats/{chat_id}").json()
 
+    def fork_chat(self, chat_id: str) -> dict:
+        """A full copy of a conversation — messages, plan and compacted context —
+        that continues independently from the same point."""
+        return self._request("POST", f"/chats/{chat_id}/fork").json()
+
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
                     cwd: str | None = None) -> dict:

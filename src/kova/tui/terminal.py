@@ -44,6 +44,7 @@ CONTROL = {
     "\x15": "kill-start", "\x17": "kill-word", "\x19": "yank", "\x0c": "clear-screen",
     "\x14": "ctrl-t", "\x0f": "ctrl-o", "\x04": "ctrl-d", "\x03": "ctrl-c", "\x10": "ctrl-p",
     "\x0e": "ctrl-n", "\x1a": "suspend",
+    "\x07": "ctrl-g", "\x12": "ctrl-r", "\x13": "ctrl-s", "\x16": "ctrl-v", "\x18": "ctrl-x",
 }
 _SGR = re.compile(r"\x1b\[([0-9;]*)m")
 _CSI = re.compile(r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]")

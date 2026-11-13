@@ -146,6 +146,7 @@ class Renderer:
         if color is None:
             color = self.tty and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
         self.p = Palette(color)
+        self.name = "Kova"
         self.verbose = verbose
         self.tools_expanded = False
         self.reasoning_text = ""
@@ -319,8 +320,8 @@ class Renderer:
         if self.in_turn and not self.headed:
             self.headed = True
             p = self.p
-            self.line(p.paint("1;" + ACCENT, "\u25c6") + " " + p.gradient("Kova", bold=True)
-                      if p.color else "\u25c6 Kova")
+            self.line(p.paint("1;" + ACCENT, "\u25c6") + " " + p.gradient(self.name, bold=True)
+                      if p.color else "\u25c6 " + self.name)
 
     def handle(self, event: dict) -> None:
         kind = event.get("type")
