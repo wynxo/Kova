@@ -101,7 +101,7 @@ class ActiveBody(BaseModel):
 def _note_dict(note: Note) -> dict:
     """The JSON shape of a memory note."""
     return {"slug": note.slug, "title": note.title, "body": note.body,
-            "tags": note.tags, "updated": note.updated}
+            "tags": note.tags, "updated": note.updated, "provenance": note.provenance}
 
 
 def _model_dict(entry: ModelEntry) -> dict:
@@ -143,15 +143,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     tools = build_tools(tool_context)
     agent = Agent(config, store, memory, tools, transport=app.state.transport, now=now)
     bus = EventBus()
+    agent.memory_review.publish = bus.publish
     app.state.store = store
     app.state.memory = memory
     app.state.tool_context = tool_context
     app.state.agent = agent
     app.state.bus = bus
     reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
+    from kova.models import ModelClient
+    def review_client():
+        config.bind_providers()
+        return ModelClient(config.active_model(), transport=app.state.transport)
+    nightly = asyncio.create_task(agent.memory_review.nightly(review_client, now))
     try:
         yield
     finally:
+        nightly.cancel()
+        with suppress(asyncio.CancelledError):
+            await nightly
+        await agent.memory_review.close()
         bus.publish(None)  # end every open /events stream
         reminders.cancel()
         for turn in list(app.state.turns):
@@ -393,6 +403,7 @@ def create_app(
         # No await: requests and new tool calls see the replacement together.
         app.state.memory = memory
         app.state.agent.memory = memory
+        app.state.agent.memory_review.memory = memory
         app.state.tool_context.memory = memory
         return {"ok": True}
     @api.get("/memory")
@@ -408,6 +419,55 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _note_dict(note)
+
+    @api.put("/memory/{slug}")
+    async def memory_edit(slug: str, body: dict) -> dict:
+        if not isinstance(body.get("body"), str) or ("tags" in body and
+                (not isinstance(body["tags"], list) or any(not isinstance(t, str) for t in body["tags"]))):
+            raise HTTPException(422, "body must be text; tags must be a list of strings")
+        try:
+            note = await asyncio.to_thread(app.state.memory.edit, slug, body["body"], body.get("tags"))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return _note_dict(note)
+
+    @api.get("/memory/settings")
+    async def memory_settings() -> dict:
+        return app.state.store.memory_settings()
+
+    @api.put("/memory/settings")
+    async def memory_settings_update(body: dict) -> dict:
+        try:
+            return app.state.store.memory_settings(body)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @api.get("/memory/diary")
+    async def memory_diary() -> list[dict]:
+        # Preimages stay in SQLite; browsers get the readable audit, not bulk copies.
+        return [{k: v for k, v in row.items() if k not in {"preimage", "postimage"}}
+                for row in app.state.store.memory_diary()]
+
+    @api.post("/memory/undo")
+    async def memory_undo(body: dict) -> dict:
+        audit_id = body.get("id")
+        if audit_id is not None and type(audit_id) is not int:
+            raise HTTPException(422, "id must be an integer")
+        try:
+            row = app.state.agent.memory_review.undo(audit_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "id": row['id'], "slug": row['slug']}
+
+    @api.post("/memory/consolidate")
+    async def memory_consolidate() -> dict:
+        from kova.models import ModelClient, ModelError
+        config.bind_providers()
+        try:
+            ids = await app.state.agent.memory_review.dream(ModelClient(config.active_model(), transport=app.state.transport))
+        except (ValueError, KeyError, TypeError, ModelError, TimeoutError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"applied": ids}
 
     @api.delete("/memory/{slug}")
     async def memory_delete(slug: str) -> dict:

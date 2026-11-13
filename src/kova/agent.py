@@ -18,6 +18,7 @@ from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE
 from kova.store import Store
+from kova.review import MemoryReview
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
@@ -31,7 +32,7 @@ _IDENTITIES = {
 Be warm, direct and genuinely helpful. Use tools when they help: search the web for current facts, work with code and files in the working folder, run commands, and set reminders.
 Use update_plan for genuine multi-step work; keep the checklist updated as you progress.
 Never retry a denied action without new user authorization. Commands can access the system as the current user; file tools stay inside the working folder.
-When you learn a lasting fact about the user (name, preferences, projects, people), save it with memory_save.
+Memory writes require an explicit remember/forget request or opt-in. Never silently infer or change the user profile. Use memory_list(slug) or memory_search to read indexed topics.
 Never say you are a different assistant or made by another company. You are Kova.""",
     "chat": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
 Be warm, direct and genuinely helpful. Keep replies short and conversational.
@@ -172,6 +173,7 @@ class Agent:
         self.config = config
         self.store = store
         self.memory = memory
+        self.memory_review = MemoryReview(store, memory)
         self.tools = tools
         self.transport = transport
         self.now = now
@@ -185,6 +187,11 @@ class Agent:
         """
         self.store.add_message(chat_id, 'user', text)
         set_current_chat(chat_id)
+        if notice := self.memory_review.undo_request(chat_id, text):
+            message_id = self.store.add_message(chat_id, 'assistant', notice)
+            yield {'type': 'text', 'text': notice}
+            yield {'type': 'done', 'message_id': message_id}
+            return
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
@@ -219,6 +226,10 @@ class Agent:
         prompt = build_system_prompt(self.now(), list(tools), memories, mode,
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0))
+        try:
+            prompt += "\n\n" + await asyncio.to_thread(self.memory.index)
+        except Exception:  # external Markdown trouble must not block a turn
+            pass
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {(chat or {}).get('permission', 'manual')}"
             instructions = await asyncio.to_thread(project_instructions, cwd)
@@ -267,6 +278,7 @@ class Agent:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
                             self.store.set_title(chat_id, derive_title(title_source))
+                    self.memory_review.after_turn(chat_id, client)
                     yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {

@@ -35,6 +35,7 @@ def test_add_list_patch_remove_roundtrip(ctx):
     assert listed['notes'][0] == {
         'slug': 'dog', 'title': 'Dog', 'body': 'Rex is a good boy', 'tags': ['pets'],
         'updated': listed['notes'][0]['updated'],
+        'provenance': listed['notes'][0]['provenance'],
         'chars': note_chars('Dog', 'Rex is a good boy', ['pets']),
     }
 

@@ -130,6 +130,19 @@ class Store:
             CREATE TABLE IF NOT EXISTS chat_compactions (
                 chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL, summary TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memory_preferences (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created TEXT NOT NULL, kind TEXT NOT NULL, chat_id TEXT,
+                root TEXT NOT NULL, slug TEXT NOT NULL,
+                preimage TEXT, postimage TEXT,
+                diary TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending'
+            );
+            CREATE TABLE IF NOT EXISTS memory_reviews (
+                chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 reminder_at TEXT NOT NULL,
@@ -601,3 +614,65 @@ class Store:
             )
             self._conn.commit()
             return cur.lastrowid
+
+    # -- memory review preferences and write-ahead audit -------------------
+    def memory_settings(self, changes: dict | None = None) -> dict:
+        """Persist explicit opt-ins independently of provider/config serialization."""
+        defaults = {"model_writes": False, "review_interval": 0, "nightly": False}
+        if changes is not None:
+            if set(changes) - set(defaults):
+                raise ValueError("Unknown memory setting")
+            for key, value in changes.items():
+                if key == "review_interval":
+                    if type(value) is not int or not 0 <= value <= 1000:
+                        raise ValueError("review_interval must be an integer from 0 to 1000")
+                elif type(value) is not bool:
+                    raise ValueError(f"{key} must be a boolean")
+        with self._lock:
+            if changes:
+                self._conn.executemany("INSERT OR REPLACE INTO memory_preferences VALUES (?, ?)",
+                                       [(k, json.dumps(v)) for k, v in changes.items()])
+                self._conn.commit()
+            rows = self._conn.execute("SELECT key, value FROM memory_preferences").fetchall()
+        return {**defaults, **{r["key"]: json.loads(r["value"]) for r in rows}}
+
+    def memory_review_claim(self, chat_id: str, cutoff: int, interval: int) -> bool:
+        """Claim a snapshot once after N new user turns, including across restarts."""
+        with self._lock:
+            row = self._conn.execute("SELECT cutoff FROM memory_reviews WHERE chat_id = ?", (chat_id,)).fetchone()
+            previous = row["cutoff"] if row else 0
+            count = self._conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ? AND role = 'user' AND id > ? AND id <= ?",
+                                       (chat_id, previous, cutoff)).fetchone()[0]
+            if not interval or count < interval:
+                return False
+            self._conn.execute("INSERT OR REPLACE INTO memory_reviews VALUES (?, ?)", (chat_id, cutoff))
+            self._conn.commit()
+            return True
+
+    def memory_evidence(self, chat_id: str) -> list[dict]:
+        """Immutable message ids and timestamps for citations; no tool output."""
+        with self._lock:
+            rows = self._conn.execute("SELECT id, role, content, created FROM messages WHERE chat_id = ? AND role IN ('user', 'assistant') ORDER BY id", (chat_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def memory_audit_start(self, *, kind: str, root: str, slug: str, preimage: str | None,
+                           postimage: str | None, diary: str, chat_id: str | None = None) -> int:
+        """Commit the preimage before touching Markdown, so crashes are inspectable."""
+        with self._lock:
+            cursor = self._conn.execute("INSERT INTO memory_audit (created, kind, chat_id, root, slug, preimage, postimage, diary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                        (_utc_now_iso(), kind, chat_id, root, slug, preimage, postimage, diary))
+            self._conn.commit()
+            return cursor.lastrowid
+
+    def memory_audit_state(self, audit_id: int, state: str) -> None:
+        if state not in {"applied", "undone", "failed"}:
+            raise ValueError("Invalid audit state")
+        with self._lock:
+            self._conn.execute("UPDATE memory_audit SET state = ? WHERE id = ?", (state, audit_id))
+            self._conn.commit()
+
+    def memory_diary(self, chat_id: str | None = None) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM memory_audit" + (" WHERE chat_id = ?" if chat_id else "") + " ORDER BY id DESC",
+                                       (chat_id,) if chat_id else ()).fetchall()
+        return [dict(r) for r in rows]

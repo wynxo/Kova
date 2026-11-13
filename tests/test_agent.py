@@ -107,7 +107,7 @@ async def test_plain_answer(setup):
 
 
 async def test_tool_loop(setup):
-    events, fake = await run(setup, [tool('memory_save', {'title': 'Dog', 'body': 'Rex'}), text('Saved')])
+    events, fake = await run(setup, [tool('memory_save', {'title': 'Dog', 'body': 'Rex'}), text('Saved')], 'Remember my dog Rex')
     assert setup[2].get('dog').body == 'Rex'
     assert any(m['role'] == 'tool' and 'Saved memory' in m['content'] for m in fake.requests[1]['messages'])
     assert any(e['type'] == 'tool_result' and e['ok'] for e in events)

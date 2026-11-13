@@ -190,6 +190,22 @@ class KovaClient:
     def memory_delete(self, slug: str) -> bool:
         return self._request("DELETE", f"/memory/{slug}", missing_ok=True).status_code == 200
 
+    def memory_edit(self, slug: str, body: str) -> dict:
+        return self._request("PUT", f"/memory/{slug}", json={"body": body}).json()
+
+    def memory_settings(self, changes: dict | None = None) -> dict:
+        return self._request("GET" if changes is None else "PUT", "/memory/settings",
+                             **({} if changes is None else {"json": changes})).json()
+
+    def memory_diary(self) -> list[dict]:
+        return self._request("GET", "/memory/diary").json()
+
+    def memory_undo(self, audit_id: int | None = None) -> dict:
+        return self._request("POST", "/memory/undo", json={"id": audit_id}).json()
+
+    def memory_consolidate(self) -> dict:
+        return self._request("POST", "/memory/consolidate", timeout=100).json()
+
     def memory_use(self, path: str, obsidian: bool) -> None:
         self._request("POST", "/memory/location", json={"path": path, "obsidian": obsidian}, timeout=5)
 
