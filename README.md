@@ -63,6 +63,7 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 - Runs local commands with approval controls, bounded output and Stop support
 - Streams a checklist for multi-step work
 - Reminders that pop in while you chat, with desktop notifications
+- [Reusable skills and scheduled jobs](docs/skills-and-jobs.md): on-demand procedures, recurring scripts or agent tasks, and opt-in idle heartbeats
 - Memory notes as plain Markdown, with an Obsidian mode
 - Connect API-key providers, a ChatGPT subscription, an installed login, or your own model server
 

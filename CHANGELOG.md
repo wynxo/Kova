@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Procedural skills: always-visible descriptions in work mode, lazy instruction loading, and model-created/updated Markdown procedures (#50).
+- Persistent scheduled script/agent jobs and opt-in idle heartbeats, with `kova jobs` management, approval controls, and shared reminder storage (#51).
+
 - `kova-web` command opens Kova's web UI in your browser.
 - Terminal shortcut `Ctrl+T` toggles full model reasoning, streamed live.
 - Terminal shortcut `Ctrl+O` expands and collapses tool calls and their output.

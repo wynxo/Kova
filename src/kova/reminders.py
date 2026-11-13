@@ -7,6 +7,10 @@ import logging
 import shutil
 import subprocess
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kova.scheduler import Scheduler
 from datetime import datetime
 
 from kova.events import EventBus
@@ -37,13 +41,15 @@ class ReminderLoop:
         bus: EventBus,
         now: Callable[[], datetime],
         notify: Callable[[str], None] = desktop_notify,
-        interval: float = 15,
+        interval: float = 1,
+        scheduler: Scheduler | None = None,
     ) -> None:
         self.store = store
         self.bus = bus
         self.now = now
         self.notify = notify
         self.interval = interval
+        self.scheduler = scheduler
 
     def tick(self) -> list[dict]:
         """Fire every reminder due now, once, and return the events published."""
@@ -63,9 +69,12 @@ class ReminderLoop:
         """Tick on the interval until the task is cancelled."""
         while True:
             try:
-                await asyncio.sleep(self.interval)
                 self.tick()
+                if self.scheduler is not None:
+                    self.scheduler.tick()
+                await asyncio.sleep(self.interval)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("reminder loop tick failed")
+                await asyncio.sleep(self.interval)

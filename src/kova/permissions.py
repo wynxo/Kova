@@ -70,6 +70,11 @@ def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Pat
                    session_allowed: bool = False) -> bool:
     if permission == "full":
         return False
+    if name in {"job_add", "job_remove"}:
+        # Deferred execution needs an explicit grant, even in auto mode.
+        return True
+    if name in {"skill_add", "skill_patch"}:
+        return permission != "auto" and not session_allowed
     if name == "run_command":
         if command_risk(args["command"]) == "destructive":
             return True
@@ -195,6 +200,12 @@ class Approvals:
         future = asyncio.get_running_loop().create_future()
         self.pending[identifier] = PendingApproval(chat_id, risk, future, name, args, cwd, action_key(name, args, cwd))
         summary = args["command"] if name == "run_command" else f"{name}: {args.get('path', '')}"
+        if name == "job_add":
+            summary = f"Schedule {args.get('kind')} at {args.get('when')}, repeat every {args.get('every_seconds', 0)}s: {args.get('text', '')}"
+        elif name in {"skill_add", "skill_patch"}:
+            summary = f"{name}: {args.get('slug', '')}"
+        elif name == "job_remove":
+            summary = f"Remove scheduled job #{args.get('id')}"
         changes = None
         if name == "edit_file":
             old = str(args.get("old_string", ""))

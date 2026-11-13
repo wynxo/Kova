@@ -238,6 +238,9 @@ app.add_typer(_memory, name="memory")
 _reminders = typer.Typer(no_args_is_help=True, help="Manage reminders.")
 app.add_typer(_reminders, name="reminders")
 
+_jobs = typer.Typer(no_args_is_help=True, help="Scheduled scripts, agent jobs and idle heartbeats.")
+app.add_typer(_jobs, name="jobs")
+
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
@@ -1094,3 +1097,62 @@ def doctor() -> None:
         console.print(Text(('✓ ' if ok else '✗ ') + message))
     if any(not ok for ok, _ in issues):
         raise typer.Exit(1)
+
+
+@_jobs.command("list")
+def jobs_list():
+    """Show next runs and the last outcome, including completed jobs."""
+    jobs = get_client()._request("GET", "/jobs").json()
+    if not jobs:
+        _empty("No scheduled jobs.", 'Add one with: kova jobs add "in 1 hour" "date" --kind script')
+        return
+    table = _table(caption="Jobs run only while the Kova server is running.")
+    for column in ("ID", "Kind", "Next run", "Every", "Task", "Last result"):
+        table.add_column(column, overflow="fold")
+    for job in jobs:
+        result = job.get('last_result')
+        outcome = ("ok" if result.get('ok') else result.get('error', 'failed')) if result else ('running/interrupted' if job.get('last_run') else 'not run')
+        table.add_row(str(job['id']), job['kind'], 'done' if job['done'] else job['when'],
+                      f"{job['every_seconds']}s" if job['every_seconds'] else 'once',
+                      Text(_clip(job['text'])), Text(_clip(outcome)))
+    console.print(table)
+
+
+@_jobs.command("show")
+def jobs_show(jid: int):
+    """Show a job's complete definition and bounded last output."""
+    for job in get_client()._request("GET", "/jobs").json():
+        if job['id'] == jid:
+            console.print_json(data=job)
+            return
+    _fail(f"No scheduled job #{jid}.")
+
+
+@_jobs.command("add")
+def jobs_add(
+    when: str,
+    text: str,
+    kind: str = typer.Option("agent", "--kind", help="agent, script (no LLM), or heartbeat (idle only)."),
+    every: int = typer.Option(0, "--every", min=0, max=31_536_000, help="Repeat every N seconds; 0 runs once."),
+    cwd: Path = typer.Option(Path('.'), "--cwd", help="Working folder for future runs."),
+    timeout: int = typer.Option(60, "--timeout", min=1, max=300, help="Maximum run duration in seconds."),
+):
+    """Authorize a future job. TEXT is a shell command for scripts, a prompt otherwise."""
+    if kind not in {"script", "agent", "heartbeat"}:
+        raise typer.BadParameter("must be agent, script or heartbeat", param_hint="--kind")
+    if kind == 'heartbeat' and not every:
+        raise typer.BadParameter("heartbeat requires a positive interval", param_hint="--every")
+    result = get_client()._request("POST", "/jobs", json={
+        "when": when, "text": text, "kind": kind, "every_seconds": every,
+        "cwd": str(cwd.expanduser().resolve()), "timeout": timeout,
+    }).json()
+    _ok(f"Scheduled {kind} job #{result['id']} for {result['when']}.")
+
+
+@_jobs.command("rm")
+def jobs_rm(jid: int):
+    """Remove a job; an active run stops on the next scheduler tick."""
+    response = get_client()._request("DELETE", f"/jobs/{jid}", missing_ok=True)
+    if response.status_code == 404:
+        _fail(f"No scheduled job #{jid}.")
+    _ok(f"Removed scheduled job #{jid}.")

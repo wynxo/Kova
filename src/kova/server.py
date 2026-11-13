@@ -24,6 +24,7 @@ from kova.memory import Memory, Note
 from kova.models import ModelClient
 from kova.modes import DEFAULT_MODE, MODES
 from kova.reminders import ReminderLoop
+from kova.scheduler import Scheduler
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
@@ -82,6 +83,15 @@ class ReminderBody(BaseModel):
     """A reminder to schedule."""
     when: str
     text: str
+
+
+class JobBody(BaseModel):
+    when: str
+    text: str
+    kind: str
+    every_seconds: int = 0
+    timeout: int = 60
+    cwd: str | None = None
 
 
 class ModelBody(BaseModel):
@@ -148,12 +158,46 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tool_context = tool_context
     app.state.agent = agent
     app.state.bus = bus
-    reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
+    background_chats: set[str] = set()
+
+    async def scheduled_turn(job: dict) -> dict:
+        # Separate, inspectable chats; never silently grant background tool use.
+        chat = store.create_chat(title=f"{job['kind'].title()} job #{job['id']}",
+                                 cwd=job['cwd'], permission='manual')
+        cid, task = chat['id'], asyncio.current_task()
+        lock = app.state.chat_locks.setdefault(cid, asyncio.Lock())
+        tasks = app.state.chat_turns.setdefault(cid, set())
+        tasks.add(task)  # Existing Stop/delete routes also cover background turns.
+        background_chats.add(cid)
+        result = {'ok': True, 'chat_id': cid}
+        try:
+            async with lock:
+                async for event in agent.run_turn(cid, job['text']):
+                    if event['type'] == 'approval':
+                        result.update(ok=False, error='Background action requires interactive approval')
+                        agent.approvals.answer(cid, event['id'], 'deny',
+                            'Background jobs cannot approve new actions. Ask in an interactive chat.')
+                    elif event['type'] == 'error':
+                        result.update(ok=False, error=event['message'])
+            return result
+        finally:
+            background_chats.discard(cid)
+            tasks.discard(task)
+            if not tasks:
+                app.state.chat_turns.pop(cid, None)
+
+    scheduler = Scheduler(store, bus, now, run_agent=scheduled_turn,
+                          is_idle=lambda: not app.state.turns and not any(
+                              lock.locked() for cid, lock in app.state.chat_locks.items()
+                              if cid not in background_chats))
+    app.state.scheduler = scheduler
+    reminders = asyncio.create_task(ReminderLoop(store, bus, now, scheduler=scheduler).run())
     try:
         yield
     finally:
         bus.publish(None)  # end every open /events stream
         reminders.cancel()
+        await scheduler.close()
         for turn in list(app.state.turns):
             turn.cancel()
         for task in [reminders, *app.state.turns]:
@@ -342,12 +386,14 @@ def create_app(
             finally:
                 queue.put_nowait(None)
 
+        app.state.scheduler.user_activity()
         task = asyncio.create_task(run_turn())
         app.state.turns.add(task)
         tasks = app.state.chat_turns.setdefault(chat_id, set())
         tasks.add(task)
 
         def finished(done):
+            app.state.scheduler.user_activity()
             app.state.turns.discard(done)
             tasks.discard(done)
             if not tasks:
@@ -432,6 +478,27 @@ def create_app(
     async def reminder_delete(rid: int) -> dict:
         if not app.state.store.delete_reminder(rid):
             raise HTTPException(status_code=404, detail="reminder not found")
+        return {"ok": True}
+
+    @api.get("/jobs")
+    async def jobs_list() -> list[dict]:
+        return app.state.store.list_jobs(include_done=True)
+
+    @api.post("/jobs")
+    async def jobs_add(body: JobBody) -> dict:
+        try:
+            when = parse_when(body.when, now())
+            jid = app.state.store.add_job(when, body.text, kind=body.kind,
+                cwd=body.cwd or str(config.files_path), every_seconds=body.every_seconds,
+                timeout=body.timeout)
+        except (ToolError, ValueError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": jid, "when": when.isoformat()}
+
+    @api.delete("/jobs/{jid}")
+    async def jobs_delete(jid: int) -> dict:
+        if not app.state.store.delete_job(jid):
+            raise HTTPException(status_code=404, detail="job not found")
         return {"ok": True}
 
     @api.get("/models")

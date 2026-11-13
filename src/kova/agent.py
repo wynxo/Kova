@@ -18,6 +18,7 @@ from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE
 from kova.store import Store
+from kova.skills import Skills
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
@@ -221,6 +222,9 @@ class Agent:
                                      memory_budget=getattr(self.memory, 'budget', 0))
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {(chat or {}).get('permission', 'manual')}"
+            skill_descriptions = await asyncio.to_thread(Skills(self.config.home / "skills").prompt)
+            if skill_descriptions:
+                prompt += f"\n\n{skill_descriptions}"
             instructions = await asyncio.to_thread(project_instructions, cwd)
             if instructions:
                 prompt += f"\n\n{instructions}"

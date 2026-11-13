@@ -11,7 +11,7 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -162,6 +162,11 @@ class Store:
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
         if "plan" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+        # Jobs extend the existing reminder queue; legacy rows remain reminders.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
+        for name in ("job", "last_run", "last_result"):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} TEXT")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -545,9 +550,9 @@ class Store:
             return cur.lastrowid
 
     def _reminder_rows(self, include_done: bool) -> list[dict]:
-        sql = "SELECT id, reminder_at, text, done FROM reminders"
+        sql = "SELECT id, reminder_at, text, done FROM reminders WHERE job IS NULL"
         if not include_done:
-            sql += " WHERE done = 0"
+            sql += " AND done = 0"
         with self._lock:
             rows = self._conn.execute(sql).fetchall()
         out = [
@@ -574,19 +579,19 @@ class Store:
 
     def mark_reminder_done(self, rid: int) -> None:
         with self._lock:
-            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (rid,))
+            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ? AND job IS NULL", (rid,))
             self._conn.commit()
 
     def delete_reminder(self, rid: int) -> bool:
         with self._lock:
-            cur = self._conn.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND job IS NULL", (rid,))
             self._conn.commit()
             return cur.rowcount > 0
 
     def clear_reminders(self) -> None:
         """Delete every reminder (used by a replacing import)."""
         with self._lock:
-            self._conn.execute("DELETE FROM reminders")
+            self._conn.execute("DELETE FROM reminders WHERE job IS NULL")
             self._conn.commit()
 
     def import_reminder(self, when: str, text: str, done: bool = False) -> int:
@@ -601,3 +606,76 @@ class Store:
             )
             self._conn.commit()
             return cur.lastrowid
+
+
+    # -- scheduled jobs (the same queue as reminders) ----------------------
+    def add_job(self, when: datetime, text: str, *, kind: str, cwd: str,
+                every_seconds: int = 0, timeout: int = 60) -> int:
+        if when.tzinfo is None:
+            raise ValueError("job time must be timezone-aware")
+        if kind not in {"script", "agent", "heartbeat"}:
+            raise ValueError("job kind must be script, agent or heartbeat")
+        if not isinstance(text, str) or not text.strip() or len(text) > 12_000 or "\0" in text:
+            raise ValueError("job text must contain 1–12000 characters without NUL")
+        if type(every_seconds) is not int or not 0 <= every_seconds <= 31_536_000:
+            raise ValueError("every_seconds must be an integer between 0 and 31536000")
+        if kind == "heartbeat" and not every_seconds:
+            raise ValueError("heartbeat needs a recurring interval")
+        if type(timeout) is not int or not 1 <= timeout <= 300:
+            raise ValueError("timeout must be an integer between 1 and 300 seconds")
+        folder = Path(cwd).expanduser().resolve()
+        if not folder.is_dir():
+            raise ValueError("job working folder must exist")
+        job = json.dumps({"kind": kind, "cwd": str(folder), "every_seconds": every_seconds,
+                          "timeout": timeout})
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO reminders (reminder_at, text, job) VALUES (?, ?, ?)",
+                (when.isoformat(), text, job))
+            self._conn.commit()
+            return cur.lastrowid
+
+    def list_jobs(self, include_done: bool = False) -> list[dict]:
+        sql = "SELECT * FROM reminders WHERE job IS NOT NULL"
+        if not include_done:
+            sql += " AND done = 0"
+        with self._lock:
+            rows = self._conn.execute(sql).fetchall()
+        jobs = [{"id": row["id"], "when": row["reminder_at"], "text": row["text"],
+                 "done": bool(row["done"]), **json.loads(row["job"]),
+                 "last_run": row["last_run"],
+                 "last_result": json.loads(row["last_result"]) if row["last_result"] else None}
+                for row in rows]
+        return sorted(jobs, key=lambda job: datetime.fromisoformat(job["when"]))
+
+    def claim_job(self, job: dict, now: datetime) -> bool:
+        """Claim one due slot atomically; skip missed slots, never replay a backlog.
+
+        Advance before execution for at-most-once dispatch per slot. A crash
+        after claiming can miss a run, but must never repeat a script's effects.
+        """
+        due = datetime.fromisoformat(job["when"]).astimezone(timezone.utc)
+        now = now.astimezone(timezone.utc)
+        if due > now:
+            return False
+        interval = job['every_seconds']
+        next_due = due + timedelta(seconds=(int((now - due).total_seconds() // interval) + 1) * interval) if interval else due
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE reminders SET reminder_at = ?, done = ?, last_run = ?, last_result = NULL "
+                "WHERE id = ? AND reminder_at = ? AND done = 0 AND job IS NOT NULL",
+                (next_due.isoformat(), int(not interval), now.isoformat(), job['id'], job['when']))
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def finish_job(self, jid: int, result: dict) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE reminders SET last_result = ? WHERE id = ? AND job IS NOT NULL",
+                               (json.dumps(result), jid))
+            self._conn.commit()
+
+    def delete_job(self, jid: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND job IS NOT NULL", (jid,))
+            self._conn.commit()
+            return cur.rowcount > 0

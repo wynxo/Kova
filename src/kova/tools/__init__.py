@@ -33,10 +33,12 @@ class ToolContext:
 
 def build_tools(ctx: ToolContext) -> dict[str, Tool]:
     """Build the tools bound to a server context."""
-    from . import core, files, memory, reminders, sessions, system_info, web
+    from . import core, files, memory, reminders, sessions, skills, system_info, web
+    from kova import scheduler
 
     tools = [*web.tools(), *files.tools(ctx), *reminders.tools(ctx), *sessions.tools(ctx),
-             *memory.tools(ctx), *system_info.tools(ctx), *core.tools(ctx.config.files_path)]
+             *memory.tools(ctx), *system_info.tools(ctx), *core.tools(ctx.config.files_path),
+             *skills.tools(ctx), *scheduler.tools(ctx)]
     return {tool.name: tool for tool in tools}
 
 
