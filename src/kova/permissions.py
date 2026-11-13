@@ -66,12 +66,25 @@ def command_risk(command: str) -> str:
     return "destructive" if any(p.search(command) for p in (*_DESTRUCTIVE, *_EXTRA_DESTRUCTIVE)) else "normal"
 
 
+#: Tools whose arguments carry a shell command that runs as the user, now or later.
+SHELL_TOOLS = ("run_command", "job_add")
+
+
+def shell_command_arg(name: str, args: dict) -> str | None:
+    """The shell command a tool carries, or None when it carries none."""
+    if name not in SHELL_TOOLS:
+        return None
+    value = args.get("command")
+    return None if value is None else str(value)
+
+
 def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Path,
                    session_allowed: bool = False) -> bool:
     if permission == "full":
         return False
-    if name == "run_command":
-        if command_risk(args["command"]) == "destructive":
+    command = shell_command_arg(name, args)
+    if command is not None:
+        if command_risk(command) == "destructive":
             return True
         return permission != "auto" and not session_allowed
     if name in {"write_file", "edit_file"}:
@@ -107,10 +120,11 @@ class Rule:
 def action_key(name: str, args: dict, cwd: Path | None = None) -> str:
     """Bind all argv, edit contents and working directory, not a display summary."""
     executable = None
-    if name == "run_command":
+    command = shell_command_arg(name, args)
+    if command is not None:
         from kova.tools.commands import shell_command
         from kova.tools.core import fingerprint
-        argv = shell_command(str(args.get("command", "")))
+        argv = shell_command(command)
         executable = [argv, fingerprint(Path(argv[0]))]
     raw = json.dumps([name, args, str(cwd.resolve()) if cwd else None, executable], sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -135,7 +149,8 @@ def shell_parts(command: str) -> list[str]:
 
 
 def evaluate_rules(rules: list[Rule], name: str, args: dict, cwd: Path | None = None) -> str | None:
-    values = shell_parts(str(args.get("command", ""))) if name == "run_command" else [str(args.get("path", ""))]
+    command = shell_command_arg(name, args)
+    values = shell_parts(command) if command is not None else [str(args.get("path", ""))]
     matched = []
     for rule in rules:
         if not fnmatchcase(name, rule.tool):
@@ -144,7 +159,8 @@ def evaluate_rules(rules: list[Rule], name: str, args: dict, cwd: Path | None = 
             hit = rule.exact == action_key(name, args, cwd)
         elif rule.action == "allow":
             # Expansion, redirection, wrappers and shell syntax require exact approval.
-            unsafe = name == "run_command" and re.search(r"[$<>\\{}]|(^|\s)(eval|exec|source|bash|sh|zsh|env|command)\b", str(args.get("command", "")))
+            unsafe = command is not None and re.search(
+                r"[$<>\\{}]|(^|\s)(eval|exec|source|bash|sh|zsh|env|command)\b", command)
             hit = bool(values) and not unsafe and all(fnmatchcase(v, rule.pattern) for v in values)
         else:
             hit = any(fnmatchcase(v, rule.pattern) for v in values)
@@ -191,10 +207,16 @@ class Approvals:
     def create(self, chat_id: str, name: str, args: dict, cwd: Path | None = None) -> dict:
         identifier = uuid4().hex
         args = copy.deepcopy(args)
-        risk = command_risk(args["command"]) if name == "run_command" else "normal"
+        command = shell_command_arg(name, args)
+        risk = command_risk(command) if command is not None else "normal"
         future = asyncio.get_running_loop().create_future()
         self.pending[identifier] = PendingApproval(chat_id, risk, future, name, args, cwd, action_key(name, args, cwd))
-        summary = args["command"] if name == "run_command" else f"{name}: {args.get('path', '')}"
+        if command is None:
+            summary = f"{name}: {args.get('path', '')}"
+        elif name == "run_command":
+            summary = command
+        else:
+            summary = f"{command}\nRepeats: {args.get('schedule', '')}"
         changes = None
         if name == "edit_file":
             old = str(args.get("old_string", ""))

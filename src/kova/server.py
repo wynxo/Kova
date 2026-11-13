@@ -17,13 +17,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from kova import __version__
-from kova.agent import Agent
+from kova.agent import Agent, derive_title
 from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
 from kova.models import ModelClient
 from kova.modes import DEFAULT_MODE, MODES
 from kova.reminders import ReminderLoop
+from kova.scheduler import Scheduler, parse_schedule
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
@@ -82,6 +83,16 @@ class ReminderBody(BaseModel):
     """A reminder to schedule."""
     when: str
     text: str
+
+
+class JobBody(BaseModel):
+    """A recurring job: a shell command, or one agent turn, on a repeat schedule."""
+    text: str
+    schedule: str
+    command: str | None = None
+    prompt: str | None = None
+    first_run: str | None = None
+    idle_only: bool = False
 
 
 class ModelBody(BaseModel):
@@ -149,7 +160,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent = agent
     app.state.bus = bus
     app.state.conversation_states = ConversationStates(bus)
-    reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
+
+    async def run_job_prompt(job: dict) -> str:
+        """Run one prompt job's turn, in the job's own chat, and return its reply."""
+        chat_id = job.get("chat_id")
+        if not chat_id or app.state.store.get_chat(chat_id) is None:
+            chat = app.state.store.create_chat(title=derive_title(f"Job: {job['text']}"),
+                                               cwd=str(config.files_path.resolve()))
+            chat_id = chat["id"]
+            app.state.store.set_job_chat(job["id"], chat_id)
+        parts: list[str] = []
+        async with app.state.chat_locks.setdefault(chat_id, asyncio.Lock()):
+            app.state.conversation_states.transition(chat_id, "turn_start")
+            try:
+                async for event in app.state.agent.run_turn(chat_id, job["prompt"]):
+                    if event.get("type") == "text":
+                        parts.append(event["text"])
+                    elif event.get("type") == "error":
+                        raise RuntimeError(event.get("message") or "the job's turn failed")
+            finally:
+                app.state.conversation_states.transition(chat_id, "turn_end")
+        return "".join(parts).strip() or "(the turn ended without a reply)"
+
+    def is_idle() -> bool:
+        """A heartbeat waits for the user's work to finish, and for other jobs."""
+        return (not app.state.turns and not app.state.scheduler.busy
+                and not app.state.agent.approvals.pending)
+
+    scheduler = Scheduler(store, bus, now, cwd=config.files_path,
+                          run_prompt=run_job_prompt, is_idle=is_idle)
+    app.state.scheduler = scheduler
+    reminders = asyncio.create_task(ReminderLoop(store, bus, now, scheduler=scheduler).run())
     try:
         yield
     finally:
@@ -443,6 +484,32 @@ def create_app(
     async def reminder_delete(rid: int) -> dict:
         if not app.state.store.delete_reminder(rid):
             raise HTTPException(status_code=404, detail="reminder not found")
+        return {"ok": True}
+
+    @api.get("/jobs")
+    async def jobs_list() -> list[dict]:
+        return app.state.store.list_jobs()
+
+    @api.post("/jobs")
+    async def job_add(body: JobBody) -> dict:
+        if not body.text.strip():
+            raise HTTPException(status_code=422, detail="a job needs a short description")
+        command, prompt = (body.command or "").strip(), (body.prompt or "").strip()
+        if bool(command) == bool(prompt):
+            raise HTTPException(status_code=422, detail="give exactly one of command or prompt")
+        try:
+            schedule = parse_schedule(body.schedule, now())
+            first = parse_when(body.first_run, now()) if body.first_run else schedule.next_after(now())
+        except ToolError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        jid = app.state.store.add_job(body.text.strip(), schedule.spec, first, command=command or None,
+                                      prompt=prompt or None, idle_only=body.idle_only)
+        return next(job for job in app.state.store.list_jobs(include_done=True) if job["id"] == jid)
+
+    @api.delete("/jobs/{jid}")
+    async def job_delete(jid: int) -> dict:
+        if not app.state.store.delete_job(jid):
+            raise HTTPException(status_code=404, detail="job not found")
         return {"ok": True}
 
     @api.get("/models")

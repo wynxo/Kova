@@ -162,6 +162,21 @@ class Store:
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
         if "plan" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+        # Jobs share the reminders table: a job is a row with kind 'job', a repeat
+        # schedule and either a shell command or a prompt. One table, one loop.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
+        for name, definition in (
+            ("kind", "TEXT NOT NULL DEFAULT 'reminder'"),
+            ("schedule", "TEXT"),
+            ("command", "TEXT"),
+            ("prompt", "TEXT"),
+            ("chat_id", "TEXT"),
+            ("idle_only", "INTEGER NOT NULL DEFAULT 0"),
+            ("runs", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_run", "TEXT"),
+        ):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -545,9 +560,9 @@ class Store:
             return cur.lastrowid
 
     def _reminder_rows(self, include_done: bool) -> list[dict]:
-        sql = "SELECT id, reminder_at, text, done FROM reminders"
+        sql = "SELECT id, reminder_at, text, done FROM reminders WHERE kind = 'reminder'"
         if not include_done:
-            sql += " WHERE done = 0"
+            sql += " AND done = 0"
         with self._lock:
             rows = self._conn.execute(sql).fetchall()
         out = [
@@ -584,9 +599,12 @@ class Store:
             return cur.rowcount > 0
 
     def clear_reminders(self) -> None:
-        """Delete every reminder (used by a replacing import)."""
+        """Delete every one-shot reminder (used by a replacing import).
+
+        Scheduled jobs are not part of a backup, so a restore never wipes them.
+        """
         with self._lock:
-            self._conn.execute("DELETE FROM reminders")
+            self._conn.execute("DELETE FROM reminders WHERE kind = 'reminder'")
             self._conn.commit()
 
     def import_reminder(self, when: str, text: str, done: bool = False) -> int:
@@ -601,3 +619,79 @@ class Store:
             )
             self._conn.commit()
             return cur.lastrowid
+
+    # -- jobs (recurring, in the same table as reminders) ------------------
+    def add_job(self, text: str, schedule: str, next_at: datetime, *,
+                command: str | None = None, prompt: str | None = None,
+                idle_only: bool = False) -> int:
+        """Schedule one recurring job: a shell command, or a prompt for one turn."""
+        if next_at.tzinfo is None:
+            raise ValueError("job time must be timezone-aware")
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO reminders (reminder_at, text, done, kind, schedule, command, prompt, idle_only)"
+                " VALUES (?, ?, 0, 'job', ?, ?, ?, ?)",
+                (next_at.isoformat(), text, schedule, command, prompt, 1 if idle_only else 0),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def _job_rows(self, include_done: bool = False) -> list[dict]:
+        sql = (
+            "SELECT id, reminder_at, text, done, schedule, command, prompt, chat_id, idle_only, runs, last_run"
+            " FROM reminders WHERE kind = 'job'"
+        )
+        if not include_done:
+            sql += " AND done = 0"
+        with self._lock:
+            rows = self._conn.execute(sql).fetchall()
+        out = [
+            {
+                "id": r["id"],
+                "next_run": r["reminder_at"],
+                "text": r["text"],
+                "done": bool(r["done"]),
+                "schedule": r["schedule"] or "",
+                "kind": "script" if r["command"] else "prompt",
+                "command": r["command"],
+                "prompt": r["prompt"],
+                "chat_id": r["chat_id"],
+                "idle_only": bool(r["idle_only"]),
+                "runs": r["runs"],
+                "last_run": r["last_run"],
+            }
+            for r in rows
+        ]
+        out.sort(key=lambda r: datetime.fromisoformat(r["next_run"]))
+        return out
+
+    def list_jobs(self, include_done: bool = False) -> list[dict]:
+        return self._job_rows(include_done)
+
+    def due_jobs(self, now: datetime) -> list[dict]:
+        return [j for j in self._job_rows(False) if datetime.fromisoformat(j["next_run"]) <= now]
+
+    def mark_job_run(self, jid: int, next_at: datetime | None) -> None:
+        """Record one run: schedule the next one, or finish the job with ``None``."""
+        if next_at is None:
+            sql, params = "UPDATE reminders SET runs = runs + 1, last_run = ?, done = 1 WHERE id = ?", (_utc_now_iso(), jid)
+        else:
+            if next_at.tzinfo is None:
+                raise ValueError("job time must be timezone-aware")
+            sql, params = ("UPDATE reminders SET runs = runs + 1, last_run = ?, reminder_at = ? WHERE id = ?",
+                           (_utc_now_iso(), next_at.isoformat(), jid))
+        with self._lock:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+
+    def set_job_chat(self, jid: int, chat_id: str) -> None:
+        """Remember the chat a prompt job runs in, so it keeps one thread."""
+        with self._lock:
+            self._conn.execute("UPDATE reminders SET chat_id = ? WHERE id = ? AND kind = 'job'", (chat_id, jid))
+            self._conn.commit()
+
+    def delete_job(self, jid: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND kind = 'job'", (jid,))
+            self._conn.commit()
+            return cur.rowcount > 0

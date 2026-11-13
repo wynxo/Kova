@@ -45,6 +45,8 @@ def _hint_for(message: str) -> str | None:
         return "Run: kova memory list"
     if "no reminder" in text:
         return "Run: kova reminders list"
+    if "no job" in text:
+        return "Run: kova jobs list"
     if "no model named" in text:
         return "Run: kova model list"
     if "no chat" in text:
@@ -237,6 +239,9 @@ app.add_typer(_memory, name="memory")
 
 _reminders = typer.Typer(no_args_is_help=True, help="Manage reminders.")
 app.add_typer(_reminders, name="reminders")
+
+_jobs = typer.Typer(no_args_is_help=True, help="Manage scheduled recurring jobs.")
+app.add_typer(_jobs, name="jobs")
 
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
@@ -822,6 +827,60 @@ def reminders_rm(rid: int):
         _ok(f"Removed reminder #{rid}.")
     else:
         _fail(f"No reminder #{rid}.")
+
+
+@_jobs.command("list")
+def jobs_list():
+    """List the scheduled recurring jobs."""
+    now = _local_now()
+    jobs = get_client().jobs_list()
+    if not jobs:
+        _empty("No scheduled jobs.",
+               'Add one with: kova jobs add "every 2h" "Check the backups" --command "ls ~/backups"')
+        return
+    table = _table(caption=f"{len(jobs)} job" + ("" if len(jobs) == 1 else "s"))
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Job", overflow="ellipsis")
+    table.add_column("Kind", style=theme.MUTED, no_wrap=True)
+    table.add_column("Schedule", no_wrap=True)
+    table.add_column("Next", no_wrap=True)
+    table.add_column("Runs", justify="right", style=theme.MUTED, no_wrap=True)
+    for job in jobs:
+        kind = "heartbeat" if job["idle_only"] else job["kind"]
+        try:
+            next_run = _reminder_time(job["next_run"], now)
+            when = f"{next_run.strftime('%Y-%m-%d %H:%M')} · {format_relative(next_run, now)}"
+        except (TypeError, ValueError):
+            when = job["next_run"]
+        table.add_row(str(job["id"]), _clip(job["text"]), kind, job["schedule"], when, str(job["runs"]))
+    console.print(table)
+
+
+@_jobs.command("add")
+def jobs_add(
+    schedule: str,
+    text: str,
+    command: str = typer.Option(None, "--command", help="Shell command to run, with no model call."),
+    prompt: str = typer.Option(None, "--prompt", help="Instruction for one Kova turn per run."),
+    idle_only: bool = typer.Option(False, "--idle-only", help="Only start when nothing else is running."),
+    first_run: str = typer.Option(None, "--first-run", help="First run time, e.g. 'tomorrow 8am'."),
+):
+    """Add a recurring job: --command for a script, --prompt for a Kova turn."""
+    if bool(command) == bool(prompt):
+        _fail("Pass exactly one of --command (a shell command) or --prompt (an instruction).",
+              "Example: kova jobs add \"daily 09:00\" \"Summarise the news\" --prompt \"Summarise today's headlines\"")
+    job = get_client().job_add(text, schedule, command=command, prompt=prompt,
+                               first_run=first_run, idle_only=idle_only)
+    _ok(f"Job #{job['id']} scheduled {job['schedule']} · next {job['next_run']}")
+
+
+@_jobs.command("rm")
+def jobs_rm(jid: int):
+    """Delete a scheduled job."""
+    if get_client().job_delete(jid):
+        _ok(f"Removed job #{jid}.")
+    else:
+        _fail(f"No job #{jid}.")
 
 
 # ---------------------------------------------------------------------------
