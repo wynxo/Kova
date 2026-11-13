@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from kova.client import KovaClient, KovaError
 from kova.config import ensure_token, load_config
 from kova.permissions import Approvals, command_risk, needs_approval
-from kova.project_instructions import project_instructions
+from kova.project_instructions import INSTRUCTION_BUDGET, project_instructions
 from kova.server import create_app
 from kova.store import Store
 from kova.tools import ToolError
@@ -180,7 +180,7 @@ def test_project_instructions_bounded_root_contained(tmp_path):
     (tmp_path / 'KOVA.md').write_text('Use project style.\n' * 400)
     (tmp_path / 'AGENTS.md').write_text('Use pytest.')
     result = project_instructions(tmp_path)
-    assert len(result) <= 4096 and 'Use project style.' in result
+    assert len(result.encode()) <= INSTRUCTION_BUDGET and 'Use project style.' in result
     (tmp_path / 'KOVA.md').unlink()
     outside = tmp_path.parent / (tmp_path.name + '-instructions')
     outside.write_text('external secret')

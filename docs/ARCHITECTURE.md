@@ -173,7 +173,13 @@ forwards its events to the client as SSE.
 3. `memory.search(text, 5)` picks up to five relevant notes. A memory error is
    swallowed so it can never block a chat.
 4. `build_system_prompt` assembles the identity for the mode, the current
-   time, the mode name, the available tool names, and the chosen memories.
+   time, the mode name, the available tool names, and the chosen memories. Work
+   mode then appends the working folder, the permission mode, the
+   `sandbox.status()` line, and `project_instructions` (`src/kova/project_instructions.py`):
+   guidance from the Kova home folder, the project root, and every folder down
+   to the working folder, byte-budgeted with the closest folder winning. A chat
+   that later touches a subfolder gets that folder's guidance appended to the
+   prompt on demand, once per folder (`FileSession.take_instructions`).
 5. The model is the explicit per-turn `model` override or `config.active_model()`.
 6. Up to eleven model calls are made. Before each call the history is reloaded
    from SQLite, `repair_tool_pairs` fills in missing tool replies for an

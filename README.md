@@ -237,9 +237,9 @@ Work mode includes:
 - `update_plan`: publishes up to eight checklist items with `pending`, `in_progress`, or `done` status. Plans stream to clients and the latest checklist is saved per chat.
 - Existing web, memory, and reminder tools remain available.
 
-File tools resolve relative paths against the **working folder** and reject paths or symlinks that escape it, even in Full access mode. Existing file-tool names are unchanged; chats default to the configured Kova files folder (`~/Kova Files`). Set an existing absolute folder using the desktop composer or `PATCH /chats/{id}` with `{"cwd": "/absolute/project"}`. Commands are not a filesystem sandbox: they can access anything your user can access.
+File tools resolve relative paths against the **working folder** and reject paths or symlinks that escape it, even in Full access mode. Existing file-tool names are unchanged; chats default to the configured Kova files folder (`~/Kova Files`). Set an existing absolute folder using the desktop composer or `PATCH /chats/{id}` with `{"cwd": "/absolute/project"}`. An approved command runs as your user can access anything your user can access; commands Kova runs on its own are confined by the OS sandbox below.
 
-In work mode, `KOVA.md` and `AGENTS.md` from that folder are included as project guidance in the system prompt, capped at **4,096 characters total**. They cannot override permissions. Chat mode neither offers nor executes commands, file tools, or plan tools, and does not load project instructions.
+In work mode, `KOVA.md` and `AGENTS.md` are included as project guidance in the system prompt from several levels: your Kova home folder (`~/.kova`), the project root (the nearest `.git`/`pyproject.toml`/`package.json`/`Cargo.toml`/`go.mod` folder at or above the working folder), and every folder from that root down to the working folder. Broader guidance comes first and guidance closer to the working folder wins; the whole block is capped at **8 KiB**, and guidance in folders *below* the working folder loads on demand the first time a chat touches a file there. Files larger than 12 KB, binary files, and symlinks that escape their folder are skipped. Guidance cannot override permissions. Chat mode neither offers nor executes commands, file tools, or plan tools, and does not load project instructions.
 
 ## Permissions
 
@@ -247,11 +247,17 @@ Each chat has a saved `permission` setting, selectable in the desktop composer o
 
 | Mode | Commands | File writes/edits |
 | --- | --- | --- |
-| **manual** (default) | Approve every command | Approve outside the configured Kova files folder |
+| **manual** (default) | Approve every command the sandbox cannot run | Approve outside the configured Kova files folder |
 | **auto** | Run normal commands; approve destructive ones | Run inside the working folder |
 | **full** | Never ask, including destructive commands | Never ask, still folder-contained |
 
-Reads, listings, searches, and plans never ask. The destructive-command classifier flags deletion, disk operations, pipe-to-shell, package removal, elevation, discarding Git work and other destructive actions, including Windows equivalents. This is a heuristic, not a shell security boundary; Manual keeps every command behind approval.
+Reads, listings, searches, and plans never ask. The destructive-command classifier flags deletion, disk operations, pipe-to-shell, package removal, elevation, discarding Git work and other destructive actions, including Windows equivalents. This is a heuristic, not a shell security boundary, so everything it does not recognise keeps the approval flow above.
+
+### Command sandbox
+
+On Linux, one plain inspection command — `ls`, `cat`, `head`, `grep`, `rg`, `find`, `git status`/`log`/`diff` and the rest of the read-only Git subcommands, `python -m pytest` and the other interpreters on the allowlist — runs **without a prompt** inside an OS sandbox: [landlock](https://landlock.io/) when the kernel has it, bubblewrap otherwise. Inside the sandbox a command can read system paths, the working folder, temp and its own interpreter, write only in the working folder, temp and `/dev`, receive no network, and (with landlock ABI 6 and later) cannot signal processes or open abstract UNIX sockets outside its own domain. It cannot read your home folder.
+
+Everything else keeps the approval flow: any command with a separator, pipe, redirect, substitution or expansion is never auto-run, and neither are commands on the destructive list or programs outside the allowlist. Full access skips the sandbox entirely. The sandbox is **fail-closed**: if the kernel feature is missing, bubblewrap cannot start, or the domain cannot be established, Kova asks for approval instead of running the command unsandboxed. Set `KOVA_SANDBOX=0` to turn the sandbox off. Permission rules are checked first, so an `ask` rule still prompts for a command the sandbox could run.
 
 Approvals appear inline with a summary, risk badge, optional guidance, and **Allow**, **Allow for this chat**, or **Deny**. A session allowance lasts only for that chat while this server runs; destructive commands always need individual approval unless the chat is in Full access. For a destructive call, an API `allow_session` answer allows that single call only and never creates a session allowance. Changing the folder or permission mode clears a session allowance. Stop denies pending requests; unanswered requests are denied after **10 minutes**. Denial and optional guidance are returned to the model. Noninteractive `kova ask` denies approval-requiring actions immediately and prints a hint to continue in interactive chat, so scripts do not hang waiting for a prompt. Settings cannot change during an active turn: stop it first.
 

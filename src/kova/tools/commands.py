@@ -38,7 +38,14 @@ async def _kill_tree(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
-async def run_command(command: str, cwd: Path, timeout: float = 60) -> dict:
+async def run_command(command: str, cwd: Path, timeout: float = 60,
+                      *, argv: list[str] | None = None) -> dict:
+    """Run one shell command, bounded in time and output.
+
+    ``argv`` replaces the shell wrapper for callers that need a different program
+    in front, such as the OS sandbox bootstrap; ``command`` stays the text that is
+    validated and reported.
+    """
     if not command.strip() or "\0" in command:
         raise ValueError("Enter a non-empty command without NUL characters")
     if isinstance(timeout, bool) or not 0 < timeout <= 300:
@@ -46,7 +53,7 @@ async def run_command(command: str, cwd: Path, timeout: float = 60) -> dict:
     options = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                if os.name == "nt" else {"start_new_session": True})
     spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-        *shell_command(command), cwd=cwd, stdin=subprocess.DEVNULL,
+        *(argv if argv else shell_command(command)), cwd=cwd, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **options,
     ))
     # Shield startup so cancellation cannot orphan a process created concurrently.

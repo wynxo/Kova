@@ -13,9 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal shortcut `Ctrl+T` toggles full model reasoning, streamed live.
 - Terminal shortcut `Ctrl+O` expands and collapses tool calls and their output.
 - Live streaming of commands and their output, and of code, as the model writes them.
+- Layered project instructions: `KOVA.md` and `AGENTS.md` now load from your Kova home folder, the project root, and every folder down to the working folder, within an 8 KiB budget and with closer guidance winning; guidance in folders below the working folder loads on demand the first time a chat touches a file there.
+- OS sandbox for `run_command`: on Linux, a plain inspection command (`ls`, `cat`, `grep`, read-only `git`, `python -m pytest`) runs without a prompt inside landlock, or bubblewrap when landlock is missing. Inside it a command reads system paths, the working folder and temp, writes only in the working folder, temp and `/dev`, and has no network; it cannot read your home folder. When no sandbox can be established the command asks for approval instead of running unsandboxed (`KOVA_SANDBOX=0` disables the sandbox).
 
 ### Changed
 
+- Manual permission mode prompts only for commands the sandbox cannot run; Full access is unchanged.
 - `kova-app` now launches the desktop app (native window; `--browser` for your browser).
 - Redesigned desktop and web UI, with a new app icon.
 

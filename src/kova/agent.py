@@ -24,6 +24,7 @@ from kova.tools import core
 from kova.tools.sessions import set_current_chat
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
+from kova import sandbox
 
 
 _IDENTITIES = {
@@ -188,6 +189,8 @@ class Agent:
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
+        permission = (chat or {}).get('permission', 'manual')
+        sandboxing = mode != 'chat' and permission != 'full'
         cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
         tools = select_tools(mode, web, self.tools)
         files = None
@@ -199,7 +202,7 @@ class Agent:
                 return
             files = self.file_sessions.setdefault((chat_id, str(cwd)), FileSession(cwd))
             # Bind per-chat state, never mutate the server-wide registry.
-            replacements = [*files.tools(), *core.tools(cwd)]
+            replacements = [*files.tools(), *core.tools(cwd, sandbox=sandboxing)]
             tools.update({tool.name: tool for tool in replacements if tool.name in tools})
         needs_title = chat is not None and not chat['title']
         title_source = text
@@ -220,8 +223,10 @@ class Agent:
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0))
         if mode != 'chat':
-            prompt += f"\nWorking folder: {cwd}\nPermission mode: {(chat or {}).get('permission', 'manual')}"
-            instructions = await asyncio.to_thread(project_instructions, cwd)
+            note = sandbox.status() if sandboxing else "off (full access runs commands directly)"
+            prompt += (f"\nWorking folder: {cwd}\nPermission mode: {permission}"
+                       f"\nCommand sandbox: {note}")
+            instructions = await asyncio.to_thread(project_instructions, cwd, home=self.config.home)
             if instructions:
                 prompt += f"\n\n{instructions}"
             if (chat or {}).get('plan'):
@@ -297,9 +302,10 @@ class Agent:
                                 policy, reason = self.approvals.policy(chat_id, name, args, cwd)
                                 if policy == 'deny':
                                     raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
-                                if policy == 'ask' or (policy != 'allow' and needs_approval(name, args, (chat or {}).get('permission', 'manual'),
-                                                  cwd, self.config.files_path,
-                                                  False)):
+                                # A sandboxed inspection command replaces the prompt with the sandbox.
+                                sandboxed = (sandboxing and sandbox.auto_runs(name, args, cwd))
+                                if policy == 'ask' or (policy != 'allow' and not sandboxed and needs_approval(
+                                        name, args, permission, cwd, self.config.files_path, False)):
                                     approval = self.approvals.create(chat_id, name, args, cwd=cwd)
                                     approved_binding = approval["binding"]
                                     try:
@@ -341,5 +347,9 @@ class Agent:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                    if files is not None:
+                        guidance = files.take_instructions()
+                        if guidance:
+                            prompt += f"\n\n{guidance}"
         except ModelError as exc:
             yield {'type': 'error', 'message': str(exc)}

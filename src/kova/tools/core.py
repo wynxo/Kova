@@ -12,6 +12,8 @@ from pathlib import Path
 from . import Tool, ToolError
 from . import code_files
 from .commands import run_command
+from kova.project_instructions import ON_DEMAND_BUDGET, directory_instructions
+from kova.sandbox import wrap as sandbox_argv
 
 FILE_TOOLS = code_files.FILE_TOOLS
 WRITE_TOOLS = code_files.WRITE_TOOLS
@@ -78,6 +80,10 @@ class FileSession:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.observed: dict[Path, str | None] = {}
+        # Subfolder guidance, loaded the first time this chat touches a folder.
+        self.instructed: set[Path] = {self.root}
+        self.pending_instructions: list[str] = []
+        self.instructed_bytes = 0
 
     def prepare(self, name: str, args: dict) -> tuple[Path, str | None] | None:
         target = code_files.resolve_path(args.get("path", "."), str(self.root))
@@ -98,6 +104,7 @@ class FileSession:
         self.root.mkdir(parents=True, exist_ok=True)
         path = args.get("path") or "."
         target = code_files.resolve_path(path, str(self.root))
+        self._note_instructions(target)
         root = str(self.root)
         if name == "read_file":
             observed = fingerprint(target)
@@ -133,6 +140,30 @@ class FileSession:
             self.observed[target] = fingerprint(target)
         return json.dumps(result)
 
+    def take_instructions(self) -> str:
+        """Guidance for the folders touched since the last call, or an empty string."""
+        pending, self.pending_instructions = self.pending_instructions, []
+        return "\n\n".join(pending)
+
+    def _note_instructions(self, target: Path) -> None:
+        """Queue guidance for the folders a file access just entered, once each."""
+        folder = target if target.is_dir() else target.parent
+        if not folder.is_relative_to(self.root):
+            return
+        chain = [folder]
+        while chain[-1] != self.root and chain[-1].parent != chain[-1]:
+            chain.append(chain[-1].parent)
+        for parent in reversed(chain):          # working folder first, then deeper
+            if parent in self.instructed or not parent.is_relative_to(self.root):
+                continue
+            self.instructed.add(parent)
+            text = directory_instructions(parent, root=self.root)
+            cost = len(text.encode())
+            if not text or self.instructed_bytes + cost > ON_DEMAND_BUDGET:
+                continue
+            self.instructed_bytes += cost
+            self.pending_instructions.append(text)
+
     def tools(self) -> list[Tool]:
         definitions = [
             ("list_files", "List files under the working folder, skipping dependency/build folders.", schema({"path": {"type": "string", "maxLength": 4096}, "pattern": TEXT})),
@@ -144,9 +175,10 @@ class FileSession:
         return [Tool(name, description, params, lambda args, n=name: self.execute(n, args)) for name, description, params in definitions]
 
 
-def tools(cwd: Path) -> list[Tool]:
+def tools(cwd: Path, *, sandbox: bool = False) -> list[Tool]:
     async def command(args):
-        return json.dumps(await run_command(args["command"], cwd, args.get("timeout", 60)))
+        argv = sandbox_argv(args["command"], cwd) if sandbox else None
+        return json.dumps(await run_command(args["command"], cwd, args.get("timeout", 60), argv=argv))
 
     def plan(args):
         return json.dumps({"ok": True, "items": args["items"]})

@@ -1,7 +1,9 @@
 # Permission rules and approvals
 
 Rules are checked before manual/auto/full mode: **deny > ask > allow**.
-Without a matching rule, the existing mode and destructive classifier apply.
+Without a matching rule, the existing mode, the command sandbox and the
+destructive classifier apply; an `ask` rule still prompts for a command the
+sandbox could run on its own.
 A denial's optional `message` goes back to the model.
 
 Open **Permission rules** in the web composer, or `/permissions rules` in the
