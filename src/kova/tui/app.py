@@ -739,8 +739,8 @@ class ChatApp:
         self.renderer.line()
 
     def _choose(self, title: str, items: list[tuple[str, str, object]], on_pick, *,
-                current=None, subtitle: str = "") -> None:
-        self.overlay = Picker(title, items, on_pick, current=current, subtitle=subtitle)
+                current=None, subtitle: str = "", groups: dict | None = None) -> None:
+        self.overlay = Picker(title, items, on_pick, current=current, subtitle=subtitle, groups=groups)
 
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer
@@ -812,12 +812,14 @@ class ChatApp:
         if not rest:
             models = self.client.models_list()
             self._models = models
+            models = sorted(models, key=lambda m: (m.get("provider_name", ""), m["name"]))
             items = [(entry["name"], entry["model"], entry["name"]) for entry in models]
             if not items:
                 self._done("No models yet. Run kova setup to add one.")
                 return
             self._choose("Select model", items, self._cmd_model, current=self.model,
-                         subtitle="Used for every chat")
+                         subtitle="Used for every chat",
+                         groups={entry["name"]: entry.get("provider_name", "Custom") for entry in models})
             return
         try:
             self.client.model_use(rest)

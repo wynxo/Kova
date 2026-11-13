@@ -22,7 +22,7 @@
     <nav id="chat-list" aria-label="Chat history"></nav>
     <div class="sidebar-footer">
       <div class="local-note"><span class="local-icon">⌂</span><div><strong>At home on your computer</strong><small>Your conversations stay yours.</small></div></div>
-      <div class="footer-actions"><button id="theme" class="quiet">◐ <span>Light theme</span></button><button id="disconnect" class="quiet" title="Disconnect this window">Disconnect</button></div>
+      <div class="footer-actions"><button id="theme" class="quiet">◐ <span>Light theme</span></button><button id="add-provider" class="quiet">＋ Add provider</button><button id="disconnect" class="quiet" title="Disconnect this window">Disconnect</button></div>
     </div>
   </aside>
   <main>
@@ -66,6 +66,29 @@
   </main>
   <div id="toasts" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off"></label><div class="dialog-actions"><button value="cancel" class="quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="primary">Save</button></div></form></dialog>
+  <dialog id="provider-dialog" aria-labelledby="provider-title">
+    <form id="provider-form" autocomplete="off">
+      <div class="provider-heading"><h2 id="provider-title">Connect a provider</h2><button id="provider-cancel" type="button" class="quiet" aria-label="Close provider setup">×</button></div>
+      <p class="provider-intro">Choose where your messages go. Connecting only lists models, never sends a chat.</p>
+      <div id="provider-details">
+        <label>Provider<select id="provider-kind" required></select></label>
+        <label>Connection name<input id="provider-name" placeholder="e.g. personal" required pattern="[a-zA-Z0-9_-]+" maxlength="64"></label>
+        <label id="provider-url-row" hidden>Base URL<input id="provider-url" placeholder="https://example.com/v1" spellcheck="false"></label>
+        <label id="provider-key-row">API key<input id="provider-key" type="password" autocomplete="new-password" spellcheck="false"></label>
+        <a id="provider-key-link" target="_blank" rel="noopener noreferrer">Get an API key ↗</a>
+        <label id="provider-headers-row" hidden>Custom headers (optional JSON)<textarea id="provider-headers" rows="2" spellcheck="false" placeholder='{"X-Header": "value"}'></textarea></label>
+        <label id="provider-consent-row" class="provider-check" hidden><input id="provider-consent" type="checkbox">Read the installed Codex login. Kova will not copy, refresh or change it.</label>
+      </div>
+      <section id="provider-models-step" hidden>
+        <label>Filter models<input id="provider-filter" type="search" placeholder="Search by name"></label>
+        <div id="provider-models" class="provider-models" role="group" aria-label="Models to add"></div>
+        <label>Active model<select id="provider-active"></select></label>
+      </section>
+      <p id="provider-status" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="provider-back" type="button" class="quiet" hidden>Back</button><button id="provider-next" type="submit" class="primary">List models</button></div>
+      <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
+    </form>
+  </dialog>
   <noscript>Kova needs JavaScript enabled. Open kova-app to connect.</noscript>
 </body>
 </html>

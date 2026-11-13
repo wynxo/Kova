@@ -206,3 +206,14 @@ async def test_fresh_install_asks_for_setup_instead_of_calling_a_model(tmp_path)
     chat = agent.store.create_chat()
     events = [e async for e in agent.run_turn(chat["id"], "hi")]
     assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]
+
+
+async def test_tool_wire_metadata_survives_store_and_next_round(setup):
+    script = tool('memory_search', {'query':'hello'})
+    script[0]['tool_calls'][0]['extra_content'] = {'google': {'thought_signature': 'opaque-signature'}}
+    events, fake = await run(setup, [script, text('Found it')])
+    assert events[-1]['type'] == 'done'
+    assistant = next(m for m in fake.requests[1]['messages'] if m.get('tool_calls'))
+    assert assistant['tool_calls'][0]['extra_content'] == {'google': {'thought_signature': 'opaque-signature'}}
+    saved = next(m for m in setup[1].get_messages(setup[4]) if m.get('tool_calls'))
+    assert saved['tool_calls'][0]['extra_content'] == assistant['tool_calls'][0]['extra_content']

@@ -44,3 +44,20 @@ def test_token_stable_and_private(tmp_path):
 def test_config_file_private(tmp_path):
     load_config(tmp_path)
     assert (tmp_path / "config.toml").stat().st_mode & 0o777 == 0o600
+
+
+def test_provider_key_is_authoritative_over_hydrated_model_keys(tmp_path):
+    cfg = load_config(tmp_path)
+    cfg.providers[0].api_key = 'changed-on-provider'
+    save_config(cfg)
+    assert load_config(tmp_path).active_model().api_key == 'changed-on-provider'
+
+
+def test_legacy_key_assignment_updates_all_models_sharing_provider(tmp_path):
+    cfg = load_config(tmp_path)
+    cfg.models.append(ModelEntry('second', cfg.models[0].base_url, 'another'))
+    save_config(cfg)
+    cfg.models[0].api_key = 'new-key'
+    save_config(cfg)
+    again = load_config(tmp_path)
+    assert all(m.api_key == 'new-key' for m in again.models)

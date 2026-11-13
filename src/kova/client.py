@@ -183,6 +183,24 @@ class KovaClient:
         payload = {"name": name, "base_url": base_url, "model": model, "api_key": api_key}
         return self._request("POST", "/models", json=payload).json()
 
+    def providers_list(self) -> list[dict]:
+        return self._request("GET", "/providers").json()
+
+    def provider_add(self, provider, models, active=None, *, legacy_name=None):
+        payload = {k: getattr(provider, k) for k in ('id', 'name', 'kind', 'base_url', 'api_key', 'headers', 'auth')}
+        payload.update(models=models, active=active, legacy_name=legacy_name, consent=provider.kind == 'codex')
+        return self._request('POST', '/providers', json=payload, timeout=30).json()
+
+    def provider_remove(self, identifier):
+        return self._request('DELETE', f'/providers/{identifier}').json()
+
+    def provider_logout(self, identifier):
+        return self._request('POST', f'/providers/{identifier}/logout').json()
+
+    def provider_login(self, identifier, *, api_key=None, auth=None, consent=False):
+        return self._request('POST', f'/providers/{identifier}/login',
+                             json={'api_key': api_key, 'auth': auth or {}, 'consent': consent}, timeout=30).json()
+
     def model_use(self, name: str) -> dict:
         return self._request("POST", "/models/active", json={"name": name}).json()
 

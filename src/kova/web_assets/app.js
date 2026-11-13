@@ -24,7 +24,7 @@
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
   function controls() {
     const busy = state.busy;
-    for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd']) $(id).disabled = busy || !state.connected;
+    for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     for (const id of ['permission', 'cwd']) $(id).disabled ||= $('mode').value === 'chat';
     $('send').hidden = busy; $('stop').hidden = !busy;
     $('send').disabled = !state.connected || !$('prompt').value.trim();
@@ -405,7 +405,7 @@
       await json('/chats'); state.connected = true;
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
-      $('model').replaceChildren(...models.map(model => { const option = el('option', '', model.name); option.value = model.name; option.title = model.model || 'Not configured'; return option; }));
+      renderModels(models);
       $('model').value = status.model; selectedModel = status.model;
       await refreshChats(); controls(); await health();
       state.events = new EventSource('/events');
@@ -414,6 +414,149 @@
       $('prompt').focus();
     } catch (error) { disconnected(error.message); }
   }
+  function renderModels(models) {
+    const groups = new Map();
+    for (const model of models) {
+      const provider = model.provider_name || 'Custom';
+      if (!groups.has(provider)) { const group = el('optgroup'); group.label = provider; groups.set(provider, group); }
+      const option = el('option', '', model.model || model.name);
+      option.value = model.name; option.title = model.name;
+      groups.get(provider).append(option);
+    }
+    $('model').replaceChildren(...groups.values());
+  }
+
+  let providerSpecs = [], providerDraft = null, providerChoices = [], providerLogin = null, providerTimer = null;
+  let providerVersion = 0;
+  function clearProviderSecrets() {
+    $('provider-key').value = ''; $('provider-headers').value = '';
+    providerDraft = null;
+  }
+  function closeProvider() {
+    providerVersion++; clearTimeout(providerTimer);
+    if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {});
+    providerLogin = null; clearProviderSecrets(); providerChoices = [];
+    $('provider-dialog').close();
+  }
+  function providerKindChanged() {
+    clearProviderSecrets();
+    const spec = providerSpecs.find(p => p.id === $('provider-kind').value);
+    if (!spec) return;
+    $('provider-name').value = spec.id;
+    const custom = spec.id === 'custom', local = spec.id === 'local', oauth = spec.id === 'chatgpt';
+    $('provider-url-row').hidden = !custom && !local;
+    $('provider-url').value = ''; $('provider-url').placeholder = local ? 'homelab:8080' : 'https://example.com/v1';
+    $('provider-key-row').hidden = oauth || spec.id === 'codex';
+    $('provider-key').required = Boolean(spec.key_url);
+    $('provider-headers-row').hidden = !custom;
+    $('provider-consent-row').hidden = spec.id !== 'codex'; $('provider-consent').checked = false;
+    $('provider-key-link').hidden = !spec.key_url; $('provider-key-link').href = spec.key_url || '#';
+    $('provider-next').textContent = oauth ? 'Continue with ChatGPT' : 'List models';
+    $('provider-status').textContent = '';
+  }
+  function providerActiveOptions() {
+    const previous = $('provider-active').value;
+    const selected = providerChoices.filter(c => c.input.checked);
+    $('provider-active').replaceChildren(...selected.map(c => { const option = el('option', '', c.model); option.value = c.model; return option; }));
+    if (selected.some(c => c.model === previous)) $('provider-active').value = previous;
+    $('provider-next').disabled = !selected.length;
+  }
+  function showProviderModels(models) {
+    if (!models.length) throw new Error('No models listed. Check access or load a model first.');
+    providerChoices = models.map((model, index) => {
+      const label = el('label', 'provider-check'), input = el('input');
+      input.type = 'checkbox'; input.checked = index === 0;
+      label.append(input, document.createTextNode(model));
+      input.onchange = providerActiveOptions;
+      return {model, input, label};
+    });
+    $('provider-models').replaceChildren(...providerChoices.map(c => c.label));
+    $('provider-details').hidden = true; $('provider-models-step').hidden = false;
+    $('provider-back').hidden = false; $('provider-next').textContent = 'Connect provider';
+    $('provider-filter').value = ''; providerActiveOptions();
+    $('provider-status').textContent = `${models.length} models available. Choose one or more.`;
+    $('provider-filter').focus();
+  }
+  $('provider-filter').oninput = () => {
+    const query = $('provider-filter').value.toLowerCase();
+    for (const choice of providerChoices) choice.label.hidden = !choice.model.toLowerCase().includes(query);
+  };
+  $('add-provider').onclick = () => safe(async () => {
+    const data = await json('/providers/catalog'); providerSpecs = data.providers;
+    $('provider-kind').replaceChildren(...providerSpecs.map(spec => {
+      const option = el('option', '', spec.name + (spec.id === 'codex' && !data.harness_available ? ' (not found)' : ''));
+      option.value = spec.id; return option;
+    }));
+    $('provider-kind').value = 'openai'; $('provider-details').hidden = false;
+    $('provider-models-step').hidden = true; $('provider-back').hidden = true;
+    $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); providerKindChanged(); $('provider-dialog').showModal();
+  });
+  $('provider-kind').onchange = providerKindChanged;
+  $('provider-cancel').onclick = closeProvider;
+  $('provider-dialog').addEventListener('cancel', event => { event.preventDefault(); closeProvider(); });
+  $('provider-back').onclick = () => {
+    providerVersion++; clearTimeout(providerTimer);
+    if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {});
+    providerLogin = null; clearProviderSecrets(); providerChoices = [];
+    $('provider-models-step').hidden = true; $('provider-details').hidden = false;
+    $('provider-back').hidden = true; $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); providerKindChanged();
+  };
+  $('provider-form').onsubmit = async event => {
+    event.preventDefault(); const version = ++providerVersion;
+    // Open synchronously with the gesture so browser sign-in is not popup-blocked.
+    const signIn = !providerDraft && $('provider-kind').value === 'chatgpt';
+    const popup = signIn ? window.open('about:blank', '_blank') : null;
+    if (popup) popup.opener = null;
+    $('provider-next').disabled = true;
+    $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = true; });
+    try {
+      if (providerDraft) {
+        const selected = providerChoices.filter(c => c.input.checked).map(c => c.model);
+        await json('/providers', write('POST', {...providerDraft, models: selected, active: $('provider-active').value}));
+        if (version !== providerVersion) return;
+        providerLogin = null; closeProvider();
+        const [models, status] = await Promise.all([json('/models'), json('/health')]);
+        state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
+        await health(); toast('Provider connected. Ready when you are.'); return;
+      }
+      const kind = $('provider-kind').value;
+      const body = {kind, id: $('provider-name').value, name: $('provider-name').value,
+        api_key: $('provider-key').value || null, consent: $('provider-consent').checked};
+      if (kind === 'custom' || kind === 'local') body.base_url = $('provider-url').value;
+      if (kind === 'custom' && $('provider-headers').value.trim()) {
+        try { body.headers = JSON.parse($('provider-headers').value); }
+        catch (_) { throw new Error('Custom headers must be a JSON object.'); }
+      }
+      $('provider-status').textContent = signIn ? 'Finish sign-in in your browser…' : 'Listing models…';
+      if (signIn) {
+        const login = await json('/providers/auth/start', write('POST', {}));
+        if (version !== providerVersion) { api(`/providers/auth/${login.login_id}`, {method: 'DELETE'}).catch(() => {}); popup?.close(); return; }
+        providerLogin = login.login_id; body.login_id = providerLogin;
+        if (popup) popup.location = login.url;
+        else {
+          const link = el('a', '', 'Continue with ChatGPT ↗'); link.href = login.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          $('provider-status').replaceChildren(link);
+        }
+        const poll = async () => {
+          try {
+            const status = await json(`/providers/auth/${providerLogin}`);
+            if (version !== providerVersion) return;
+            if (!status.complete) { providerTimer = setTimeout(poll, 1500); return; }
+            const data = await json('/providers/validate', write('POST', body));
+            if (version !== providerVersion) return;
+            providerDraft = body; clearProviderFieldValues(); showProviderModels(data.models);
+          } catch (error) { if (version === providerVersion) { $('provider-status').textContent = error.message; $('provider-next').disabled = false; } }
+        };
+        await poll(); return;
+      }
+      const data = await json('/providers/validate', write('POST', body));
+      if (version !== providerVersion) return;
+      providerDraft = body; clearProviderFieldValues(); showProviderModels(data.models);
+    } catch (error) {
+      popup?.close(); if (version === providerVersion) $('provider-status').textContent = error.message;
+    } finally { if (version === providerVersion && (!signIn || !providerLogin)) { $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); } }
+  };
+  function clearProviderFieldValues() { $('provider-key').value = ''; $('provider-headers').value = ''; }
   function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname); }
   window.addEventListener('beforeunload', () => state.events?.close());
   setInterval(() => { if (state.connected) health(); }, 30000);

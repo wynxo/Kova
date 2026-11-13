@@ -408,9 +408,9 @@ def setup(
     model: str | None = typer.Option(None, "--model", help="Model name to use."),
     name: str | None = typer.Option(None, "--name", help="Name to save this model under."),
     key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Save it even if the test message fails."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Use defaults for scripted setup (never bypasses credential validation)."),
 ):
-    """Find a model server and get Kova ready to chat."""
+    """Connect a provider and choose models. No scan or test chat."""
     try:
         onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
     except onboarding.SetupError as exc:
@@ -616,14 +616,15 @@ def _list_models(client: KovaClient) -> None:
     table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
     table.add_column("Name", no_wrap=True)
     table.add_column("Model", no_wrap=True)
+    table.add_column("Provider", style=theme.MUTED, overflow="fold")
     table.add_column("Server", style=theme.MUTED, overflow="fold")
-    for number, entry in enumerate(models, start=1):
+    for number, entry in enumerate(sorted(models, key=lambda m: (m.get("provider_name", ""), m["name"])), start=1):
         selected = entry["name"] == active
         badge = Text.assemble(
             ("● " if selected else "  ", theme.SUCCESS if selected else ""),
             (entry["name"], f"bold {theme.ACCENT}" if selected else ""),
         )
-        table.add_row(str(number), badge, entry["model"], entry["base_url"])
+        table.add_row(str(number), badge, entry["model"], entry.get("provider_name", "Custom"), entry["base_url"])
     console.print(table)
 
 
@@ -1012,3 +1013,74 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
         _ok(f'Deleted chat "{title}".')
     else:
         _fail(f'No chat "{ref}".')
+
+
+_providers = typer.Typer(help="Manage provider connections.", invoke_without_command=True)
+app.add_typer(_providers, name="providers")
+
+
+@_providers.callback()
+def providers_root(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        providers_list()
+
+
+@_providers.command('list')
+def providers_list():
+    rows = get_client().providers_list()
+    if not rows:
+        _empty('No providers connected.', 'Run: kova providers add')
+        return
+    table = _table()
+    for heading in ('Connection', 'Provider', 'Access', 'Address'):
+        table.add_column(heading)
+    for p in rows:
+        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials', p['base_url'])
+    console.print(table)
+
+
+@_providers.command('add')
+def provider_add(kind: str | None = typer.Argument(None, help='Optional provider type, such as openai, chatgpt, local or custom.')):
+    try:
+        onboarding.run_setup(load_config(), provider_kind=kind)
+    except onboarding.SetupError as exc:
+        _fail(str(exc))
+
+
+@_providers.command('remove')
+def provider_remove(name: str):
+    get_client().provider_remove(name)
+    _ok(f'Removed provider {name} and its selected models.')
+
+
+@_providers.command('logout')
+def provider_logout(name: str):
+    result = get_client().provider_logout(name)
+    _ok(f'Signed out of {name}.')
+    if not result.get('remote_revocation_confirmed', True):
+        _muted('Remote revocation was not confirmed. Disconnect Kova in ChatGPT Settings to revoke access.')
+
+
+@_providers.command('login')
+def provider_login(name: str):
+    from kova import provider_auth
+    from kova.providers import ProviderError
+    cfg = load_config()
+    p = next((p for p in cfg.providers if p.id == name), None)
+    if p is None:
+        _fail(f'No provider named "{name}".')
+    try:
+        if p.kind == 'codex':
+            consent = onboarding._ask('Read the installed Codex login without changing it? [y/N]:').lower() == 'y'
+            provider_auth.reuse_codex(p, consent=consent)
+            get_client().provider_login(name, consent=consent)
+        elif p.kind == 'chatgpt':
+            console.print('Continue with ChatGPT in your browser…')
+            provider_auth.login(p)
+            get_client().provider_login(name, auth=p.auth)
+        else:
+            key = onboarding._secret('API key:')
+            get_client().provider_login(name, api_key=key)
+    except (ProviderError, onboarding.SetupError) as exc:
+        _fail(str(exc))
+    _ok(f'Connected {name}.')

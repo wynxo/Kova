@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -70,9 +71,29 @@ class ModelClient:
         return f"{self.entry.base_url.rstrip('/')}/{path}"
 
     def _headers(self) -> dict[str, str]:
+        if self.entry._provider is not None:
+            from kova.providers import headers_for
+            return headers_for(self.entry._provider)
         return {"Authorization": f"Bearer {self.entry.api_key}"} if self.entry.api_key else {}
 
     async def stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
+        from kova.providers import ProviderError
+        try:
+            headers = await asyncio.to_thread(self._headers)
+        except ProviderError as exc:
+            raise ModelError(str(exc)) from None
+        adapter = self.entry._provider.adapter if self.entry._provider else 'openai'
+        if adapter != 'openai':
+            from kova.model_adapters import anthropic_request, responses_request, stream_native
+            build = anthropic_request if adapter == 'anthropic' else responses_request
+            path, payload = build(self.entry.model, messages, tools)
+            try:
+                async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
+                    async for event in stream_native(client, self._url(path), payload, adapter):
+                        yield event
+            except httpx.RequestError:
+                raise ModelError('Could not connect to the provider. Check your connection.') from None
+            return
         payload = {"model": self.entry.model, "messages": messages, "stream": True}
         if tools is not None:
             payload["tools"] = tools
@@ -80,7 +101,7 @@ class ModelClient:
         calls: dict[int, dict] = {}
         error = f"Can't reach model '{self.entry.name}' at {self.entry.base_url}"
         try:
-            async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=self._headers()) as client:
+            async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
                 async with client.stream("POST", self._url("chat/completions"), json=payload) as response:
                     if response.status_code >= 400:
                         raise ModelError(f"{error}: HTTP {response.status_code}")
@@ -109,6 +130,10 @@ class ModelClient:
                             index = part["index"]
                             call = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
                             call["id"] += part.get("id") or ""
+                            # Opaque tool protocol extensions (e.g. signed reasoning) must
+                            # survive history without provider logic in the agent loop.
+                            if isinstance(part.get('extra_content'), dict):
+                                call.setdefault('extra_fields', {})['extra_content'] = part['extra_content']
                             function = part.get("function") or {}
                             call["name"] += function.get("name") or ""
                             call["arguments"] += function.get("arguments") or ""
@@ -124,9 +149,12 @@ class ModelClient:
 
     async def ping(self) -> bool:
         """Check whether the model server responds successfully."""
+        from kova.providers import ProviderError
         try:
-            async with httpx.AsyncClient(transport=self.transport, timeout=min(self.timeout, 3), headers=self._headers()) as client:
-                response = await client.get(self._url("models"))
+            headers = await asyncio.to_thread(self._headers)
+            async with httpx.AsyncClient(transport=self.transport, timeout=min(self.timeout, 3), headers=headers, trust_env=False) as client:
+                path = "models?client_version=0.0.0" if self.entry._provider and self.entry._provider.kind == "codex" else "models"
+                response = await client.get(self._url(path))
                 return response.status_code == 200
-        except httpx.HTTPError:
+        except (httpx.HTTPError, ProviderError):
             return False

@@ -2,8 +2,8 @@
 
 Kova is a private AI assistant that runs on the user's own machine. One local
 server owns the chats, memory and reminders; every client is a thin view over
-its HTTP API. There is no cloud service, no account and no database server to
-install.
+its HTTP API. There is no Kova cloud service, Kova account or database server to
+install. Model inference can run locally or through an explicitly connected provider.
 
 The import package is `kova`; the distribution on GitHub is `kova-ai`.
 
@@ -361,3 +361,62 @@ with `KOVA_LIVE=1`.
 | `src/kova/web_assets/` | desktop/web client |
 | `src/kova/config.py` | config file and token |
 | `src/kova/theme.py` | the palette |
+
+
+## Providers and model adapters
+
+`config.py` stores schema v2: `[[providers]]` owns an id, display name, kind,
+base URL, wire adapter, optional API key/custom headers and OAuth metadata.
+`[[models]]` selects model IDs from those providers and keeps stable CLI aliases.
+Legacy URL/key model entries migrate without changing aliases or the active
+selection, deduplicating identical endpoint/credential pairs. Writes use a
+same-directory 0600 temporary file and atomic replacement. Loading a legacy
+config also tightens its permissions. Provider secrets are hidden from reprs,
+API responses, validation errors and backup exports.
+
+`providers.py` defines the preset catalog, explicit model listing and connection
+lifecycle. Setup never invokes network discovery or sends a test completion.
+Local addresses still use `server_finder.connect`; discovery remains a separate
+explicit library operation, not a setup step. OpenRouter's public catalog is
+paired with its authenticated, read-only `/key` endpoint for key validation.
+
+`ModelClient` dispatches wire formats through `model_adapters.py`: existing
+OpenAI-compatible streaming, Anthropic Messages (system content, tool schemas,
+tool-use/results, thinking deltas), or Responses (instructions, function calls
+and outputs, text/reasoning deltas). Native streams must receive a successful
+terminal event before tools execute or a turn succeeds. The agent sees only
+normalized events and keeps its existing tool loop.
+
+`provider_auth.py` implements the documented public ChatGPT-plan OAuth flow:
+a loopback listener is bound before opening the browser, PKCE/S256, random state
+and nonce, issued-client tracking, JWT signature/issuer/audience/expiry/nonce
+validation and an explicit plan-use scope. Owned tokens and rotating refreshes
+remain in config; refresh is serialized with a cross-process file lock. A stable
+host ID is stored with the config. Sign-out attempts renewable-session revocation
+before forgetting tokens and reports unconfirmed revocation.
+
+Installed-login reuse is deliberately separate: after consent, only a source
+reference is saved. Requests read the local Codex auth file without copying,
+refreshing or revoking its credentials. It uses the installed harness's Responses
+backend; fresh Kova-owned ChatGPT sign-ins use the public Responses API. An
+expired borrowed token requires the user to log back into the owning CLI.
+No installed-login discovery touches the network.
+
+`provider_routes.py` exposes authenticated `/providers` management, catalog
+validation and bounded browser-login attempts to all clients. Browser credentials
+are transient form/in-memory data, never browser storage. CLI setup writes
+through the running server when available; no restart is needed. The desktop
+model select uses optgroups; terminal chat's filtered picker renders provider
+headings while keeping stable model aliases as the selection value.
+
+### Authentication research
+
+- [Public ChatGPT registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
+- [Public model catalog and Responses inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+- [Refresh, account sessions and revocation](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
+- [Open-source Codex device flow](https://github.com/openai/codex/blob/main/codex-rs/login/src/device_code_auth.rs)
+- [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)
+- [OpenRouter authenticated key information](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key)
+
+Fresh browser authorization and hosted API-key inference require actual user
+accounts and are covered by mocked HTTP/JWT tests, not automatic paid calls.

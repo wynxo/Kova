@@ -68,7 +68,7 @@ def _note_files(root: Path) -> list[Path]:
 def _strip_api_keys(value):
     """Recursively drop every ``api_key`` key from parsed TOML."""
     if isinstance(value, dict):
-        return {key: _strip_api_keys(item) for key, item in value.items() if key != "api_key"}
+        return {key: _strip_api_keys(item) for key, item in value.items() if key not in {"api_key", "auth", "headers"}}
     if isinstance(value, list):
         return [_strip_api_keys(item) for item in value]
     return value
@@ -246,7 +246,14 @@ def _clear_managed_notes(memory: Memory) -> None:
 
 def _restore_models(cfg: Config, data: dict) -> bool:
     """Replace model entries from the backup, keeping matching local API keys."""
+    from kova.config import ProviderEntry
     current = {model.name: model for model in cfg.models}
+    existing = {p.id: p for p in cfg.providers}
+    for raw in data.get('providers', []):
+        if raw.get('id') not in existing:
+            p = ProviderEntry(**{k: v for k, v in raw.items() if k not in ('api_key', 'auth', 'headers')})
+            cfg.providers.append(p)
+            existing[p.id] = p
     models: list[ModelEntry] = []
     for raw in data.get("models", []):
         if not isinstance(raw, dict) or not raw.get("name"):
@@ -261,6 +268,7 @@ def _restore_models(cfg: Config, data: dict) -> bool:
             model=str(raw.get("model", "")),
             api_key=None,
             context=context,
+            provider=str(raw.get('provider', '')),
         )
         if entry.name in current:
             entry.api_key = current[entry.name].api_key
