@@ -217,3 +217,16 @@ async def test_tool_wire_metadata_survives_store_and_next_round(setup):
     assert assistant['tool_calls'][0]['extra_content'] == {'google': {'thought_signature': 'opaque-signature'}}
     saved = next(m for m in setup[1].get_messages(setup[4]) if m.get('tool_calls'))
     assert saved['tool_calls'][0]['extra_content'] == assistant['tool_calls'][0]['extra_content']
+
+
+async def test_tool_argument_snapshots_arrive_before_execution_with_full_result(setup):
+    setup[3]['inspect_test'] = Tool('inspect_test', 'test', {'type': 'object'}, lambda args: 'x' * 1000)
+    events, _ = await run(setup, [[{'reasoning_content': 'thinking now'},
+                                  *tool('inspect_test', {'content': 'hello'}, chunk_size=1)], text('done')])
+    drafts = [e for e in events if e['type'] == 'tool_call_delta']
+    assert len(drafts) > 10
+    assert drafts[-1]['arguments'] == '{"content": "hello"}'
+    assert events.index(drafts[-1]) < next(i for i, e in enumerate(events) if e['type'] == 'tool_call')
+    result = next(e for e in events if e['type'] == 'tool_result')
+    assert result['output'] == 'x' * 1000 and len(result['summary']) == 200
+    assert events[0] == {'type': 'reasoning', 'text': 'thinking now'}

@@ -37,7 +37,7 @@ PLACEHOLDERS = ('Try "what can you do?"', 'Try "remind me to stretch in an hour"
                 'Try "summarize @README.md"', 'Try "search the web for today\'s news"',
                 'Try "what do you remember about me?"')
 # (keys, what they do), in the order the ? panel lists them.
-SHORTCUTS = (("!", "run a shell command"), ("/", "commands"), ("@", "attach a file"),
+SHORTCUTS = (("pgup/pgdn", "scroll expanded details"), ("ctrl+t", "toggle full reasoning"), ("ctrl+o", "toggle tool details"), ("!", "run a shell command"), ("/", "commands"), ("@", "attach a file"),
              ("#", "remember a note"), ("esc", "interrupt Kova"), ("esc esc", "clear the input"),
              ("shift+\u23ce", "new line (or \\\u23ce)"), ("shift+tab", "cycle permissions"),
              ("tab", "complete"), ("\u2191 \u2193", "earlier messages"),
