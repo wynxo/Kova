@@ -67,7 +67,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -285,3 +285,92 @@ assert.ok(byClass(steerBody, 'turn-status')[0].textContent.includes('Steering: c
 steerView.finish();
 state.queued = []; state.busy = false; controls();
 console.log('Queue and steer passed');
+
+// Chat feel: one live indicator at a time, readable tool rows, message actions and keys.
+sandbox.marked = {parse: text => text}; sandbox.DOMPurify = {sanitize: html => html};
+const copied = []; sandbox.navigator = {clipboard: {writeText: async text => { copied.push(text); }}};
+const {toolSummary, toolHint, toolLabel} = sandbox.test;
+assert.equal(toolLabel('run_command'), 'Run command');
+assert.equal(toolHint({command: 'ls  -la\n'}), 'ls -la');
+assert.equal(toolHint('{"path": "notes.txt"}'), 'notes.txt', 'saved calls carry their arguments as JSON text');
+assert.equal(toolHint('not json'), '');
+assert.equal(toolSummary({ok: false, name: 'run_command', summary: '{"ok": false, "err', output: '{"ok": false, "error": "exit  status 1"}'}), 'exit status 1');
+assert.equal(toolSummary({ok: true, name: 'web_search', output: '[{"title": "a"}, {"title": "b"}]'}), '2 results');
+assert.equal(toolSummary({ok: true, name: 'read_file', summary: 'plain text', output: 'plain text'}), 'plain text');
+assert.equal(toolSummary({ok: true, name: 'update_plan', output: '{}'}), 'Plan updated');
+
+state.chat = {id: 'chat-1', cwd: '/project'};
+const article = new Element('article'), liveBody = new Element(); article.append(liveBody);
+const live = turnView(liveBody);
+const activityRow = byClass(liveBody, 'activity')[0];
+assert.equal(Boolean(activityRow.hidden), false, 'a fresh turn shows that Kova is thinking');
+live.accept({type: 'reasoning', text: 'Let me think.'});
+assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
+assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
+live.accept({type: 'tool_call', name: 'run_command', args: {command: 'npm test'}});
+assert.equal(byClass(liveBody, 'thinking')[0].classList.contains('live'), false);
+const liveTool = byClass(liveBody, 'tool-row')[0];
+assert.ok(liveTool.textContent.includes('Run command') && liveTool.textContent.includes('npm test'));
+live.accept({type: 'tool_result', name: 'run_command', ok: false, summary: '{"ok": false', output: '{"ok": false, "error": "2 tests failed"}'});
+assert.ok(liveTool.textContent.includes('2 tests failed'), 'a failed tool says why');
+assert.ok(liveTool.classList.contains('failed'));
+assert.equal(byClass(liveBody, 'tool-output').length, 1, 'the full result opens under the row');
+assert.ok(activityRow.textContent.includes('Working'));
+live.accept({type: 'text', text: 'All '}); live.accept({type: 'text', text: 'done.'});
+assert.ok(byClass(liveBody, 'markdown')[0].classList.contains('live'));
+live.finish();
+assert.equal(byClass(liveBody, 'markdown')[0].classList.contains('live'), false);
+const replyActions = byClass(article, 'message-actions')[0];
+buttons(replyActions)[0].onclick(); await tick();
+assert.deepEqual(copied, ['All done.'], 'the reply copies as the text the model wrote');
+
+// A saved turn is one message, however many rounds it took.
+setChat({id: 'saved-turn', messages: [
+  {role: 'user', content: 'Read my notes'},
+  {role: 'assistant', content: 'Looking.', tool_calls: [{function: {name: 'read_file', arguments: '{"path": "notes.txt"}'}}]},
+  {role: 'tool', content: '...'},
+  {role: 'assistant', content: 'They are short.'},
+]});
+assert.equal(byClass($('messages'), 'assistant').length, 1);
+assert.ok(byClass($('messages'), 'tool-row')[0].textContent.includes('notes.txt'));
+const savedActions = byClass($('messages'), 'message-actions');
+assert.equal(savedActions.length, 2, 'your message and the reply each get actions');
+buttons(savedActions[1])[0].onclick(); await tick();
+assert.equal(copied.at(-1), 'Looking.\n\nThey are short.');
+buttons(savedActions[0])[1].onclick();
+assert.equal($('prompt').value, 'Read my notes', 'edit brings your words back to the box');
+
+// Up in an empty box recalls the last message; it never clobbers a draft.
+$('prompt').value = 'a draft'; $('prompt').listeners.keydown({key: 'ArrowUp', preventDefault() {}});
+assert.equal($('prompt').value, 'a draft');
+$('prompt').value = ''; $('prompt').listeners.keydown({key: 'ArrowUp', preventDefault() {}});
+assert.equal($('prompt').value, 'Read my notes');
+
+// Queue and Steer appear only when there is something to send; Escape stops the reply.
+state.busy = true; $('prompt').value = ''; controls();
+assert.equal($('stop').hidden, false);
+assert.equal($('queue').hidden, true); assert.equal($('steer').hidden, true);
+$('prompt').value = 'wait'; controls();
+assert.equal($('queue').hidden, false); assert.equal($('steer').hidden, false);
+const keys = sandbox.document.listeners.keydown; let handled = 0;
+keys({key: 'Escape', target: $('prompt'), preventDefault() { handled++; }}); await tick(); await tick();
+assert.equal(state.stopRequested, true); assert.equal(handled, 1);
+state.busy = false; state.stopRequested = false; $('prompt').value = ''; controls();
+keys({key: 'Escape', target: $('prompt'), preventDefault() { handled++; }});
+assert.equal(handled, 1, 'Escape is left alone when nothing is running');
+let focused = 0; $('prompt').focus = () => { focused++; };
+keys({key: '/', target: {tagName: 'TEXTAREA'}, preventDefault() { handled++; }});
+assert.equal(focused, 0, 'a slash typed into a field stays a slash');
+keys({key: '/', target: {tagName: 'BODY'}, preventDefault() { handled++; }});
+assert.equal(focused, 1); assert.equal(handled, 2);
+let opened = 0; $('shortcuts-dialog').showModal = () => { opened++; };
+keys({key: '/', ctrlKey: true, target: $('prompt'), preventDefault() {}});
+keys({key: '?', target: {tagName: 'BODY'}, preventDefault() {}});
+assert.equal(opened, 2);
+// The drawer on a phone; without matchMedia the harness is the narrow layout.
+sandbox.test.toggleSidebar();
+assert.ok(sandbox.document.body.classList.contains('sidebar-open'));
+assert.equal($('menu').getAttribute('aria-expanded'), 'true');
+keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
+assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
+console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');

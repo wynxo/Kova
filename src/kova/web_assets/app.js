@@ -7,8 +7,11 @@
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
   scroll.addEventListener('touchmove', () => { nearBottom = false; }, {passive: true});
-  scroll.addEventListener('scroll', () => { nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < (nearBottom ? 100 : 2); });
-  function follow() { if (nearBottom) scroll.scrollTop = scroll.scrollHeight; }
+  scroll.addEventListener('scroll', () => { nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < (nearBottom ? 100 : 2); updateJump(); });
+  // The jump button appears only when there is something below to return to.
+  function updateJump() { $('jump').hidden = nearBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 160; }
+  function follow() { if (nearBottom) scroll.scrollTop = scroll.scrollHeight; updateJump(); }
+  $('jump').onclick = () => { nearBottom = true; follow(); };
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -58,7 +61,9 @@
     // With steering the composer stays usable mid-reply; without it the reply
     // is stopped or waited for, so send is withheld while one runs.
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
-    $('queue').hidden = !busy; $('steer').hidden = !busy;
+    // Queue and Steer only make sense once there is something to send.
+    $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
+    $('options-label').textContent = $('mode').value === 'chat' ? 'Chat' : 'Work';
     $('send').disabled = !state.connected || !$('prompt').value.trim();
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
     $('stop').disabled = state.stopRequested;
@@ -104,20 +109,71 @@
       if (!/^https?:\/\//i.test(href)) link.removeAttribute('href');
       link.target = '_blank'; link.rel = 'noopener noreferrer';
     });
-    if (final) node.querySelectorAll('pre code').forEach(code => {
-      try { if (code.textContent.length < 20000) hljs.highlightElement(code); } catch (_) {}
+    // The bar is there from the first streamed line, so nothing jumps when the reply ends.
+    node.querySelectorAll('pre code').forEach(code => {
+      try { if (code.textContent.length < (final ? 20000 : 4000)) hljs.highlightElement(code); } catch (_) {}
       const language = /language-([\w+#.-]+)/.exec(code.className)?.[1] || 'text';
       const bar = el('div', 'code-bar'), copy = el('button', 'copy-code'), text = el('span', '', 'Copy');
       copy.type = 'button'; copy.setAttribute('aria-label', 'Copy code'); copy.append(icon('copy'), text);
-      copy.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(code.textContent); text.textContent = 'Copied';
-          setTimeout(() => { text.textContent = 'Copy'; }, 1800);
-        } catch (_) { toast('Clipboard unavailable. Select the code to copy it.'); }
-      };
+      copy.onclick = () => copyText(code.textContent, () => {
+        text.textContent = 'Copied'; setTimeout(() => { text.textContent = 'Copy'; }, 1800);
+      });
       bar.append(el('span', 'code-lang', language), copy);
       code.parentNode.insertBefore(bar, code);
     });
+  }
+  async function copyText(text, copied) {
+    try { await navigator.clipboard.writeText(text); copied?.(); }
+    catch (_) { toast('Clipboard unavailable. Select the text to copy it.'); }
+  }
+  // Quiet actions under a message: copy it, or bring your own words back to edit.
+  function messageActions(article, read, role) {
+    const bar = el('div', 'message-actions');
+    const glyph = icon('copy'), copy = el('button', 'message-action');
+    copy.type = 'button'; copy.title = 'Copy'; copy.setAttribute('aria-label', role === 'user' ? 'Copy your message' : 'Copy reply');
+    copy.append(glyph);
+    copy.onclick = () => copyText(read(), () => {
+      glyph.className = 'icon i-check'; copy.title = 'Copied';
+      setTimeout(() => { glyph.className = 'icon i-copy'; copy.title = 'Copy'; }, 1600);
+    });
+    bar.append(copy);
+    if (role === 'user') {
+      const edit = iconButton('pencil', 'Edit as a new message', 'message-action');
+      edit.onclick = () => { $('prompt').value = read(); resize(); $('prompt').focus(); };
+      bar.append(edit);
+    }
+    article.append(bar);
+  }
+  // Tool rows speak plainly: what ran, on what, and the gist of what came back.
+  function toolLabel(name) {
+    const words = String(name || 'tool').replaceAll('_', ' ');
+    return words[0].toUpperCase() + words.slice(1);
+  }
+  function toolHint(args) {
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch (_) { return ''; } }
+    for (const key of ['command', 'path', 'query', 'url', 'title', 'text', 'when', 'name']) {
+      if (typeof args?.[key] === 'string' && args[key].trim()) return args[key].replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
+    return '';
+  }
+  function toolSummary(event) {
+    if (event.ok && event.name === 'update_plan') return 'Plan updated';
+    let text = event.summary || '';
+    try {
+      const data = JSON.parse(event.output);
+      if (Array.isArray(data)) text = `${data.length} result${data.length === 1 ? '' : 's'}`;
+      else if (data && typeof data === 'object') {
+        const said = ['error', 'message', 'output', 'stdout', 'content', 'text', 'result'].map(key => data[key]).find(value => typeof value === 'string' && value.trim());
+        if (said) text = said; else if (data.ok === true) text = 'Done';
+      }
+    } catch (_) { /* plain text results read fine as they are */ }
+    return text.replace(/\s+/g, ' ').trim().slice(0, 200);
+  }
+  function toolRow(name, args, glyph) {
+    const node = el('details', 'tool'), row = el('summary', 'tool-row'), detail = el('span', 'tool-detail', toolHint(args));
+    row.append(glyph, el('strong', '', toolLabel(name)), detail); row.title = name || '';
+    node.append(row);
+    return {node, row, detail, hint: detail.textContent};
   }
   function message(role, content, heading) {
     const article = el('article', `message ${role}`);
@@ -128,6 +184,7 @@
     if (role === 'user') body.textContent = content || '';
     else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
+    if (role === 'user' && content) messageActions(article, () => content, 'user');
     return body;
   }
   function history(chats) {
@@ -157,9 +214,25 @@
     if (version !== state.searchVersion) return;
     state.chats = chats; history(chats);
   }
+  // Phones get a drawer; wider windows collapse the sidebar in place and remember it.
+  const wide = window.matchMedia?.('(min-width:721px)');
+  function menuState() {
+    const shown = wide?.matches ? !document.body.classList.contains('sidebar-collapsed') : document.body.classList.contains('sidebar-open');
+    $('menu').setAttribute('aria-expanded', String(shown));
+  }
   function sidebar(open) {
     document.body.classList.toggle('sidebar-open', open); $('backdrop').hidden = !open;
-    $('menu').setAttribute('aria-expanded', String(open));
+    menuState();
+  }
+  function toggleSidebar(show) {
+    if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'));
+    const collapsed = !(show ?? document.body.classList.contains('sidebar-collapsed'));
+    document.body.classList.toggle('sidebar-collapsed', collapsed); menuState();
+    try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
+  }
+  function pageTitle() {
+    $('chat-title').textContent = state.chat?.title || 'New conversation';
+    document.title = state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
   }
   function renderQueue() {
     const strip = $('queue-strip');
@@ -208,7 +281,7 @@
   }
   function setChat(chat) {
     state.chat = chat;
-    $('chat-title').textContent = chat?.title || 'New conversation';
+    pageTitle();
     $('mode').value = chat?.mode || 'work';
     $('permission').value = chat?.permission || 'manual';
     $('cwd').value = chat?.cwd || '';
@@ -216,16 +289,20 @@
     $('web').setAttribute('aria-pressed', String(web)); $('web').lastElementChild.textContent = `Web ${web ? 'on' : 'off'}`;
     empty(!chat?.messages?.some(m => m.role === 'user'));
     $('messages').replaceChildren();
+    // A saved turn reads like a live one: every round of it sits under one heading.
+    const turns = []; let turn = null;
     for (const msg of chat?.messages || []) {
-      if (msg.role === 'user') message('user', msg.content);
+      if (msg.role === 'user') { message('user', msg.content); turn = null; }
       else if (msg.role === 'assistant') {
-        const body = message('assistant', msg.content);
+        if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
+        if (msg.content) { const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
         if (msg.tool_calls?.length) for (const call of msg.tool_calls) {
-          const row = el('div', 'tool-row'); row.append(icon('check'), el('strong', '', call.function?.name || 'Tool')); body.append(row);
+          turn.body.append(toolRow(call.function?.name, call.function?.arguments, icon('check')).node);
         }
       }
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
+    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant');
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
@@ -265,7 +342,7 @@
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
       await json(`/chats/${chat.id}`, write('PATCH', {title}));
-      if (state.chat?.id === chat.id) { state.chat.title = title; $('chat-title').textContent = title; }
+      if (state.chat?.id === chat.id) { state.chat.title = title; pageTitle(); }
     }
     await refreshChats();
   }
@@ -488,11 +565,14 @@
     let current = null, scheduled = false, finished = false;
     const blocks = [], pendingTools = [], approvals = new Map();
     let plan = null;
-    const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), el('span', '', 'Thinking…')); body.append(activity);
+    const activityText = el('span', 'shimmer', 'Thinking…');
+    const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), activityText); body.append(activity);
     function paint() {
       scheduled = false;
       for (const block of blocks) {
         if (block.kind === 'text' && block.dirty) { markdown(block.node, block.text, finished); block.dirty = false; }
+        // Only the block being written right now carries the live cursor.
+        block.node.classList.toggle('live', !finished && block === current && !block.end);
         if (block.kind === 'reasoning') {
           block.pre.textContent = block.text;
           block.summary.textContent = block.end ? `Thought for ${((block.end - block.start) / 1000).toFixed(1)}s` : 'Thinking…';
@@ -507,7 +587,8 @@
         const kind = event.type;
         if (kind !== 'reasoning') endReasoning();
         if (kind === 'text' || kind === 'reasoning') {
-          activity.hidden = kind === 'text';
+          // The reasoning line says "Thinking…" itself; one indicator at a time.
+          activity.hidden = true;
           if (!current || current.kind !== kind) {
             current = {kind, text: '', dirty: true, start: performance.now()};
             if (kind === 'text') current.node = el('div', 'markdown');
@@ -522,9 +603,10 @@
           body.insertBefore(details, activity);
         } else if (kind === 'tool_call') {
           current = null; activity.hidden = true;
-          const row = el('div', 'tool-row'); const icon = el('span', 'spinner'); const detail = el('span', 'tool-detail', 'Running…');
-          row.append(icon, el('strong', '', event.name), detail); body.insertBefore(row, activity);
-          pendingTools.push({name: event.name, row, icon, detail, done: false});
+          const spinner = el('span', 'spinner'), tool = toolRow(event.name, event.args, spinner);
+          if (!tool.hint) tool.detail.textContent = 'Running…';
+          body.insertBefore(tool.node, activity);
+          pendingTools.push({...tool, name: event.name, icon: spinner, done: false});
         } else if (kind === 'question') {
           activity.hidden = true;
           const question = questionCard(event); approvals.set(event.id, question);
@@ -550,8 +632,15 @@
           }
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
-          if (tool) { tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok); tool.detail.textContent = event.ok && event.name === 'update_plan' ? 'Plan updated' : (event.summary || '').replace(/\s+/g, ' ').slice(0, 200); tool.detail.title = event.summary || ''; }
-          current = null; activity.hidden = false;
+          if (tool) {
+            tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok);
+            // What ran stays visible; a failure says why instead. The full result opens underneath.
+            const summary = toolSummary(event);
+            tool.detail.textContent = event.ok && tool.hint ? tool.hint : summary;
+            const output = String(event.output ?? event.summary ?? '');
+            if (output.trim() && output.trim() !== tool.detail.textContent) tool.node.append(el('pre', 'tool-output', output.length > 6000 ? output.slice(0, 6000) + '\n…' : output));
+          }
+          current = null; activity.hidden = false; activityText.textContent = 'Working…';
         } else if (kind === 'error') {
           const error = el('div', 'turn-error'); error.setAttribute('role', 'alert'); error.append(icon('triangle-alert'), el('span', '', event.message));
           body.insertBefore(error, activity);
@@ -566,9 +655,11 @@
       finish() {
         endReasoning(); finished = true; activity.remove();
         for (const approval of approvals.values()) approval.finish();
-        for (const tool of pendingTools.filter(t => !t.done)) { tool.icon.className = 'icon i-minus'; tool.detail.textContent = 'Interrupted'; }
+        for (const tool of pendingTools.filter(t => !t.done)) { tool.icon.className = 'icon i-minus'; tool.detail.textContent = tool.hint ? `Interrupted · ${tool.hint}` : 'Interrupted'; }
         for (const block of blocks) block.dirty = true;
         paint();
+        const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
+        if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant');
       }
     };
   }
@@ -585,7 +676,7 @@
     let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
-      empty(false); message('user', text); $('prompt').value = ''; resize();
+      empty(false); message('user', text); $('prompt').value = ''; resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
       state.turnReady = true;
@@ -605,7 +696,7 @@
       if (state.connected) {
         try {
           // Update title/history without replacing the live reasoning and tool rows.
-          if (state.chat) { state.chat = await json(`/chats/${state.chat.id}`); $('chat-title').textContent = state.chat.title || 'New conversation'; }
+          if (state.chat) { state.chat = await json(`/chats/${state.chat.id}`); pageTitle(); }
           await refreshChats(); await health();
         } catch (error) { toast(error.message); }
       }
@@ -628,16 +719,48 @@
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
   $('composer').addEventListener('submit', send);
   $('prompt').addEventListener('input', resize);
-  $('prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); } });
+  $('prompt').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
+    // Like a shell: Up in an empty box brings back what you last said.
+    if (event.key === 'ArrowUp' && !$('prompt').value) {
+      const last = (state.chat?.messages || []).filter(msg => msg.role === 'user' && typeof msg.content === 'string').at(-1);
+      if (last) { event.preventDefault(); $('prompt').value = last.content; resize(); }
+    }
+  });
+  function options(open) {
+    $('composer').classList.toggle('options-open', open); $('options').setAttribute('aria-expanded', String(open));
+  }
+  $('options').onclick = () => options(!$('composer').classList.contains('options-open'));
   $('stop').onclick = stop; $('new-chat').onclick = newChat;
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
-  $('menu').onclick = () => sidebar(!document.body.classList.contains('sidebar-open'));
+  $('menu').onclick = () => toggleSidebar();
+  try { if (localStorage.getItem('kova-sidebar') === 'collapsed') document.body.classList.toggle('sidebar-collapsed', true); } catch (_) {}
+  menuState(); wide?.addEventListener?.('change', () => { sidebar(false); });
   $('backdrop').onclick = () => sidebar(false); $('sidebar-close').onclick = () => sidebar(false);
-  if (/Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '')) $('new-chat-key').textContent = '⌘K';
+  if (/Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '')) {
+    $('new-chat-key').textContent = '⌘K';
+    document.querySelectorAll('kbd[data-mod]').forEach(key => { key.textContent = '⌘'; });
+  }
+  $('open-shortcuts').onclick = () => { sidebar(false); $('shortcuts-dialog').showModal(); };
+  $('shortcuts-close').onclick = () => $('shortcuts-dialog').close();
+  const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
   document.addEventListener('keydown', event => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); if (state.connected) safe(newChat); }
-    if (event.key === 'Escape') sidebar(false);
+    if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
+    const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
+    if (mod && !event.shiftKey && key === 'k') { if (state.connected) safe(newChat); }
+    else if (mod && !event.shiftKey && key === 'b') toggleSidebar();
+    else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
+    else if (mod && event.shiftKey && key === 'l') $('theme').onclick();
+    else if (mod && key === '/') $('shortcuts-dialog').showModal();
+    else if (key === 'escape') {
+      if (document.body.classList.contains('sidebar-open')) sidebar(false);
+      else if (state.busy) safe(stop);
+      else return;
+    } else if (!mod && !event.altKey && !typingIn(event.target) && key === '/') $('prompt').focus();
+    else if (!mod && !event.altKey && !typingIn(event.target) && key === '?') $('shortcuts-dialog').showModal();
+    else return;
+    event.preventDefault();
   });
   let searchTimer;
   $('search').addEventListener('input', () => { clearTimeout(searchTimer); ++state.searchVersion; searchTimer = setTimeout(() => safe(refreshChats), 200); });
@@ -650,10 +773,7 @@
     try { await chatSetting({mode: $('mode').value}); controls(); }
     catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
   });
-  const rulesButton = el('button', 'btn quiet', 'Permission rules');
-  rulesButton.type = 'button';
-  $('permission').parentNode?.append(rulesButton);
-  rulesButton.onclick = () => safe(async () => {
+  const openRules = () => safe(async () => {
     const dialog = el('dialog', 'rules-dialog');
     const title = el('h2', '', 'Permission rules');
     const help = el('p', '', 'Deny beats ask beats allow. Patterns are case-sensitive globs. Session rules expire on restart. Exact grants include all arguments and the working folder.');
@@ -729,7 +849,7 @@
       });
       dialog.remove();
     }
-    document.title = state.persona.name;
+    pageTitle();
   }
 
   async function start() {
@@ -1022,6 +1142,15 @@
       for (const option of child.children) add(option, group);
       list.append(group);
     }
+    // Related actions close the list: reachable with the same arrows and Enter.
+    for (const action of owner.actions || []) {
+      const index = items.length, item = el('div', 'option option-action');
+      item.id = `${select.id}-option-${index}`; item.setAttribute('role', 'option'); item.setAttribute('aria-selected', 'false');
+      item.append(icon(action.glyph), el('span', 'option-title', action.label));
+      item.onclick = () => { closeMenu(true); action.run(); };
+      item.onpointermove = () => { if (active !== index) activate(index, false); };
+      list.append(item); items.push({item, action, value: null, label: action.label.toLowerCase(), group: null});
+    }
     const none = el('div', 'option-empty', 'No matches'); none.hidden = true; list.append(none);
     const search = items.length > 7 ? el('input', 'popover-search') : null;
     const target = search || list;
@@ -1059,7 +1188,7 @@
       else if (event.key === 'ArrowUp') step(-1);
       else if (event.key === 'Home' && !search) activate(order[0]);
       else if (event.key === 'End' && !search) activate(order.at(-1));
-      else if (event.key === 'Enter' || (event.key === ' ' && !search)) { if (items[active] && !items[active].item.hidden) choose(items[active].value); }
+      else if (event.key === 'Enter' || (event.key === ' ' && !search)) { if (items[active] && !items[active].item.hidden) items[active].item.onclick(); }
       else if (event.key === 'Escape') { event.stopPropagation(); closeMenu(true); }
       else if (event.key === 'Tab') { closeMenu(true); return; }
       else {
@@ -1094,14 +1223,14 @@
     activate(items.findIndex(entry => entry.value === select.value));
     target.focus({preventScroll: true});
   }
-  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby} = {}) {
+  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby, actions} = {}) {
     const select = $(id), button = el('button', 'menu-button'), text = el('span', 'menu-value', placeholder);
     button.type = 'button'; button.id = `${id}-button`;
     button.setAttribute('aria-haspopup', 'listbox'); button.setAttribute('aria-expanded', 'false');
     if (labelledby) button.setAttribute('aria-labelledby', `${labelledby} ${id}-button`); else button.setAttribute('aria-label', label);
     if (glyph) button.append(icon(glyph));
     button.append(text, icon('chevron-down'));
-    const owner = {select, button, text, label, describe, align, width, placeholder};
+    const owner = {select, button, text, label, describe, align, width, placeholder, actions};
     button.onclick = () => { if (popup?.owner === owner) closeMenu(); else openMenu(owner); };
     button.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (popup?.owner !== owner) openMenu(owner); }
@@ -1109,7 +1238,8 @@
     $(`${id}-slot`).append(button); menus.push(owner); return owner;
   }
   const permissionNotes = {manual: 'Ask before commands and file changes', auto: 'Ask only before destructive commands', full: 'Never ask. Use with care.'};
-  menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value]});
+  menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value],
+    actions: [{glyph: 'sliders-horizontal', label: 'Edit permission rules…', run: openRules}]});
   menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value});
   menu('provider-kind', 'Provider', {width: 240, labelledby: 'provider-kind-label'});
   menu('provider-active', 'Active model', {width: 240, labelledby: 'provider-active-label'});
