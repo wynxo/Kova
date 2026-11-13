@@ -156,3 +156,35 @@ def test_import_rejects_a_non_kova_zip(tmp_path):
         archive.writestr("hello.txt", "not a backup")
     with pytest.raises(BackupError):
         import_archive(load_config(tmp_path / "home"), path)
+
+
+@pytest.mark.parametrize("change", ["base_url", "adapter", "kind"])
+def test_restore_provider_id_collision_does_not_reuse_local_connection(tmp_path, change):
+    source = _home(tmp_path, "source")
+    source_provider = source.providers[0]
+    setattr(source_provider, change, {
+        "base_url": "https://different.example/v1",
+        "adapter": "anthropic",
+        "kind": "anthropic",
+    }[change])
+    save_config(source)
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+    target = _home(tmp_path, "target")
+    original = target.providers[0]
+    original.api_key = "local-private-key"
+    original.headers = {"X-Private": "local-header"}
+    original.auth = {"access_token": "local-token"}
+    save_config(target)
+    import_archive(target, backup, merge=False)
+    restored = load_config(target.home)
+    model = restored.active_model()
+    assert model.provider != original.id
+    assert getattr(model._provider, change) == getattr(source_provider, change)
+    assert model.api_key is None
+    assert model._provider.headers == {}
+    assert model._provider.auth == {}
+    kept = next(p for p in restored.providers if p.id == original.id)
+    assert kept.api_key == "local-private-key"
+    assert kept.headers == {"X-Private": "local-header"}
+    assert kept.auth == {"access_token": "local-token"}
