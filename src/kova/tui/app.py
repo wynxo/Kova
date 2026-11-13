@@ -193,6 +193,7 @@ class ChatApp:
         self.model, self.model_ok = "", True
         self.notes: int | None = None
         self.plan: list[dict] = []
+        self.conversation_state = "done"
         self.files = FileIndex(self.cwd)
         # Rough context accounting for the status line: characters in the
         # conversation so far, and the active model's window in tokens.
@@ -207,6 +208,7 @@ class ChatApp:
         self.job: Job | None = None
         self.queued: list[str] = []
         self.context_notes: list[str] = []
+        self.state_events: queue.Queue = queue.Queue()
         self.notices: queue.Queue = queue.Queue()   # reminders from the event stream
         self.show_shortcuts = False
         self.flash_text, self.flash_until = "", 0.0
@@ -289,6 +291,8 @@ class ChatApp:
 
     def _read_chat(self, chat: dict) -> None:
         """Take the server's view of the chat and its rough token size."""
+        self.plan = list(chat.get("plan") or [])
+        self.conversation_state = chat.get("state", "done")
         self.title = str(chat.get("title") or "")
         self.mode = chat.get("mode") or "work"
         self.web = chat.get("web", True)
@@ -354,6 +358,8 @@ class ChatApp:
     def _watch_reminders(self) -> None:
         try:
             for event in self.client.events():
+                if event.get("type") == "conversation_state":
+                    self.state_events.put(event)
                 if event.get("type") == "reminder":
                     self.notices.put(str(event.get("text", "")))
         except Exception:  # a dead event connection must never crash chat
@@ -714,6 +720,13 @@ class ChatApp:
     def _pump(self) -> None:
         while True:
             try:
+                update = self.state_events.get_nowait()
+            except queue.Empty:
+                break
+            if update.get("chat_id") == self.chat_id:
+                self.conversation_state = update.get("state", "done")
+        while True:
+            try:
                 text = self.notices.get_nowait()
             except queue.Empty:
                 break
@@ -733,6 +746,12 @@ class ChatApp:
                 self._finish(job)
                 return
             kind = event.get("type")
+            if kind == "question":
+                if job.cancel.is_set():
+                    self._send_question(event, None)
+                else:
+                    self._ask_question(event)
+                continue
             if kind == "approval":
                 if job.cancel.is_set():
                     self._send_approval(event, "deny")
@@ -798,7 +817,35 @@ class ChatApp:
             threading.Thread(target=stop, daemon=True, name="kova-chat-stop").start()
 
     # ================================================================ approvals
+    def _ask_question(self, event: dict) -> None:
+        self.approval = event
+        self.conversation_state = "blocked-on-approval"
+        self.renderer.asking = True
+        self.renderer.activity = "Waiting for your answer"
+        args = event.get("args") or {}
+        options = args.get("options") or []
+        if options:
+            self.overlay = Choice(str(args.get("question", "Question")), [],
+                                  [(option, ("answer", option), "") for option in options],
+                                  footer="enter to answer · esc to skip")
+        else:
+            self.overlay = TextPrompt(str(args.get("question", "Question")),
+                                      lambda answer: self._send_question(event, answer),
+                                      placeholder="Your answer")
+
+    def _send_question(self, event: dict, answer: str | None) -> None:
+        self.approval = None
+        self.renderer.asking = False
+        self.renderer.activity = ""
+        try:
+            self.client.answer_approval(self.chat_id, str(event["id"]),
+                                        "allow" if answer else "deny", answer)
+            self.conversation_state = "working"
+        except KovaError as exc:
+            self.renderer.error(f"Could not answer the question: {exc.message}")
+
     def _ask(self, event: dict) -> None:
+        self.conversation_state = "blocked-on-approval"
         r = self.renderer
         r.end_text()
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
@@ -820,6 +867,9 @@ class ChatApp:
         self.overlay = None
         if event is None:
             return
+        if event.get("type") == "question":
+            self._send_question(event, decision[1] if isinstance(decision, tuple) else None)
+            return
         if decision == "deny" and ask_why:
             def send(message):
                 self._send_approval(event, "deny", message)
@@ -833,6 +883,7 @@ class ChatApp:
             self.approval = None
         self.renderer.asking = False
         self.renderer.activity = ""
+        self.conversation_state = "working"
         try:
             self.client.answer_approval(self.chat_id, str(event.get("id", "")), decision, message)
         except KovaError as exc:
@@ -1123,6 +1174,9 @@ class ChatApp:
         lines: list[str] = []
         if self.welcome_started is not None:
             lines += [*self._welcome_lines(animate=True), ""]
+        if self.plan:
+            marks = {"done": "✓", "in_progress": "●", "pending": "○"}
+            lines += box([f"{marks.get(item.get('status'), '○')} {item.get('text', '')}" for item in self.plan], width, p, ACCENT, title="Plan")
         lines += self.renderer.detail_lines()
         if self.job is not None:
             lines += self.renderer.live_lines(self.frame)
@@ -1203,7 +1257,7 @@ class ChatApp:
         return status_bar(self.p, width, mode=self.mode, model=self.model or "?",
                           title=self.title, permission=self.permission, web=self.web, plan=plan,
                           stats=self._turn_stats(), offline=not self.model_ok,
-                          cwd=_home_short(self.cwd))
+                          cwd=_home_short(self.cwd), state=self.conversation_state)
 
 
 __all__ = ["COMMANDS", "ChatApp", "Job", "PERMISSIONS", "TextPrompt", "run_shell"]

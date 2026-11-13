@@ -282,7 +282,7 @@ def hint_line(left: str, right: str, width: int) -> str:
 
 def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = "",
                permission: str | None = None, web: bool = True, plan: str = "",
-               stats: str = "", offline: bool = False, cwd: str = "") -> str:
+               stats: str = "", offline: bool = False, cwd: str = "", state: str = "") -> str:
     """The bottom line: a mode chip, the model, the chat, and the last turn's
     numbers on the right. Parts drop off from the least useful end as the
     terminal narrows, so it never wraps."""
@@ -294,6 +294,8 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
         return (dot + " " + p.bold(fit(model or "no model", max(1, room)))
                 + (p.yellow(" offline") if offline else ""))
     parts: list[tuple[int, str]] = [(0, model_part(60))]
+    if state:
+        parts.append((0, p.dim(state.replace("-", " "))))
     if title:
         parts.append((2, p.dim(fit(title, 28))))
     if permission:

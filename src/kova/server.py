@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from kova import __version__
 from kova.agent import Agent
 from kova.config import Config, ModelEntry, ensure_token, save_config
-from kova.events import EventBus
+from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
 from kova.models import ModelClient
 from kova.modes import DEFAULT_MODE, MODES
@@ -148,6 +148,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tool_context = tool_context
     app.state.agent = agent
     app.state.bus = bus
+    app.state.conversation_states = ConversationStates(bus)
     reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
     try:
         yield
@@ -203,7 +204,7 @@ def create_app(
 
     @api.get("/chats")
     async def list_chats() -> list[dict]:
-        return app.state.store.list_chats()
+        return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats()]
 
     @api.post("/chats")
     async def create_chat(body: ChatBody | None = None) -> dict:
@@ -221,14 +222,15 @@ def create_app(
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
         """Chats with a user/assistant message matching ``q``, newest first."""
-        return await asyncio.to_thread(app.state.store.search_chats, q, limit)
+        chats = await asyncio.to_thread(app.state.store.search_chats, q, limit)
+        return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in chats]
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
         chat = app.state.store.get_chat(chat_id)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        return chat
+        return {**chat, "state": app.state.conversation_states.get(chat_id)}
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody) -> dict:
@@ -297,6 +299,10 @@ def create_app(
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+        pending = app.state.agent.approvals.pending.get(approval_id)
+        if pending and pending.chat_id == chat_id and pending.tool == "ask_user":
+            if body.decision not in {"allow", "deny"} or (body.decision == "allow" and not (body.message or "").strip()):
+                raise HTTPException(status_code=422, detail="A question requires a non-empty answer")
         try:
             app.state.agent.approvals.answer(chat_id, approval_id, body.decision, body.message)
         except KeyError as exc:
@@ -332,8 +338,13 @@ def create_app(
                     if app.state.store.get_chat(chat_id) is None:
                         queue.put_nowait({"type": "error", "message": "chat was deleted"})
                         return
-                    async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
-                        queue.put_nowait(event)
+                    app.state.conversation_states.transition(chat_id, "turn_start")
+                    try:
+                        async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
+                            app.state.conversation_states.transition(chat_id, event.get("type", ""))
+                            queue.put_nowait(event)
+                    finally:
+                        app.state.conversation_states.transition(chat_id, "turn_end")
             except asyncio.CancelledError:
                 queue.put_nowait({"type": "stopped"})
                 raise

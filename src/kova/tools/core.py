@@ -15,7 +15,7 @@ from .commands import run_command
 
 FILE_TOOLS = code_files.FILE_TOOLS
 WRITE_TOOLS = code_files.WRITE_TOOLS
-CORE_TOOLS = FILE_TOOLS | {"run_command", "update_plan"}
+CORE_TOOLS = FILE_TOOLS | {"run_command", "update_plan", "ask_user"}
 
 
 def validate(schema: dict, value, label: str = "arguments") -> None:
@@ -151,7 +151,11 @@ def tools(cwd: Path) -> list[Tool]:
     def plan(args):
         return json.dumps({"ok": True, "items": args["items"]})
 
+    def question(args):
+        raise ToolError("ask_user must be handled by the active conversation")
+
     return [
+        Tool("ask_user", "Ask the user a clarifying question and wait for their answer. Provide options for multiple choice or omit them for free text.", schema({"question": {"type": "string", "minLength": 1, "maxLength": 1000}, "options": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 200}}}, ["question"]), question),
         Tool("run_command", "Run a shell command in the working folder; output and exit code. No stdin or automatic elevation. Default timeout 60 seconds, maximum 300.", schema({"command": {"type": "string", "minLength": 1, "maxLength": 200000}, "timeout": {"type": "number", "minimum": 0.01, "maximum": 300}}, ["command"]), command),
         Tool("update_plan", "Publish a concise checklist for genuine multi-step work. Keep it updated as work progresses.", schema({"items": {"type": "array", "maxItems": 8, "items": schema({"text": {"type": "string", "minLength": 1, "maxLength": 180}, "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}}, ["text", "status"])}}, ["items"]), plan),
     ]

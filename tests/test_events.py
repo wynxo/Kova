@@ -54,3 +54,16 @@ async def test_publish_delivers_to_a_running_consumer():
     task = asyncio.create_task(consumer())
     bus.publish({"k": "v"})
     assert await task == {"k": "v"}
+
+
+def test_conversation_lifecycle_is_scoped_and_broadcast():
+    from kova.events import ConversationStates
+    bus = EventBus()
+    queue = bus.subscribe()
+    states = ConversationStates(bus)
+    for event, expected in [('turn_start', 'working'), ('approval', 'blocked-on-approval'),
+                            ('approval_resolved', 'working'), ('turn_end', 'done')]:
+        states.transition('chat-a', event)
+        assert states.get('chat-a') == expected
+        assert queue.get_nowait() == {'type': 'conversation_state', 'chat_id': 'chat-a', 'state': expected}
+    assert states.get('chat-b') == 'done'

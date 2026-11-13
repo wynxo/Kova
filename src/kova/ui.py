@@ -271,6 +271,9 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
         with live or nullcontext():
             try:
                 for event in events:
+                    if event["type"] == "question":
+                        client.answer_approval(chat_id, event["id"], "deny", "Continue in the full-screen Kova chat to answer.")
+                        continue
                     if event["type"] == "approval":
                         _approve(client, chat_id, event, console, live)
                         continue
