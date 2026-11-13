@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, backup, lifecycle, onboarding, theme
+from kova import __version__, backup, lifecycle, onboarding, providers, theme
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.modes import MODES
@@ -45,6 +45,8 @@ def _hint_for(message: str) -> str | None:
         return "Run: kova memory list"
     if "no reminder" in text:
         return "Run: kova reminders list"
+    if "no job" in text:
+        return "Run: kova jobs list"
     if "no model named" in text:
         return "Run: kova model list"
     if "no chat" in text:
@@ -238,6 +240,9 @@ app.add_typer(_memory, name="memory")
 _reminders = typer.Typer(no_args_is_help=True, help="Manage reminders.")
 app.add_typer(_reminders, name="reminders")
 
+_jobs = typer.Typer(no_args_is_help=True, help="Manage scheduled recurring jobs.")
+app.add_typer(_jobs, name="jobs")
+
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
@@ -305,6 +310,23 @@ def _ask_error(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _reasoning_error(model: str | None) -> str | None:
+    """Why ``--think`` cannot show anything here, or ``None`` when it can.
+
+    Reads the provider's declared capabilities, so a provider with no reasoning
+    stream is refused up front instead of printing nothing at all.
+    """
+    cfg = load_config()
+    try:
+        entry = next((m for m in cfg.models if m.name == model), None) if model else cfg.active_model()
+    except KeyError:
+        return None  # nothing configured: the server reports that, not this check
+    provider = entry._provider if entry is not None else None
+    if provider is None or providers.supports(provider, 'reasoning'):
+        return None
+    return f"{provider.name} does not stream reasoning"
+
+
 @app.command("ask")
 def ask(
     text: str | None = typer.Argument(None, help="The question. Optional if you pipe text in."),
@@ -323,6 +345,10 @@ def ask(
     git diff | kova ask "review this"
     """
     _check_mode(mode)
+    if think:
+        reason = _reasoning_error(model)
+        if reason:
+            _ask_error(f"{reason}. Use a reasoning model, or drop --think.")
     attached = []
     for path in files:
         with path.open("rb") as handle:
@@ -685,6 +711,7 @@ def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
     table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
     table.add_column("Note", no_wrap=True, max_width=32, overflow="ellipsis")
     table.add_column("Tags", style=theme.MUTED, no_wrap=True, max_width=24, overflow="ellipsis")
+    table.add_column("From", style=theme.MUTED, no_wrap=True)
     table.add_column("Updated", style=theme.MUTED, no_wrap=True)
     table.add_column("About", max_width=52, overflow="fold")
     for number, note in enumerate(notes, start=1):
@@ -692,10 +719,17 @@ def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
             str(number),
             Text(note["title"], style="bold"),
             ", ".join(note.get("tags") or []) or "—",
+            _origin_label(note),
             _relative_when(note.get("updated")),
             _clip(note.get("body", "")),
         )
     return table
+
+
+def _origin_label(note: dict) -> str:
+    """Where a memory came from: the user's own words, or Kova's own note."""
+    origin = note.get("origin") or "user"
+    return "you said" if origin == "user" else "Kova noted"
 
 
 @_memory.command("list")
@@ -728,6 +762,13 @@ def memory_show(slug: str):
         if note["slug"] == slug:
             console.print(Text(note["title"], style=f"bold {theme.ACCENT}"))
             console.print(Text(note["slug"], style=theme.MUTED))
+            console.print(Text(
+                f"{_origin_label(note)}"
+                + (f" · from chat {note['source']}" if note.get("source") else "")
+                + (f" · first recorded {_relative_when(note.get('created'))}"
+                   if note.get("created") else "")
+                + f" · updated {_relative_when(note.get('updated'))}",
+                style=theme.MUTED))
             console.print()
             console.print(note["body"], markup=False, soft_wrap=True)
             return
@@ -740,12 +781,171 @@ def memory_add(title: str, body: str, tags: list[str] = typer.Option([], "--tags
     _ok(f"Saved {note['title']}.")
 
 
+@_memory.command("edit")
+def memory_edit(
+    slug: str,
+    body: str | None = typer.Option(None, "--body", help="Replacement text for the note."),
+    title: str | None = typer.Option(None, "--title", help="New title for the note."),
+    tag: list[str] = typer.Option([], "--tag", help="Replace the note's tags; repeatable."),
+):
+    """Rewrite one note in place; the slug and where it came from are kept."""
+    if body is None and title is None and not tag:
+        _fail("Nothing to change.", hint=f"Usage: kova memory edit {slug} --body \"new text\"")
+    note = get_client().memory_edit(slug, title=title, body=body, tags=tag or None)
+    _ok(f"Updated {note['title']}.")
+
+
 @_memory.command("rm")
 def memory_rm(slug: str):
     if get_client().memory_delete(slug):
         _ok(f"Removed {slug}.")
     else:
         _fail(f'No note named "{slug}".')
+
+
+@_memory.command("forget")
+def memory_forget(slug: str):
+    """Delete one note; the same as `memory rm`, named for the review notices."""
+    if get_client().memory_forget(slug):
+        _ok(f"Forgot {slug}.")
+    else:
+        _fail(f'No note named "{slug}".')
+
+
+@_memory.command("review")
+def memory_review(
+    state: str = typer.Argument(..., help="on or off"),
+    every: int | None = typer.Option(None, "--every", min=1,
+                                     help="Review after this many user turns."),
+):
+    """Turn post-turn memory review on or off; it is off until you opt in."""
+    if state not in ("on", "off"):
+        _fail(f'Unknown state "{state}".', hint="Usage: kova memory review on|off")
+    try:
+        settings = get_client().memory_settings(review=state == "on", review_every=every)
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        cfg = load_config()
+        cfg.memory_review = state == "on"
+        if every:
+            cfg.memory_review_every = every
+        save_config(cfg)
+        settings = {"review": cfg.memory_review, "review_every": cfg.memory_review_every}
+    if settings.get("review"):
+        _ok(f"Memory review is on (every {settings.get('review_every')} turns).")
+    else:
+        _muted("Memory review is off.")
+
+
+@_memory.command("nightly")
+def memory_nightly(
+    state: str = typer.Argument(..., help="on or off"),
+    hour: int | None = typer.Option(None, "--hour", min=0, max=23,
+                                    help="Earliest local hour it may run."),
+):
+    """Turn nightly consolidation on or off; it is off until you opt in."""
+    if state not in ("on", "off"):
+        _fail(f'Unknown state "{state}".', hint="Usage: kova memory nightly on|off")
+    try:
+        settings = get_client().memory_settings(consolidate=state == "on",
+                                               consolidate_hour=hour)
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        cfg = load_config()
+        cfg.memory_consolidate = state == "on"
+        if hour is not None:
+            cfg.memory_consolidate_hour = hour
+        save_config(cfg)
+        settings = {"consolidate": cfg.memory_consolidate,
+                    "consolidate_hour": cfg.memory_consolidate_hour}
+    if settings.get("consolidate"):
+        _ok(f"Nightly consolidation is on (from {settings.get('consolidate_hour')}:00).")
+    else:
+        _muted("Nightly consolidation is off.")
+
+
+@_memory.command("consolidate")
+def memory_consolidate(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan without changing notes."),
+    yes: bool = typer.Option(False, "--yes", help="Apply without asking."),
+    min_confidence: float | None = typer.Option(None, "--min-confidence",
+                                               help="Score gate for each operation."),
+    max_loss: float | None = typer.Option(None, "--max-loss",
+                                          help="Most of the store one run may drop (0-1)."),
+):
+    """Ask the model for operations over memory, gate them, then apply them."""
+    if (min_confidence is not None or max_loss is not None):
+        get_client().memory_settings(consolidate_min_confidence=min_confidence,
+                                     consolidate_max_loss=max_loss)
+    if not dry_run and not yes and not typer.confirm(
+            "Apply the planned memory changes?", default=False):
+        _muted("Nothing changed.")
+        return
+    result = get_client().memory_consolidate(dry_run=dry_run)
+    planned = result.get("planned") or []
+    if not planned:
+        _muted("Nothing worth consolidating.")
+    for operation in planned:
+        title = f" → {operation['title']}" if operation.get("title") else ""
+        _muted(f"{operation['op']} {', '.join(operation['slugs'])}{title} "
+               f"(confidence {operation['confidence']:.2f})")
+    for reason in result.get("refused") or []:
+        _muted(f"refused: {reason}")
+    if dry_run:
+        _ok(f"Planned {len(result.get('accepted') or [])} operation(s); nothing was changed.")
+    elif result.get("applied"):
+        _ok(f"Applied {len(result['applied'])} change(s); `kova memory undo` reverses them.")
+    else:
+        _muted("No changes were applied.")
+
+
+@_memory.command("diary")
+def memory_diary(limit: int = typer.Option(20, "--limit", min=1, max=500)):
+    """What Kova's background memory passes did, and why."""
+    entries = get_client().memory_diary(limit)
+    if not entries:
+        _empty("No memory diary entries yet.",
+               "Nightly consolidation and reviews write them; both are off by default.")
+        return
+    table = _table(caption=f"{len(entries)} entries")
+    table.add_column("When", style=theme.MUTED, no_wrap=True)
+    table.add_column("Kind", no_wrap=True)
+    table.add_column("What", overflow="fold")
+    for entry in entries:
+        table.add_row(_relative_when(entry.get("created")), entry.get("kind", ""),
+                      entry.get("entry", ""))
+    console.print(table)
+
+
+@_memory.command("undo")
+def memory_undo(revision_id: int | None = typer.Argument(None),
+                list_revisions: bool = typer.Option(False, "--list",
+                                                    help="Show recent changes instead.")):
+    """Reverse remembered changes made by review or consolidation."""
+    if list_revisions:
+        entries = get_client().memory_revisions()
+        if not entries:
+            _empty("No memory changes to undo.", "Kova has not rewritten memory behind your back.")
+            return
+        table = _table(caption=f"{len(entries)} recent change(s)")
+        table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+        table.add_column("When", style=theme.MUTED, no_wrap=True)
+        table.add_column("Kind", no_wrap=True)
+        table.add_column("Note", no_wrap=True)
+        table.add_column("Undone", no_wrap=True)
+        for entry in entries:
+            table.add_row(str(entry["id"]), _relative_when(entry.get("created")),
+                          entry.get("kind", ""), entry.get("slug", ""),
+                          "yes" if entry.get("undone") else "no")
+        console.print(table)
+        return
+    undone = get_client().memory_undo(revision_id)
+    if undone:
+        _ok(f"Put back: {', '.join(undone)}.")
+    else:
+        _muted("Nothing to undo.")
 
 
 @_memory.command("use")
@@ -822,6 +1022,60 @@ def reminders_rm(rid: int):
         _ok(f"Removed reminder #{rid}.")
     else:
         _fail(f"No reminder #{rid}.")
+
+
+@_jobs.command("list")
+def jobs_list():
+    """List the scheduled recurring jobs."""
+    now = _local_now()
+    jobs = get_client().jobs_list()
+    if not jobs:
+        _empty("No scheduled jobs.",
+               'Add one with: kova jobs add "every 2h" "Check the backups" --command "ls ~/backups"')
+        return
+    table = _table(caption=f"{len(jobs)} job" + ("" if len(jobs) == 1 else "s"))
+    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Job", overflow="ellipsis")
+    table.add_column("Kind", style=theme.MUTED, no_wrap=True)
+    table.add_column("Schedule", no_wrap=True)
+    table.add_column("Next", no_wrap=True)
+    table.add_column("Runs", justify="right", style=theme.MUTED, no_wrap=True)
+    for job in jobs:
+        kind = "heartbeat" if job["idle_only"] else job["kind"]
+        try:
+            next_run = _reminder_time(job["next_run"], now)
+            when = f"{next_run.strftime('%Y-%m-%d %H:%M')} · {format_relative(next_run, now)}"
+        except (TypeError, ValueError):
+            when = job["next_run"]
+        table.add_row(str(job["id"]), _clip(job["text"]), kind, job["schedule"], when, str(job["runs"]))
+    console.print(table)
+
+
+@_jobs.command("add")
+def jobs_add(
+    schedule: str,
+    text: str,
+    command: str = typer.Option(None, "--command", help="Shell command to run, with no model call."),
+    prompt: str = typer.Option(None, "--prompt", help="Instruction for one Kova turn per run."),
+    idle_only: bool = typer.Option(False, "--idle-only", help="Only start when nothing else is running."),
+    first_run: str = typer.Option(None, "--first-run", help="First run time, e.g. 'tomorrow 8am'."),
+):
+    """Add a recurring job: --command for a script, --prompt for a Kova turn."""
+    if bool(command) == bool(prompt):
+        _fail("Pass exactly one of --command (a shell command) or --prompt (an instruction).",
+              "Example: kova jobs add \"daily 09:00\" \"Summarise the news\" --prompt \"Summarise today's headlines\"")
+    job = get_client().job_add(text, schedule, command=command, prompt=prompt,
+                               first_run=first_run, idle_only=idle_only)
+    _ok(f"Job #{job['id']} scheduled {job['schedule']} · next {job['next_run']}")
+
+
+@_jobs.command("rm")
+def jobs_rm(jid: int):
+    """Delete a scheduled job."""
+    if get_client().job_delete(jid):
+        _ok(f"Removed job #{jid}.")
+    else:
+        _fail(f"No job #{jid}.")
 
 
 # ---------------------------------------------------------------------------
@@ -1031,10 +1285,11 @@ def providers_list():
         _empty('No providers connected.', 'Run: kova providers add')
         return
     table = _table()
-    for heading in ('Connection', 'Provider', 'Access', 'Address'):
+    for heading in ('Connection', 'Provider', 'Access', 'Address', 'Capabilities'):
         table.add_column(heading)
     for p in rows:
-        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials', p['base_url'])
+        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials',
+                      p['base_url'], ', '.join(p.get('capabilities') or []) or '-')
     console.print(table)
 
 
@@ -1069,11 +1324,11 @@ def provider_login(name: str):
     if p is None:
         _fail(f'No provider named "{name}".')
     try:
-        if p.kind == 'codex':
+        if providers.supports(p, 'harness_login'):
             consent = onboarding._ask('Read the installed Codex login without changing it? [y/N]:').lower() == 'y'
             provider_auth.reuse_codex(p, consent=consent)
             get_client().provider_login(name, consent=consent)
-        elif p.kind == 'chatgpt':
+        elif providers.supports(p, 'browser_login'):
             console.print('Continue with ChatGPT in your browser…')
             provider_auth.login(p)
             get_client().provider_login(name, auth=p.auth)

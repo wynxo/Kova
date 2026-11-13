@@ -17,13 +17,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from kova import __version__, checkpoints
-from kova.agent import Agent, Steering
+from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
 from kova.models import ModelClient
-from kova.modes import DEFAULT_MODE, MODES
+from kova.modes import DEFAULT_MODE, MODES, capabilities as mode_capabilities
 from kova.reminders import ReminderLoop
+from kova.scheduler import Scheduler, parse_schedule
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
@@ -83,6 +84,34 @@ class NoteBody(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class MemoryEditBody(BaseModel):
+    """An in-place edit of one memory note; omitted fields stay as they are."""
+    title: str | None = None
+    body: str | None = None
+    tags: list[str] | None = None
+
+
+class MemoryUndoBody(BaseModel):
+    """Undo the most recent background memory changes, or one named revision."""
+    revision_id: int | None = None
+
+
+class MemorySettingsBody(BaseModel):
+    """Opt-in switches and gates for the background memory passes; omitted fields stay."""
+
+    review: bool | None = None
+    review_every: int | None = None
+    consolidate: bool | None = None
+    consolidate_hour: int | None = None
+    consolidate_min_confidence: float | None = None
+    consolidate_max_loss: float | None = None
+
+
+class ConsolidateBody(BaseModel):
+    """Plan (and by default apply) one consolidation run."""
+    dry_run: bool = False
+
+
 class MemoryLocationBody(BaseModel):
     """The root and write mode for memory."""
     path: str
@@ -93,6 +122,16 @@ class ReminderBody(BaseModel):
     """A reminder to schedule."""
     when: str
     text: str
+
+
+class JobBody(BaseModel):
+    """A recurring job: a shell command, or one agent turn, on a repeat schedule."""
+    text: str
+    schedule: str
+    command: str | None = None
+    prompt: str | None = None
+    first_run: str | None = None
+    idle_only: bool = False
 
 
 class ModelBody(BaseModel):
@@ -110,9 +149,26 @@ class ActiveBody(BaseModel):
 
 
 def _note_dict(note: Note) -> dict:
-    """The JSON shape of a memory note."""
+    """The JSON shape of a memory note, including where the fact came from."""
     return {"slug": note.slug, "title": note.title, "body": note.body,
-            "tags": note.tags, "updated": note.updated}
+            "tags": note.tags, "updated": note.updated,
+            "origin": note.origin, "source": note.source, "created": note.created}
+
+
+def _memory_settings(config: Config) -> dict:
+    """The background memory passes' switches and gates, as the CLI shows them."""
+    return {"review": config.memory_review, "review_every": config.memory_review_every,
+            "consolidate": config.memory_consolidate,
+            "consolidate_hour": config.memory_consolidate_hour,
+            "consolidate_min_confidence": config.memory_consolidate_min_confidence,
+            "consolidate_max_loss": config.memory_consolidate_max_loss}
+
+
+def _refresh_review(store: Store, config: Config):
+    """Rebuild the agent's background passes after a settings change, or None when off."""
+    from kova.review import MemoryReview, ReviewSettings
+    settings = ReviewSettings.from_config(config)
+    return MemoryReview(store, settings) if settings.enabled else None
 
 
 def _model_dict(entry: ModelEntry) -> dict:
@@ -160,7 +216,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent = agent
     app.state.bus = bus
     app.state.conversation_states = ConversationStates(bus)
-    reminders = asyncio.create_task(ReminderLoop(store, bus, now).run())
+
+    async def run_job_prompt(job: dict) -> str:
+        """Run one prompt job's turn, in the job's own chat, and return its reply."""
+        chat_id = job.get("chat_id")
+        if not chat_id or app.state.store.get_chat(chat_id) is None:
+            chat = app.state.store.create_chat(title=derive_title(f"Job: {job['text']}"),
+                                               cwd=str(config.files_path.resolve()))
+            chat_id = chat["id"]
+            app.state.store.set_job_chat(job["id"], chat_id)
+        parts: list[str] = []
+        async with app.state.chat_locks.setdefault(chat_id, asyncio.Lock()):
+            app.state.conversation_states.transition(chat_id, "turn_start")
+            try:
+                async for event in app.state.agent.run_turn(chat_id, job["prompt"]):
+                    if event.get("type") == "text":
+                        parts.append(event["text"])
+                    elif event.get("type") == "error":
+                        raise RuntimeError(event.get("message") or "the job's turn failed")
+            finally:
+                app.state.conversation_states.transition(chat_id, "turn_end")
+        return "".join(parts).strip() or "(the turn ended without a reply)"
+
+    def is_idle() -> bool:
+        """A heartbeat waits for the user's work to finish, and for other jobs."""
+        return (not app.state.turns and not app.state.scheduler.busy
+                and not app.state.agent.approvals.pending)
+
+    scheduler = Scheduler(store, bus, now, cwd=config.files_path,
+                          run_prompt=run_job_prompt, is_idle=is_idle)
+    app.state.scheduler = scheduler
+    reminders = asyncio.create_task(ReminderLoop(store, bus, now, scheduler=scheduler).run())
     try:
         yield
     finally:
@@ -337,6 +423,11 @@ def create_app(
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
+            raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
         pending = app.state.agent.approvals.pending.get(approval_id)
         if pending and pending.chat_id == chat_id and pending.tool == "ask_user":
             if body.decision not in {"allow", "deny"} or (body.decision == "allow" and not (body.message or "").strip()):
@@ -542,7 +633,10 @@ def create_app(
     @api.get("/memory")
     async def memory_list(q: str | None = None) -> list[dict]:
         mem = app.state.memory
-        notes = await asyncio.to_thread(mem.search, q) if q else await asyncio.to_thread(mem.list)
+        # The same hybrid ranking the prompt recall uses: keyword hits ordered
+        # by the deterministic lexical signal, so CLI and web searches agree.
+        notes = await asyncio.to_thread(mem.search, q, 50, mode="hybrid") if q \
+            else await asyncio.to_thread(mem.list)
         return [_note_dict(note) for note in notes]
 
     @api.post("/memory")
@@ -553,11 +647,92 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _note_dict(note)
 
+    # Static routes must be declared before "/memory/{slug}", or FastAPI matches
+    # PATCH /memory/settings against the note-edit route with slug="settings".
+    @api.get("/memory/settings")
+    async def memory_settings_get() -> dict:
+        """The opt-in switches and gates of the background memory passes."""
+        return _memory_settings(config)
+
+    @api.patch("/memory/settings")
+    async def memory_settings_set(body: MemorySettingsBody) -> dict:
+        """Turn the background memory passes on or off and tune their gates."""
+        updates = body.model_dump(exclude_unset=True)
+        if "review_every" in updates and updates["review_every"] < 1:
+            raise HTTPException(status_code=422, detail="review_every must be at least 1")
+        if "consolidate_hour" in updates and not 0 <= updates["consolidate_hour"] <= 23:
+            raise HTTPException(status_code=422, detail="consolidate_hour must be 0-23")
+        for key in ("consolidate_min_confidence", "consolidate_max_loss"):
+            if key in updates and not 0 <= updates[key] <= 1:
+                raise HTTPException(status_code=422, detail=f"{key} must be 0-1")
+        for key, value in updates.items():
+            setattr(config, f"memory_{key}", value)
+        save_config(config)
+        app.state.agent.memory_review = _refresh_review(app.state.store, config)
+        return _memory_settings(config)
+
     @api.delete("/memory/{slug}")
     async def memory_delete(slug: str) -> dict:
         if not app.state.memory.delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
+
+    @api.patch("/memory/{slug}")
+    async def memory_edit(slug: str, body: MemoryEditBody) -> dict:
+        """Rewrite one note in place, keeping its slug, provenance and creation date."""
+        if body.title is None and body.body is None and body.tags is None:
+            raise HTTPException(status_code=422, detail="nothing to update")
+        try:
+            note = await asyncio.to_thread(app.state.memory.update, slug,
+                                           title=body.title, body=body.body, tags=body.tags)
+        except ValueError as exc:
+            status = 422 if "No note named" not in str(exc) else 404
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return _note_dict(note)
+
+    @api.get("/memory/diary")
+    async def memory_diary(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+        """What the background memory passes did, oldest first, for a person to read."""
+        return app.state.store.memory_diary(limit=limit)
+
+    @api.get("/memory/revisions")
+    async def memory_revisions(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+        """Recent background memory changes, newest first, with their undo state."""
+        return app.state.store.memory_revisions(limit=limit)
+
+    @api.post("/memory/undo")
+    async def memory_undo(body: MemoryUndoBody | None = None) -> dict:
+        """Reverse recorded review/consolidation writes from their preimages."""
+        from kova.review import undo
+        undone = await asyncio.to_thread(undo, app.state.memory, app.state.store,
+                                         revision_id=body.revision_id if body else None)
+        return {"undone": undone}
+
+    @api.post("/memory/consolidate")
+    async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
+        """Plan one consolidation run and, unless asked to dry-run, apply it."""
+        from kova.review import gate_operations, plan_consolidation, apply_operations
+        entry = config.active_model()
+        if not entry.model:
+            raise HTTPException(status_code=422, detail="No model is configured")
+        client = ModelClient(entry, transport=app.state.agent.transport)
+        memory, store = app.state.memory, app.state.store
+        operations = await plan_consolidation(memory, client)
+        accepted, refused = await asyncio.to_thread(
+            gate_operations, operations, memory.list(),
+            min_confidence=config.memory_consolidate_min_confidence,
+            max_loss=config.memory_consolidate_max_loss)
+        applied = [] if (body and body.dry_run) else await asyncio.to_thread(
+            apply_operations, store, memory, accepted)
+        return {
+            "planned": [{"op": op.kind, "slugs": op.slugs, "title": op.title,
+                         "body": op.body, "confidence": op.confidence,
+                         "reason": op.reason} for op in operations],
+            "accepted": [{"op": op.kind, "slugs": op.slugs} for op in accepted],
+            "refused": refused,
+            "applied": applied,
+            "dry_run": bool(body and body.dry_run),
+        }
 
     @api.get("/reminders")
     async def reminders_list() -> list[dict]:
@@ -576,6 +751,32 @@ def create_app(
     async def reminder_delete(rid: int) -> dict:
         if not app.state.store.delete_reminder(rid):
             raise HTTPException(status_code=404, detail="reminder not found")
+        return {"ok": True}
+
+    @api.get("/jobs")
+    async def jobs_list() -> list[dict]:
+        return app.state.store.list_jobs()
+
+    @api.post("/jobs")
+    async def job_add(body: JobBody) -> dict:
+        if not body.text.strip():
+            raise HTTPException(status_code=422, detail="a job needs a short description")
+        command, prompt = (body.command or "").strip(), (body.prompt or "").strip()
+        if bool(command) == bool(prompt):
+            raise HTTPException(status_code=422, detail="give exactly one of command or prompt")
+        try:
+            schedule = parse_schedule(body.schedule, now())
+            first = parse_when(body.first_run, now()) if body.first_run else schedule.next_after(now())
+        except ToolError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        jid = app.state.store.add_job(body.text.strip(), schedule.spec, first, command=command or None,
+                                      prompt=prompt or None, idle_only=body.idle_only)
+        return next(job for job in app.state.store.list_jobs(include_done=True) if job["id"] == jid)
+
+    @api.delete("/jobs/{jid}")
+    async def job_delete(jid: int) -> dict:
+        if not app.state.store.delete_job(jid):
+            raise HTTPException(status_code=404, detail="job not found")
         return {"ok": True}
 
     @api.get("/models")

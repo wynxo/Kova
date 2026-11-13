@@ -79,6 +79,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 | `DELETE /reminders/{id}` | token or session | delete a reminder |
 | `GET/POST /models` | token or session | list / add model servers |
 | `POST /models/active` | token or session | choose the active model |
+| `GET /capabilities` | token or session | what the active provider declares, and what each mode offers |
 | `GET /events` | token or session | SSE stream of background events (reminders) |
 
 `/health` and the app shell are deliberately public; neither contains chat
@@ -292,11 +293,14 @@ thread and the desktop `EventSource`.
 ## Modes
 
 `src/kova/modes.py` has `MODES = ("chat", "work")` and
-`DEFAULT_MODE = "work"`. A mode is stored per chat. `agent.select_tools` is the
-only place that decides what a mode may do, and `agent._IDENTITIES` holds one
+`DEFAULT_MODE = "work"`. A mode is stored per chat. Each mode declares the
+capabilities it offers (`MODE_CAPABILITIES`); `agent.select_tools` reads that
+declaration rather than the mode name, and `agent._IDENTITIES` holds one
 system-prompt identity per mode. Chat mode is plain conversation: web tools
 only, no memory writes, but remembered facts are still injected into the
 prompt. Work mode gets everything. The per-chat web flag applies to both.
+`providers.offered` combines a mode's declaration with the active provider's,
+which is what the clients read (see *The capability contract* below).
 
 ## Theme
 
@@ -430,6 +434,29 @@ are transient form/in-memory data, never browser storage. CLI setup writes
 through the running server when available; no restart is needed. The desktop
 model select uses optgroups; terminal chat's filtered picker renders provider
 headings while keeping stable model aliases as the selection value.
+
+### The capability contract
+
+Every provider declares what it can do, once, so no UI layer branches on a
+provider or mode name. `model_adapters.ADAPTER_CAPABILITIES` states what each
+wire format carries (`tools`, `reasoning`); `providers.CATALOG` states what each
+provider kind adds (an API key, a browser or installed-agent sign-in, an
+editable address, custom headers, a reasoning stream).
+`providers.CAPABILITY_GATES` names the layers that must agree before a UI may
+offer something: `tools` needs the provider and the mode, `approvals` the mode
+alone, everything else the provider alone. `providers.offered(provider, mode)`
+combines them, and `providers.capabilities(provider)` is the provider's own
+declaration, which the setup form and `kova providers list` show.
+
+`GET /capabilities` publishes the active provider's declarations and the
+`offered` set for each mode — the one thing the CLI, the terminal chat and the
+web app read. The web provider form shows only the fields a kind declares, chat
+mode disables the permission and folder pickers, and `/think` is refused where
+no reasoning stream exists. The server enforces the same declarations, so a
+client that forces a field a kind does not take (an API key for ChatGPT, custom
+headers for OpenAI, an approval in a mode that never asks) is refused rather
+than silently obeyed. A model with no provider entry — a legacy single-model
+config — declares everything, so nothing is hidden from it.
 
 ### Authentication research
 

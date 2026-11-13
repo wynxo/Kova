@@ -4,6 +4,12 @@ There is deliberately no whole-entry replace: a model that wants to change one
 fact patches a span of exactly one note. Memory is capped (see
 ``Memory.budget``); an over-budget write fails with the exact overflow so the
 model can free space itself rather than silently losing text.
+
+Every note carries provenance. Writes made here are recorded as
+``origin=model``: the model volunteered them, and Kova cannot prove the user
+said them. A fact the post-turn review could quote from the user verbatim is
+recorded as ``origin=user`` with the chat id in ``source``, and anything the
+user typed themselves in the CLI, TUI or web app is ``user`` too.
 """
 
 from __future__ import annotations
@@ -19,7 +25,8 @@ MAX_SEARCH_NOTES = 10
 
 def _note_dict(note, budget: int | None = None) -> dict:
     data = {"slug": note.slug, "title": note.title, "body": note.body,
-            "tags": note.tags, "updated": note.updated}
+            "tags": note.tags, "updated": note.updated,
+            "origin": note.origin, "source": note.source, "created": note.created}
     if budget:
         data["chars"] = len(note.title) + sum(len(t) for t in note.tags) + len(note.body)
     return data
@@ -52,7 +59,7 @@ def tools(ctx: ToolContext) -> list[Tool]:
         })
 
     def search(args: dict) -> str:
-        notes = ctx.memory.search(args["query"], MAX_SEARCH_NOTES)
+        notes = ctx.memory.search(args["query"], MAX_SEARCH_NOTES, mode="hybrid")
         return json.dumps([_note_dict(note) for note in notes])
 
     # The old name keeps working for prompts/tests that still call it, but it

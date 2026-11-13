@@ -13,14 +13,14 @@ from pathlib import Path
 
 import httpx
 
-from kova import sandbox
+from kova import providers, sandbox
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
 from kova.persona import Persona
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
-from kova.modes import DEFAULT_MODE
+from kova.modes import DEFAULT_MODE, capabilities as mode_capabilities
 from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
@@ -28,6 +28,8 @@ from kova.tools import core
 from kova.tools.sessions import set_current_chat
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
+from kova.review import MemoryReview, ReviewSettings
+from kova.skills import Skills
 
 
 _IDENTITIES = {
@@ -36,6 +38,7 @@ Be warm, direct and genuinely helpful. Use tools when they help: search the web 
 Use ask_user when clarification is needed. Use update_plan for genuine multi-step work; keep the checklist updated as you progress.
 Never retry a denied action without new user authorization. Commands can access the system as the current user; file tools stay inside the working folder.
 When you learn a lasting fact about the user (name, preferences, projects, people), save it with memory_save.
+Keep a short note titled "index" listing who and what you remember (one line per topic); put the detail in separate topic notes, because the index is always loaded and topics are only read when they matter.
 Never say you are a different assistant or made by another company. You are Kova.""",
     "chat": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
 Be warm, direct and genuinely helpful. Keep replies short and conversational.
@@ -48,12 +51,12 @@ _WEB_TOOLS = ("web_search", "web_fetch")
 
 
 def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool]:
-    """The tools a chat may use: everything in work mode, web only in chat mode.
+    """The tools a chat may use: everything when the mode offers tools, web only otherwise.
 
-    The web toggle applies to both modes; a future code mode would add its own
-    branch here.
+    The web toggle applies to both modes; a future code mode declares its own
+    capabilities in :mod:`kova.modes` instead of adding a branch here.
     """
-    allowed = set(tools) if mode != "chat" else set(_WEB_TOOLS)
+    allowed = set(tools) if "tools" in mode_capabilities(mode) else set(_WEB_TOOLS)
     if not web:
         allowed -= set(_WEB_TOOLS)
     return {name: tool for name, tool in tools.items() if name in allowed}
@@ -63,8 +66,14 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
                         mode: str = DEFAULT_MODE, *,
                         memory_usage: int | None = None,
                         memory_budget: int | None = None,
-                        persona: Persona | None = None) -> str:
-    """Build the identity, current context, and relevant memory prompt."""
+                        persona: Persona | None = None,
+                        index: str | None = None) -> str:
+    """Build the identity, current context, and relevant memory prompt.
+
+    ``memories`` are the topic notes recall picked for this message; ``index``
+    is the small index note that is always loaded, so the model knows what
+    exists even when nothing matched.
+    """
     persona = persona or Persona()
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
     identity = identity.replace("Kova", persona.name).replace(
@@ -88,6 +97,9 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
             prompt += f"\n\n{header}\n{notes}"
         else:
             prompt += f"\n\n{header} nothing yet."
+    if index:
+        prompt += ("\n\nMemory index (always loaded; open a topic note or run memory_search "
+                   f"when you need the detail):\n{index}")
     return prompt
 
 
@@ -217,11 +229,16 @@ class Agent:
         self.config = config
         self.store = store
         self.memory = memory
+        self.skills = Skills.for_home(config.home)
         self.tools = tools
         self.transport = transport
         self.now = now
         self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
+        # Background memory maintenance is opt-in (memory.review / memory.consolidate).
+        settings = ReviewSettings.from_config(config)
+        self.memory_review = MemoryReview(store, settings) if settings.enabled else None
+
         # File contents for per-turn checkpoints, outside every working folder.
         self.blobs = BlobStore(config.home / "checkpoints")
 
@@ -288,13 +305,24 @@ class Agent:
                     title_source = message['content']
                     break
         try:
-            memories = await asyncio.to_thread(self.memory.search, text, 5)
+            memories = await asyncio.to_thread(self.memory.search, text, 5, mode="hybrid")
         except Exception:  # memory trouble must never block a chat
             memories = []
         try:
             memory_usage = await asyncio.to_thread(self.memory.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
+        # The index is always loaded; topic notes are only the ones recall picked.
+        try:
+            index = await asyncio.to_thread(self.memory.index_text,
+                                            getattr(self.config, 'memory_index_lines', 200))
+        except Exception:  # a broken index must not block the prompt either
+            index = ""
+        memories = [note for note in memories if note.slug != "index"]
+        try:
+            skills = await asyncio.to_thread(self.skills.prompt_block) if mode != 'chat' else ""
+        except Exception:  # a broken skill file must not block the prompt
+            skills = ""
         try:  # the identity is a nicety: trouble reading it must never block a chat
             current_config = load_config(self.config.home)
             persona = Persona(current_config.persona_name, current_config.persona_tone)
@@ -302,13 +330,16 @@ class Agent:
             persona = Persona()
         prompt = build_system_prompt(self.now(), list(tools), memories, mode, persona=persona,
                                      memory_usage=memory_usage,
-                                     memory_budget=getattr(self.memory, 'budget', 0))
+                                     memory_budget=getattr(self.memory, 'budget', 0),
+                                     index=index or None)
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {permission}"
             instructions = await asyncio.to_thread(project_instructions, cwd,
                                                    user_home=self.config.home)
             if instructions:
                 prompt += f"\n\n{instructions}"
+            if skills:
+                prompt += f"\n\n{skills}"
             if (chat or {}).get('plan'):
                 prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
         self.config.bind_providers()
@@ -318,7 +349,9 @@ class Agent:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         client = ModelClient(entry, transport=self.transport)
-        schemas = openai_schemas(tools) or None
+        # A provider that does not declare tool calling is never sent schemas,
+        # so its model can neither call tools nor reach an approval.
+        schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
         try:
             repeat_count = 0
             repeat_fp = None
@@ -381,6 +414,13 @@ class Agent:
                     review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
                     if review is not None:
                         yield review
+                    if self.memory_review is not None:
+                        # Opt-in background passes run last so the answer is already
+                        # stored; a failure there can never break the reply.
+                        for notice in await self.memory_review.after_turn(
+                                chat_id=chat_id, mode=mode, memory=self.memory,
+                                client=client, now=self.now()):
+                            yield notice
                     yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {

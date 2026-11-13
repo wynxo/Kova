@@ -22,7 +22,7 @@ TAGLINE = "your private AI"
 HELP_PANELS = {
     "ask": "Chat", "chats": "Chat",
     "setup": "Models", "providers": "Models", "model": "Models",
-    "memory": "Memory", "reminders": "Memory",
+    "memory": "Memory", "reminders": "Memory", "jobs": "Memory",
     "export": "Your data", "import": "Your data",
     "status": "Server & updates", "serve": "Server & updates", "stop": "Server & updates",
     "update": "Server & updates", "uninstall": "Server & updates",

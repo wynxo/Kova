@@ -35,6 +35,9 @@ def test_add_list_patch_remove_roundtrip(ctx):
     assert listed['notes'][0] == {
         'slug': 'dog', 'title': 'Dog', 'body': 'Rex is a good boy', 'tags': ['pets'],
         'updated': listed['notes'][0]['updated'],
+        # A model-facing write is recorded as volunteered by the model, never as
+        # something the user was proven to have said.
+        'origin': 'model', 'source': '', 'created': listed['notes'][0]['created'],
         'chars': note_chars('Dog', 'Rex is a good boy', ['pets']),
     }
 

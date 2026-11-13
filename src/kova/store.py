@@ -151,6 +151,28 @@ class Store:
                 model TEXT,
                 created TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memory_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                before TEXT,
+                after TEXT,
+                chat_id TEXT,
+                detail TEXT,
+                undone INTEGER NOT NULL DEFAULT 0,
+                created TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_diary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                entry TEXT NOT NULL,
+                created TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_reviews (
+                chat_id TEXT PRIMARY KEY,
+                turns INTEGER NOT NULL,
+                created TEXT NOT NULL
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
@@ -177,6 +199,21 @@ class Store:
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
         if "plan" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+        # Jobs share the reminders table: a job is a row with kind 'job', a repeat
+        # schedule and either a shell command or a prompt. One table, one loop.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
+        for name, definition in (
+            ("kind", "TEXT NOT NULL DEFAULT 'reminder'"),
+            ("schedule", "TEXT"),
+            ("command", "TEXT"),
+            ("prompt", "TEXT"),
+            ("chat_id", "TEXT"),
+            ("idle_only", "INTEGER NOT NULL DEFAULT 0"),
+            ("runs", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_run", "TEXT"),
+        ):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -590,6 +627,27 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    # -- memory maintenance ------------------------------------------------
+    def record_memory_revision(self, slug: str, kind: str, *, before: str | None = None,
+                               after: str | None = None, chat_id: str | None = None,
+                               detail: dict | None = None) -> int:
+        """Store a memory preimage, so every write behind a background pass is reversible.
+
+        ``before`` is the note's whole previous file text (``None`` when the
+        note did not exist) and ``after`` what replaced it; ``detail`` carries
+        whatever the caller needs to describe the change to a person.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (slug, kind, before, after, chat_id,
+                 json.dumps(detail, ensure_ascii=False) if detail is not None else None,
+                 _utc_now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
     def queued_messages(self, chat_id: str) -> list[dict]:
         """The chat's queued messages, oldest first."""
         with self._lock:
@@ -634,6 +692,59 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    def _revision_row(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "slug": row["slug"],
+            "kind": row["kind"],
+            "before": row["before"],
+            "after": row["after"],
+            "chat_id": row["chat_id"],
+            "detail": json.loads(row["detail"]) if row["detail"] else None,
+            "undone": bool(row["undone"]),
+            "created": row["created"],
+        }
+
+    def get_memory_revision(self, revision_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memory_revisions WHERE id = ?", (revision_id,)
+            ).fetchone()
+        return self._revision_row(row) if row is not None else None
+
+    def memory_revisions(self, *, limit: int = 50, kind: str | None = None,
+                         pending_only: bool = False) -> list[dict]:
+        """Recent memory revisions, newest first; ``pending_only`` drops undone ones."""
+        sql = "SELECT * FROM memory_revisions"
+        conditions, params = [], []
+        if kind is not None:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if pending_only:
+            conditions.append("undone = 0")
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, limit))
+        with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [self._revision_row(row) for row in rows]
+
+    def mark_memory_revision_undone(self, revision_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE memory_revisions SET undone = 1 WHERE id = ?", (revision_id,))
+            self._conn.commit()
+
+    def add_memory_diary(self, kind: str, entry: str) -> int:
+        """One human-readable line of what a background pass did, and why."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO memory_diary (kind, entry, created) VALUES (?, ?, ?)",
+                (kind, entry, _utc_now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
     def _checkpoint(self, row: sqlite3.Row) -> dict:
         return {"id": row["id"], "chat_id": row["chat_id"], "created": row["created"],
                 "label": row["label"], "root": row["root"], "files": json.loads(row["files"])}
@@ -666,6 +777,41 @@ class Store:
             self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
             self._conn.commit()
 
+    def memory_diary(self, *, limit: int = 50, kind: str | None = None) -> list[dict]:
+        """Recent diary entries, oldest first, so they read as a log."""
+        sql = "SELECT id, kind, entry, created FROM memory_diary"
+        params: list = []
+        if kind is not None:
+            sql += " WHERE kind = ?"
+            params.append(kind)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, limit))
+        with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [{"id": r["id"], "kind": r["kind"], "entry": r["entry"], "created": r["created"]}
+                for r in reversed(rows)]
+
+    def last_memory_diary(self, kind: str) -> dict | None:
+        entries = self.memory_diary(limit=1, kind=kind)
+        return entries[-1] if entries else None
+
+    def memory_review_turns(self, chat_id: str) -> int:
+        """How many user turns this chat had when it was last reviewed (0 if never)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT turns FROM memory_reviews WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        return int(row["turns"]) if row is not None else 0
+
+    def set_memory_review_turns(self, chat_id: str, turns: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO memory_reviews (chat_id, turns, created) VALUES (?, ?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET turns = excluded.turns, created = excluded.created",
+                (chat_id, turns, _utc_now_iso()),
+            )
+            self._conn.commit()
+
     # -- reminders --------------------------------------------------------
     def add_reminder(self, when: datetime, text: str) -> int:
         if when.tzinfo is None:
@@ -679,9 +825,9 @@ class Store:
             return cur.lastrowid
 
     def _reminder_rows(self, include_done: bool) -> list[dict]:
-        sql = "SELECT id, reminder_at, text, done FROM reminders"
+        sql = "SELECT id, reminder_at, text, done FROM reminders WHERE kind = 'reminder'"
         if not include_done:
-            sql += " WHERE done = 0"
+            sql += " AND done = 0"
         with self._lock:
             rows = self._conn.execute(sql).fetchall()
         out = [
@@ -708,19 +854,22 @@ class Store:
 
     def mark_reminder_done(self, rid: int) -> None:
         with self._lock:
-            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (rid,))
+            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ? AND kind = 'reminder'", (rid,))
             self._conn.commit()
 
     def delete_reminder(self, rid: int) -> bool:
         with self._lock:
-            cur = self._conn.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND kind = 'reminder'", (rid,))
             self._conn.commit()
             return cur.rowcount > 0
 
     def clear_reminders(self) -> None:
-        """Delete every reminder (used by a replacing import)."""
+        """Delete every one-shot reminder (used by a replacing import).
+
+        Scheduled jobs are not part of a backup, so a restore never wipes them.
+        """
         with self._lock:
-            self._conn.execute("DELETE FROM reminders")
+            self._conn.execute("DELETE FROM reminders WHERE kind = 'reminder'")
             self._conn.commit()
 
     def import_reminder(self, when: str, text: str, done: bool = False) -> int:
@@ -735,3 +884,79 @@ class Store:
             )
             self._conn.commit()
             return cur.lastrowid
+
+    # -- jobs (recurring, in the same table as reminders) ------------------
+    def add_job(self, text: str, schedule: str, next_at: datetime, *,
+                command: str | None = None, prompt: str | None = None,
+                idle_only: bool = False) -> int:
+        """Schedule one recurring job: a shell command, or a prompt for one turn."""
+        if next_at.tzinfo is None:
+            raise ValueError("job time must be timezone-aware")
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO reminders (reminder_at, text, done, kind, schedule, command, prompt, idle_only)"
+                " VALUES (?, ?, 0, 'job', ?, ?, ?, ?)",
+                (next_at.isoformat(), text, schedule, command, prompt, 1 if idle_only else 0),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def _job_rows(self, include_done: bool = False) -> list[dict]:
+        sql = (
+            "SELECT id, reminder_at, text, done, schedule, command, prompt, chat_id, idle_only, runs, last_run"
+            " FROM reminders WHERE kind = 'job'"
+        )
+        if not include_done:
+            sql += " AND done = 0"
+        with self._lock:
+            rows = self._conn.execute(sql).fetchall()
+        out = [
+            {
+                "id": r["id"],
+                "next_run": r["reminder_at"],
+                "text": r["text"],
+                "done": bool(r["done"]),
+                "schedule": r["schedule"] or "",
+                "kind": "script" if r["command"] else "prompt",
+                "command": r["command"],
+                "prompt": r["prompt"],
+                "chat_id": r["chat_id"],
+                "idle_only": bool(r["idle_only"]),
+                "runs": r["runs"],
+                "last_run": r["last_run"],
+            }
+            for r in rows
+        ]
+        out.sort(key=lambda r: datetime.fromisoformat(r["next_run"]))
+        return out
+
+    def list_jobs(self, include_done: bool = False) -> list[dict]:
+        return self._job_rows(include_done)
+
+    def due_jobs(self, now: datetime) -> list[dict]:
+        return [j for j in self._job_rows(False) if datetime.fromisoformat(j["next_run"]) <= now]
+
+    def mark_job_run(self, jid: int, next_at: datetime | None) -> None:
+        """Record one run: schedule the next one, or finish the job with ``None``."""
+        if next_at is None:
+            sql, params = "UPDATE reminders SET runs = runs + 1, last_run = ?, done = 1 WHERE id = ?", (_utc_now_iso(), jid)
+        else:
+            if next_at.tzinfo is None:
+                raise ValueError("job time must be timezone-aware")
+            sql, params = ("UPDATE reminders SET runs = runs + 1, last_run = ?, reminder_at = ? WHERE id = ?",
+                           (_utc_now_iso(), next_at.isoformat(), jid))
+        with self._lock:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+
+    def set_job_chat(self, jid: int, chat_id: str) -> None:
+        """Remember the chat a prompt job runs in, so it keeps one thread."""
+        with self._lock:
+            self._conn.execute("UPDATE reminders SET chat_id = ? WHERE id = ? AND kind = 'job'", (chat_id, jid))
+            self._conn.commit()
+
+    def delete_job(self, jid: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND kind = 'job'", (jid,))
+            self._conn.commit()
+            return cur.rowcount > 0

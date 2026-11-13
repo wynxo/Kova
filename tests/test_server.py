@@ -131,6 +131,36 @@ def test_memory_location_keeps_the_configured_budget(server, tmp_path):
     assert client.app.state.memory.budget == cfg.memory_budget
 
 
+def test_memory_settings_roundtrip_and_guards(server):
+    client, headers, cfg, fake = server
+    settings = client.get("/memory/settings", headers=headers).json()
+    assert settings["review"] is False and settings["review_every"] == 12
+    updated = client.patch("/memory/settings",
+                           json={"review": True, "review_every": 4}, headers=headers).json()
+    assert (updated["review"], updated["review_every"]) == (True, 4)
+    assert cfg.memory_review is True and cfg.memory_review_every == 4
+    assert client.app.state.agent.memory_review is not None
+    for bad in ({"review_every": 0}, {"consolidate_hour": 24},
+                {"consolidate_min_confidence": 2}, {"consolidate_max_loss": -1}):
+        assert client.patch("/memory/settings", json=bad, headers=headers).status_code == 422
+    # Switching the passes back off drops the agent hook again.
+    assert client.patch("/memory/settings",
+                        json={"review": False}, headers=headers).json()["review"] is False
+    assert client.app.state.agent.memory_review is None
+
+
+def test_memory_revisions_lists_recorded_changes(server):
+    client, headers, cfg, fake = server
+    assert client.get("/memory/revisions", headers=headers).json() == []
+    client.post("/memory", json={"title": "Dog", "body": "Rex"}, headers=headers)
+    from kova.review import record_revision
+    record_revision(client.app.state.store, client.app.state.memory,
+                    "dog", "consolidate", before="old text")
+    entries = client.get("/memory/revisions", headers=headers).json()
+    assert [(entry["slug"], entry["kind"], entry["undone"]) for entry in entries] == [
+        ("dog", "consolidate", False)]
+
+
 def test_memory_crud(server):
     client, headers, cfg, fake = server
     response = client.post("/memory", json={"title": "Dog", "body": "Rex", "tags": ["pet"]},

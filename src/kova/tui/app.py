@@ -83,6 +83,7 @@ COMMANDS = {
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
     "model": ("/model [name]", "List models; /model <name> switches"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
+    "memory": ("/memory [list|show|forget]", "Browse what Kova remembers; /memory show <slug>, /memory forget <slug>"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
     "compact": ("/compact", "Summarize older conversation context"),
     "steer": ("/steer <text>", "Send a message into the reply that is running now"),
@@ -93,6 +94,11 @@ COMMANDS = {
     "exit": ("/exit", "Leave Kova (also /quit)"),
     "quit": ("/quit", "Leave Kova"),
 }
+
+# The capability each command needs (see kova.providers.CAPABILITIES). The
+# palette, /help and dispatch offer them only when the contract declares it,
+# so a provider or mode that cannot do the thing is never offered it.
+_COMMAND_CAPABILITIES = {"think": "reasoning", "permissions": "approvals", "cd": "tools"}
 
 
 class Job:
@@ -223,6 +229,9 @@ class ChatApp:
         self.title = ""
         self.cwd = os.getcwd()
         self.model, self.model_ok = "", True
+        # The capability contract the server declares, per mode. ``None`` means
+        # it has not told us yet (an older server), and then nothing is hidden.
+        self.offered: dict[str, set[str]] | None = None
         self.notes: int | None = None
         self.plan: list[dict] = []
         self.conversation_state = "done"
@@ -371,6 +380,25 @@ class ChatApp:
         self.model, self.model_ok = str(health.get("model", "")), bool(health.get("model_ok", True))
         self._sync_context_window()
 
+    def _refresh_capabilities(self) -> None:
+        """Adopt the server's capability contract for the active model.
+
+        A server that does not declare one (an older Kova) leaves every
+        capability in place, so nothing it can do is hidden.
+        """
+        try:
+            contract = self.client.capabilities()
+        except Exception:
+            return
+        self.offered = {mode: set(caps or ())
+                        for mode, caps in (contract.get("offered") or {}).items()}
+
+    def offers(self, capability: str) -> bool:
+        """Whether the contract lets this chat use ``capability`` right now."""
+        if self.offered is None:
+            return True
+        return capability in self.offered.get(self.mode, set())
+
     def _load_lists_later(self) -> None:
         """Models and chats for suggestions, fetched off the UI thread."""
         if self._loading:
@@ -384,8 +412,8 @@ class ChatApp:
                 self._sync_context_window()
             except Exception:  # suggestions are a nicety; a hiccup must not break typing
                 pass
-            finally:
-                self._loading = False
+            self._refresh_capabilities()
+            self._loading = False
         threading.Thread(target=load, daemon=True, name="kova-chat-lists").start()
 
     def _refresh_title_later(self) -> None:
@@ -497,6 +525,9 @@ class ChatApp:
         elif name == "ctrl-p":
             self._open_palette()
         elif name == "ctrl-t":
+            if not self.offers("reasoning"):
+                self._flash(f"{self.model or 'This model'} does not stream reasoning", 3)
+                return
             self.renderer.verbose = not self.renderer.verbose
             self.renderer.no_think = False
         elif name in ("pageup", "pagedown"):
@@ -582,7 +613,7 @@ class ChatApp:
             self.menu = None
             return
         self.menu_dismissed = None
-        descriptions = {name: description for name, (_usage, description) in COMMANDS.items()}
+        descriptions = {name: description for name, (_usage, description) in self._commands().items()}
         found = suggest(text, self.editor.cursor, descriptions, self.argument_options, self.files)
         labels = [item.label for item in found.items] if found else []
         previous = [item.label for item in self.menu.items] if self.menu else []
@@ -624,7 +655,7 @@ class ChatApp:
         """Everything the Ctrl+P palette can find, grouped by kind."""
         items: list[tuple[str, str, object]] = []
         groups: dict = {}
-        for name, (usage, description) in COMMANDS.items():
+        for name, (usage, description) in self._commands().items():
             if name == "quit":  # /quit is offered as /exit
                 continue
             value = ("command", name)
@@ -989,6 +1020,21 @@ class ChatApp:
                    + (self.p.dim(f" · {fit(message, 60)}") if message else ""))
 
     # ================================================================ commands
+    def _commands(self) -> dict:
+        """The commands this chat may use: the contract hides what it cannot offer."""
+        return {name: entry for name, entry in COMMANDS.items()
+                if name not in _COMMAND_CAPABILITIES or self.offers(_COMMAND_CAPABILITIES[name])}
+
+    def _unavailable(self, name: str) -> str:
+        """Why the contract withholds one command, in one line."""
+        capability = _COMMAND_CAPABILITIES[name]
+        if capability == "reasoning":
+            return (f"/{name} needs a provider that streams reasoning; "
+                    f"{self.model or 'this model'} does not.")
+        if capability == "approvals":
+            return f"/{name} needs a mode that asks before acting; this chat is in {self.mode} mode."
+        return f"/{name} needs a mode that can use tools; this chat is in {self.mode} mode."
+
     def command(self, line: str) -> None:
         name, _, rest = line[1:].partition(" ")
         name, rest = name.lower(), rest.strip()
@@ -997,6 +1043,9 @@ class ChatApp:
             close = rank(sorted(COMMANDS), name)
             hint = f" Did you mean /{close[0]}?" if close and name else " Type /help to see them."
             self.renderer.error(f"Unknown command /{name}.{hint}")
+            return
+        if name not in self._commands():
+            self.renderer.error(self._unavailable(name))
             return
         handler(rest)
 
@@ -1173,23 +1222,29 @@ class ChatApp:
 
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer
+        commands = self._commands()
         width = max(len(usage) for usage, _ in COMMANDS.values()) + 3
         room = max(10, r.width - width - 4)
         r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Commands"))
-        for name, (usage, text) in COMMANDS.items():
+        for name, (usage, text) in commands.items():
             if name == "quit":
                 continue
             r.line("    " + p.paint(ACCENT_SOFT, usage.ljust(width)) + p.dim(fit(text, room)))
         r.line()
         r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Keys"))
-        for key, text in (("esc", "stop the reply · close a menu · twice to clear the input"),
-                          ("ctrl+p", "command palette: commands, models and chats"),
-                          ("ctrl+c", "stop · clear the input · twice to exit"),
-                          ("ctrl+t", "toggle reasoning"), ("ctrl+o", "toggle tool details"),
-                          ("ctrl+d", "exit"), ("shift+tab", "cycle permission modes"),
-                          ("\\⏎  shift+⏎  ctrl+j", "new line"), ("tab", "complete"),
-                          ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
-                          ("! # @ /", "shell command · remember · attach a file · command")):
+        keys = [("esc", "stop the reply · close a menu · twice to clear the input"),
+                ("ctrl+p", "command palette: commands, models and chats"),
+                ("ctrl+c", "stop · clear the input · twice to exit"),
+                ("ctrl+t", "toggle reasoning"), ("ctrl+o", "toggle tool details"),
+                ("ctrl+d", "exit"), ("shift+tab", "cycle permission modes"),
+                ("\\⏎  shift+⏎  ctrl+j", "new line"), ("tab", "complete"),
+                ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
+                ("! # @ /", "shell command · remember · attach a file · command")]
+        withheld = {key for key, capability in (("ctrl+t", "reasoning"), ("shift+tab", "approvals"))
+                    if not self.offers(capability)}
+        for key, text in keys:
+            if key in withheld:
+                continue
             key = self.keys.format_help(key)
             r.line("    " + p.paint(ACCENT_SOFT, key.ljust(width)) + p.dim(fit(text, room)))
         r.line()
@@ -1266,6 +1321,7 @@ class ChatApp:
         self.model = rest
         self._refresh_health()
         self._sync_context_window()
+        self._refresh_capabilities()  # another model means another provider contract
         self._done(f"Now using {self.p.bold(rest)}.")
 
     def _cmd_permissions(self, rest: str) -> None:
@@ -1306,6 +1362,9 @@ class ChatApp:
         return True
 
     def _cycle_permission(self) -> None:
+        if not self.offers("approvals"):
+            self._flash(f"No approvals in {self.mode} mode", 3)
+            return
         current = self.permission if self.permission in PERMISSION_CYCLE else PERMISSION_CYCLE[-1]
         level = PERMISSION_CYCLE[(PERMISSION_CYCLE.index(current) + 1) % len(PERMISSION_CYCLE)]
         try:
@@ -1389,6 +1448,68 @@ class ChatApp:
         self.refresh_chat()
         self._done(f"Resumed {self.p.bold(chat.get('title') or 'Untitled')}")
         self.replay()
+
+    @staticmethod
+    def _memory_origin(note: dict) -> str:
+        """Where a note came from, in the user's words."""
+        return "you said" if (note.get("origin") or "user") == "user" else "Kova noted"
+
+    def _cmd_memory(self, rest: str) -> None:
+        """Browse what Kova remembers: list, show one note, or forget one."""
+        action, _, argument = rest.partition(" ")
+        argument = argument.strip()
+        if action in ("", "list"):
+            notes = self.client.memory_list(argument or None)
+            if not notes:
+                self._done("Nothing here yet. Ask Kova to remember something, "
+                           "or press # to save a note.", dim=True)
+                return
+            r, p = self.renderer, self.p
+            for note in notes[:30]:
+                title = note.get("title") or note.get("slug") or ""
+                tags = ", ".join(note.get("tags") or [])
+                detail = self._memory_origin(note)
+                if note.get("source"):
+                    detail += f" · {note['source']}"
+                if tags:
+                    detail += f" · {tags}"
+                r.line("  " + p.bold(fit(title, 48)) + " " + p.dim(fit(detail, 48)))
+                r.line("    " + p.dim(fit(note.get('body') or "", 76)))
+            if len(notes) > 30:
+                r.line(self.p.dim(f"  … {len(notes) - 30} more; narrow it with /memory list <words>"))
+            r.line()
+            return
+        if action == "show":
+            if not argument:
+                self.renderer.error("Use /memory show <slug>. Type /memory to see the slugs.")
+                return
+            notes = self.client.memory_list()
+            note = next((n for n in notes if n.get("slug") == argument), None)
+            if note is None:
+                self.renderer.error(f'No note "{argument}". Type /memory to see the slugs.')
+                return
+            r, p = self.renderer, self.p
+            r.line("  " + p.bold(note.get("title") or "") + " " + p.dim(self._memory_origin(note)))
+            for line in (note.get("body") or "").splitlines() or ["(empty)"]:
+                r.line("  " + line)
+            r.line()
+            return
+        if action == "forget":
+            if not argument:
+                self.renderer.error("Use /memory forget <slug>. Type /memory to see the slugs.")
+                return
+            try:
+                removed = self.client.memory_delete(argument)
+            except KovaError as exc:
+                if exc.status != 404:
+                    raise
+                removed = False
+            if not removed:
+                self.renderer.error(f'No note "{argument}". Type /memory to see the slugs.')
+                return
+            self._done(f"Forgot {self.p.bold(argument)}. (`kova memory undo` reverses a review's change.)")
+            return
+        self.renderer.error("Use /memory, /memory list <words>, /memory show <slug> or /memory forget <slug>.")
 
     def replay(self) -> None:
         """The chat's recent messages, so a resumed conversation reads as it was."""
@@ -1511,15 +1632,16 @@ class ChatApp:
                                                               + fit(_home_short(self.cwd), 30))
         if text.startswith("#"):
             return p.paint(MEMORY, "# save a memory note")
+        thinking = " · ctrl+t thinking" if self.offers("reasoning") else ""
         if self.job is not None:
-            return p.faint(f"⏎ queue · /steer joins · {key('cancel')} stop · {key('thinking')} thinking")
-        if self.permission in PERMISSIONS and self.permission != "manual":
+            return p.faint(f"⏎ queue · /steer joins · {key('cancel')} stop" + thinking + f" · {key('tools')} tools")
+        if self.permission in PERMISSIONS and self.permission != "manual" and self.offers("approvals"):
             return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
                             f"⏵⏵ {self.permission} permissions")
                     + p.faint(f" · {key('permissions')} to cycle"))
         if text:
             return p.faint(f"{key('submit')} send · {key('newline')} new line · {key('palette')} palette")
-        return p.faint(f"{key('palette')} palette · {key('thinking')} thinking · {key('shortcuts')} help")
+        return p.faint(f"{key('palette')} palette" + thinking + f" · {key('shortcuts')} help")
 
     def _turn_stats(self) -> str:
         """Tokens, context fill and turn time for the right of the status line.
@@ -1550,7 +1672,9 @@ class ChatApp:
             done = sum(item.get("status") == "done" for item in self.plan)
             plan = f"{done}/{len(self.plan)}"
         return status_bar(self.p, width, mode=self.mode, model=self.model or "?",
-                          title=self.title, permission=self.permission, web=self.web, plan=plan,
+                          title=self.title,
+                          permission=self.permission if self.offers("approvals") else None,
+                          web=self.web, plan=plan,
                           stats=self._turn_stats(), offline=not self.model_ok,
                           cwd=_home_short(self.cwd), state=self.conversation_state)
 

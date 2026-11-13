@@ -1,7 +1,27 @@
-"""Native wire formats normalized to the same ModelEvent stream as local models."""
+"""Native wire formats normalized to the same ModelEvent stream as local models.
+
+Each adapter declares the capabilities its wire format carries, so provider
+kinds (see :mod:`kova.providers`) and UI layers can ask instead of guessing.
+"""
 from __future__ import annotations
 
 import json
+
+# ``tools``: the wire format carries tool schemas and tool calls.
+# ``reasoning``: it carries a dedicated reasoning stream.
+# The OpenAI chat-completions format has no reasoning field: reasoning reaches
+# Kova only when a provider sends its own ``reasoning_content``/``reasoning``
+# extension, which the provider kind declares.
+ADAPTER_CAPABILITIES = {
+    'openai': frozenset({'tools'}),
+    'anthropic': frozenset({'tools', 'reasoning'}),
+    'responses': frozenset({'tools', 'reasoning'}),
+}
+
+
+def adapter_capabilities(adapter: str) -> frozenset[str]:
+    """What one adapter's wire format can carry; unknown adapters use the OpenAI format."""
+    return ADAPTER_CAPABILITIES.get(adapter, ADAPTER_CAPABILITIES['openai'])
 
 
 def anthropic_request(model, messages, tools):

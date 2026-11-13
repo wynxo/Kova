@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Light terminal theme: set `theme = "light"` under `[tui]`; colours adapt to a light background before terminal colour-depth downscaling.
 - Progressive onboarding tips in the chat: one short tip per start instead of a one-shot key list.
 - Onboarding names your assistant and picks a tone (warm, concise, professional, playful); the identity is used in the system prompt, the chat UI, the web UI and the desktop window and tray.
+- Providers declare their capabilities once — tool calling, reasoning stream, sign-in style, address and header fields — and the CLI, terminal chat and web app offer only what is declared; the server refuses a forced unsupported action.
 - `kova-web` command opens Kova's web UI in your browser.
 - Terminal shortcut `Ctrl+T` toggles full model reasoning, streamed live.
 - Terminal shortcut `Ctrl+O` expands and collapses tool calls and their output.

@@ -52,6 +52,16 @@ class Config:
     compact_threshold: float = 0.75
     memory_write_subdir: str | None = None
     memory_budget: int = DEFAULT_MEMORY_BUDGET
+    #: How much of the always-loaded index note may reach the prompt.
+    memory_index_lines: int = 200
+    #: Post-turn review (#37): opt-in, and how many user turns between runs.
+    memory_review: bool = False
+    memory_review_every: int = 12
+    #: Nightly consolidation (#38): opt-in, when it may start, and its gates.
+    memory_consolidate: bool = False
+    memory_consolidate_hour: int = 3
+    memory_consolidate_min_confidence: float = 0.8
+    memory_consolidate_max_loss: float = 0.25
     providers: list[ProviderEntry] = field(default_factory=list)
     oauth_host_id: str = field(default_factory=lambda: 'urn:uuid:' + str(uuid.uuid4()))
     tui_theme: str = "dark"
@@ -121,6 +131,13 @@ def load_config(home: Path | None = None) -> Config:
                  memory_path=Path(mem.get('path', str(home / 'memory'))).expanduser(),
                  memory_write_subdir=mem.get('write_subdir') or None,
                  memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),
+                 memory_index_lines=int(mem.get('index_lines', 200)),
+                 memory_review=bool(mem.get('review', False)),
+                 memory_review_every=int(mem.get('review_every', 12)),
+                 memory_consolidate=bool(mem.get('consolidate', False)),
+                 memory_consolidate_hour=int(mem.get('consolidate_hour', 3)),
+                 memory_consolidate_min_confidence=float(mem.get('consolidate_min_confidence', 0.8)),
+                 memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),
                  files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
                  port=int(data.get('port', 7700)),
                  compact_threshold=float(data.get('compact_threshold', 0.75)),
@@ -157,7 +174,13 @@ def save_config(cfg: Config) -> None:
         if m._provider is not None and m.api_key != m._bound_api_key:
             m._provider.api_key = m.api_key
     cfg.bind_providers()
-    memory = {'path': str(cfg.memory_path), 'budget': cfg.memory_budget}
+    memory = {'path': str(cfg.memory_path), 'budget': cfg.memory_budget,
+              'index_lines': cfg.memory_index_lines,
+              'review': cfg.memory_review, 'review_every': cfg.memory_review_every,
+              'consolidate': cfg.memory_consolidate,
+              'consolidate_hour': cfg.memory_consolidate_hour,
+              'consolidate_min_confidence': cfg.memory_consolidate_min_confidence,
+              'consolidate_max_loss': cfg.memory_consolidate_max_loss}
     if cfg.memory_write_subdir:
         memory['write_subdir'] = cfg.memory_write_subdir
     providers = []
