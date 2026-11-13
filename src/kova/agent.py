@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
+import tempfile
 import unicodedata
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
@@ -147,6 +149,27 @@ def trim_history(messages: list[dict], context_tokens: int, reserved_chars: int)
     return messages[start:]
 
 
+def call_fingerprint(name: str, arguments: str) -> str:
+    """A stable fingerprint of a tool call: its name and arguments.
+
+    Reuses ``core.fingerprint`` (which hashes a file) by serializing the call to a
+    throwaway file, so two calls with the same name and arguments hash to the same
+    value. The agent loop uses this to spot a model that keeps reissuing one call.
+    """
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        parsed = arguments
+    payload = f"{name}\x00{json.dumps(parsed, sort_keys=True, default=str)}".encode()
+    with tempfile.NamedTemporaryFile("wb", delete=False) as handle:
+        handle.write(payload)
+        path = Path(handle.name)
+    try:
+        return core.fingerprint(path) or hashlib.sha256(payload).hexdigest()
+    finally:
+        path.unlink(missing_ok=True)
+
+
 class Agent:
     """Coordinate model streaming, tools, and persistent chat history."""
 
@@ -212,6 +235,10 @@ class Agent:
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(tools) or None
         try:
+            repeat_count = 0
+            repeat_fp = None
+            repeat_error = None
+            awaiting_replacement = False
             attempted_compaction = False
             for step in range(11):
                 history = self.store.get_context(chat_id)
@@ -237,6 +264,14 @@ class Agent:
                         yield {'type': 'tool_call_delta', **event.tool_call}
                     elif event.type == 'tool_call' and event.tool_call is not None and step < 10:
                         calls.append(event.tool_call)
+                if awaiting_replacement:
+                    awaiting_replacement = False
+                    for call in calls:
+                        if call_fingerprint(call['name'], call['arguments']) == repeat_fp:
+                            yield {'type': 'error',
+                                   'message': f"Tool '{call['name']}' kept failing after several attempts. "
+                                              "Try a different approach or answer the user."}
+                            return
                 answer = ''.join(content)
                 if not calls:
                     message_id = self.store.add_message(chat_id, 'assistant', answer)
@@ -316,7 +351,29 @@ class Agent:
                     full_output = result
                     if name != 'run_command' and len(result) > MAX_TOOL_RESULT_CHARS:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
-                    self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
-                    yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                    triggered = False
+                    if not ok:
+                        fp = call_fingerprint(name, call['arguments'])
+                        if fp == repeat_fp and result == repeat_error and repeat_count >= 1:
+                            repeat_count += 1
+                        else:
+                            repeat_count, repeat_fp, repeat_error = 1, fp, result
+                        if repeat_count >= 3:
+                            awaiting_replacement = True
+                            triggered = True
+                    else:
+                        repeat_count = 0
+                        repeat_fp = None
+                        repeat_error = None
+                    if triggered:
+                        warning = ("Error: tool "
+                                   f"'{name}' failed repeatedly and kept returning the same error. "
+                                   "This call keeps failing — try a different approach or answer the user.")
+                        self.store.add_message(chat_id, 'tool', warning, tool_call_id=call['id'])
+                        yield {'type': 'tool_result', 'name': name, 'ok': False,
+                               'summary': warning[:200], 'output': warning}
+                    else:
+                        self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                        yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
         except ModelError as exc:
             yield {'type': 'error', 'message': str(exc)}

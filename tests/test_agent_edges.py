@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from kova.agent import (
+    call_fingerprint,
     MAX_TOOL_RESULT_CHARS,
     Agent,
     build_system_prompt,
@@ -411,7 +412,7 @@ async def test_run_turn_executes_a_batch_of_tool_calls_in_order(setup):
 
 
 async def test_run_turn_stops_after_ten_tool_rounds(setup):
-    scripts = [tool("missing", {}) for _ in range(12)] + [text("never used")]
+    scripts = [tool("missing", {"i": i}, f"call{i}") for i in range(12)] + [text("never used")]
     events, fake = await run_turn(setup, scripts)
     assert len(fake.requests) == 11
     assert "tools" not in fake.requests[-1]
@@ -529,3 +530,136 @@ async def test_run_turn_never_sends_a_half_answered_tool_pair(setup):
     assert "Earlier context" in str(sent)
     assert not any(m["role"] == "user" and m["content"].startswith("old") for m in sent)
     assert_tool_pairs_wired(sent)
+
+
+# -- call_fingerprint -----------------------------------------------------
+
+def test_call_fingerprint_matches_name_and_arguments():
+    assert call_fingerprint("web_search", '{"query": "x"}') == call_fingerprint(
+        "web_search", '{"query": "x"}')
+
+
+def test_call_fingerprint_ignores_argument_order_and_whitespace():
+    a = call_fingerprint("web_search", '{"query": "x", "n": 1}')
+    b = call_fingerprint("web_search", '{"n": 1, "query": "x"}')
+    assert a == b
+
+
+def test_call_fingerprint_distinguishes_name_and_arguments():
+    assert call_fingerprint("web_search", '{"query": "x"}') != call_fingerprint(
+        "web_fetch", '{"query": "x"}')
+    assert call_fingerprint("web_search", '{"query": "x"}') != call_fingerprint(
+        "web_search", '{"query": "y"}')
+
+
+def test_call_fingerprint_handles_invalid_json_arguments():
+    assert call_fingerprint("web_search", '{not json') == call_fingerprint(
+        "web_search", '{not json')
+    assert call_fingerprint("web_search", '{not json') != call_fingerprint(
+        "web_search", 'also not json')
+
+
+
+# -- repeated failing tool call guard -------------------------------------
+
+
+async def test_run_turn_stops_after_three_identical_failures(setup):
+    cfg, store, memory, tools, chat_id = setup
+    setup[3]["boom"] = Tool("boom", "test", {"type": "object"},
+                            lambda args: (_ for _ in ()).throw(RuntimeError("always")))
+    scripts = [tool("boom", {}) for _ in range(3)] + [text("try something else")]
+    events, fake = await run_turn(setup, scripts)
+    results = tool_results(events)
+    # First two failures are plain tool results.
+    assert results[0]["ok"] is False and results[1]["ok"] is False
+    # The third identical failure is replaced by a warning, and the turn ends.
+    assert results[2]["ok"] is False
+    assert "repeatedly" in results[2]["summary"].lower()
+    assert events[-1]["type"] == "done"
+    # The model took the hint and answered, so four requests were made.
+    assert len(fake.requests) == 4
+
+
+async def test_run_turn_resets_after_a_successful_call(setup):
+    cfg, store, memory, tools, chat_id = setup
+    setup[3]["boom"] = Tool("boom", "test", {"type": "object"},
+                            lambda args: (_ for _ in ()).throw(RuntimeError("always")))
+    setup[3]["ok"] = Tool("ok", "test", {"type": "object"}, lambda args: "fine")
+    scripts = [
+        tool("boom", {}),
+        tool("ok", {}),
+        tool("boom", {}),
+        tool("boom", {}),
+        text("done"),
+    ]
+    events, fake = await run_turn(setup, scripts)
+    results = tool_results(events)
+    assert [(r["name"], r["ok"]) for r in results] == [
+        ("boom", False), ("ok", True), ("boom", False), ("boom", False)]
+    # The boom call only failed twice in a row (the ok call broke the streak),
+    # so no guard fired and the turn ends normally.
+    assert events[-1]["type"] == "done"
+    assert not any(e["type"] == "error" for e in events)
+
+
+async def test_run_turn_recovers_when_the_model_changes_approach(setup):
+    cfg, store, memory, tools, chat_id = setup
+    setup[3]["boom"] = Tool("boom", "test", {"type": "object"},
+                            lambda args: (_ for _ in ()).throw(RuntimeError("always")))
+    setup[3]["ok"] = Tool("ok", "test", {"type": "object"}, lambda args: "fine")
+    # Three identical boom calls, then the model switches to a different tool.
+    scripts = [
+        tool("boom", {}),
+        tool("boom", {}),
+        tool("boom", {}),
+        tool("ok", {}),
+        text("all good"),
+    ]
+    events, fake = await run_turn(setup, scripts)
+    results = tool_results(events)
+    assert results[2]["ok"] is False and "repeatedly" in results[2]["summary"].lower()
+    assert results[3]["name"] == "ok" and results[3]["ok"] is True
+    assert events[-1]["type"] == "done"
+
+
+async def test_run_turn_errors_when_the_model_repeats_after_the_warning(setup):
+    cfg, store, memory, tools, chat_id = setup
+    setup[3]["boom"] = Tool("boom", "test", {"type": "object"},
+                            lambda args: (_ for _ in ()).throw(RuntimeError("always")))
+    # Three identical boom calls (triggering the warning), then the model
+    # repeats the identical call again instead of trying anything new.
+    scripts = [
+        tool("boom", {}),
+        tool("boom", {}),
+        tool("boom", {}),
+        tool("boom", {}),
+        text("still stuck"),
+    ]
+    events, fake = await run_turn(setup, scripts)
+    results = tool_results(events)
+    assert results[2]["ok"] is False and "repeatedly" in results[2]["summary"].lower()
+    assert events[-1]["type"] == "error"
+    assert "kept failing" in events[-1]["message"]
+    # The first three identical boom calls produced three requests; the fourth
+    # boom call was rejected by the guard before it was sent, so the model
+    assert len(fake.requests) == 4
+
+
+async def test_run_turn_distinguishes_calls_by_arguments(setup):
+    cfg, store, memory, tools, chat_id = setup
+    setup[3]["boom"] = Tool("boom", "test", {"type": "object"},
+                            lambda args: (_ for _ in ()).throw(RuntimeError("always")))
+    # Same tool, but the arguments differ each round, so the streak never reaches
+    # three identical failures and the guard does not fire.
+    scripts = [
+        tool("boom", {"i": 0}),
+        tool("boom", {"i": 1}),
+        tool("boom", {"i": 2}),
+        tool("boom", {"i": 3}),
+        text("still going"),
+    ]
+    events, fake = await run_turn(setup, scripts)
+    results = tool_results(events)
+    assert all(r["ok"] is False for r in results)
+    assert not any(e["type"] == "error" for e in events)
+    assert events[-1]["type"] == "done"
