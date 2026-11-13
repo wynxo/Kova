@@ -731,6 +731,11 @@
       for (const row of rows) {
         const item = el('section', 'panel-item'), text = el('div'), remove = iconButton('trash-2', 'Delete');
         text.append(el('strong', '', row.title || row.text), el('p', '', kind === 'memory' ? row.body : new Date(row.when || row.reminder_at).toLocaleString()));
+        if (kind === 'memory') {
+          const from = row.origin === 'model' ? 'Kova noted' : 'you said';
+          const when = row.created || row.updated ? new Date(row.created || row.updated).toLocaleDateString() : '';
+          text.append(el('p', 'panel-meta', [from, row.source, when].filter(Boolean).join(' · ')));
+        }
         item.append(text, remove);
         remove.onclick = () => safe(async () => {
           remove.disabled = true;

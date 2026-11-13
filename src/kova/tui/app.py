@@ -76,6 +76,7 @@ COMMANDS = {
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
     "model": ("/model [name]", "List models; /model <name> switches"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
+    "memory": ("/memory [list|show|forget]", "Browse what Kova remembers; /memory show <slug>, /memory forget <slug>"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
     "compact": ("/compact", "Summarize older conversation context"),
     "clear": ("/clear", "Clear the screen, keeping this conversation"),
@@ -1174,6 +1175,68 @@ class ChatApp:
         self.refresh_chat()
         self._done(f"Resumed {self.p.bold(chat.get('title') or 'Untitled')}")
         self.replay()
+
+    @staticmethod
+    def _memory_origin(note: dict) -> str:
+        """Where a note came from, in the user's words."""
+        return "you said" if (note.get("origin") or "user") == "user" else "Kova noted"
+
+    def _cmd_memory(self, rest: str) -> None:
+        """Browse what Kova remembers: list, show one note, or forget one."""
+        action, _, argument = rest.partition(" ")
+        argument = argument.strip()
+        if action in ("", "list"):
+            notes = self.client.memory_list(argument or None)
+            if not notes:
+                self._done("Nothing here yet. Ask Kova to remember something, "
+                           "or press # to save a note.", dim=True)
+                return
+            r, p = self.renderer, self.p
+            for note in notes[:30]:
+                title = note.get("title") or note.get("slug") or ""
+                tags = ", ".join(note.get("tags") or [])
+                detail = self._memory_origin(note)
+                if note.get("source"):
+                    detail += f" · {note['source']}"
+                if tags:
+                    detail += f" · {tags}"
+                r.line("  " + p.bold(fit(title, 48)) + " " + p.dim(fit(detail, 48)))
+                r.line("    " + p.dim(fit(note.get('body') or "", 76)))
+            if len(notes) > 30:
+                r.line(self.p.dim(f"  … {len(notes) - 30} more; narrow it with /memory list <words>"))
+            r.line()
+            return
+        if action == "show":
+            if not argument:
+                self.renderer.error("Use /memory show <slug>. Type /memory to see the slugs.")
+                return
+            notes = self.client.memory_list()
+            note = next((n for n in notes if n.get("slug") == argument), None)
+            if note is None:
+                self.renderer.error(f'No note "{argument}". Type /memory to see the slugs.')
+                return
+            r, p = self.renderer, self.p
+            r.line("  " + p.bold(note.get("title") or "") + " " + p.dim(self._memory_origin(note)))
+            for line in (note.get("body") or "").splitlines() or ["(empty)"]:
+                r.line("  " + line)
+            r.line()
+            return
+        if action == "forget":
+            if not argument:
+                self.renderer.error("Use /memory forget <slug>. Type /memory to see the slugs.")
+                return
+            try:
+                removed = self.client.memory_delete(argument)
+            except KovaError as exc:
+                if exc.status != 404:
+                    raise
+                removed = False
+            if not removed:
+                self.renderer.error(f'No note "{argument}". Type /memory to see the slugs.')
+                return
+            self._done(f"Forgot {self.p.bold(argument)}. (`kova memory undo` reverses a review's change.)")
+            return
+        self.renderer.error("Use /memory, /memory list <words>, /memory show <slug> or /memory forget <slug>.")
 
     def replay(self) -> None:
         """The chat's recent messages, so a resumed conversation reads as it was."""

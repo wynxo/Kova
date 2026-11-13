@@ -1324,11 +1324,11 @@ def provider_login(name: str):
     if p is None:
         _fail(f'No provider named "{name}".')
     try:
-        if p.kind == 'codex':
+        if providers.supports(p, 'harness_login'):
             consent = onboarding._ask('Read the installed Codex login without changing it? [y/N]:').lower() == 'y'
             provider_auth.reuse_codex(p, consent=consent)
             get_client().provider_login(name, consent=consent)
-        elif p.kind == 'chatgpt':
+        elif providers.supports(p, 'browser_login'):
             console.print('Continue with ChatGPT in your browser…')
             provider_auth.login(p)
             get_client().provider_login(name, auth=p.auth)

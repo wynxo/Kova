@@ -702,6 +702,7 @@ dialog.panel[open] { display:flex; flex-direction:column; gap:12px; }
 .panel-item > div { flex:1; min-width:0; }
 .panel-item strong { display:block; font-size:13.5px; font-weight:550; overflow-wrap:anywhere; }
 .panel-item p { margin-top:2px; color:var(--text-2); font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+.panel-item .panel-meta { color:var(--text-3); font-size:12px; }
 .panel-item .icon-button { width:28px; height:28px; color:var(--text-3); }
 .panel-item .icon-button:hover:not(:disabled) { color:var(--danger); }
 .panel-empty { padding:18px 8px; color:var(--text-3); font-size:13px; text-align:center; }
