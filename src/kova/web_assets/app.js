@@ -23,7 +23,11 @@
     const button = el('button', cls); button.type = 'button'; button.title = label;
     button.setAttribute('aria-label', label); button.append(icon(name)); return button;
   }
+  function greeting(hour) {
+    return hour < 5 ? 'Up late?' : hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
+  }
   function empty(flag) {
+    if (flag) $('greeting').textContent = greeting(new Date().getHours());
     $('welcome').hidden = !flag; $('starters').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
@@ -36,7 +40,12 @@
     // Reminders stay until explicitly dismissed.
     if (title !== 'Reminder') setTimeout(() => node.remove(), 9000);
   }
-  function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
+  // A problem the banner names should be one click from its fix.
+  function banner(message = '', action = null) {
+    $('banner-text').textContent = message; $('banner').hidden = !message;
+    $('banner-action').hidden = !action; $('banner-action').textContent = action?.label || '';
+    $('banner-action').onclick = action ? () => safe(action.run) : null;
+  }
   // The capability contract the server declares: what each chat mode offers
   // once every gate has agreed. Nothing is offered that is not declared here.
   function offers(capability) {
@@ -56,7 +65,7 @@
     for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     $('permission').disabled ||= !offers('approvals');
     $('cwd').disabled ||= !offers('tools');
-    $('composer').dataset.mode = $('mode').value;
+    $('composer').dataset.mode = $('mode').value; document.body.dataset.mode = $('mode').value;
     const nothingToSend = !state.connected || !$('prompt').value.trim();
     // With steering the composer stays usable mid-reply; without it the reply
     // is stopped or waited for, so send is withheld while one runs.
@@ -187,16 +196,33 @@
     if (role === 'user' && content) messageActions(article, () => content, 'user');
     return body;
   }
+  function dayGroup(date, now = new Date()) {
+    if (Number.isNaN(date.getTime())) return 'Earlier';
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const days = Math.ceil((midnight - date.getTime()) / 86400000);
+    return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : days <= 7 ? 'Previous 7 days' : 'Earlier';
+  }
+  // Only a chat that is busy or waiting on you says so; a finished one is just a chat.
+  const STATE_LABELS = {working: 'Working', 'blocked-on-approval': 'Needs you'};
   function history(chats) {
     $('chat-list').replaceChildren(); $('chat-count').textContent = chats.length || '';
-    if (!chats.length) $('chat-list').append(el('div', 'history-empty', $('search').value ? 'No conversations found.' : 'A fresh space. Start something new.'));
+    const searching = Boolean($('search').value.trim());
+    if (!chats.length) $('chat-list').append(el('div', 'history-empty', searching ? 'No conversations match that search.' : 'No conversations yet. Say hello to start one.'));
+    let group = '';
     for (const chat of chats) {
-      const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
+      const date = new Date(chat.last_message || chat.created), day = dayGroup(date);
+      // Search results come back by relevance, so date headings would mislead there.
+      if (!searching && day !== group) { group = day; $('chat-list').append(el('div', 'history-group', day)); }
+      const attention = STATE_LABELS[chat.state] || '';
+      const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}${attention ? ' ' + chat.state : ''}`);
       const button = el('button', 'history-open');
       const title = chat.title || 'New conversation';
       button.append(el('span', 'history-title', title)); button.title = title;
-      const date = new Date(chat.last_message || chat.created);
-      button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
+      const when = Number.isNaN(date.getTime()) ? '' : day === 'Today' ? date.toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'}) : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+      const meta = el('span', 'history-date');
+      if (attention) meta.append(el('span', 'history-state', attention));
+      meta.append(document.createTextNode([chat.mode === 'chat' ? 'Chat' : chat.mode === 'work' ? 'Work' : '', when].filter(Boolean).join(' · ')));
+      button.append(meta);
       button.onclick = () => safe(() => openChat(chat.id));
       const actions = el('div', 'history-actions');
       for (const [symbol, name, fn] of [['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
@@ -355,7 +381,9 @@
       const ready = status.model_ok && configured;
       $('connection').className = `connection${ready ? ' online' : ''}`;
       $('connection').lastElementChild.textContent = ready ? 'Model connected' : configured ? 'Model offline' : 'Model not set up';
-      banner(ready ? '' : configured ? 'Your space is ready. Model offline: start your model server, or run kova setup, then try again.' : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
+      if (ready) banner();
+      else if (configured) banner('Your model is not answering. Start your model server, then try again.', {label: 'Try again', run: health});
+      else banner('Kova needs a model to talk to. Connect one to start chatting.', {label: 'Connect a model', run: () => $('add-provider').onclick()});
     } catch (_) {
       if (!state.connected) return;
       retry.hidden = false;
@@ -808,36 +836,63 @@
     try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(); }
     catch (error) { $('model').value = selectedModel; throw error; }
   });
-  function theme(value) {
+  function theme(value, remember = true) {
     document.documentElement.dataset.theme = value;
     const next = value === 'light' ? 'Dark theme' : 'Light theme';
     $('theme').lastElementChild.textContent = next; $('theme').title = next;
     $('theme-icon').className = `icon i-${value === 'light' ? 'moon' : 'sun'}`;
     // The desktop shell follows this colour for its window background.
     $('theme-color').setAttribute('content', value === 'light' ? '#faf9f7' : '#0d0d10');
-    try { localStorage.setItem('kova-theme', value); } catch (_) {}
+    if (remember) try { localStorage.setItem('kova-theme', value); } catch (_) {}
   }
   $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-  try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
+  // Until you pick a theme yourself, Kova follows the system's.
+  const savedTheme = () => { try { return localStorage.getItem('kova-theme'); } catch (_) { return null; } };
+  const systemLight = window.matchMedia?.('(prefers-color-scheme: light)');
+  theme(savedTheme() || (systemLight?.matches ? 'light' : 'dark'), false);
+  systemLight?.addEventListener?.('change', event => { if (!savedTheme()) theme(event.matches ? 'light' : 'dark', false); });
   $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   document.querySelectorAll('[data-prompt]').forEach(button => { button.onclick = () => { $('prompt').value = button.dataset.prompt; resize(); $('prompt').focus(); }; });
   async function setupIdentity() {
     state.persona = await json('/persona');
     if (!state.persona.configured) {
-      const dialog = el('dialog');
+      // First run: one friendly card, the only question Kova asks before you can chat.
+      const dialog = el('dialog', 'meet'); dialog.setAttribute('aria-labelledby', 'meet-title');
       const form = el('form'); form.method = 'dialog';
-      const title = el('h2', '', 'Meet your assistant');
+      const mark = el('img', 'meet-mark'); mark.src = '/app/assets/icon.svg'; mark.alt = '';
+      const title = el('h2', '', 'Meet your assistant'); title.id = 'meet-title';
+      const intro = el('p', 'meet-intro', 'It runs on this computer and remembers what matters to you. Give it a name and a voice.');
       const nameLabel = el('label', '', 'Name');
-      const name = el('input'); name.value = 'Kova'; name.required = true; name.maxLength = 40;
+      const name = el('input'); name.value = 'Kova'; name.required = true; name.maxLength = 40; name.autocomplete = 'off';
       nameLabel.append(name);
-      const toneLabel = el('label', '', 'Tone'); const tone = el('select');
-      for (const value of ['warm', 'concise', 'professional', 'playful']) {
-        const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; tone.append(option);
+      const tone = {value: 'warm'};
+      const tones = el('div', 'tone-grid'); tones.setAttribute('role', 'radiogroup'); tones.setAttribute('aria-label', 'Tone');
+      const toneNotes = {warm: 'Warm and direct', concise: 'Short and to the point', professional: 'Clear and measured', playful: 'Friendly, with some fun'};
+      const toneButtons = Object.entries(toneNotes).map(([value, note]) => {
+        const button = el('button', 'tone'); button.type = 'button'; button.setAttribute('role', 'radio');
+        button.append(el('strong', '', value[0].toUpperCase() + value.slice(1)), el('span', '', note));
+        button.onclick = () => { tone.value = value; pick(); };
+        return {value, button};
+      });
+      function pick() {
+        for (const {value, button} of toneButtons) { button.setAttribute('aria-checked', String(value === tone.value)); button.tabIndex = value === tone.value ? 0 : -1; }
       }
-      toneLabel.append(tone);
-      const error = el('p'); error.setAttribute('role', 'alert');
-      const submit = el('button', 'btn', 'Continue'); submit.type = 'submit';
-      form.append(title, nameLabel, toneLabel, error, submit); dialog.append(form); document.body.append(dialog);
+      toneButtons.forEach(({button}, index) => {
+        button.addEventListener('keydown', event => {
+          const delta = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[event.key];
+          if (!delta) return;
+          event.preventDefault();
+          const next = toneButtons[(index + delta + toneButtons.length) % toneButtons.length];
+          tone.value = next.value; pick(); next.button.focus();
+        });
+        tones.append(button);
+      });
+      pick();
+      const toneLabel = el('div', 'field'); toneLabel.append(el('span', '', 'Tone'), tones);
+      const error = el('p', 'meet-error'); error.setAttribute('role', 'alert');
+      const submit = el('button', 'btn primary', 'Start chatting'); submit.type = 'submit';
+      const note = el('p', 'meet-note'); note.append(icon('lock'), el('span', '', 'Saved on this computer, nowhere else.'));
+      form.append(mark, title, intro, nameLabel, toneLabel, error, submit, note); dialog.append(form); document.body.append(dialog);
       dialog.addEventListener('cancel', event => event.preventDefault());
       await new Promise(resolve => {
         form.addEventListener('submit', async event => {
@@ -845,7 +900,7 @@
           try { state.persona = await json('/persona', write('POST', {name: name.value, tone: tone.value})); dialog.close(); resolve(); }
           catch (err) { error.textContent = err.message; submit.disabled = false; }
         });
-        dialog.showModal(); name.focus();
+        dialog.showModal(); name.focus(); name.select?.();
       });
       dialog.remove();
     }

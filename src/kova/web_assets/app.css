@@ -52,6 +52,7 @@
   --danger:#ff8585;
   --danger-soft:rgb(255 133 133 / .11);
   --peach:#f5a97f;
+  --sky:#7cc4f5;
   --code-bg:#09090b;
   --scroll:rgb(255 255 255 / .14);
   --scroll-hover:rgb(255 255 255 / .26);
@@ -103,6 +104,7 @@
   --danger:#c93636;
   --danger-soft:rgb(201 54 54 / .08);
   --peach:#c2622d;
+  --sky:#1f6fb0;
   --code-bg:#f4f3ef;
   --scroll:rgb(24 24 32 / .16);
   --scroll-hover:rgb(24 24 32 / .3);
@@ -350,7 +352,7 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-title { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:13.5px; color:var(--text); }
 .history-row:not(.active) .history-title { color:var(--text-2); }
 .history-row:hover .history-title { color:var(--text); }
-.history-date { font-size:11.5px; color:var(--text-3); text-transform:capitalize; }
+.history-date { font-size:11.5px; color:var(--text-3); }
 .history-actions {
   position:absolute; right:4px; top:50%; transform:translateY(-50%);
   display:flex; gap:1px; padding-left:18px;
@@ -364,7 +366,16 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-actions button:hover:not(:disabled) { background:var(--surface-3); color:var(--text); }
 .history-actions button:last-child:hover:not(:disabled) { color:var(--danger); }
 .history-actions .icon { width:14px; height:14px; }
-.history-empty { padding:10px; color:var(--text-3); font-size:13px; }
+.history-empty { padding:10px; color:var(--text-3); font-size:13px; line-height:1.5; }
+.history-group { flex:none; padding:12px 10px 4px; color:var(--text-3); font-size:11.5px; font-weight:550; }
+.history-group:first-child { padding-top:2px; }
+.history-state { display:inline-flex; align-items:center; gap:5px; margin-right:6px; color:var(--accent); font-weight:550; }
+.history-state::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.working .history-state::before { animation:pulse 1.4s ease-in-out infinite; }
+.blocked-on-approval .history-state { color:var(--warn); }
+.history-skeleton { display:grid; gap:14px; padding:10px; }
+.history-skeleton i { height:12px; border-radius:6px; background:linear-gradient(90deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%) 0 0 / 220% 100%; animation:shimmer 1.6s linear infinite; }
+.history-skeleton i:nth-child(2) { width:72%; } .history-skeleton i:nth-child(3) { width:86%; } .history-skeleton i:nth-child(4) { width:58%; }
 
 .sidebar-footer { flex:none; padding-top:8px; border-top:1px solid var(--border); }
 .footer-nav { display:grid; gap:1px; }
@@ -399,7 +410,10 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
   flex:none; margin:12px auto 0; width:calc(100% - 40px); max-width:var(--column); padding:10px 14px;
   border:1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius:var(--r-md);
   background:var(--warn-soft); color:var(--text); font-size:13px; line-height:1.5;
+  display:flex; align-items:center; gap:12px;
 }
+#banner-text { flex:1; min-width:0; }
+.banner .btn { flex:none; background:var(--surface); }
 
 #scroll-area { flex:1 1 0; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable both-edges; }
 .messages { display:flex; flex-direction:column; gap:26px; width:100%; max-width:var(--column); margin:0 auto; padding:28px 20px 36px; }
@@ -414,7 +428,10 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .welcome p { margin-top:12px; color:var(--text-2); font-size:15px; }
 .welcome p span { display:inline-block; }
 .starters { flex:1.35 1 0; min-height:0; overflow-y:auto; padding:18px 20px 16px; }
-.suggestions { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; max-width:calc(var(--column) - 40px); margin:0 auto; }
+.suggestions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; max-width:calc(var(--column) - 40px); margin:0 auto; }
+/* Starters follow the mode: nothing is suggested that this chat could not do. */
+body[data-mode="chat"] .suggestions [data-for="work"], body:not([data-mode="chat"]) .suggestions [data-for="chat"] { display:none; }
+#greeting { color:var(--text); font-weight:550; }
 .suggestions button {
   display:flex; align-items:center; gap:11px; min-width:0; padding:11px 12px;
   border:1px solid var(--border); border-radius:var(--r-lg); text-align:left;
@@ -424,6 +441,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .suggestions button:active { transform:translateY(.5px); }
 .suggestion-icon { flex:none; display:grid; place-items:center; width:32px; height:32px; border-radius:9px; background:var(--accent-soft); color:var(--accent); }
 .suggestion-icon.mint { background:var(--ok-soft); color:var(--ok); }
+.suggestion-icon.sky { background:color-mix(in srgb, var(--sky) 14%, transparent); color:var(--sky); }
 .suggestion-icon.peach { background:color-mix(in srgb, var(--peach) 14%, transparent); color:var(--peach); }
 .suggestion-text { display:grid; min-width:0; }
 .suggestion-text strong { font-size:13.5px; font-weight:550; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
@@ -776,6 +794,22 @@ dialog label, dialog .field { display:grid; gap:6px; color:var(--text-2); font-s
 .shortcuts dt { color:var(--text); font-size:13.5px; }
 .shortcuts dd { display:flex; align-items:center; gap:4px; margin:0; color:var(--text-3); font-size:12px; white-space:nowrap; }
 .shortcuts kbd { min-width:22px; padding:4px 6px; text-align:center; background:var(--surface-2); color:var(--text-2); }
+dialog.meet { width:min(420px, calc(100vw - 24px)); padding:26px 24px 20px; }
+.meet form { gap:16px; }
+.meet-mark { display:block; width:48px; height:48px; border-radius:13px; box-shadow:var(--shadow-md); }
+.meet h2 { font-size:21px; letter-spacing:-.02em; margin-top:2px; }
+.meet-intro { margin-top:-8px; color:var(--text-2); font-size:14px; line-height:1.55; }
+.tone-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.tone { display:grid; gap:1px; padding:10px 12px; border:1px solid var(--border-strong); border-radius:var(--r-md); background:var(--bg); text-align:left; transition:border-color var(--fast), background var(--fast), box-shadow var(--fast); }
+.tone strong { color:var(--text); font-size:13.5px; font-weight:550; }
+.tone span { color:var(--text-3); font-size:12px; font-weight:400; }
+.tone:hover { border-color:var(--accent-line); }
+.tone[aria-checked="true"] { border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent); }
+.meet-error { color:var(--danger); font-size:13px; }
+.meet-error:empty { display:none; }
+.meet .btn.primary { min-height:40px; font-size:14px; }
+.meet-note { display:flex; align-items:center; justify-content:center; gap:7px; color:var(--text-3); font-size:12px; }
+.meet-note .icon { width:13px; height:13px; }
 #provider-dialog { width:min(480px, calc(100vw - 24px)); }
 #provider-details, #provider-models-step { display:grid; gap:14px; }
 .provider-intro, .provider-footnote { color:var(--text-2); font-size:13px; line-height:1.55; }
@@ -823,10 +857,6 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
   body.sidebar-collapsed { grid-template-columns:0 minmax(0, 1fr); }
   .sidebar-collapsed #sidebar { transform:translateX(-100%); visibility:hidden; transition:transform var(--slow) var(--ease), visibility 0s linear var(--slow); }
 }
-@media (max-width:980px) {
-  .suggestions { grid-template-columns:minmax(0, 1fr); gap:6px; max-width:460px; }
-  .suggestions button { padding:9px 10px; }
-}
 @media (max-width:720px) {
   body { grid-template-columns:minmax(0, 1fr); }
   #sidebar {
@@ -852,7 +882,6 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
   .welcome-mark { width:40px; height:40px; margin-bottom:16px; }
   .welcome p { font-size:14px; }
   .starters { padding:14px 10px 12px; }
-  .suggestions { grid-template-columns:minmax(0, 1fr); gap:6px; }
   .suggestions button { padding:9px 10px; }
   .suggestion-text span { display:block; }
   #prompt { font-size:16px; }
@@ -884,6 +913,8 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
   #model-slot .menu-button { max-width:100%; }
 }
 @media (max-width:560px) {
+  .suggestions { grid-template-columns:minmax(0, 1fr); gap:6px; }
+  .banner { flex-wrap:wrap; }
   #toasts { right:12px; left:12px; width:auto; }
   dialog { padding:16px; }
 }

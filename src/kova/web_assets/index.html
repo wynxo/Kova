@@ -26,7 +26,7 @@
     <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl K</kbd></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <div class="section-label"><span>Conversations</span><span id="chat-count"></span></div>
-    <nav id="chat-list" aria-label="Chat history"></nav>
+    <nav id="chat-list" aria-label="Chat history"><div class="history-skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div></nav>
     <div class="sidebar-footer">
       <nav class="footer-nav" aria-label="Kova tools">
         <button id="open-memory" type="button" class="nav-row"><span class="icon i-brain" aria-hidden="true"></span>Memory</button>
@@ -47,12 +47,12 @@
       <strong id="chat-title" class="chat-title">New conversation</strong>
       <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
     </header>
-    <div id="banner" class="banner" role="status" hidden></div>
+    <div id="banner" class="banner" role="status" hidden><span id="banner-text"></span><button id="banner-action" type="button" class="btn small" hidden></button></div>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="44" height="44">
         <h1>Make room for <span>your next idea.</span></h1>
-        <p><span>A question, a plan, a half-formed thought.</span> <span>Bring it here.</span></p>
+        <p><span id="greeting"></span> <span>A question, a plan, a half-formed thought.</span> <span>Bring it here.</span></p>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
@@ -88,9 +88,12 @@
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
-        <button type="button" data-prompt="Help me turn a half-formed idea into a clear plan."><span class="suggestion-icon"><span class="icon i-lightbulb" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Find a starting point</strong><span>Turn a spark into a plan</span></span></button>
-        <button type="button" data-prompt="Help me think through a decision. Ask me what I'm weighing up."><span class="suggestion-icon mint"><span class="icon i-compass" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Think it through</strong><span>Untangle something tricky</span></span></button>
-        <button type="button" data-prompt="Help me make space for what matters today. Ask me what's on my mind."><span class="suggestion-icon peach"><span class="icon i-sun" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Make today lighter</strong><span>A little order for your day</span></span></button>
+        <button type="button" data-for="any" data-prompt="What can you do? Give me a short tour, with three things I could try right now."><span class="suggestion-icon"><span class="icon i-compass" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Take the tour</strong><span>See what Kova can do</span></span></button>
+        <button type="button" data-for="any" data-prompt="Search the web for today's biggest tech news and give me the three most interesting stories, with links."><span class="suggestion-icon mint"><span class="icon i-globe" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Search the web</strong><span>Today's news, with sources</span></span></button>
+        <button type="button" data-for="work" data-prompt="What hardware does this computer have, and which local AI models would run well on it?"><span class="suggestion-icon peach"><span class="icon i-square-terminal" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Look at this PC</strong><span>What can it run locally?</span></span></button>
+        <button type="button" data-for="work" data-prompt="Remind me in 20 minutes to stretch and drink some water."><span class="suggestion-icon sky"><span class="icon i-bell" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Set a reminder</strong><span>It pops up when it is due</span></span></button>
+        <button type="button" data-for="chat" data-prompt="Help me turn a half-formed idea into a clear plan. Ask me what it is first."><span class="suggestion-icon peach"><span class="icon i-lightbulb" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Shape an idea</strong><span>Turn a spark into a plan</span></span></button>
+        <button type="button" data-for="chat" data-prompt="Help me think through a decision. Ask me what I'm weighing up."><span class="suggestion-icon sky"><span class="icon i-message-square" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Think it through</strong><span>Untangle something tricky</span></span></button>
       </div>
       <div class="welcome-foot"><span class="icon i-lock" aria-hidden="true"></span>Private by nature. Here for you.</div>
     </div>
