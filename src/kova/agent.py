@@ -21,7 +21,7 @@ from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
-from kova.permissions import Approvals, needs_approval
+from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
 
 
@@ -159,7 +159,7 @@ class Agent:
         self.tools = tools
         self.transport = transport
         self.now = now
-        self.approvals = Approvals()
+        self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
@@ -271,10 +271,14 @@ class Agent:
                                 prepared = None
                                 if name in FILE_TOOLS:
                                     prepared = await asyncio.to_thread(files.prepare, name, args)
-                                if needs_approval(name, args, (chat or {}).get('permission', 'manual'),
+                                policy, reason = self.approvals.policy(chat_id, name, args, cwd)
+                                if policy == 'deny':
+                                    raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
+                                if policy == 'ask' or (policy != 'allow' and needs_approval(name, args, (chat or {}).get('permission', 'manual'),
                                                   cwd, self.config.files_path,
-                                                  chat_id in self.approvals.sessions):
-                                    approval = self.approvals.create(chat_id, name, args)
+                                                  False)):
+                                    approval = self.approvals.create(chat_id, name, args, cwd=cwd)
+                                    approved_binding = approval["binding"]
                                     try:
                                         yield approval
                                         decision = await self.approvals.wait(approval['id'])
@@ -284,6 +288,8 @@ class Agent:
                                         if pending and not pending.future.done():
                                             pending.future.cancel()
                                     yield {'type': 'approval_resolved', 'id': approval['id'], **decision}
+                                    if action_key(name, args, cwd) != approved_binding:
+                                        raise ToolError('Action changed after approval; request fresh authorization.')
                                     if decision['decision'] == 'deny':
                                         raise ToolError('Action denied. Do not retry without new authorization.' +
                                                         (f" User guidance: {decision['message']}" if decision.get('message') else ''))

@@ -502,13 +502,12 @@ class Renderer:
         """Title, body lines and frame colour for the approval dialog."""
         p = self.p
         title = PERMISSION_TITLES.get(name, f"Allow {name}?")
-        body = [""]
+        body = ["", "  " + p.dim(f"Operation: {name} · Risk: {risk}")]
         if name == "run_command":
-            for line in (clean(tool_detail(name, args)).splitlines() or [""])[:6]:
-                body.append("  " + p.code(shorten(line, self.width - 10)))
+            for line in (clean(str(args.get("command", ""))).splitlines() or [""]):
+                body.extend("  " + p.code(row) for row in wrap_words(line, self.width - 10))
         else:
-            preview = args_preview(args, self.width - 10)
-            body.append("  " + p.bold(name) + (p.dim("  " + preview) if preview else ""))
+            body.extend("  " + p.code(row) for row in wrap_words(clean(str(args.get("path", ""))), self.width - 10))
         if summary:
             body += ["  " + p.dim(row) for row in wrap_words(summary, self.width - 10)[:3]]
         if risk == "destructive":

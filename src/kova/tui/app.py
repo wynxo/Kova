@@ -17,6 +17,7 @@ and dialogs) and ``kaine/cli_commands.py`` (pickers and slash commands).
 from __future__ import annotations
 
 import os
+import json
 import queue
 import signal
 import subprocess
@@ -70,7 +71,7 @@ COMMANDS = {
     "new": ("/new", "Start a fresh conversation"),
     "resume": ("/resume [n]", "Open an earlier conversation"),
     "mode": ("/mode [chat|work]", "Show the chat mode; /mode chat|work switches"),
-    "permissions": ("/permissions [mode]", "When Kova asks before acting: manual, auto, full"),
+    "permissions": ("/permissions [mode|rules]", "When Kova asks before acting: manual, auto, full"),
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
     "model": ("/model [name]", "List models; /model <name> switches"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
@@ -705,9 +706,9 @@ class ChatApp:
         risk = event.get("risk") or "normal"
         title, body, colour = r.permission_card(str(event.get("tool", "")), args, risk,
                                                 str(event.get("summary") or ""))
-        options = [("Yes", "allow", "y")]
-        if risk != "destructive":
-            options.append(("Yes, don't ask again this chat", "allow_session", "a"))
+        options = [("Allow once", "allow", "y")]
+        options.append(("Allow this exact action for this session", "allow_session", "a"))
+        options.append(("Always allow this exact action", "allow_always", "w"))
         options.append(("No, and tell Kova what to do differently", "deny", "n"))
         self.overlay = Choice(title, body, options, colour=colour,
                               footer="enter to choose · esc to decline")
@@ -742,9 +743,10 @@ class ChatApp:
         r.reply_header()
         if decision == "allow":
             r.line(self.p.dim("  ⎿  ") + f"Allowed {tool}")
-        elif decision == "allow_session":
+        elif decision in {"allow_session", "allow_always"}:
+            scope = "this session" if decision == "allow_session" else "always"
             r.line(self.p.dim("  ⎿  ") + f"Allowed {tool} "
-                   + self.p.dim("· won't ask again this chat, except before destructive actions"))
+                   + self.p.dim(f"· this exact action, {scope}"))
         else:
             r.line(self.p.dim("  ⎿  ") + self.p.red(f"Declined {tool}")
                    + (self.p.dim(f" · {fit(message, 60)}") if message else ""))
@@ -875,6 +877,20 @@ class ChatApp:
         self._done(f"Now using {self.p.bold(rest)}.")
 
     def _cmd_permissions(self, rest: str) -> None:
+        if rest.lower() == "rules":
+            rules = self.client.permission_rules()
+            def save(value):
+                if value is None:
+                    return
+                try:
+                    self.client.replace_permission_rules(json.loads(value))
+                    self._done("Permission rules saved")
+                except (ValueError, KovaError) as exc:
+                    self.renderer.error(str(exc))
+            self.overlay = TextPrompt("Permission rules (JSON: action/tool/pattern/scope)", save,
+                                      placeholder=json.dumps(rules))
+            self.overlay.value = json.dumps(rules)
+            return
         level = rest.lower()
         if level not in PERMISSIONS:
             if rest:

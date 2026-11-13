@@ -160,6 +160,12 @@ class KovaClient:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))
 
+    def permission_rules(self) -> list[dict]:
+        return self._request("GET", "/permission-rules").json()
+
+    def replace_permission_rules(self, rules: list[dict]) -> dict:
+        return self._request("PUT", "/permission-rules", json=rules).json()
+
     def answer_approval(self, chat_id: str, approval_id: str, decision: str,
                         message: str | None = None) -> dict:
         """Answer an ``approval`` event: ``allow``, ``allow_session`` or ``deny``."""

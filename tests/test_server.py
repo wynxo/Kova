@@ -259,3 +259,16 @@ def test_manual_compaction_endpoint(server):
     assert response.json()['type'] == 'compacted'
     assert response.json()['summary'] == 'Hello there!'
     assert 'Hello there!' in str(store.get_context(chat_id))
+
+
+def test_permission_rules_authenticated_validated_and_persisted(server):
+    client, headers, cfg, fake = server
+    assert client.get('/permission-rules').status_code == 401
+    rules = [{'action':'deny','tool':'run_command','pattern':'rm *','message':'Use trash'}]
+    assert client.put('/permission-rules',headers=headers,json=rules).status_code == 200
+    assert client.get('/permission-rules',headers=headers).json()[0]['message'] == 'Use trash'
+    from kova.permissions import Approvals
+    assert Approvals(path=cfg.home/'permission-rules.json').rules[0].action == 'deny'
+    for invalid in [{'action':'oops'}, {'action':'allow','tool':4}, {'action':'allow','scope':'session'}]:
+        assert client.put('/permission-rules',headers=headers,json=[invalid]).status_code == 422
+    assert client.get('/permission-rules',headers=headers).json()[0]['action'] == 'deny'

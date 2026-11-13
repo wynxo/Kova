@@ -60,16 +60,18 @@ $('mode').value = 'chat'; controls(); assert.equal($('cwd').disabled, true);
 $('mode').value = 'work'; state.busy = true; controls(); assert.equal($('permission').disabled, true);
 state.busy = false;
 
-for (const decision of ['allow', 'allow_session', 'deny']) {
+for (const decision of ['allow', 'allow_session', 'allow_always', 'deny']) {
   const body = new Element(), view = turnView(body);
   view.accept({type: 'approval', id: 'approval-1', tool: 'run_command', args: {command: '<script>literal command</script>'}, risk: 'normal', summary: 'short summary'});
   const card = byClass(body, 'approval-card')[0];
   assert.ok(card.textContent.includes('<script>literal command</script>'));
   assert.ok(card.textContent.includes('/project'));
   const input = walk(card).find(n => n.tagName === 'input'); input.value = 'Read instead';
-  buttons(card)[['allow', 'allow_session', 'deny'].indexOf(decision)].onclick();
+  buttons(card)[['allow', 'allow_session', 'allow_always', 'deny'].indexOf(decision)].onclick();
   await tick(); await tick();
   assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/approval-1', body: {decision, message: 'Read instead'}});
+  view.accept({type: 'approval_resolved', id: 'approval-1', decision});
+  assert.equal(card.textContent.includes('Denied'), decision === 'deny');
   assert.ok(buttons(card).every(b => b.disabled));
   assert.equal(input.disabled, true);
   view.finish();
@@ -77,7 +79,7 @@ for (const decision of ['allow', 'allow_session', 'deny']) {
 const body = new Element(), view = turnView(body);
 view.accept({type: 'approval', id: 'danger', risk: 'destructive', summary: 'rm file'});
 const dangerous = byClass(body, 'approval-card')[0];
-assert.equal(buttons(dangerous)[1].disabled, true);
+assert.equal(buttons(dangerous)[1].disabled, false);
 assert.equal(buttons(dangerous)[0].disabled, false);
 view.accept({type: 'approval_resolved', id: 'danger', decision: 'deny', message: 'Approval timed out'});
 assert.ok(dangerous.textContent.includes('Approval timed out'));

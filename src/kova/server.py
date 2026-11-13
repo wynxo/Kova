@@ -46,7 +46,7 @@ class ChatBody(BaseModel):
 
 
 class ApprovalBody(BaseModel):
-    decision: Literal["allow", "allow_session", "deny"]
+    decision: Literal["allow", "allow_session", "allow_always", "deny"]
     message: str | None = Field(default=None, max_length=4000)
 
 
@@ -271,6 +271,28 @@ def create_app(
         for key in list(app.state.agent.file_sessions):
             if key[0] == chat_id:
                 del app.state.agent.file_sessions[key]
+        return {"ok": True}
+
+    @api.get("/permission-rules")
+    async def permission_rules() -> list[dict]:
+        from dataclasses import asdict
+        return [asdict(r) for r in app.state.agent.approvals.rules]
+
+    @api.put("/permission-rules")
+    async def replace_permission_rules(body: list[dict]) -> dict:
+        from kova.permissions import Rule
+        try:
+            rules = [Rule(**r) for r in body]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        approvals = app.state.agent.approvals
+        previous = approvals.rules
+        approvals.rules = rules
+        try:
+            approvals.save()
+        except OSError:
+            approvals.rules = previous
+            raise
         return {"ok": True}
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")

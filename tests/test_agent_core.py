@@ -288,12 +288,12 @@ def test_real_server_allow_session_scoped_and_destructive_still_asks(tmp_path):
             if event['type'] == 'approval':
                 approvals.append(event)
                 client.answer_approval(chat['id'], event['id'], 'deny' if event['risk'] == 'destructive' else 'allow_session')
-        assert [e['risk'] for e in approvals] == ['normal', 'destructive']
+        assert [e['risk'] for e in approvals] == ['normal', 'normal', 'destructive']
         other = client.create_chat()
         for event in client.stream_message(other['id'], 'another chat'):
             if event['type'] == 'approval':
                 approvals.append(event); client.answer_approval(other['id'], event['id'], 'deny')
-        assert len(approvals) == 3
+        assert len(approvals) == 4
 
 
 def test_real_server_approval_timeout_and_stop(tmp_path):
@@ -526,3 +526,14 @@ async def test_binary_command_output_is_bounded_after_utf8_decoding(tmp_path):
     result = await run_command(python_command("import sys; sys.stdout.buffer.write(b'\\xff'*20000)"), tmp_path)
     assert result['ok'] and result['truncated']
     assert len(result['output'].encode('utf-8')) <= OUTPUT_LIMIT
+
+
+def test_rule_denial_overrides_full_mode_and_returns_comment(tmp_path):
+    from kova.permissions import Rule
+    with real_server(tmp_path, [tool('run_command', {'command':'echo forbidden'}), text('Understood')]) as (client, cfg, fake, app):
+        app.state.agent.approvals.rules = [Rule('deny','run_command','echo *',message='Use read_file instead')]
+        chat=client.create_chat(permission='full')
+        events=list(client.stream_message(chat['id'],'do it'))
+        assert not any(e['type']=='approval' for e in events)
+        replies=[m['content'] for m in fake.requests[1]['messages'] if m['role']=='tool']
+        assert any('Use read_file instead' in reply for reply in replies)

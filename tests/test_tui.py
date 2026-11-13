@@ -483,7 +483,7 @@ def test_an_approval_asks_and_yes_allows_it():
     app.submit("check the repo")
     drain(app, until=lambda app: app.approval is not None)
     labels = [label for label, _value, _key in app.overlay.options]
-    assert labels == ["Yes", "Yes, don't ask again this chat",
+    assert labels == ["Allow once", "Allow this exact action for this session", "Always allow this exact action",
                       "No, and tell Kova what to do differently"]
     app.on_key(SimpleNamespace(name="enter", text=""))
     drain(app)
@@ -496,8 +496,8 @@ def test_destructive_actions_cannot_be_allowed_for_the_whole_chat():
     app = chat_app(client)
     app.submit("clean up")
     drain(app, until=lambda app: app.approval is not None)
-    assert [value for _label, value, _key in app.overlay.options] == ["allow", "deny"]
-    assert app.overlay.pick("a") is None
+    assert [value for _label, value, _key in app.overlay.options] == ["allow", "allow_session", "allow_always", "deny"]
+    assert app.overlay.pick("a") == "allow_session"
 
 
 def test_no_asks_what_to_do_instead_and_sends_it():
@@ -706,7 +706,7 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("auto permissions")
         term.type(b"run it\r")
         term.screen("Do you want to proceed?")                         # the approval dialog
-        assert "git status" in term.vt.text() and "don't ask again" in term.vt.text()
+        assert "git status" in term.vt.text() and "exact action" in term.vt.text()
         term.type(b"1")
         term.screen("The tree is clean.")
         assert "✓ Report what changed" in term.vt.text()
@@ -856,3 +856,19 @@ def test_live_details_in_narrow_pty(kova_home, no_color):
         assert term.exit_status() == 0
     finally:
         term.close()
+
+
+def test_permissions_rules_editor_can_save_and_cancel():
+    client=StubClient()
+    saved=[]
+    client.permission_rules=lambda: []
+    client.replace_permission_rules=lambda rules: saved.append(rules)
+    app=chat_app(client)
+    app.submit('/permissions rules')
+    assert isinstance(app.overlay, TextPrompt)
+    app.overlay.value='[{"action":"ask","tool":"run_command","pattern":"git *"}]'
+    app.on_key(SimpleNamespace(name='enter',text=''))
+    assert saved[0][0]['action']=='ask'
+    app.submit('/permissions rules')
+    app.on_key(SimpleNamespace(name='esc',text=''))
+    assert len(saved)==1
