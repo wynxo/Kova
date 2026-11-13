@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import inspect
 import json
-import tempfile
 import unicodedata
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
@@ -168,22 +167,15 @@ def trim_history(messages: list[dict], context_tokens: int, reserved_chars: int)
 def call_fingerprint(name: str, arguments: str) -> str:
     """A stable fingerprint of a tool call: its name and arguments.
 
-    Reuses ``core.fingerprint`` (which hashes a file) by serializing the call to a
-    throwaway file, so two calls with the same name and arguments hash to the same
-    value. The agent loop uses this to spot a model that keeps reissuing one call.
+    Two calls with the same name and arguments hash to the same value, which the
+    agent loop uses to spot a model that keeps reissuing one failing call.
     """
     try:
         parsed = json.loads(arguments)
     except (json.JSONDecodeError, TypeError):
         parsed = arguments
     payload = f"{name}\x00{json.dumps(parsed, sort_keys=True, default=str)}".encode()
-    with tempfile.NamedTemporaryFile("wb", delete=False) as handle:
-        handle.write(payload)
-        path = Path(handle.name)
-    try:
-        return core.fingerprint(path) or hashlib.sha256(payload).hexdigest()
-    finally:
-        path.unlink(missing_ok=True)
+    return hashlib.sha256(payload).hexdigest()
 
 
 class Agent:
