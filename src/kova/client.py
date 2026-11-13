@@ -226,6 +226,20 @@ class KovaClient:
     def reminder_delete(self, rid: int) -> bool:
         return self._request("DELETE", f"/reminders/{rid}", missing_ok=True).status_code == 200
 
+    def jobs_list(self) -> list[dict]:
+        return self._request("GET", "/jobs").json()
+
+    def job_add(self, text: str, schedule: str, *, command: str | None = None,
+                prompt: str | None = None, first_run: str | None = None,
+                idle_only: bool = False) -> dict:
+        """Schedule a recurring job: a shell command, or one agent turn per run."""
+        payload = {"text": text, "schedule": schedule, "command": command, "prompt": prompt,
+                   "first_run": first_run, "idle_only": idle_only}
+        return self._request("POST", "/jobs", json=payload).json()
+
+    def job_delete(self, jid: int) -> bool:
+        return self._request("DELETE", f"/jobs/{jid}", missing_ok=True).status_code == 200
+
     def models_list(self) -> list[dict]:
         return self._request("GET", "/models").json()
 
