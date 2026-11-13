@@ -7,7 +7,7 @@ class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.parentNode = null;
     this.className = ''; this.value = ''; this.disabled = false; this.hidden = false;
-    this.attrs = {}; this.dataset = {}; this.style = {};
+    this.listeners = {}; this.attrs = {}; this.dataset = {}; this.style = {};
     this.classList = {toggle: (name, force) => {
       const names = new Set(this.className.split(' ').filter(Boolean));
       const add = force ?? !names.has(name); if (add) names.add(name); else names.delete(name);
@@ -23,7 +23,7 @@ class Element {
   replaceWith(node) { const parent = this.parentNode, i = parent.children.indexOf(this); parent.children[i] = node; node.parentNode = parent; }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key]; }
-  addEventListener() {}
+  addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
   focus() {}
   get lastElementChild() { return this.children.at(-1); }
@@ -32,11 +32,12 @@ const elements = new Map();
 function $(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }
 for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'));
 $('mode').value = 'work';
+new Element().append($('connection')); const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [];
 const sandbox = {
-  document: {getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
-    querySelectorAll: () => [], addEventListener() {}, body: new Element(), documentElement: new Element()},
-  window: {addEventListener() {}}, location: {hash: ''},
+  document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
+    querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element()},
+  window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
   performance, URLSearchParams, TextDecoder, console,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
@@ -46,7 +47,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -125,3 +126,45 @@ assert.equal($('provider-active').children.length, 1);
 assert.equal($('provider-active').children[0].value, 'beta');
 assert.equal($('provider-next').disabled, false);
 console.log('Provider grouping, filtering, selection and secret cleanup passed');
+
+// Byte-by-byte delivery covers partial UTF-8, CRLF boundaries and multiple frames.
+const wire = new TextEncoder().encode('event: text\r\ndata: {"type":"text","text":"hé🔥"}\r\n\r\ndata: {"type":"done"}\n\n');
+function responseFor(bytes) {
+  let index = 0;
+  return {body: {getReader: () => ({read: async () => index < bytes.length ? {value: bytes.slice(index, ++index), done: false} : {done: true}, releaseLock() {}})}};
+}
+const received = [];
+await sandbox.test.readEvents(responseFor(wire), event => received.push(event));
+assert.equal(received.length, 2); assert.equal(received[0].text, 'hé🔥');
+await assert.rejects(sandbox.test.readEvents(responseFor(new TextEncoder().encode('data: {"type":"text"}')), () => {}), /mid-frame/);
+await assert.rejects(sandbox.test.readEvents(responseFor(new TextEncoder().encode('data: not-json\n\n')), () => {}));
+
+// A slow chat response must not overwrite a newer navigation (or a blank chat).
+const oldFetch = sandbox.fetch;
+let resolveFirst;
+sandbox.fetch = path => path === '/chats/slow' ? new Promise(resolve => { resolveFirst = resolve; }) : Promise.resolve({ok: true, json: async () => ({id: 'fast', messages: []})});
+await sandbox.test.newChat();
+const first = sandbox.test.openChat('slow'); await sandbox.test.openChat('fast');
+resolveFirst({ok: true, json: async () => ({id:'slow', messages:[]})}); await first;
+assert.equal(state.chat.id, 'fast');
+const second = sandbox.test.openChat('slow'); await sandbox.test.newChat();
+resolveFirst({ok:true,json:async()=>({id:'slow',messages:[]})}); await second;
+assert.equal(state.chat, null); sandbox.fetch = oldFetch;
+console.log('SSE chunking, Unicode, truncation and chat navigation races passed');
+
+// Composition, Shift+Enter, and normal submission use actual registered handlers.
+let submits = 0, prevented = 0;
+$('composer').requestSubmit = () => submits++;
+for (const extra of [{shiftKey:true}, {isComposing:true}, {keyCode:229}]) {
+  $('prompt').listeners.keydown({key:'Enter', preventDefault(){prevented++;}, ...extra});
+}
+assert.equal(submits, 0); assert.equal(prevented, 0);
+$('prompt').listeners.keydown({key:'Enter', preventDefault(){prevented++;}});
+assert.equal(submits, 1); assert.equal(prevented, 1);
+// Upward user scrolling stays paused even within the old 100px threshold.
+const area = $('scroll-area'); area.scrollHeight = 1000; area.clientHeight = 500; area.scrollTop = 450;
+area.listeners.wheel({deltaY:-1}); area.listeners.scroll();
+const followBody = new Element(), following = turnView(followBody);
+following.accept({type:'tool_call',name:'test'}); assert.equal(area.scrollTop,450);
+area.scrollTop = 500; area.listeners.scroll(); following.finish(); assert.equal(area.scrollTop,1000);
+console.log('IME, keyboard and user-controlled auto-scroll passed');
