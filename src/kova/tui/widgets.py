@@ -37,7 +37,7 @@ PLACEHOLDERS = ('Try "what can you do?"', 'Try "remind me to stretch in an hour"
                 'Try "summarize @README.md"', 'Try "search the web for today\'s news"',
                 'Try "what do you remember about me?"')
 # (keys, what they do), in the order the ? panel lists them.
-SHORTCUTS = (("pgup/pgdn", "scroll expanded details"), ("ctrl+t", "toggle full reasoning"), ("ctrl+o", "toggle tool details"), ("!", "run a shell command"), ("/", "commands"), ("@", "attach a file"),
+SHORTCUTS = (("ctrl+p", "command palette"), ("pgup/pgdn", "scroll expanded details"), ("ctrl+t", "toggle full reasoning"), ("ctrl+o", "toggle tool details"), ("!", "run a shell command"), ("/", "commands"), ("@", "attach a file"),
              ("#", "remember a note"), ("esc", "interrupt Kova"), ("esc esc", "clear the input"),
              ("shift+\u23ce", "new line (or \\\u23ce)"), ("shift+tab", "cycle permissions"),
              ("tab", "complete"), ("\u2191 \u2193", "earlier messages"),
@@ -533,6 +533,73 @@ class Picker:
                    footer=p.faint(fit(footer, width - 10)))
 
 
+class CommandPalette(Picker):
+    """``Ctrl+P``: one searchable list of slash commands, models and chats.
+
+    It is a ``Picker`` with a wider net: the filter matches each entry's label
+    and its detail too (a model's id, a chat's mode), and rows are grouped when
+    nothing is typed. Narrow terminals drop the details and the subtitle rather
+    than clipping them.
+    """
+
+    ROWS = 9
+
+    def __init__(self, items: list[tuple[str, str, object]], on_pick, *,
+                 groups: dict | None = None,
+                 subtitle: str = "Slash commands, models and recent chats"):
+        super().__init__("Command palette", items, on_pick, subtitle=subtitle, groups=groups)
+
+    @property
+    def shown(self) -> list:
+        if not self.query:
+            return self.items
+        from .editor import rank
+        return rank(self.items, self.query, key=lambda item: f"{item[0]} {item[1]}")
+
+    def render(self, width: int, p: Palette) -> list[str]:
+        inner = max(8, width - 4)
+        compact = width < 44
+        lines = []
+        if self.subtitle and not compact:
+            lines.append(p.dim(fit(self.subtitle, inner)))
+        prompt = "Search: "
+        if self.query:
+            room = max(1, inner - display_width(prompt) - 2)
+            typed = self.query if display_width(self.query) <= room else self.query[-room:]
+            lines.append(p.faint(prompt) + typed + p.paint(ACCENT, "\u258f"))
+        else:
+            lines.append(p.faint(fit(prompt + "type to filter", inner)))
+        lines.append("")
+        shown = self.shown
+        rows = self.ROWS if width >= 40 else max(4, self.ROWS - 3)
+        start = max(0, min(self.selected - rows // 2, len(shown) - rows))
+        label_width = inner if compact else min(
+            26, max([display_width(item[0]) for item in shown] + [8]) + 2)
+        previous = None
+        for index, (label, detail, value) in enumerate(shown[start:start + rows], start):
+            group = self.groups.get(value)
+            if group and group != previous and not compact and not self.query:
+                lines.append(p.paint("1;" + MUTED, fit(group.upper(), inner)))
+            previous = group
+            current = value == self.current and self.current is not None
+            tick = p.green(" \u2714") if current else ""
+            title = fit(label, max(1, label_width - 2))
+            row = (p.paint("1;" + ACCENT, "\u276f ") + p.paint("1;" + SELECT, title)
+                   if index == self.selected else "  " + title)
+            if not compact and detail:
+                room = inner - label_width - 4 - visible(tick)
+                if room > 3:
+                    row += " " * max(2, label_width - visible(title)) + p.dim(fit(detail, room))
+            lines.append(row + tick)
+        if not shown:
+            lines.append(p.dim("  Nothing matches"))
+        lines.append("")
+        footer = "\u2191\u2193 move \u00b7 enter select \u00b7 esc cancel" if width >= 52 \
+            else "\u2191\u2193 \u00b7 enter \u00b7 esc" if width >= 30 else "esc"
+        return box(lines, width, p, ACCENT, title=p.bold(fit("Command palette", width - 8)),
+                   footer=p.faint(fit(footer, width - 10)))
+
+
 def pick_verb(rng: random.Random | None = None) -> str:
     return (rng or random).choice(VERBS)
 
@@ -542,7 +609,8 @@ def pick_placeholder(rng: random.Random | None = None) -> str:
 
 
 __all__ = ['ACCENT', 'BASH', 'GLYPHS', 'LOGO', 'MEMORY', 'MODE_CHIPS', 'MODE_COLOURS', 'MUTED',
-           'PLACEHOLDERS', 'SELECT', 'SHORTCUTS', 'SPINNER', 'USER', 'VERBS', 'Choice', 'Picker',
+           'PLACEHOLDERS', 'SELECT', 'SHORTCUTS', 'SPINNER', 'USER', 'VERBS', 'Choice',
+           'CommandPalette', 'Picker',
            'box', 'fit', 'fit_path', 'glyph', 'hint_line', 'input_box', 'logo', 'menu', 'pad',
            'pick_placeholder', 'pick_verb', 'pulse', 'reduced_motion', 'shimmer', 'shortcuts',
            'spinner_glyph', 'spinner_line', 'status_bar', 'visible', 'welcome', 'wrap']

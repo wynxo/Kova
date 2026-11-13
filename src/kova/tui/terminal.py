@@ -42,7 +42,8 @@ CONTROL = {
     "\r": "enter", "\n": "newline", "\t": "tab", "\x7f": "backspace", "\x08": "backspace",
     "\x01": "home", "\x05": "end", "\x02": "left", "\x06": "right", "\x0b": "kill-end",
     "\x15": "kill-start", "\x17": "kill-word", "\x19": "yank", "\x0c": "clear-screen",
-    "\x14": "ctrl-t", "\x0f": "ctrl-o", "\x04": "ctrl-d", "\x03": "ctrl-c", "\x10": "up", "\x0e": "down", "\x1a": "suspend",
+    "\x14": "ctrl-t", "\x0f": "ctrl-o", "\x04": "ctrl-d", "\x03": "ctrl-c", "\x10": "ctrl-p",
+    "\x0e": "ctrl-n", "\x1a": "suspend",
 }
 _SGR = re.compile(r"\x1b\[([0-9;]*)m")
 _CSI = re.compile(r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]")

@@ -36,8 +36,10 @@ class FakeKova:
         self.decisions: list[dict] = []
         self.notes: list[dict] = []
         self.stops: list[str] = []
-        self.models = [{"name": "local", "model": "fake-model", "base_url": "http://x/v1"},
-                       {"name": "other", "model": "other-model", "base_url": "http://y/v1"}]
+        self.models = [{"name": "local", "model": "fake-model", "base_url": "http://x/v1",
+                        "context": 32768},
+                       {"name": "other", "model": "other-model", "base_url": "http://y/v1",
+                        "context": 32768}]
         self.active = "local"
         self._answers: dict[str, threading.Event] = {}
         self._stopping: dict[str, threading.Event] = {}
@@ -212,10 +214,24 @@ class FakeKova:
                 chat_id = match.group(1)
                 if match.group(2) == "messages":
                     emit = self._sse()
+                    chat = fake.chats[chat_id]
+                    text = body.get("text", "")
+                    chat["messages"].append({"role": "user", "content": text})
+                    pieces: list[str] = []
+
+                    def recording(event):
+                        if event.get("type") == "text":
+                            pieces.append(str(event.get("text", "")))
+                        emit(event)
                     try:
-                        fake._turn(chat_id, body.get("text", ""), emit)
+                        fake._turn(chat_id, text, recording)
                     except (BrokenPipeError, ConnectionResetError):
                         pass
+                    finally:
+                        if pieces:
+                            chat["messages"].append({"role": "assistant",
+                                                     "content": "".join(pieces)})
+                        chat["message_count"] = len(chat["messages"])
                     return None
                 if match.group(2) == "stop":
                     fake.stops.append(chat_id)
