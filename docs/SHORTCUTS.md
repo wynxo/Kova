@@ -22,11 +22,12 @@ below lists every key the terminal chat understands.
 | `↑` `↓` | Earlier messages |
 | `ctrl+l` | Clear the screen |
 
-## Newly added
+## Reasoning and tools
 
-These two shortcuts are being added alongside the terminal chat redesign:
+Toggle live details for the current turn:
 
 | Key | What it does |
 | --- | --- |
 | `ctrl+t` | Toggle full model reasoning (streamed live) |
 | `ctrl+o` | Expand / collapse tool calls and their output |
+| `pgup` `pgdn` | Scroll the expanded details |
