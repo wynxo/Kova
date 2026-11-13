@@ -236,6 +236,7 @@ class Agent:
         schemas = openai_schemas(tools) or None
         try:
             attempted_compaction = False
+            failed: dict[str, int] = {}
             for step in range(11):
                 history = self.store.get_context(chat_id)
                 threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))
@@ -282,6 +283,14 @@ class Agent:
                     else:
                         result, ok = '', True
                     yield {'type': 'tool_call', 'id': call['id'], 'name': name, 'args': args}
+                    loop_guard, counted = False, False
+                    if isinstance(args, dict):
+                        try:
+                            key = action_key(name, args, cwd)
+                        except Exception:  # a fingerprint failure must not stop the turn
+                            key = None
+                    else:
+                        key = f"{name}:{call['arguments']}" if args is not None else None
                     if ok:
                         if name not in tools:
                             result, ok = f'Error: unknown tool {name}', False
@@ -350,11 +359,24 @@ class Agent:
                                 raise
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
+                                counted = True
+                                if key is not None:
+                                    failed[key] = failed.get(key, 0) + 1
+                                    if failed[key] >= 3:
+                                        loop_guard = True
+                    if not ok and not counted and key is not None:
+                        failed[key] = failed.get(key, 0) + 1
+                        if failed[key] >= 3:
+                            loop_guard = True
                     result = str(result)
                     full_output = result
                     if name != 'run_command' and len(result) > MAX_TOOL_RESULT_CHARS:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                    if loop_guard:
+                        yield {'type': 'error', 'message':
+                               f'Loop guard: stopped after {name} failed 3 times with identical arguments.'}
+                        return
         except ModelError as exc:
             yield {'type': 'error', 'message': str(exc)}

@@ -136,6 +136,13 @@ class Store:
                 text TEXT NOT NULL,
                 done INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS queued_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                model TEXT,
+                created TEXT NOT NULL
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
@@ -313,6 +320,7 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+            self._conn.execute("DELETE FROM queued_messages WHERE chat_id = ?", (chat_id,))
             cur = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
             self._conn.commit()
             return cur.rowcount > 0
@@ -322,6 +330,7 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")
+            self._conn.execute("DELETE FROM queued_messages")
             self._conn.execute("DELETE FROM chats")
             self._conn.commit()
 
@@ -531,6 +540,52 @@ class Store:
             self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET cutoff=excluded.cutoff, summary=excluded.summary", (chat_id, cutoff, summary))
             self._conn.commit()
             return True
+
+    # -- queued messages --------------------------------------------------
+    def queue_message(self, chat_id: str, text: str, model: str | None = None) -> int:
+        """Persist a message to run after the chat's current turn ends."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO queued_messages (chat_id, text, model, created) VALUES (?, ?, ?, ?)",
+                (chat_id, text, model, _utc_now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def queued_messages(self, chat_id: str) -> list[dict]:
+        """The chat's queued messages, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, text, model, created FROM queued_messages WHERE chat_id = ? ORDER BY id",
+                (chat_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pop_queued_message(self, chat_id: str) -> dict | None:
+        """Remove and return the oldest queued message for a chat."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, text, model, created FROM queued_messages WHERE chat_id = ? ORDER BY id LIMIT 1",
+                (chat_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM queued_messages WHERE id = ?", (row["id"],))
+            self._conn.commit()
+            return dict(row)
+
+    def delete_queued_message(self, chat_id: str, message_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM queued_messages WHERE id = ? AND chat_id = ?", (message_id, chat_id)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def clear_queued(self, chat_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM queued_messages WHERE chat_id = ?", (chat_id,))
+            self._conn.commit()
 
     # -- reminders --------------------------------------------------------
     def add_reminder(self, when: datetime, text: str) -> int:
