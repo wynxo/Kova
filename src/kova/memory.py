@@ -123,7 +123,7 @@ def _md_files(root: Path) -> list[Path]:
 
 def _parse(path: Path) -> Note:
     """Read one note: YAML frontmatter if present, else the file stem as title."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     meta: dict = {}
     body = text
     match = _FRONTMATTER.match(text)
@@ -174,7 +174,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """Write via a temp file + rename, so a crash or race never leaves half a note."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".kova-", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
         os.replace(tmp, path)
     except BaseException:
@@ -432,7 +432,8 @@ class Memory:
         if not _safe(slug):
             return None
         direct = self.write_dir / f"{slug}.md"
-        if direct.is_file():
+        # Match slugs exactly even on case-insensitive Windows/macOS volumes.
+        if direct.is_file() and any(p.name == direct.name for p in direct.parent.iterdir()):
             return _parse(direct)
         for candidate in _md_files(self.root):
             if candidate.stem == slug:
@@ -446,7 +447,8 @@ class Memory:
         path = self.write_dir / f"{slug}.md"
         if path.is_symlink() or not path.parent.resolve().is_relative_to(self.root.resolve()):
             return False
-        if path.is_file():
+        # Do not delete a differently-cased note on case-insensitive volumes.
+        if path.is_file() and any(p.name == path.name for p in path.parent.iterdir()):
             path.unlink()
             return True
         return False

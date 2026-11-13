@@ -782,7 +782,7 @@ def test_piped_cli_is_plain_with_ci_color_environment(args):
     env['TERM'] = 'xterm-256color'
     result = subprocess.run(
         [sys.executable, '-c', 'from kova.cli import app; app()', *args],
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout

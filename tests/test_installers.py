@@ -1,6 +1,7 @@
 """Run the POSIX installers with disposable homes and a recording uv executable."""
 
 import os
+import sys
 import shutil
 import subprocess
 from pathlib import Path
@@ -89,6 +90,7 @@ def test_installer_skips_the_desktop_app_without_download_tools(installer, tmp_p
     assert "Web UI in your browser: kova-web" in result.stdout
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop registration")
 def test_installer_registers_the_installed_desktop_command(installer):
     home, path, env, run = installer
     result = run("install.sh", "--desktop")

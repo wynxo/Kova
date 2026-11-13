@@ -17,7 +17,7 @@ def shell_command(command: str) -> list[str]:
     if os.name == "nt":
         shell = shutil.which("pwsh") or shutil.which("powershell")
         if shell:
-            return [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+            return [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command + "; exit $LASTEXITCODE"]
         return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command]
     return [shutil.which("bash") or "/bin/sh", "-c", command]
 

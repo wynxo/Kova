@@ -134,6 +134,11 @@ class _KovaGroup(TyperGroup):
     def main(self, *args, **kwargs):
         from typer import rich_utils
 
+        # Windows pipes otherwise default to a legacy code page that cannot
+        # encode the wordmark. CLI output is UTF-8, like Kova's data files.
+        if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+
         # Typer caches CI color flags at import. Decide against the current
         # stream instead (also covers CliRunner and every nested command).
         previous = rich_utils.FORCE_TERMINAL
