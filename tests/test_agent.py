@@ -126,7 +126,8 @@ async def test_unknown_tool(setup):
 
 
 async def test_max_steps_then_final_answer(setup):
-    events, fake = await run(setup, [tool('missing', {}) for _ in range(11)] + [text('Done')])
+    events, fake = await run(setup,
+                             [tool('missing', {'i': i}, f'call{i}') for i in range(11)] + [text('Done')])
     assert len(fake.requests) == 11
     assert 'tools' not in fake.requests[-1]
     assert events[-1]['type'] == 'done'
