@@ -2,10 +2,12 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false};
   const scroll = $('scroll-area');
   let nearBottom = true;
-  scroll.addEventListener('scroll', () => { nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 100; });
+  scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
+  scroll.addEventListener('touchmove', () => { nearBottom = false; }, {passive: true});
+  scroll.addEventListener('scroll', () => { nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < (nearBottom ? 100 : 2); });
   function follow() { if (nearBottom) scroll.scrollTop = scroll.scrollHeight; }
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -33,7 +35,7 @@
     $('composer').setAttribute('aria-busy', String(busy));
   }
   function disconnected(message) {
-    state.connected = false;
+    state.connected = false; retry.hidden = false;
     state.events?.close();
     $('connection').className = 'connection';
     $('connection').lastElementChild.textContent = 'Disconnected';
@@ -41,11 +43,13 @@
     controls();
   }
   async function api(path, options = {}) {
-    const response = await fetch(path, {credentials: 'same-origin', ...options,
-      headers: {'Content-Type': 'application/json', ...options.headers}});
+    let response;
+    try { response = await fetch(path, {credentials: 'same-origin', ...options,
+      headers: {'Content-Type': 'application/json', ...options.headers}}); }
+    catch (_) { throw new Error('Cannot reach Kova. Check the server, then retry.'); }
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
-      try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; } catch (_) {}
+      try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; else if (Array.isArray(body.detail)) message = body.detail.map(item => `${item.loc?.slice(1).join('.') || 'Field'}: ${item.msg}`).join('; '); } catch (_) {}
       if (response.status === 401) disconnected('Your connection expired. Open kova-app again to reconnect.');
       throw new Error(message);
     }
@@ -66,7 +70,7 @@
       link.target = '_blank'; link.rel = 'noopener noreferrer';
     });
     if (final) node.querySelectorAll('pre code').forEach(code => {
-      try { hljs.highlightElement(code); } catch (_) {}
+      try { if (code.textContent.length < 20000) hljs.highlightElement(code); } catch (_) {}
       const copy = el('button', 'copy-code', 'Copy');
       copy.type = 'button'; copy.setAttribute('aria-label', 'Copy code');
       copy.onclick = async () => {
@@ -138,8 +142,13 @@
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
   }
-  async function openChat(id) { if (!state.busy) setChat(await json(`/chats/${id}`)); }
-  async function newChat() { if (!state.busy) { setChat(null); $('prompt').focus(); } }
+  async function openChat(id) {
+    if (state.busy) return;
+    const version = ++state.navigationVersion;
+    const chat = await json(`/chats/${id}`);
+    if (version === state.navigationVersion && !state.busy) setChat(chat);
+  }
+  async function newChat() { if (!state.busy) { ++state.navigationVersion; setChat(null); $('prompt').focus(); } }
   async function editChat(chat, remove) {
     if (state.busy) return;
     const dialog = $('chat-dialog');
@@ -164,6 +173,7 @@
     try {
       const status = await json('/health');
       if (!state.connected) return;
+      retry.hidden = true;
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
       const ready = status.model_ok && configured;
       $('connection').className = `connection${ready ? ' online' : ''}`;
@@ -171,6 +181,7 @@
       banner(ready ? '' : configured ? 'Your space is ready. Model offline: start your model server, or run kova setup, then try again.' : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
     } catch (_) {
       if (!state.connected) return;
+      retry.hidden = false;
       $('connection').className = 'connection'; $('connection').lastElementChild.textContent = 'Server offline';
       banner('Cannot reach Kova. Open kova-app to restart the server, then reload this window.');
     }
@@ -179,9 +190,9 @@
   async function readEvents(response, accept) {
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
     function parse() {
-      let index;
-      while ((index = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, index); buffer = buffer.slice(index + 2);
+      let boundary;
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        const frame = buffer.slice(0, boundary.index); buffer = buffer.slice(boundary.index + boundary[0].length);
         const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
         if (data) accept(JSON.parse(data));
       }
@@ -189,6 +200,7 @@
     try {
       while (true) { const {done, value} = await reader.read(); if (done) break; buffer += decoder.decode(value, {stream: true}); parse(); }
       buffer += decoder.decode(); parse();
+      if (buffer.trim()) throw new Error('Reply stream ended mid-frame. Reopen the conversation to check saved messages.');
     } finally { reader.releaseLock(); }
   }
   function planView(items) {
@@ -314,8 +326,9 @@
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
     if (!text || state.busy || !state.connected) return;
+    ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
-    let turn;
+    let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
       $('welcome').hidden = true; message('user', text); $('prompt').value = ''; resize();
@@ -323,11 +336,17 @@
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
-      await readEvents(response, data => turn.accept(data));
+      await readEvents(response, data => {
+        if (terminal) return;
+        terminal = ['done', 'error', 'stopped'].includes(data.type);
+        turn.accept(data);
+      });
+      if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
     } catch (error) {
       if (turn) turn.accept({type: 'error', message: error.message}); else toast(error.message);
     } finally {
-      turn?.finish(); state.busy = false; state.turnReady = false; state.stopRequested = false; controls(); $('prompt').focus();
+      turn?.finish(); state.busy = false; state.turnReady = false; state.stopRequested = false; controls();
+      if (document.activeElement === $('prompt')) $('prompt').focus({preventScroll: true});
       if (state.connected) {
         try {
           // Update title/history without replacing the live reasoning and tool rows.
@@ -351,7 +370,7 @@
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
   $('composer').addEventListener('submit', send);
   $('prompt').addEventListener('input', resize);
-  $('prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } });
+  $('prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); } });
   $('stop').onclick = stop; $('new-chat').onclick = newChat;
   $('menu').onclick = () => sidebar(!document.body.classList.contains('sidebar-open'));
   $('backdrop').onclick = () => sidebar(false);
@@ -397,6 +416,8 @@
   $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-app to reconnect.'); });
   document.querySelectorAll('[data-prompt]').forEach(button => { button.onclick = () => { $('prompt').value = button.dataset.prompt; resize(); $('prompt').focus(); }; });
   async function start() {
+    if (state.starting) return;
+    state.starting = true; state.events?.close();
     // Strip before any asynchronous work, so a consumed ticket never stays in history.
     const ticket = new URLSearchParams(location.hash.slice(1)).get('ticket');
     historyReplace();
@@ -413,6 +434,7 @@
       state.events.onerror = () => { if (state.connected) health(); };
       $('prompt').focus();
     } catch (error) { disconnected(error.message); }
+    finally { state.starting = false; }
   }
   function renderModels(models) {
     const groups = new Map();
@@ -544,20 +566,71 @@
             if (!status.complete) { providerTimer = setTimeout(poll, 1500); return; }
             const data = await json('/providers/validate', write('POST', body));
             if (version !== providerVersion) return;
-            providerDraft = body; clearProviderFieldValues(); showProviderModels(data.models);
-          } catch (error) { if (version === providerVersion) { $('provider-status').textContent = error.message; $('provider-next').disabled = false; } }
+            showProviderModels(data.models); providerDraft = body; clearProviderFieldValues();
+          } catch (error) { if (version === providerVersion) { $('provider-status').textContent = error.message; $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {}); providerLogin = null; } }
         };
         await poll(); return;
       }
       const data = await json('/providers/validate', write('POST', body));
       if (version !== providerVersion) return;
-      providerDraft = body; clearProviderFieldValues(); showProviderModels(data.models);
+      showProviderModels(data.models); providerDraft = body; clearProviderFieldValues();
     } catch (error) {
       popup?.close(); if (version === providerVersion) $('provider-status').textContent = error.message;
-    } finally { if (version === providerVersion && (!signIn || !providerLogin)) { $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); } }
+    } finally { if (version === providerVersion && providerDraft) providerActiveOptions();
+      if (version === providerVersion && !providerDraft && (!signIn || !providerLogin)) { $('provider-next').disabled = false; $('provider-details').querySelectorAll('input,select,textarea').forEach(field => { field.disabled = false; }); } }
   };
   function clearProviderFieldValues() { $('provider-key').value = ''; $('provider-headers').value = ''; }
-  function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname); }
+  // Keep these API-backed panels in the client; credentials never enter storage.
+  const panels = el('div', 'footer-actions'); $('disconnect').parentNode.parentNode.append(panels);
+  for (const kind of ['memory', 'reminders']) {
+    const launch = el('button', 'quiet', kind === 'memory' ? 'Memory' : 'Reminders');
+    launch.type = 'button'; panels.append(launch);
+    const dialog = el('dialog'); dialog.setAttribute('aria-label', launch.textContent);
+    const heading = el('h2', '', launch.textContent), close = el('button', 'quiet', 'Close');
+    close.type = 'button'; close.onclick = () => dialog.close();
+    const search = el('input'); search.type = 'search'; search.placeholder = 'Search memory'; search.setAttribute('aria-label', 'Search memory');
+    const list = el('div'), form = el('form'), title = el('input'), body = el('textarea');
+    title.required = true; body.required = true;
+    title.placeholder = kind === 'memory' ? 'Title' : 'When (e.g. in 10 min)';
+    title.setAttribute('aria-label', title.placeholder);
+    body.placeholder = kind === 'memory' ? 'Note' : 'Reminder'; body.setAttribute('aria-label', body.placeholder);
+    const save = el('button', 'primary', 'Add'); save.type = 'submit';
+    form.append(title, body, save); dialog.append(heading, close, list, form); document.body.append(dialog);
+    if (kind === 'memory') dialog.insertBefore(search, list);
+    search.oninput = () => { ++version; safe(refresh); };
+    let version = 0;
+    async function refresh() {
+      const current = ++version, rows = await json(`/${kind}${kind === 'memory' && search.value.trim() ? '?q=' + encodeURIComponent(search.value.trim()) : ''}`);
+      if (current !== version) return;
+      list.replaceChildren();
+      if (!rows.length) list.append(el('p', '', 'Nothing here yet.'));
+      for (const row of rows) {
+        const item = el('section'), remove = el('button', 'quiet', 'Delete'); remove.type = 'button';
+        item.append(el('strong', '', row.title || row.text), el('p', '', kind === 'memory' ? row.body : new Date(row.when || row.reminder_at).toLocaleString()), remove);
+        remove.onclick = () => safe(async () => {
+          remove.disabled = true;
+          try { await json(`/${kind}/${encodeURIComponent(row.slug ?? row.id)}`, {method: 'DELETE'}); await refresh(); }
+          finally { remove.disabled = false; }
+        }); list.append(item);
+      }
+    }
+    launch.onclick = () => safe(async () => { dialog.showModal(); await refresh(); });
+    form.onsubmit = event => {
+      event.preventDefault(); if (save.disabled) return;
+      safe(async () => {
+        save.disabled = true;
+        try {
+          await json(`/${kind}`, write('POST', kind === 'memory' ? {title: title.value, body: body.value} : {when: title.value, text: body.value}));
+          title.value = ''; body.value = ''; await refresh();
+        } finally { save.disabled = false; }
+      });
+    };
+  }
+  const retry = el('button', 'quiet', 'Retry connection');
+  retry.hidden = true; retry.type = 'button'; retry.onclick = () => safe(start);
+  $('connection').parentNode.append(retry);
+  window.addEventListener('online', () => safe(start));
+  function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname + location.search); }
   window.addEventListener('beforeunload', () => state.events?.close());
   setInterval(() => { if (state.connected) health(); }, 30000);
   window.addEventListener('hashchange', () => { if (location.hash.includes('ticket=') && !state.busy) { state.events?.close(); start(); } });
