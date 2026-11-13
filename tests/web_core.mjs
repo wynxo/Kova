@@ -43,21 +43,47 @@ const sandbox = {
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options) => {
     requests.push({path, body: options.body ? JSON.parse(options.body) : null});
-    return {ok: true, json: async () => path === '/chats' ? [] : {ok: true}};
+    const payloads = {
+      '/chats': [],
+      // The capability contract the server declares, and the catalog with it.
+      '/capabilities': {provider: 'openai', capabilities: ['api_key', 'tools'],
+                        offered: {chat: ['reasoning'], work: ['api_key', 'approvals', 'tools']}},
+      '/providers/catalog': {harness_available: true, providers: [
+        {id: 'openai', name: 'OpenAI', key_url: 'https://platform.openai.com/api-keys',
+         capabilities: ['api_key', 'tools']},
+        {id: 'chatgpt', name: 'ChatGPT subscription', key_url: '', capabilities: ['browser_login', 'reasoning', 'tools']},
+        {id: 'codex', name: 'Installed Codex login', key_url: '', capabilities: ['harness_login', 'reasoning', 'tools']},
+        {id: 'custom', name: 'Custom provider', key_url: '', base_url_hint: 'https://example.com/v1',
+         capabilities: ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']},
+      ]},
+    };
+    return {ok: true, json: async () => (path in payloads ? payloads[path] : {ok: true})};
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, applyCapabilities, providerKindChanged};');
 vm.runInNewContext(source, sandbox);
-const {state, controls, turnView, setChat} = sandbox.test;
+const {state, controls, turnView, setChat, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+// The controls follow the declared contract: the provider's capabilities
+// intersected with the mode's, never a hardcoded mode name.
+const openai = {provider: 'openai', capabilities: ['api_key', 'tools'],
+                offered: {chat: ['reasoning'], work: ['api_key', 'approvals', 'tools']}};
+applyCapabilities(openai);
 state.connected = true; state.chat = {id: 'chat-1', cwd: '/project'};
 controls(); assert.equal($('permission').disabled, false);
+assert.equal($('cwd').disabled, false);
 $('mode').value = 'chat'; controls(); assert.equal($('cwd').disabled, true);
+assert.equal($('permission').disabled, true);
+$('mode').value = 'work'; applyCapabilities({offered: {chat: [], work: []}}); controls();
+assert.equal($('permission').disabled, true, 'a provider that declares nothing is offered nothing');
+assert.equal($('cwd').disabled, true);
+applyCapabilities(openai); controls(); assert.equal($('cwd').disabled, false);
 $('mode').value = 'work'; state.busy = true; controls(); assert.equal($('permission').disabled, true);
+assert.equal($('send').hidden, true, 'no provider declares steering, so send is withheld mid-reply');
 state.busy = false;
 
 for (const decision of ['allow', 'allow_session', 'allow_always', 'deny']) {
@@ -141,6 +167,29 @@ assert.equal($('provider-active').children.length, 1);
 assert.equal($('provider-active').children[0].value, 'beta');
 assert.equal($('provider-next').disabled, false);
 console.log('Provider grouping, filtering, selection and secret cleanup passed');
+
+// The setup form shows exactly the fields each kind declares, so a provider
+// is never asked for something it cannot use.
+$('add-provider').onclick();
+await tick(); await tick(); await tick();
+$('provider-kind').value = 'openai'; providerKindChanged();
+assert.equal($('provider-key-row').hidden, false);
+assert.equal($('provider-url-row').hidden, true);
+assert.equal($('provider-headers-row').hidden, true);
+assert.equal($('provider-consent-row').hidden, true);
+assert.equal($('provider-next').textContent, 'List models');
+$('provider-kind').value = 'chatgpt'; providerKindChanged();
+assert.equal($('provider-key-row').hidden, true, 'a browser sign-in has no key field');
+assert.equal($('provider-next').textContent, 'Continue with ChatGPT');
+$('provider-kind').value = 'codex'; providerKindChanged();
+assert.equal($('provider-key-row').hidden, true);
+assert.equal($('provider-consent-row').hidden, false, 'reusing an installed login asks for consent');
+$('provider-kind').value = 'custom'; providerKindChanged();
+assert.equal($('provider-url-row').hidden, false);
+assert.equal($('provider-url').placeholder, 'https://example.com/v1');
+assert.equal($('provider-headers-row').hidden, false);
+assert.equal($('provider-key-row').hidden, false);
+console.log('Provider setup fields follow declared capabilities passed');
 
 // Byte-by-byte delivery covers partial UTF-8, CRLF boundaries and multiple frames.
 const wire = new TextEncoder().encode('event: text\r\ndata: {"type":"text","text":"hé🔥"}\r\n\r\ndata: {"type":"done"}\n\n');

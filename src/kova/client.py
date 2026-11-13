@@ -212,6 +212,10 @@ class KovaClient:
     def providers_list(self) -> list[dict]:
         return self._request("GET", "/providers").json()
 
+    def capabilities(self) -> dict:
+        """The capability contract: the active provider's declarations and each mode's."""
+        return self._request("GET", "/capabilities").json()
+
     def provider_add(self, provider, models, active=None, *, legacy_name=None):
         payload = {k: getattr(provider, k) for k in ('id', 'name', 'kind', 'base_url', 'api_key', 'headers', 'auth')}
         payload.update(models=models, active=active, legacy_name=legacy_name, consent=provider.kind == 'codex')
