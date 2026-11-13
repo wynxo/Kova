@@ -133,3 +133,13 @@ def test_help_groups_commands_under_the_wordmark():
         assert f"─ {panel} " in text, panel
     assert text.index("─ Chat ") < text.index("─ Server & updates ")
     assert "\x1b[" not in text
+
+
+def test_light_palette_changes_foreground_and_background_before_downscaling():
+    dark = Palette(3, theme_name='dark')
+    light = Palette(3, theme_name='light')
+    codes = fg(theme.ACCENT) + ';48;2;30;29;40'
+    assert dark.paint(codes, 'x') != light.paint(codes, 'x')
+    assert '38;2;' in light.paint(codes, 'x') and '48;2;' in light.paint(codes, 'x')
+    assert '38;5;' in Palette(2, theme_name='light').paint(codes, 'x')
+    assert light.gradient('Kova') != dark.gradient('Kova')

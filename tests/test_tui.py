@@ -1028,3 +1028,14 @@ def test_permissions_rules_editor_can_save_and_cancel():
     app.submit('/permissions rules')
     app.on_key(SimpleNamespace(name='esc',text=''))
     assert len(saved)==1
+
+
+def test_key_remapping_swaps_actions_without_leaving_old_binding():
+    from kova.tui.terminal import Key
+    from kova.tui.keymap import Keymap
+    keys = Keymap({'palette': 'ctrl-t', 'thinking': 'ctrl-p'})
+    assert keys.translate(Key('ctrl-t')).name == 'ctrl-p'
+    assert keys.translate(Key('ctrl-p')).name == 'ctrl-t'
+    assert keys.label('palette') == 'ctrl-t'
+    with pytest.raises(ValueError):
+        Keymap({'palette': 'ctrl-t'})

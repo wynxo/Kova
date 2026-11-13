@@ -29,10 +29,12 @@ from pathlib import Path
 
 from kova import __version__, theme
 from kova.client import KovaClient, KovaError
+from kova.config import load_config
 from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
 from .markdown import ACCENT, BASH, MEMORY
+from .keymap import Keymap
 from .render import Renderer, compact_number, duration, shorten
 from .style import ACCENT_SOFT, FAINT, colour_level
 from .terminal import KeyReader, RawMode, Screen
@@ -71,6 +73,7 @@ COMMANDS = {
     "help": ("/help", "Show commands and keyboard shortcuts"),
     "new": ("/new", "Start a fresh conversation"),
     "resume": ("/resume [n]", "Open an earlier conversation"),
+    "fork": ("/fork", "Fork the current conversation"),
     "mode": ("/mode [chat|work]", "Show the chat mode; /mode chat|work switches"),
     "permissions": ("/permissions [mode|rules]", "When Kova asks before acting: manual, auto, full"),
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
@@ -179,6 +182,13 @@ class ChatApp:
             color = colour_level()
         self.renderer = Renderer(self.screen, color=color)
         self.renderer.no_think = no_think
+        cfg = load_config(history_path.parent) if history_path else None
+        self.renderer.name = cfg.persona_name if cfg else "Kova"
+        self.renderer.p.theme_name = (cfg.tui_theme if cfg else os.environ.get("KOVA_THEME", "dark"))
+        try:
+            self.keys = Keymap(cfg.tui_keys if cfg else {})
+        except ValueError as exc:
+            raise ValueError(f"Invalid [tui.keys] in config.toml: {exc}") from exc
         self.p = self.renderer.p
         self.history_path = history_path
         self.editor = Editor(load_history(history_path) if history_path else [])
@@ -224,6 +234,15 @@ class ChatApp:
 
     # ================================================================ lifecycle
     def run(self) -> int:
+        if self.history_path and sys.stdin.isatty():
+            cfg = load_config(self.history_path.parent)
+            if not cfg.persona_configured:
+                from kova.onboarding import SetupError, _setup_persona
+                try:
+                    _setup_persona(cfg)
+                except SetupError:
+                    return 0
+                self.renderer.name = cfg.persona_name
         fd = sys.stdin.fileno()
         reader = KeyReader(fd)
         previous = signal.signal(signal.SIGWINCH, lambda *_: setattr(self, "resized", True))
@@ -367,6 +386,10 @@ class ChatApp:
 
     # ================================================================ keys
     def on_key(self, key) -> None:
+        if key.name == 'text' and key.text == '?' and not self.editor.text and self.keys.label('shortcuts') == 'question':
+            from .terminal import Key
+            key = Key('question')
+        key = self.keys.translate(key)
         if isinstance(self.overlay, TextPrompt):
             self._prompt_key(key)
         elif self.overlay is not None:
@@ -429,7 +452,9 @@ class ChatApp:
     def _editor_key(self, key) -> None:
         editor, name, now = self.editor, key.name, time.monotonic()
         before = editor.text
-        if name == "ctrl-p":
+        if name == "question":
+            self.show_shortcuts = not self.show_shortcuts
+        elif name == "ctrl-p":
             self._open_palette()
         elif name == "ctrl-t":
             self.renderer.verbose = not self.renderer.verbose
@@ -448,7 +473,7 @@ class ChatApp:
                 self.quit = True
             else:
                 self.last_ctrl_c = now
-                self._flash("Press Ctrl+C again to exit")
+                self._flash(f"Press {self.keys.label('interrupt').replace('ctrl-', 'Ctrl+').upper() if self.keys.label('interrupt') != 'ctrl-c' else 'Ctrl+C'} again to exit")
         elif name == "ctrl-d":
             if not editor.text and self.job is None:
                 self.quit = True
@@ -466,7 +491,7 @@ class ChatApp:
                 editor.clear()
             elif editor.text:
                 self.last_esc = now
-                self._flash("Esc again to clear")
+                self._flash(f"{self.keys.label('cancel')} again to clear")
         elif name == "shift-tab":
             self._cycle_permission()
         elif name == "clear-screen":
@@ -493,9 +518,6 @@ class ChatApp:
         elif name == "newline":
             editor.insert("\n")
         elif name == "text":
-            if key.text == "?" and not editor.text:
-                self.show_shortcuts = not self.show_shortcuts
-                return
             editor.insert(key.text)
         elif name == "paste":
             editor.paste(key.text)
@@ -951,6 +973,7 @@ class ChatApp:
                           ("\\⏎  shift+⏎  ctrl+j", "new line"), ("tab", "complete"),
                           ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
                           ("! # @ /", "shell command · remember · attach a file · command")):
+            key = self.keys.format_help(key)
             r.line("    " + p.paint(ACCENT_SOFT, key.ljust(width)) + p.dim(fit(text, room)))
         r.line()
 
@@ -1090,6 +1113,14 @@ class ChatApp:
         note = "" if "cwd" in chat else self.p.dim(" · for @ files and ! commands")
         self._done(f"Folder: {self.p.bold(_home_short(folder))}" + note)
 
+    def _cmd_fork(self, _rest: str) -> None:
+        chat = self.client._request("POST", f"/chats/{self.chat_id}/fork").json()
+        self.chat_id = chat["id"]
+        self.plan = chat.get("plan") or []
+        self.refresh_chat()
+        self._done(f"Forked {self.p.bold(chat.get('title') or 'Untitled')}")
+        self.replay()
+
     def _cmd_resume(self, rest: str) -> None:
         chats = self.client.list_chats()[:30]
         self._chats = chats
@@ -1153,15 +1184,36 @@ class ChatApp:
         phase = None
         if animate and self.welcome_started is not None:
             phase = (time.monotonic() - self.welcome_started) / WELCOME_SECONDS * 12 - 4
-        return welcome(self.p, width, version=__version__, model=self.model or "?",
+        lines = welcome(self.p, width, version=__version__, model=self.model or "?",
                        mode=self.mode, cwd=_home_short(self.cwd),
                        memory=_home_short(self.memory_path) if self.memory_path else "",
                        notes=self.notes, web=self.web, offline=not self.model_ok, phase=phase,
-                       tips=tips, title=self.title, permission=self.permission)
+                       tips=False, title=self.title, permission=self.permission,
+                       assistant_name=self.renderer.name)
+        if tips:
+            tips_list = [f"{self.keys.label('palette')}: find commands and chats",
+                         "/resume: switch conversations · /fork: branch this chat",
+                         "@ attaches files · ! runs a shell command",
+                         "# saves a memory · /help lists commands"]
+            try:
+                index = int((self.history_path.parent / 'tui-tip').read_text()) if self.history_path else 0
+            except (OSError, ValueError):
+                index = 0
+            lines += ["", "  " + self.p.dim(fit("Tip: " + tips_list[index % len(tips_list)], width - 3))]
+        return lines
 
     def _commit_welcome(self, tips: bool = True) -> None:
         self.welcome_started = None
-        for line in self._welcome_lines(animate=False, tips=tips):
+        lines = self._welcome_lines(animate=False, tips=tips)
+        if tips and self.history_path:
+            from kova.config import private_write
+            tip_path = self.history_path.parent / 'tui-tip'
+            try:
+                index = int(tip_path.read_text()) if tip_path.exists() else 0
+                private_write(tip_path, str(index + 1))
+            except (OSError, ValueError):
+                pass
+        for line in lines:
             self.renderer.line(line)
         self.renderer.line()
 
@@ -1201,7 +1253,7 @@ class ChatApp:
             if self.menu is not None:
                 lines += menu(self.menu.items, self.menu_index, width, p)
             elif self.show_shortcuts:
-                lines += shortcuts(width, p)
+                lines += shortcuts(width, p, self.keys)
             lines.append(self._status(width))
         self.screen.set_live(lines, caret)
         self.screen.render()
@@ -1209,6 +1261,7 @@ class ChatApp:
     def _hint(self) -> str:
         """The input box's footer: what the keys do right now."""
         p, text = self.p, self.editor.text
+        key = self.keys.label
         if self.flash_text and time.monotonic() < self.flash_until:
             return p.yellow(self.flash_text)
         if text.startswith("!"):
@@ -1217,14 +1270,14 @@ class ChatApp:
         if text.startswith("#"):
             return p.paint(MEMORY, "# save a memory note")
         if self.job is not None:
-            return p.faint("esc stop · ctrl+t thinking · ctrl+o tools")
+            return p.faint(f"{key('cancel')} stop · {key('thinking')} thinking · {key('tools')} tools")
         if self.permission in PERMISSIONS and self.permission != "manual":
             return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
                             f"⏵⏵ {self.permission} permissions")
-                    + p.faint(" · shift+tab to cycle"))
+                    + p.faint(f" · {key('permissions')} to cycle"))
         if text:
-            return p.faint("⏎ send · \\⏎ new line · ctrl+p palette")
-        return p.faint("ctrl+p palette · ctrl+t thinking · ? help")
+            return p.faint(f"{key('submit')} send · {key('newline')} new line · {key('palette')} palette")
+        return p.faint(f"{key('palette')} palette · {key('thinking')} thinking · {key('shortcuts') if key('shortcuts') != 'question' else '?'} help")
 
     def _turn_stats(self) -> str:
         """Tokens, context fill and turn time for the right of the status line.

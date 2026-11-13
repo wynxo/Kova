@@ -13,7 +13,8 @@ from pathlib import Path
 import httpx
 
 from kova.compact import compact
-from kova.config import Config
+from kova.config import Config, load_config
+from kova.persona import Persona
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE
@@ -58,9 +59,13 @@ def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool
 def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Note],
                         mode: str = DEFAULT_MODE, *,
                         memory_usage: int | None = None,
-                        memory_budget: int | None = None) -> str:
+                        memory_budget: int | None = None,
+                        persona: Persona | None = None) -> str:
     """Build the identity, current context, and relevant memory prompt."""
+    persona = persona or Persona()
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
+    identity = identity.replace("Kova", persona.name).replace(
+        "Be warm, direct and genuinely helpful.", persona.instruction)
     tools = ", ".join(tool_names) if tool_names else "none"
     prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
               f"Available tools: {tools}")
@@ -216,7 +221,12 @@ class Agent:
             memory_usage = await asyncio.to_thread(self.memory.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
-        prompt = build_system_prompt(self.now(), list(tools), memories, mode,
+        current_config = load_config(self.config.home)
+        try:
+            persona = Persona(current_config.persona_name, current_config.persona_tone)
+        except ValueError:
+            persona = Persona()
+        prompt = build_system_prompt(self.now(), list(tools), memories, mode, persona=persona,
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0))
         if mode != 'chat':

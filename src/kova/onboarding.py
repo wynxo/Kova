@@ -13,7 +13,8 @@ from rich.text import Text
 
 from kova import server_finder
 from kova.client import KovaClient, KovaError
-from kova.config import Config, ensure_token, save_config
+from kova.config import Config, ensure_token, save_config, load_config
+from kova.persona import Persona, TONES
 from kova.providers import (
     CATALOG,
     ProviderError,
@@ -154,6 +155,24 @@ def _identifier(cfg: Config, default: str) -> str:
     return identifier
 
 
+def _setup_persona(cfg: Config) -> None:
+    if cfg.persona_configured:
+        return
+    while True:
+        name = _ask('Name your assistant (Enter = Kova):', 'Kova')
+        try:
+            Persona(name)
+            break
+        except ValueError as exc:
+            console.print(str(exc))
+    tones = list(TONES)
+    tone = tones[_select('Choose a tone', [t.title() for t in tones])]
+    current = load_config(cfg.home)
+    current.persona_name, current.persona_tone, current.persona_configured = name, tone, True
+    save_config(current)
+    cfg.persona_name, cfg.persona_tone, cfg.persona_configured = name, tone, True
+
+
 def needs_setup(cfg: Config, **kwargs) -> bool:
     """Do not auto-discover or fetch catalogs on chat startup."""
     try:
@@ -256,5 +275,7 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
                     provider.api_key = _secret('API key:')
         selected, active = _pick_models(models)
         _save_provider(cfg, provider, selected, active)
+        if sys.stdin.isatty():
+            _setup_persona(cfg)
     except (ProviderError, KovaError, ValueError, OSError) as exc:
         raise SetupError(str(exc)) from None

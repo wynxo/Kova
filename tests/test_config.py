@@ -64,3 +64,18 @@ def test_legacy_key_assignment_updates_all_models_sharing_provider(tmp_path):
     save_config(cfg)
     again = load_config(tmp_path)
     assert all(m.api_key == 'new-key' for m in again.models)
+
+
+def test_persona_config_round_trip_and_prompt(tmp_path):
+    from datetime import datetime
+    from kova.agent import build_system_prompt
+    from kova.persona import Persona
+
+    cfg = load_config(tmp_path)
+    cfg.persona_name, cfg.persona_tone = 'Nova', 'concise'
+    save_config(cfg)
+    cfg = load_config(tmp_path)
+    assert (cfg.persona_name, cfg.persona_tone) == ('Nova', 'concise')
+    prompt = build_system_prompt(datetime.now(), [], [], persona=Persona(cfg.persona_name, cfg.persona_tone))
+    assert 'You are Nova' in prompt and 'concise' in prompt.lower()
+    assert 'You are Kova' not in prompt
