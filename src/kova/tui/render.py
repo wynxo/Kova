@@ -8,9 +8,10 @@ running tool, input box) below it. In live mode the spinner is not drawn here;
 
 Ported and adapted from Kaine's ``kaine/cli_render.py`` for Kova's event
 protocol (``text``, ``reasoning``, ``tool_call``, ``tool_result``, ``error``,
-``done``, ``plan``, ``approval``, ``stopped``) and Kova's visual language
-(``\u25c6 Kova`` header, ``\u203a`` prompt, ``\u25cf Kova`` replies, tool rows
-``\u2699 name "args"`` running and ``\u2713 name \u00b7 result`` done).
+``done``, ``plan``, ``approval``, ``stopped``). The look: the user's turn is a
+``\u276f`` line on a faint teal tint; Kova's starts with a gradient
+``\u25c6 Kova``; tools are small coloured chips (``\u2713 Search  query \u00b7 5
+results``); reasoning collapses to one quiet ``\u273b Thought for 2s`` line.
 """
 from __future__ import annotations
 
@@ -20,13 +21,34 @@ import shutil
 import sys
 import time
 
-from .markdown import ACCENT, BASH, ERROR, MEMORY, SUCCESS, USER, WARNING, MarkdownStream, Palette, \
-    clean, display_width
+from kova import theme
+
+from .markdown import (
+    ACCENT,
+    BASH,
+    ERROR,
+    MEMORY,
+    SUCCESS,
+    USER,
+    WARNING,
+    MarkdownStream,
+    Palette,
+    clean,
+    display_width,
+    strip_ansi,
+)
+from .style import FAINT, bg, mix
 from .widgets import pick_verb, pulse, spinner_line
 
-# Tool rows read like calls for run_command: Bash(git status).
-TOOL_NAMES = {"run_command": "Bash", "web_search": "Web", "web_fetch": "Read",
-              "read_file": "Read", "write_file": "Write", "list_files": "List"}
+# Each tool's chip: a short name, and the colour it is drawn in.
+TOOL_NAMES = {"run_command": "Bash", "web_search": "Search", "web_fetch": "Fetch",
+              "read_file": "Read", "write_file": "Write", "list_files": "List",
+              "memory_save": "Remember", "memory_search": "Recall",
+              "reminder_add": "Remind", "reminder_list": "Reminders", "system_info": "System"}
+TOOL_COLOURS = {"run_command": theme.BASH, "web_search": theme.MEMORY, "web_fetch": theme.MEMORY,
+                "read_file": theme.CODE, "write_file": theme.CODE, "list_files": theme.CODE,
+                "memory_save": theme.USER, "memory_search": theme.USER,
+                "reminder_add": theme.WARNING, "reminder_list": theme.WARNING}
 ACTIVE_TITLES = {
     "run_command": "Running", "web_search": "Searching the web", "web_fetch": "Reading a page",
     "read_file": "Reading", "write_file": "Writing", "list_files": "Listing files",
@@ -35,7 +57,7 @@ ACTIVE_TITLES = {
     "system_info": "Checking your system",
 }
 PERMISSION_TITLES = {"run_command": "Run a shell command?", "write_file": "Write a file?"}
-PLAN_MARKS = {"done": "\u2611", "in_progress": "\u25d0", "pending": "\u2610"}
+PLAN_MARKS = {"done": "\u2713", "in_progress": "\u25d0", "pending": "\u25cb"}
 OUTPUT_PREVIEW_LINES = 4
 
 
@@ -72,7 +94,7 @@ def args_preview(args: object, limit: int = 60) -> str:
     return shorten(preview, limit)
 
 
-def compact_number(count: int | float) -> str:
+def compact_number(count: float) -> str:
     count = int(count or 0)
     if count >= 1_000_000:
         return f"{count / 1_000_000:.1f}M"
@@ -140,6 +162,7 @@ class Renderer:
         self.headed = False       # this turn's "\u25cf Kova" line is out
         self.stopped = False      # the turn ended with a "stopped" event
         self.after_block = False  # a tool row or plan was the last thing shown
+        self.last_stats = ""      # the last turn's tokens and time, for the status bar
 
     # ------------------------------------------------------------ basics
     @property
@@ -149,7 +172,7 @@ class Renderer:
     @property
     def width(self) -> int:
         """Where text wraps: the terminal, but never wider than is comfortable to read."""
-        return max(40, min(self.columns - 1, 120))
+        return max(30, min(self.columns - 1, 104))
 
     def write(self, text: str) -> None:
         self.out.write(text)
@@ -160,8 +183,10 @@ class Renderer:
 
     def error(self, text: str) -> None:
         """A failure, wrapped rather than cut off, with room after it."""
-        for index, row in enumerate(wrap_words(text, self.width - 2)):
-            self.line(self.p.red("\u2717 " if index == 0 else "  ") + self.p.red(row))
+        p = self.p
+        for index, row in enumerate(wrap_words(text, self.width - 4)):
+            lead = p.paint("1;" + ERROR, "\u2717 ") if index == 0 else "  "
+            self.line("  " + lead + p.red(row))
         self.line()
 
     @property
@@ -181,31 +206,47 @@ class Renderer:
         if self.pending_tool and not self.asking:
             name, args = self.pending_tool
             lines.append("  " + pulse(self.p, frame) + " " + self.tool_header(name, args))
-        lines.append(spinner_line(self.p, verb=self.activity or self.verb, frame=frame,
+        lines.append("  " + spinner_line(self.p, verb=self.activity or self.verb, frame=frame,
                                   elapsed=now - (self.turn_started or now), tokens=self.tokens,
                                   stopping=self.stopping,
                                   thinking=bool(self.think_started and not self.stream)))
         return lines
 
     # ------------------------------------------------------------ prompts
-    def user(self, text: str, *, mark: str = "\u203a", colour: str = USER) -> None:
-        """Echo a submitted prompt, one ``mark`` line per paragraph, in Kova's green."""
-        lines = clean(str(text)).splitlines() or [""]
-        for index, line in enumerate(lines):
+    def user(self, text: str, *, mark: str = "\u276f", colour: str = USER,
+             tint: str = theme.USER) -> None:
+        """Echo a submitted prompt: a ``mark`` and the text on a faint tint of
+        ``tint``, so the user's turns stand apart from Kova's at a glance."""
+        p = self.p
+        rows: list[str] = []
+        for paragraph in clean(str(text)).splitlines() or [""]:
+            rows += wrap_words(paragraph, self.width - 4) if paragraph.strip() else [""]
+        if len(rows) > 40:  # a pasted wall of text: show its start and end
+            rows = [*rows[:18], f"\u2026 {len(rows) - 36} more lines", *rows[-18:]]
+        size = max(display_width(row) for row in rows) + 4
+        shade = bg(mix(tint, theme.SURFACE, 0.86)) if p.level >= 2 else ""
+        for index, row in enumerate(rows):
             lead = mark if index == 0 else " "
-            self.line(self.p.paint("1;" + colour, lead + " ") + line if self.p.color
-                      else f"{lead} {line}")
+            if not p.color:
+                self.line(f"{lead} {row}")
+                continue
+            pad = " " * (size - display_width(row) - 3)
+            if shade:
+                self.line(p.paint(f"1;{colour};{shade}", " " + lead + " ")
+                          + p.paint(shade, row + pad))
+            else:
+                self.line(p.paint("1;" + colour, lead + " ") + row)
         self.line()
 
     def shell(self, command: str) -> None:
-        self.user(command, mark="!", colour=BASH)
+        self.user(command, mark="!", colour=BASH, tint=theme.BASH)
 
     def remember(self, note: str) -> None:
-        self.user(note, mark="#", colour=MEMORY)
+        self.user(note, mark="#", colour=MEMORY, tint=theme.MEMORY)
 
     def reminder(self, text: str) -> None:
         """A reminder that popped in while chatting."""
-        self.line(self.p.paint("1;" + SUCCESS, "\u23f0 ") + shorten(text, self.width - 4))
+        self.line(self.p.pill("Reminder", theme.SUCCESS) + " " + shorten(text, self.width - 14))
         self.line()
 
     # ------------------------------------------------------------ events
@@ -223,7 +264,9 @@ class Renderer:
         """The turn's ``\u25cf Kova`` line, once, before the first thing it shows."""
         if self.in_turn and not self.headed:
             self.headed = True
-            self.line(self.p.paint("1;" + ACCENT, "\u25cf Kova") if self.p.color else "\u25cf Kova")
+            p = self.p
+            self.line(p.paint("1;" + ACCENT, "\u25c6") + " " + p.gradient("Kova", bold=True)
+                      if p.color else "\u25c6 Kova")
 
     def handle(self, event: dict) -> None:
         kind = event.get("type")
@@ -240,8 +283,10 @@ class Renderer:
         if self.verbose and not self.no_think:
             if self.thinking is None:
                 self.reply_header()
-                self.thinking = MarkdownStream(self.write, self.width, self.p, first="\u273b ",
-                                               base=["2", "3"])
+                self.line(self.p.faint("  \u273b Thinking"))
+                base = ["3", FAINT] if self.p.level >= 2 else ["2", "3"]
+                self.thinking = MarkdownStream(self.write, self.width, self.p, margin="    ",
+                                               base=base)
             self.thinking.feed(text)
 
     def _end_thinking(self) -> None:
@@ -251,7 +296,9 @@ class Renderer:
             self.line()
         elif self.think_started and not self.no_think:
             self.reply_header()
-            self.line(self.p.dim(f"  thought for {duration(time.monotonic() - self.think_started)}"))
+            took = duration(time.monotonic() - self.think_started)
+            self.line(self.p.faint("  \u273b ") + self.p.paint(f"3;{FAINT}" if self.p.level >= 2 else "2;3",
+                                                            f"Thought for {took}"))
         self.think_started = 0.0
 
     def _on_text(self, event) -> None:
@@ -306,39 +353,55 @@ class Renderer:
     def interrupted(self) -> None:
         if not self.stopped:
             self.stopped = True
-            self.line(self.p.dim("  \u23bf  Interrupted \u00b7 send another message when ready"))
+            self.line("  " + self.p.yellow("\u25fc Interrupted")
+                      + self.p.dim(" \u00b7 send another message when ready"))
 
     def _on_plan(self, event) -> None:
         self.end_text()
         self.plan(event.get("items") or [])
 
     # ------------------------------------------------------------ tool rows
+    def chip(self, name: str, ok: bool = True) -> str:
+        """The tool's coloured name chip: ``Bash``, ``Search``, ``Read``..."""
+        label = TOOL_NAMES.get(name, name or "tool")
+        return self.p.pill(label, TOOL_COLOURS.get(name, theme.ACCENT) if ok else theme.ERROR)
+
+    def _detail(self, name: str, args: dict, room: int) -> str:
+        detail = tool_detail(name, args) or args_preview(args, room)
+        return shorten(detail, room) if detail else ""
+
+    def _call(self, chip: str, detail: str, paint=None) -> str:
+        """A chip and its detail: side by side in colour, ``Name(detail)`` without."""
+        if not self.p.color:
+            return chip + (f"({detail})" if detail else "")
+        return chip + (" " + (paint or (lambda text: text))(detail) if detail else "")
+
     def tool_header(self, name: str, args: dict) -> str:
-        """A running tool: ``Bash(git status)`` for commands, else ``name "args"``."""
-        p = self.p
-        if name == "run_command":
-            room = self.width - 14
-            return p.bold(TOOL_NAMES[name]) + p.dim("(" + shorten(tool_detail(name, args), room) + ")")
-        preview = args_preview(args, max(10, self.width - display_width(name) - 10))
-        return p.paint("1;" + ACCENT, name) + (p.dim("  " + preview) if preview else "")
+        """A running tool: its chip and what it is working on."""
+        chip = self.chip(name)
+        detail = self._detail(name, args, max(10, self.width - display_width(strip_ansi(chip)) - 8))
+        return self._call(chip, detail, self.p.dim)
 
     def tool_row(self, name, args, ok, summary) -> None:
-        """A finished tool: ``\u2713 name \u00b7 result``; commands get their output underneath."""
+        """A finished tool: ``\u2713 Search  query \u00b7 result``; commands get
+        their output underneath on a quiet rule."""
         p = self.p
         self.reply_header()
         icon = p.paint("1;" + (SUCCESS if ok else ERROR), "\u2713" if ok else "\u2717")
+        chip = self.chip(name, ok)
+        used = display_width(strip_ansi(chip)) + 6
         if name == "run_command":
             command = tool_detail(name, args) or "command"
-            self.line(f"  {icon} {p.bold(TOOL_NAMES[name])}"
-                      + p.dim("(" + shorten(command, self.width - 14) + ")"))
-            for index, text in enumerate(self._run_command_body(summary, ok)):
-                self.line(p.dim("    \u23bf  " if index == 0 else "       ") + text)
+            self.line(f"  {icon} " + self._call(chip, shorten(command, self.width - used)))
+            for text in self._run_command_body(summary, ok):
+                self.line("    " + p.faint("\u2502") + " " + text)
             self.after_block = True
             return
-        detail = shorten(summary, self.width - display_width(name) - 8)
-        row = f"  {icon} {name}"
-        if detail:
-            row += (p.dim if ok else p.red)(f" \u00b7 {detail}")
+        detail = self._detail(name, args, max(8, (self.width - used) // 2))
+        result = shorten(summary, max(8, self.width - used - display_width(detail) - 3))
+        row = f"  {icon} " + self._call(chip, detail)
+        if result:
+            row += p.faint(" \u00b7 ") + (p.dim if ok else p.red)(result)
         self.line(row)
         self.after_block = True
 
@@ -347,34 +410,35 @@ class Renderer:
         lines = [line.rstrip() for line in command_output(summary).splitlines()]
         while lines and not lines[-1]:
             lines.pop()
-        paint = (lambda text: text) if ok else p.red
-        shown = [paint(shorten(line, self.width - 9)) for line in lines[:OUTPUT_PREVIEW_LINES]]
+        paint = p.dim if ok else p.red
+        shown = [paint(shorten(line, self.width - 8)) for line in lines[:OUTPUT_PREVIEW_LINES]]
         if len(lines) > OUTPUT_PREVIEW_LINES:
             more = len(lines) - OUTPUT_PREVIEW_LINES
-            shown.append(p.dim(f"\u2026 +{more} line{'' if more == 1 else 's'}"))
+            shown.append(p.faint(f"\u2026 +{more} line{'' if more == 1 else 's'}"))
         elif not lines:
-            shown.append(p.dim("(No output)") if ok else p.red("Failed"))
+            shown.append(p.faint("(No output)") if ok else p.red("Failed"))
         return shown
 
     def plan(self, items) -> None:
-        """The agent's checklist as an ``Update Todos`` block: \u2610 / \u25d0 / \u2611."""
+        """The agent's checklist: \u2713 done, \u25d0 doing, \u25cb to do."""
         if not items:
             return
         p = self.p
         self.reply_header()
-        self.line(f"  {p.paint('1;' + ACCENT, '\u25cf')} {p.bold('Update Todos')}")
-        for index, item in enumerate(items):
+        done = sum(1 for item in items if isinstance(item, dict) and item.get("status") == "done")
+        self.line(f"  {p.paint(ACCENT, '\u25c6')} {p.bold('Plan')} " + p.dim(f"{done}/{len(items)}"))
+        for item in items:
             status = item.get("status") if isinstance(item, dict) else None
             text = (item.get("text") if isinstance(item, dict) else str(item)) or ""
-            mark = PLAN_MARKS.get(status, "\u2610")
-            title = shorten(text, self.width - 12)
+            mark = PLAN_MARKS.get(status, PLAN_MARKS["pending"])
+            title = shorten(text, self.width - 8)
             if status == "done":
-                row = p.paint("2;9", f"{mark} {title}")
+                row = p.green(mark) + " " + p.paint(f"9;{FAINT}" if p.level >= 2 else "2;9", title)
             elif status == "in_progress":
                 row = p.paint("1;" + ACCENT, f"{mark} {title}")
             else:
-                row = f"{mark} {title}"
-            self.line(p.dim("    \u23bf  " if index == 0 else "       ") + row)
+                row = p.dim(mark) + " " + title
+            self.line("    " + row)
         self.after_block = True
 
     # -------------------------------------------------------- permission
@@ -406,9 +470,13 @@ class Renderer:
         elapsed = time.monotonic() - self.turn_started if self.turn_started else 0
         parts = [f"Worked for {duration(elapsed)}"] if elapsed else []
         if self.pass_chars:
-            parts.append(f"\u2193 {compact_number(self.tokens)} tokens")
+            parts.append(f"{compact_number(self.tokens)} tokens")
+        if elapsed:
+            self.last_stats = " \u00b7 ".join(
+                ([f"{compact_number(self.tokens)} tokens"] if self.pass_chars else [])
+                + [duration(elapsed)])
         if parts and self.headed:
-            self.line(self.p.dim("  \u273b " + " \u00b7 ".join(parts)))
+            self.line(self.p.faint("  \u273b " + " \u00b7 ".join(parts)))
         if self.headed:
             self.line()
         self.spinner = ""
@@ -438,6 +506,7 @@ __all__ = [
     'ACTIVE_TITLES',
     'PERMISSION_TITLES',
     'PLAN_MARKS',
+    'TOOL_COLOURS',
     'TOOL_NAMES',
     'Renderer',
     'args_preview',

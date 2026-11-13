@@ -147,7 +147,7 @@ class _Turn:
             self.blocks.append(_Block("stopped"))
 
     def render(self) -> Group:
-        items: list = [Text("● Kova", style=f"bold {theme.ACCENT}")]
+        items: list = [Text.assemble(("◆ ", f"bold {theme.ACCENT}"), ("Kova", f"bold {theme.ACCENT}"))]
         for block in self.blocks:
             text = "".join(block.chunks)
             if block.kind == "text":
@@ -301,23 +301,34 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None) ->
     mode = (chat.get("mode") if chat else None) or "work"
     web = (chat.get("web", True) if chat else True)
 
-    status = Text("◆ Kova", style=f"bold {theme.ACCENT}")
+    from kova import __version__
+    from kova.tui.brand import gradient_text, wordmark
+
+    console.print()
+    console.print(wordmark(__version__))
+    console.print()
+    status = Text("  ")
+    status.append("●", style=theme.SUCCESS if health["model_ok"] else theme.WARNING)
+    status.append("  ")
+    status.append_text(gradient_text("Kova"))
     status.append("  ·  model ", style=theme.MUTED)
     status.append(str(health["model"]), style="bold")
     if not health["model_ok"]:
         status.append("  ·  offline", style=f"bold {theme.WARNING}")
     status.append("  ·  mode ", style=theme.MUTED)
-    status.append(mode, style="bold")
+    status.append(mode, style=f"bold {theme.ACCENT}")
     if not web:
         status.append("  ·  web off", style=theme.MUTED)
     status.append("  ·  ", style=theme.MUTED)
     status.append(f"{notes} {'note' if notes == 1 else 'notes'}", style=theme.MUTED)
     console.print(status)
-    console.print(f"  Memory  {cfg.memory_path}", style=theme.MUTED)
+    console.print(f"     memory  {cfg.memory_path}", style=theme.FAINT)
     if not health["model_ok"]:
         console.print("  The model is unreachable — replies may fail. "
-                      "Check kova setup or /model.", style=theme.MUTED)
-    console.print("  /help commands  ·  /think reasoning  ·  Ctrl+D leave", style=theme.MUTED)
+                      "Check kova setup or /model.", style=theme.WARNING)
+    console.print(Text.assemble(("  /help", f"bold {theme.ACCENT_SOFT}"), (" commands  ·  ", theme.MUTED),
+                                ("/think", f"bold {theme.ACCENT_SOFT}"), (" reasoning  ·  ", theme.MUTED),
+                                ("Ctrl+D", f"bold {theme.ACCENT_SOFT}"), (" leave", theme.MUTED)))
     console.print()
 
 
