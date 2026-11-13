@@ -9,7 +9,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from kova import provider_auth, providers
+from kova import modes, provider_auth, providers
 from kova.config import Config, ProviderEntry, save_config
 
 
@@ -31,7 +31,13 @@ class ProviderBody(BaseModel):
 def public_provider(p: ProviderEntry) -> dict:
     return {'id': p.id, 'name': p.name, 'kind': p.kind, 'base_url': p.base_url,
             'adapter': p.adapter, 'authenticated': bool(p.api_key or p.auth.get('access_token') or p.auth.get('source')),
-            'account': p.auth.get('email', '')}
+            'account': p.auth.get('email', ''),
+            'capabilities': sorted(providers.capabilities(p))}
+
+
+def public_spec(spec: providers.ProviderSpec) -> dict:
+    """One catalog entry with its declared capabilities as a JSON list."""
+    return {**asdict(spec), 'capabilities': sorted(providers.spec_capabilities(spec))}
 
 
 def install_provider_routes(app, config: Config, require_token):
@@ -61,16 +67,19 @@ def install_provider_routes(app, config: Config, require_token):
             base_url = found.base_url
         p = providers.make_provider(body.kind, identifier=identifier, name=body.name or identifier,
                                     base_url=base_url, api_key=body.api_key, headers=body.headers)
-        if body.auth and (p.kind != 'chatgpt' or body.auth.get('source')):
-            if p.kind != 'codex':
-                raise providers.ProviderError('Sign in using the provider login flow.')
-        if body.auth and p.kind == 'chatgpt':
+        # The provider kind declares how it authenticates; reject anything else.
+        caps = providers.capabilities(p)
+        if body.consent and 'harness_login' not in caps:
+            raise providers.ProviderError('Only an installed agent login needs consent.')
+        if body.auth and 'harness_login' not in caps and ('browser_login' not in caps or body.auth.get('source')):
+            raise providers.ProviderError('Sign in using the provider login flow.')
+        if body.auth and 'browser_login' in caps:
             p.auth = body.auth  # CLI-owned login, sent over the authenticated loopback API only
-        if p.kind == 'codex':
+        if 'harness_login' in caps:
             provider_auth.reuse_codex(p, consent=body.consent)
         if body.login_id:
             attempt = pending.get(body.login_id)
-            if not attempt or not attempt.done.is_set() or not attempt.result or attempt.error or p.kind != 'chatgpt':
+            if not attempt or not attempt.done.is_set() or not attempt.result or attempt.error or 'browser_login' not in caps:
                 raise providers.ProviderError('Finish sign-in before adding this provider.')
             p.auth = dict(attempt.result)
         return p
@@ -83,7 +92,29 @@ def install_provider_routes(app, config: Config, require_token):
 
     @router.get('/providers/catalog')
     async def choices():
-        return {'providers': [asdict(s) for s in providers.CATALOG], 'harness_available': provider_auth.detect_harness()}
+        return {'providers': [public_spec(s) for s in providers.CATALOG],
+                'harness_available': provider_auth.detect_harness()}
+
+    @router.get('/capabilities')
+    async def contract():
+        """The capability contract, for every UI layer to consult.
+
+        ``capabilities`` is what the active provider declares; ``offered`` is
+        what each chat mode offers once every gate has agreed (see
+        :data:`kova.providers.CAPABILITY_GATES`), which is what a UI reads for
+        the mode it is in. The server enforces the same declarations, so a
+        client that forces an unsupported action is refused rather than
+        silently obeyed.
+        """
+        config.bind_providers()
+        try:
+            entry = config.active_model()
+        except KeyError:
+            entry = None
+        provider = entry._provider if entry is not None else None
+        return {'provider': provider.id if provider else '',
+                'capabilities': sorted(providers.capabilities(provider)),
+                'offered': {mode: sorted(providers.offered(provider, mode)) for mode in modes.MODES}}
 
     @router.get('/providers')
     async def listing():
@@ -140,13 +171,18 @@ def install_provider_routes(app, config: Config, require_token):
         p = next((p for p in config.providers if p.id == identifier), None)
         if not p:
             raise HTTPException(404, 'No provider with that name.')
-        if body.auth and (p.kind != 'chatgpt' or body.auth.get('source')):
+        caps = providers.capabilities(p)
+        if body.api_key and 'api_key' not in caps:
+            raise HTTPException(400, f'{p.name} does not use an API key.')
+        if body.consent and 'harness_login' not in caps:
+            raise HTTPException(400, 'Only an installed agent login needs consent.')
+        if body.auth and 'harness_login' not in caps and ('browser_login' not in caps or body.auth.get('source')):
             raise HTTPException(400, 'Use the provider sign-in flow with explicit consent.')
         candidate = ProviderEntry(p.id, p.name, p.base_url, p.kind, p.adapter,
                                   api_key=body.api_key, headers=dict(p.headers), auth=dict(body.auth or p.auth))
         candidate._home = config.home
         try:
-            if p.kind == 'codex':
+            if 'harness_login' in caps:
                 provider_auth.reuse_codex(candidate, consent=body.consent)
             await catalog(candidate)
         except providers.ProviderError as exc:

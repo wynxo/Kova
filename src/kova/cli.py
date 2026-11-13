@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, backup, lifecycle, onboarding, theme
+from kova import __version__, backup, lifecycle, onboarding, providers, theme
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.modes import MODES
@@ -305,6 +305,23 @@ def _ask_error(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _reasoning_error(model: str | None) -> str | None:
+    """Why ``--think`` cannot show anything here, or ``None`` when it can.
+
+    Reads the provider's declared capabilities, so a provider with no reasoning
+    stream is refused up front instead of printing nothing at all.
+    """
+    cfg = load_config()
+    try:
+        entry = next((m for m in cfg.models if m.name == model), None) if model else cfg.active_model()
+    except KeyError:
+        return None  # nothing configured: the server reports that, not this check
+    provider = entry._provider if entry is not None else None
+    if provider is None or providers.supports(provider, 'reasoning'):
+        return None
+    return f"{provider.name} does not stream reasoning"
+
+
 @app.command("ask")
 def ask(
     text: str | None = typer.Argument(None, help="The question. Optional if you pipe text in."),
@@ -323,6 +340,10 @@ def ask(
     git diff | kova ask "review this"
     """
     _check_mode(mode)
+    if think:
+        reason = _reasoning_error(model)
+        if reason:
+            _ask_error(f"{reason}. Use a reasoning model, or drop --think.")
     attached = []
     for path in files:
         with path.open("rb") as handle:
@@ -1031,10 +1052,11 @@ def providers_list():
         _empty('No providers connected.', 'Run: kova providers add')
         return
     table = _table()
-    for heading in ('Connection', 'Provider', 'Access', 'Address'):
+    for heading in ('Connection', 'Provider', 'Access', 'Address', 'Capabilities'):
         table.add_column(heading)
     for p in rows:
-        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials', p['base_url'])
+        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials',
+                      p['base_url'], ', '.join(p.get('capabilities') or []) or '-')
     console.print(table)
 
 

@@ -22,7 +22,7 @@ from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.events import EventBus
 from kova.memory import Memory, Note
 from kova.models import ModelClient
-from kova.modes import DEFAULT_MODE, MODES
+from kova.modes import DEFAULT_MODE, MODES, capabilities as mode_capabilities
 from kova.reminders import ReminderLoop
 from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
@@ -297,6 +297,11 @@ def create_app(
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
+            raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
         try:
             app.state.agent.approvals.answer(chat_id, approval_id, body.decision, body.message)
         except KeyError as exc:

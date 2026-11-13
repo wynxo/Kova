@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, offered: null};
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
@@ -34,12 +34,29 @@
     if (title !== 'Reminder') setTimeout(() => node.remove(), 9000);
   }
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
+  // The capability contract the server declares: what each chat mode offers
+  // once every gate has agreed. Nothing is offered that is not declared here.
+  function offers(capability) {
+    if (state.offered === null) return true;  // not told yet: nothing is hidden
+    return (state.offered[$('mode').value] || []).includes(capability);
+  }
+  function applyCapabilities(contract) {
+    state.offered = contract.offered || {};
+    controls();
+  }
+  async function refreshCapabilities() {
+    try { applyCapabilities(await json('/capabilities')); }
+    catch (_) { state.offered = null; controls(); }  // an older server declares nothing
+  }
   function controls() {
     const busy = state.busy;
     for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
-    for (const id of ['permission', 'cwd']) $(id).disabled ||= $('mode').value === 'chat';
+    $('permission').disabled ||= !offers('approvals');
+    $('cwd').disabled ||= !offers('tools');
     $('composer').dataset.mode = $('mode').value;
-    $('send').hidden = busy; $('stop').hidden = !busy;
+    // With steering the composer stays usable mid-reply; without it the reply
+    // is stopped or waited for, so send is withheld while one runs.
+    $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     $('send').disabled = !state.connected || !$('prompt').value.trim();
     $('stop').disabled = state.stopRequested;
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
@@ -452,7 +469,7 @@
   });
   let selectedModel = '';
   $('model').onchange = () => safe(async () => {
-    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); }
+    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(); }
     catch (error) { $('model').value = selectedModel; throw error; }
   });
   function theme(value) {
@@ -477,10 +494,11 @@
     try {
       if (ticket) await json('/app/login', write('POST', {ticket}));
       await json('/chats'); state.connected = true;
-      const [models, status] = await Promise.all([json('/models'), json('/health')]);
+      const [models, status, contract] = await Promise.all([json('/models'), json('/health'), json('/capabilities')]);
       state.models = models;
       renderModels(models);
       $('model').value = status.model; selectedModel = status.model;
+      applyCapabilities(contract);
       await refreshChats(); controls(); await health();
       state.events = new EventSource('/events');
       state.events.addEventListener('reminder', event => { try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
@@ -518,20 +536,27 @@
     providerLogin = null; clearProviderSecrets(); providerChoices = [];
     $('provider-dialog').close();
   }
+  function providerSpec() {
+    return providerSpecs.find(p => p.id === $('provider-kind').value) || {};
+  }
+  function providerCaps() {
+    return providerSpec().capabilities || [];
+  }
   function providerKindChanged() {
     clearProviderSecrets();
-    const spec = providerSpecs.find(p => p.id === $('provider-kind').value);
-    if (!spec) return;
+    const spec = providerSpec();
+    if (!spec.id) return;
+    const caps = providerCaps();
     $('provider-name').value = spec.id;
-    const custom = spec.id === 'custom', local = spec.id === 'local', oauth = spec.id === 'chatgpt';
-    $('provider-url-row').hidden = !custom && !local;
-    $('provider-url').value = ''; $('provider-url').placeholder = local ? 'homelab:8080' : 'https://example.com/v1';
-    $('provider-key-row').hidden = oauth || spec.id === 'codex';
+    // Every field follows the kind's declared capabilities, never its name.
+    $('provider-url-row').hidden = !caps.includes('editable_base_url');
+    $('provider-url').value = ''; $('provider-url').placeholder = spec.base_url_hint || 'https://example.com/v1';
+    $('provider-key-row').hidden = !caps.includes('api_key');
     $('provider-key').required = Boolean(spec.key_url);
-    $('provider-headers-row').hidden = !custom;
-    $('provider-consent-row').hidden = spec.id !== 'codex'; $('provider-consent').checked = false;
+    $('provider-headers-row').hidden = !caps.includes('custom_headers');
+    $('provider-consent-row').hidden = !caps.includes('harness_login'); $('provider-consent').checked = false;
     $('provider-key-link').hidden = !spec.key_url; $('provider-key-link').href = spec.key_url || '#';
-    $('provider-next').textContent = oauth ? 'Continue with ChatGPT' : 'List models';
+    $('provider-next').textContent = caps.includes('browser_login') ? 'Continue with ChatGPT' : 'List models';
     $('provider-status').textContent = '';
     syncMenus();
   }
@@ -586,7 +611,7 @@
   $('provider-form').onsubmit = async event => {
     event.preventDefault(); const version = ++providerVersion;
     // Open synchronously with the gesture so browser sign-in is not popup-blocked.
-    const signIn = !providerDraft && $('provider-kind').value === 'chatgpt';
+    const signIn = !providerDraft && providerCaps().includes('browser_login');
     const popup = signIn ? window.open('about:blank', '_blank') : null;
     if (popup) popup.opener = null;
     $('provider-next').disabled = true;
@@ -599,13 +624,14 @@
         providerLogin = null; closeProvider();
         const [models, status] = await Promise.all([json('/models'), json('/health')]);
         state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
+        await refreshCapabilities();
         syncMenus(); await health(); toast('Provider connected. Ready when you are.'); return;
       }
-      const kind = $('provider-kind').value;
+      const kind = $('provider-kind').value, caps = providerCaps();
       const body = {kind, id: $('provider-name').value, name: $('provider-name').value,
         api_key: $('provider-key').value || null, consent: $('provider-consent').checked};
-      if (kind === 'custom' || kind === 'local') body.base_url = $('provider-url').value;
-      if (kind === 'custom' && $('provider-headers').value.trim()) {
+      if (caps.includes('editable_base_url')) body.base_url = $('provider-url').value;
+      if (caps.includes('custom_headers') && $('provider-headers').value.trim()) {
         try { body.headers = JSON.parse($('provider-headers').value); }
         catch (_) { throw new Error('Custom headers must be a JSON object.'); }
       }

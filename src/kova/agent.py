@@ -12,11 +12,12 @@ from pathlib import Path
 
 import httpx
 
+from kova import providers
 from kova.compact import compact
 from kova.config import Config
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
-from kova.modes import DEFAULT_MODE
+from kova.modes import DEFAULT_MODE, capabilities as mode_capabilities
 from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
@@ -44,12 +45,12 @@ _WEB_TOOLS = ("web_search", "web_fetch")
 
 
 def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool]:
-    """The tools a chat may use: everything in work mode, web only in chat mode.
+    """The tools a chat may use: everything when the mode offers tools, web only otherwise.
 
-    The web toggle applies to both modes; a future code mode would add its own
-    branch here.
+    The web toggle applies to both modes; a future code mode declares its own
+    capabilities in :mod:`kova.modes` instead of adding a branch here.
     """
-    allowed = set(tools) if mode != "chat" else set(_WEB_TOOLS)
+    allowed = set(tools) if "tools" in mode_capabilities(mode) else set(_WEB_TOOLS)
     if not web:
         allowed -= set(_WEB_TOOLS)
     return {name: tool for name, tool in tools.items() if name in allowed}
@@ -233,7 +234,9 @@ class Agent:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         client = ModelClient(entry, transport=self.transport)
-        schemas = openai_schemas(tools) or None
+        # A provider that does not declare tool calling is never sent schemas,
+        # so its model can neither call tools nor reach an approval.
+        schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
         try:
             attempted_compaction = False
             for step in range(11):
