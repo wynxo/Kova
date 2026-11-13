@@ -18,6 +18,9 @@ def tools(ctx: ToolContext) -> list[Tool]:
     """Create job tools for a context."""
     def add(args: dict) -> str:
         now = ctx.now()
+        text = " ".join((args.get("text") or "").split())
+        if not text:
+            raise ToolError("Give the job a short description, so the user knows what it does.")
         command = (args.get("command") or "").strip()
         prompt = (args.get("prompt") or "").strip()
         if bool(command) == bool(prompt):
@@ -26,7 +29,7 @@ def tools(ctx: ToolContext) -> list[Tool]:
         schedule = parse_schedule(args["schedule"], now)
         first = parse_when(args["first_run"], now) if args.get("first_run") else schedule.next_after(now)
         idle_only = bool(args.get("idle_only"))
-        jid = ctx.store.add_job(args["text"], schedule.spec, first, command=command or None,
+        jid = ctx.store.add_job(text, schedule.spec, first, command=command or None,
                                 prompt=prompt or None, idle_only=idle_only)
         what = "a shell command, no model call" if command else (
             "one of your turns, only when nothing else is running" if idle_only else "one of your turns")
