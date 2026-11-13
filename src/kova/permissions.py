@@ -26,7 +26,7 @@ _DESTRUCTIVE_PATTERNS = (
     r"\b(userdel|usermod|groupdel|chpasswd|visudo)\b",
     r"(^|[;&|]\s*)passwd\b",                 # reading /etc/passwd is not this
     r"\bchmod\s+(-[a-z]+\s+)*(777|-R\s+777)",
-    r"\bcho(wn|rp)\s+(-[a-z]+\s+)*[^\s]+\s+/(\s|$)",
+    r"\bch(own|grp)\s+(-[a-z]+\s+)*[^\s]+\s+/",  # any absolute target, not just /
     r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z|k|da)?sh\b",
     r"\b(apt|apt-get|dnf|yum|pacman|zypper|snap|flatpak|pip3?|npm|cargo)\b"
     r"[^|;&]*\b(remove|purge|uninstall|autoremove|-R|-Rns)\b",
@@ -36,6 +36,8 @@ _DESTRUCTIVE_PATTERNS = (
     r"\bkill(all)?\s+(-9\s+)?-1\b",
     r"\bdocker\s+(system\s+prune|volume\s+rm|rm\s+-f)\b",
     r"\btruncate\b[^|;&]*-s\s*0\b",
+    r">>?\s*(/etc/|/boot/|/usr/|/bin/|/sbin/|/lib|/sys/|/proc/)",  # redirect into system files
+    r">>?\s*(~|\$HOME|\$\{HOME\})?/?(\.ssh/|\.bashrc|\.zshrc|\.profile|\.bash_profile)",
     r":\(\)\s*\{[^}]*\|[^}]*&[^}]*\}",       # the fork bomb
     r"\b(init\s+0|telinit\s+[06])\b",
 )

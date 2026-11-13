@@ -134,3 +134,12 @@ async def test_answer_wrong_chat_raises():
     created = approvals.create("chat1", "run_command", {"command": "echo hi"})
     with pytest.raises(KeyError):
         approvals.answer("chat2", created["id"], "allow")
+
+
+def test_chown_on_any_absolute_path_and_system_file_redirects_are_destructive():
+    from kova.permissions import command_risk
+    for command in ("chown -R 0:0 /etc", "chgrp root /usr/bin/x", "echo x > /etc/passwd",
+                    "echo AAA >> ~/.ssh/authorized_keys", "echo x >> $HOME/.bashrc"):
+        assert command_risk(command) == "destructive", command
+    for command in ("chown me file.txt", "echo hi > out.txt", "cat /etc/hosts"):
+        assert command_risk(command) == "normal", command
