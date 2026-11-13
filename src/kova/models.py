@@ -106,6 +106,7 @@ class ModelClient:
         splitter = ThinkSplitter()
         calls: dict[int, dict] = {}
         received_text = False
+        complete = False
         error = f"Can't reach model '{self.entry.name}' at {self.entry.base_url}"
         try:
             async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
@@ -132,6 +133,7 @@ class ModelClient:
                             continue
                         data = line[5:].strip()
                         if data == "[DONE]":
+                            complete = True
                             break
                         if not data:
                             continue
@@ -146,6 +148,8 @@ class ModelClient:
                             continue
                         if not isinstance(choices, list) or not isinstance(choices[0], dict):
                             raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.')
+                        if choices[0].get("finish_reason"):
+                            complete = True
                         delta = choices[0].get("delta") or {}
                         if not isinstance(delta, dict) or not isinstance(delta.get('content', ''), (str, type(None))):
                             raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.')
@@ -177,6 +181,11 @@ class ModelClient:
             raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.') from None
         if not received_text and not calls:
             raise ModelError('Model returned an empty response (no reply). Load a chat model with kova setup, then retry.')
+        # A clean HTTP EOF is not proof that generation finished. In particular,
+        # never release accumulated tool calls from a truncated response. Some
+        # compatible servers omit [DONE] but send a terminal finish_reason.
+        if not complete:
+            raise ModelError("Provider stream ended before completion. Please retry.")
         for kind, value in splitter.flush():
             yield ModelEvent(kind, value)
         for index, call in sorted(calls.items()):
