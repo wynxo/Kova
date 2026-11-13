@@ -767,3 +767,23 @@ def test_bare_kova_opens_chat_and_old_name_still_works(monkeypatch):
     assert [c[0] for c in calls] == [False, True, True]
     help_text = cli_runner.invoke(cli.app, ["--help"]).output
     assert "--new" in help_text and "│ chat " not in help_text
+
+
+@pytest.mark.parametrize('args', [['--help'], ['model', '--help'], ['--version']])
+def test_piped_cli_is_plain_with_ci_color_environment(args):
+    """Import Typer in a fresh process: its CI flags are cached at import time."""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, 'GITHUB_ACTIONS': 'true', 'FORCE_COLOR': '1', 'PY_COLORS': '1'}
+    env.pop('_TYPER_FORCE_DISABLE_TERMINAL', None)
+    env.pop('NO_COLOR', None)
+    env['TERM'] = 'xterm-256color'
+    result = subprocess.run(
+        [sys.executable, '-c', 'from kova.cli import app; app()', *args],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout
+    assert '\x1b[' not in result.stdout
