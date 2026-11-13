@@ -16,9 +16,9 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__
-from kova.agent import Agent
-from kova.config import Config, ModelEntry, ensure_token, save_config, load_config
+from kova import __version__, checkpoints
+from kova.agent import Agent, Steering
+from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
 from kova.models import ModelClient
@@ -53,6 +53,12 @@ class PersonaBody(BaseModel):
 class ApprovalBody(BaseModel):
     decision: Literal["allow", "allow_session", "allow_always", "deny"]
     message: str | None = Field(default=None, max_length=4000)
+
+
+class QueuedBody(BaseModel):
+    """A message to run after the chat's current turn ends."""
+    text: str = Field(min_length=1, max_length=100_000)
+    model: str | None = None
 
 
 def working_folder(value: str) -> str:
@@ -187,6 +193,7 @@ def create_app(
     app.state.turns = set()
     app.state.chat_locks = {}
     app.state.chat_turns = {}
+    app.state.steering = {}
     install_web(app, _require_bearer)
     from kova.provider_routes import install_provider_routes
     config.bind_providers()
@@ -364,14 +371,17 @@ def create_app(
 
         async def run_turn() -> None:
             """Drive the turn to completion even if the client disconnects."""
+            steering = Steering()
             try:
                 async with chat_lock(chat_id):
                     if app.state.store.get_chat(chat_id) is None:
                         queue.put_nowait({"type": "error", "message": "chat was deleted"})
                         return
                     app.state.conversation_states.transition(chat_id, "turn_start")
+                    app.state.steering[chat_id] = steering
                     try:
-                        async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
+                        async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
+                                                                  steering=steering):
                             app.state.conversation_states.transition(chat_id, event.get("type", ""))
                             queue.put_nowait(event)
                     finally:
@@ -382,6 +392,12 @@ def create_app(
             except Exception as exc:  # never leave the stream without an ending
                 queue.put_nowait({"type": "error", "message": str(exc)})
             finally:
+                if app.state.steering.get(chat_id) is steering:
+                    app.state.steering.pop(chat_id, None)
+                # A steer that arrived after the last model round must not be
+                # lost: it becomes the next message in the chat's queue.
+                for message in steering.take():
+                    app.state.store.queue_message(chat_id, message)
                 queue.put_nowait(None)
 
         task = asyncio.create_task(run_turn())
@@ -408,6 +424,50 @@ def create_app(
         return StreamingResponse(drain(), media_type="text/event-stream")
 
 
+    @api.get("/chats/{chat_id}/queue")
+    async def list_queue(chat_id: str) -> list[dict]:
+        """Messages waiting to run after this chat's current turn."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return app.state.store.queued_messages(chat_id)
+
+    @api.post("/chats/{chat_id}/queue")
+    async def queue_message(chat_id: str, body: QueuedBody) -> dict:
+        """Queue a message; it survives restarts until a client runs it."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        if body.model is not None and not any(m.name == body.model for m in config.models):
+            raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
+        row = app.state.store.queue_message(chat_id, body.text, body.model)
+        message = next(entry for entry in app.state.store.queued_messages(chat_id)
+                       if entry["id"] == row)
+        return message
+
+    @api.delete("/chats/{chat_id}/queue/{message_id}")
+    async def delete_queued(chat_id: str, message_id: int) -> dict:
+        if not app.state.store.delete_queued_message(chat_id, message_id):
+            raise HTTPException(status_code=404, detail="queued message not found")
+        return {"ok": True}
+
+    @api.post("/chats/{chat_id}/queue/next")
+    async def next_queued(chat_id: str) -> dict:
+        """Take the oldest queued message, for a client to send as its next turn."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return app.state.store.pop_queued_message(chat_id) or {"message": None}
+
+    @api.post("/chats/{chat_id}/steer")
+    async def steer(chat_id: str, body: QueuedBody) -> dict:
+        """Put a message into the turn that is running now, not the queue."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        steering = app.state.steering.get(chat_id)
+        if steering is None:
+            raise HTTPException(status_code=409,
+                                detail="No reply is running. Queue the message or send it as a new one.")
+        steering.add(body.text)
+        return {"ok": True, "text": body.text}
+
     @api.post("/chats/{chat_id}/stop")
     async def stop_chat(chat_id: str) -> dict:
         """Cancel this chat's server-side turns, not merely its HTTP stream.
@@ -424,6 +484,48 @@ def create_app(
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return {"stopped": bool(tasks)}
+
+    def checkpoint_or_404(chat_id: str, checkpoint_id: int) -> dict:
+        row = app.state.store.get_checkpoint(chat_id, checkpoint_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="checkpoint not found")
+        return row
+
+    @api.get("/chats/{chat_id}/checkpoints")
+    async def list_checkpoints(chat_id: str) -> list[dict]:
+        """This chat's change sets, newest first: what each turn changed."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return await asyncio.to_thread(app.state.store.list_checkpoints, chat_id)
+
+    @api.get("/chats/{chat_id}/checkpoints/{checkpoint_id}")
+    async def get_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+        return checkpoint_or_404(chat_id, checkpoint_id)
+
+    @api.get("/chats/{chat_id}/checkpoints/{checkpoint_id}/diff")
+    async def checkpoint_diff(chat_id: str, checkpoint_id: int, path: str) -> dict:
+        """One changed file's diff and both sides, to preview before restoring."""
+        row = checkpoint_or_404(chat_id, checkpoint_id)
+        entry = (row.get("files") or {}).get(path)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="file is not part of this checkpoint")
+        return await asyncio.to_thread(checkpoints.preview, app.state.agent.blobs, path, entry)
+
+    @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/restore")
+    async def restore_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+        """Put the working folder back to this checkpoint.
+
+        Only the paths the reverted turns changed are touched; the user's git
+        repository is never read or written.
+        """
+        row = checkpoint_or_404(chat_id, checkpoint_id)
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Stop the active turn before restoring files")
+        rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
+        plan = checkpoints.revert_plan(rows, checkpoint_id)
+        result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
+                                         app.state.agent.blobs)
+        return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
 
 
     @api.post("/memory/location")

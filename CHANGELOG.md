@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal shortcut `Ctrl+T` toggles full model reasoning, streamed live.
 - Terminal shortcut `Ctrl+O` expands and collapses tool calls and their output.
 - Live streaming of commands and their output, and of code, as the model writes them.
+- Queue a message for after the running turn, or steer the running turn itself, in the terminal and web UI. Queued messages are persisted and survive reloads.
+- Per-turn change review with diffs and local, Git-independent restore points (`/changes`, `/diff`, `/restore`).
+- Layered `KOVA.md` / `AGENTS.md` guidance from the Kova home, project root and working folder, with a 16 KiB budget and clear precedence.
+- Linux Landlock sandbox for `run_command`: safe commands run without a prompt but cannot write outside the working folder.
 
 ### Changed
 

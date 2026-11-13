@@ -144,9 +144,10 @@ class FileSession:
         return [Tool(name, description, params, lambda args, n=name: self.execute(n, args)) for name, description, params in definitions]
 
 
-def tools(cwd: Path) -> list[Tool]:
+def tools(cwd: Path, sandboxed: bool = False) -> list[Tool]:
     async def command(args):
-        return json.dumps(await run_command(args["command"], cwd, args.get("timeout", 60)))
+        return json.dumps(await run_command(args["command"], cwd, args.get("timeout", 60),
+                                            sandboxed=sandboxed))
 
     def plan(args):
         return json.dumps({"ok": True, "items": args["items"]})

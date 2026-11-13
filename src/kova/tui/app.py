@@ -25,16 +25,18 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 from kova import __version__, theme
+from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
 from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
-from .markdown import ACCENT, BASH, MEMORY
 from .keymap import Keymap
+from .markdown import ACCENT, BASH, MEMORY, display_width
 from .render import Renderer, compact_number, duration, shorten
 from .style import ACCENT_SOFT, FAINT, colour_level
 from .terminal import KeyReader, RawMode, Screen
@@ -60,6 +62,8 @@ STOP_GRACE = 5.0        # how long a stopped reply may take to end before the UI
 SHELL_TIMEOUT = 300     # seconds a ``!command`` may run
 SHELL_CONTEXT_CHARS = 4000
 REPLAY_MESSAGES = 20    # messages shown when a chat is resumed
+DIFF_LINES = 200        # diff lines ``/diff`` prints per file
+RESTORE_PREVIEW = 10    # paths listed before a restore is confirmed
 
 PERMISSIONS = {"manual": "asks before every action",
                "auto": "asks only before destructive actions",
@@ -81,6 +85,10 @@ COMMANDS = {
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
     "compact": ("/compact", "Summarize older conversation context"),
+    "steer": ("/steer <text>", "Send a message into the reply that is running now"),
+    "changes": ("/changes", "Review what Kova changed, turn by turn"),
+    "diff": ("/diff [n]", "Show the diff of a change set (latest by default)"),
+    "restore": ("/restore <n>", "Put the working folder back to a change set"),
     "clear": ("/clear", "Clear the screen, keeping this conversation"),
     "exit": ("/exit", "Leave Kova (also /quit)"),
     "quit": ("/quit", "Leave Kova"),
@@ -166,6 +174,20 @@ def _kill(process: subprocess.Popen) -> None:
 def _home_short(path: str) -> str:
     home = str(Path.home())
     return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
+
+
+def _clip(text: str, width: int) -> str:
+    """Cut one transcript line to the terminal width, keeping its indentation."""
+    if display_width(text) <= width:
+        return text
+    out, used = "", 0
+    for char in text:
+        step = display_width(char)
+        if used + step > max(1, width - 1):
+            break
+        out += char
+        used += step
+    return out + "\u2026"
 
 
 class ChatApp:
@@ -311,6 +333,12 @@ class ChatApp:
         if cwd and os.path.isdir(cwd) and cwd != self.cwd:
             self.cwd = cwd
             self.files = FileIndex(cwd)
+        if self.job is None:
+            # Queued messages live on the server, so they survive a restart.
+            try:
+                self.queued = [row["text"] for row in self.client.queued_messages(self.chat_id)]
+            except KovaError:
+                pass
 
     def _read_chat(self, chat: dict) -> None:
         """Take the server's view of the chat and its rough token size."""
@@ -676,6 +704,11 @@ class ChatApp:
         if not text.strip():
             return
         if self.job is not None:
+            # Queue runs after this reply; persist it so a reload keeps it.
+            try:
+                self.client.queue_message(self.chat_id, text)
+            except KovaError:
+                pass  # still hold it here for this session
             self.queued.append(text)
             return
         self._dispatch(text)
@@ -830,8 +863,28 @@ class ChatApp:
                 waiting = "\n".join(self.queued)
                 self.editor.set(waiting + ("\n" + self.editor.text if self.editor.text else ""))
                 self.queued.clear()
+                try:
+                    while self.client.next_queued_message(self.chat_id) is not None:
+                        pass
+                except KovaError:
+                    pass
             else:
-                self._dispatch(self.queued.pop(0))
+                text = self._next_queued()
+                if text is not None:
+                    self._dispatch(text)
+
+    def _next_queued(self) -> str | None:
+        """Take the next queued message from the server, or from this session."""
+        try:
+            row = self.client.next_queued_message(self.chat_id)
+        except KovaError:
+            row = None
+        text = row.get("text") if row else None
+        if text is not None:
+            with suppress(ValueError):
+                self.queued.remove(text)
+            return text
+        return self.queued.pop(0) if self.queued else None
 
     def _stop(self) -> None:
         job = self.job
@@ -967,6 +1020,156 @@ class ChatApp:
             emit(event)
             emit({"type": "done"})
         self.job = Job("reply", run, label="/compact")
+
+    def _cmd_steer(self, rest: str) -> None:
+        """Send a message into the running reply instead of queuing it behind."""
+        if not rest:
+            self.renderer.error("Usage: /steer <message for the running reply>")
+            return
+        if self.job is None:
+            self._done("No reply is running. Send it as a normal message.", dim=True)
+            return
+        try:
+            self.client.steer_message(self.chat_id, rest)
+        except KovaError as exc:
+            self.renderer.error(f"Could not steer the reply: {exc.message}")
+            return
+        self._done("Sent into the running reply", dim=True)
+
+    def _change_set(self, rest: str) -> dict | None:
+        """The change set named by ``rest``, or the newest one when it is empty."""
+        try:
+            checkpoints = self.client.list_checkpoints(self.chat_id)
+        except KovaError as exc:
+            self.renderer.error(f"Could not read changes: {exc.message}")
+            return None
+        if not checkpoints:
+            self._done("No changes recorded yet. Kova checkpoints the files it edits.")
+            return None
+        if not rest:
+            return checkpoints[0]
+        if rest.isdigit():
+            found = next((entry for entry in checkpoints if entry["id"] == int(rest)), None)
+            if found is not None:
+                return found
+        self.renderer.error(f"No change set {rest!r}. Type /changes to list them.")
+        return None
+
+    def _cmd_changes(self, _rest: str) -> None:
+        """Every change set in this chat, newest first."""
+        p, r = self.p, self.renderer
+        try:
+            checkpoints = self.client.list_checkpoints(self.chat_id)
+        except KovaError as exc:
+            r.error(f"Could not read changes: {exc.message}")
+            return
+        if not checkpoints:
+            self._done("No changes recorded yet. Kova checkpoints the files it edits.")
+            return
+        r.line("  " + p.paint("1;" + ACCENT, "\u25c6") + " " + p.bold("Changes")
+               + p.dim(f" \u00b7 {len(checkpoints)} change set{'' if len(checkpoints) == 1 else 's'}"))
+        for checkpoint in checkpoints:
+            totals = summarize(checkpoint.get("files") or {})
+            r.line("    " + p.paint(ACCENT_SOFT, f"{checkpoint['id']:>3}") + "  "
+                   + fit(checkpoint.get("label") or "change set", 34) + "  "
+                   + p.green(f"+{totals['additions']}") + " " + p.red(f"\u2212{totals['deletions']}")
+                   + "  " + p.dim(f"{totals['files']} file{'' if totals['files'] == 1 else 's'}"))
+        r.line("    " + p.faint("/diff <n> shows one \u00b7 /restore <n> puts the files back"))
+        r.line()
+
+    def _cmd_diff(self, rest: str) -> None:
+        """The unified diff of one change set, file by file."""
+        checkpoint = self._change_set(rest)
+        if checkpoint is None:
+            return
+        p, r = self.p, self.renderer
+        files = list((checkpoint.get("files") or {}).items())
+        if not files:
+            self._done("That change set recorded no files.")
+            return
+        r.line("  " + p.paint("1;" + ACCENT, "\u25c6") + " "
+               + p.bold(f"Change set {checkpoint['id']}") + "  "
+               + p.dim(fit(checkpoint.get("label") or "", 40)))
+        for path, entry in files:
+            try:
+                preview = self.client.checkpoint_diff(self.chat_id, checkpoint["id"], path)
+            except KovaError as exc:
+                r.error(f"{path}: {exc.message}")
+                continue
+            r.line("  " + p.pill(str(entry.get("status") or "modified").capitalize(), theme.ACCENT)
+                   + " " + p.bold(_clip(path, max(20, r.width - 30)))
+                   + p.dim(f"  +{entry.get('additions', 0)} \u2212{entry.get('deletions', 0)}"))
+            lines = (preview.get("diff") or "").splitlines()
+            for line in lines[:DIFF_LINES]:
+                if line.startswith(("+++", "---")):
+                    paint = p.faint
+                elif line.startswith("+"):
+                    paint = p.green
+                elif line.startswith("-"):
+                    paint = p.red
+                elif line.startswith("@@"):
+                    paint = p.accent
+                else:
+                    paint = p.dim
+                r.line("    " + paint(_clip(line, max(10, r.width - 6))))
+            if len(lines) > DIFF_LINES:
+                r.line("    " + p.faint(f"\u2026 {len(lines) - DIFF_LINES} more lines"))
+            if preview.get("truncated"):
+                r.line("    " + p.faint("(preview truncated)"))
+        r.line()
+
+    def _cmd_restore(self, rest: str) -> None:
+        """Put the working folder back to a change set, after a confirmation."""
+        p, r = self.p, self.renderer
+        checkpoint = self._change_set(rest)
+        if checkpoint is None:
+            return
+        paths = self._restore_paths(checkpoint["id"])
+        if not paths:
+            self._done("That change set recorded no files to restore.")
+            return
+        for path in paths[:RESTORE_PREVIEW]:
+            r.line("    " + self.p.dim(_clip(path, max(10, r.width - 6))))
+        if len(paths) > RESTORE_PREVIEW:
+            r.line("    " + self.p.faint(f"\u2026 {len(paths) - RESTORE_PREVIEW} more"))
+        self._choose(f"Restore change set {checkpoint['id']}?",
+                     [("Restore the files", "", True), ("Cancel", "", False)],
+                     lambda choice: self._do_restore(checkpoint) if choice
+                     else self._done("Cancelled", dim=True),
+                     subtitle="Kova's later edits are undone; files it created are removed")
+
+    def _restore_paths(self, checkpoint_id: int) -> list[str]:
+        """Every path a change set at or after ``checkpoint_id`` wrote, in order."""
+        try:
+            checkpoints = self.client.list_checkpoints(self.chat_id)
+        except KovaError as exc:
+            self.renderer.error(f"Could not read changes: {exc.message}")
+            return []
+        paths: list[str] = []
+        for entry in checkpoints:
+            if entry["id"] < checkpoint_id:
+                continue
+            for path in entry.get("files") or {}:
+                if path not in paths:
+                    paths.append(path)
+        return paths
+
+    def _do_restore(self, checkpoint: dict) -> None:
+        p, r = self.p, self.renderer
+        try:
+            result = self.client.restore_checkpoint(self.chat_id, checkpoint["id"])
+        except KovaError as exc:
+            r.error(f"Could not restore: {exc.message}")
+            return
+        r.line("  " + p.green("\u2713") + " " + p.pill("Restore", theme.ACCENT) + " "
+               + p.bold(f"change set {checkpoint['id']}"))
+        for path in result.get("restored") or []:
+            r.line("    " + p.dim(f"put back {path}"))
+        for path in result.get("deleted") or []:
+            r.line("    " + p.dim(f"removed {path}"))
+        for failure in result.get("failed") or []:
+            r.line("    " + p.red(f"{failure.get('path')}: {failure.get('error')}"))
+        r.line()
 
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer
@@ -1309,7 +1512,7 @@ class ChatApp:
         if text.startswith("#"):
             return p.paint(MEMORY, "# save a memory note")
         if self.job is not None:
-            return p.faint(f"{key('cancel')} stop · {key('thinking')} thinking · {key('tools')} tools")
+            return p.faint(f"⏎ queue · /steer joins · {key('cancel')} stop · {key('thinking')} thinking")
         if self.permission in PERMISSIONS and self.permission != "manual":
             return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
                             f"⏵⏵ {self.permission} permissions")

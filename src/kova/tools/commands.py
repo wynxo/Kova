@@ -8,6 +8,8 @@ import shutil
 import signal
 import subprocess
 
+from kova import sandbox
+
 OUTPUT_LIMIT = 32 * 1024
 
 
@@ -38,15 +40,26 @@ async def _kill_tree(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
-async def run_command(command: str, cwd: Path, timeout: float = 60) -> dict:
+async def run_command(command: str, cwd: Path, timeout: float = 60,
+                      sandboxed: bool = False) -> dict:
     if not command.strip() or "\0" in command:
         raise ValueError("Enter a non-empty command without NUL characters")
     if isinstance(timeout, bool) or not 0 < timeout <= 300:
         raise ValueError("timeout must be greater than 0 and at most 300 seconds")
+    argv = shell_command(command)
+    if sandboxed:
+        wrapped = sandbox.wrap(argv, cwd)
+        if wrapped is None:
+            # Fail closed: an unavailable sandbox is a refusal, never an
+            # unconfined run of a command the user was not asked about.
+            return {"ok": False, "output": "", "exit_code": None, "truncated": False,
+                    "sandboxed": False, "cwd": str(cwd),
+                    "error": "Command sandbox is unavailable; the command was not run."}
+        argv = wrapped
     options = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                if os.name == "nt" else {"start_new_session": True})
     spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-        *shell_command(command), cwd=cwd, stdin=subprocess.DEVNULL,
+        *argv, cwd=cwd, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **options,
     ))
     # Shield startup so cancellation cannot orphan a process created concurrently.
@@ -86,9 +99,12 @@ async def run_command(command: str, cwd: Path, timeout: float = 60) -> dict:
     truncated |= len(decoded) > OUTPUT_LIMIT
     result = {"ok": not timed_out and process.returncode == 0,
               "output": decoded[:OUTPUT_LIMIT].decode("utf-8", "ignore"),
-              "exit_code": process.returncode, "truncated": truncated, "cwd": str(cwd)}
+              "exit_code": process.returncode, "truncated": truncated,
+              "sandboxed": sandboxed, "cwd": str(cwd)}
     if timed_out:
         result["error"] = f"Command timed out after {timeout} seconds; partial changes may remain"
+    elif process.returncode == sandbox.EXIT_UNAVAILABLE and sandboxed:
+        result["error"] = "Command sandbox could not be established; the command did not run."
     elif process.returncode:
         result["error"] = f"Command exited with status {process.returncode}"
     return result

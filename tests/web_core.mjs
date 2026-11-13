@@ -26,6 +26,8 @@ class Element {
   addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
   focus() {}
+  showModal() {}
+  close() {}
   get lastElementChild() { return this.children.at(-1); }
 }
 const elements = new Map();
@@ -41,15 +43,21 @@ const sandbox = {
   performance, URLSearchParams, TextDecoder, console,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
-  fetch: async (path, options) => {
-    requests.push({path, body: options.body ? JSON.parse(options.body) : null});
-    return {ok: true, json: async () => path === '/chats' ? [] : {ok: true}};
+  fetch: async (path, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    requests.push({path, body});
+    let payload = {ok: true};
+    if (path === '/chats') payload = [];
+    else if (path.endsWith('/checkpoints')) payload = [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}];
+    else if (path.endsWith('/queue') && (options.method || 'GET') === 'GET') payload = [{id: 9, text: 'later'}];
+    else if (path.endsWith('/queue') && options.method === 'POST') payload = {id: 10, text: body.text};
+    return {ok: true, json: async () => payload};
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue};');
 vm.runInNewContext(source, sandbox);
-const {state, controls, turnView, setChat} = sandbox.test;
+const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
@@ -183,3 +191,50 @@ const followBody = new Element(), following = turnView(followBody);
 following.accept({type:'tool_call',name:'test'}); assert.equal(area.scrollTop,450);
 area.scrollTop = 500; area.listeners.scroll(); following.finish(); assert.equal(area.scrollTop,1000);
 console.log('IME, keyboard and user-controlled auto-scroll passed');
+
+// Per-turn change review: the card, its diff preview, and its restore call.
+state.chat = {id: 'chat-1', cwd: '/project'};
+const reviewBody = new Element(), reviewView = turnView(reviewBody);
+reviewView.accept({type: 'review', checkpoint_id: 7, label: 'fix the notes',
+                   files: [{path: 'notes.txt', status: 'modified', additions: 1, deletions: 1}]});
+const changes = byClass(reviewBody, 'changes-card')[0];
+assert.ok(changes.textContent.includes('Changed in this turn'));
+assert.ok(changes.textContent.includes('fix the notes'));
+assert.equal(byClass(changes, 'status-modified').length, 1);
+assert.ok(changes.textContent.includes('+1 −1'));
+const file = byClass(changes, 'change-file')[0];
+file.open = true; file.listeners.toggle(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/diff?path=notes.txt'));
+assert.equal(byClass(file, 'diff').length, 1);
+buttons(changes)[0].onclick(); await tick(); await tick();
+const restore = byClass(sandbox.document.body, 'restore-dialog').at(-1);
+assert.ok(restore.textContent.includes('Restore to change set 7?'));
+assert.ok(restore.textContent.includes('notes.txt'));
+buttons(restore)[1].onclick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/restore' && r.body === null));
+reviewView.finish();
+console.log('Per-turn change review, preview and restore passed');
+
+// Queue vs steer: both are explicit while a reply runs, and the queue survives a reload.
+state.chat = {id: 'chat-1', cwd: '/project'};
+state.busy = true; $('prompt').value = 'later please'; controls();
+assert.equal($('send').hidden, true);
+assert.equal($('queue').hidden, false); assert.equal($('steer').hidden, false);
+assert.equal($('queue').disabled, false); assert.equal($('steer').disabled, false);
+await queueMessage('later please'); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/queue' && r.body.text === 'later please'));
+assert.equal($('queue-strip').hidden, false);
+assert.ok($('queue-strip').textContent.includes('later please'));
+assert.ok($('queue-strip').textContent.includes('Queued'));
+$('prompt').value = 'change course';
+await steerMessage(); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/steer' && r.body.text === 'change course'));
+await loadQueue(); await tick();
+assert.deepEqual(state.queued.map(row => row.text), ['later']);
+assert.ok($('queue-strip').textContent.includes('later'));
+const steerBody = new Element(), steerView = turnView(steerBody);
+steerView.accept({type: 'steer', text: 'change course'});
+assert.ok(byClass(steerBody, 'turn-status')[0].textContent.includes('Steering: change course'));
+steerView.finish();
+state.queued = []; state.busy = false; controls();
+console.log('Queue and steer passed');

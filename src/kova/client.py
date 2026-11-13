@@ -165,6 +165,45 @@ class KovaClient:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))
 
+    def queue_message(self, chat_id: str, text: str, model: str | None = None) -> dict:
+        """Persist a message to run after the chat's current turn ends."""
+        body = {"text": text}
+        if model is not None:
+            body["model"] = model
+        return self._request("POST", f"/chats/{chat_id}/queue", json=body).json()
+
+    def queued_messages(self, chat_id: str) -> list[dict]:
+        """The chat's queued messages, oldest first; they survive reloads."""
+        return self._request("GET", f"/chats/{chat_id}/queue").json()
+
+    def delete_queued_message(self, chat_id: str, message_id: int) -> bool:
+        return self._request("DELETE", f"/chats/{chat_id}/queue/{message_id}",
+                             missing_ok=True).status_code == 200
+
+    def next_queued_message(self, chat_id: str) -> dict | None:
+        """Take the oldest queued message (or None) so it can run next."""
+        row = self._request("POST", f"/chats/{chat_id}/queue/next").json()
+        return row if row.get("text") else None
+
+    def steer_message(self, chat_id: str, text: str) -> dict:
+        """Send a message into the turn that is running now."""
+        return self._request("POST", f"/chats/{chat_id}/steer", json={"text": text},
+                             timeout=10).json()
+
+    def list_checkpoints(self, chat_id: str) -> list[dict]:
+        """This chat's change sets, newest first: what each turn changed."""
+        return self._request("GET", f"/chats/{chat_id}/checkpoints").json()
+
+    def checkpoint_diff(self, chat_id: str, checkpoint_id: int, path: str) -> dict:
+        """One changed file's diff and both sides, to preview before restoring."""
+        return self._request("GET", f"/chats/{chat_id}/checkpoints/{checkpoint_id}/diff",
+                             params={"path": path}).json()
+
+    def restore_checkpoint(self, chat_id: str, checkpoint_id: int) -> dict:
+        """Put the working folder back to a checkpoint; never touches git."""
+        return self._request("POST", f"/chats/{chat_id}/checkpoints/{checkpoint_id}/restore",
+                             timeout=120).json()
+
     def permission_rules(self) -> list[dict]:
         return self._request("GET", "/permission-rules").json()
 

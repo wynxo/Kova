@@ -60,7 +60,8 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 - Remembers facts about you and brings the relevant ones into every chat
 - Web search and page reading, with a per-chat on/off toggle
 - Reads, searches and atomically edits project files in a per-chat working folder (`~/Kova Files` by default)
-- Runs local commands with approval controls, bounded output and Stop support
+- Runs local commands inside an OS sandbox when the platform supports one, with approval controls, bounded output and Stop support
+- Reviews what each turn changed and restores it from local checkpoints, without touching Git
 - Streams a checklist for multi-step work
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
@@ -88,7 +89,8 @@ they are built per platform and need the Kova Python CLI installed separately.
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
 live tool status, approval cards, plan checklists, working-folder and permission
 controls, chat history/search, modes, web search, model selection, Stop,
-reminder popups, and dark/light themes. The UI loads even when the model is offline;
+queue-or-steer while a reply runs, per-turn change review, reminder popups, and
+dark/light themes. The UI loads even when the model is offline;
 run `kova setup` or start your model server to chat.
 
 The launcher trades the local server token for a **single-use, 60-second ticket**
@@ -183,6 +185,8 @@ Inside a chat:
 - `/web` — show whether web search is on; `/web on` or `/web off` toggles it
 - `/model` — list models and mark the active one; `/model <name>` switches models
 - `/think` — toggle full reasoning; by default you see a spinner, then a compact elapsed-time summary
+- `/steer <text>` — send a message into the reply that is running now
+- `/changes` — review the files each turn changed; `/diff [n]` previews one change set; `/restore <n>` puts the files back
 - `/clear` — clear the screen without resetting the conversation
 - `/help` — list chat commands
 - `/exit` or `/quit` — leave the chat
@@ -205,6 +209,8 @@ thinking = "ctrl-p"
 ```
 
 Bindings must be unique, so swapping two keys requires both entries. Actions include `shortcuts`, `palette`, `thinking`, `tools`, `scroll_up`, `scroll_down`, `cancel`, `interrupt`, `exit`, `permissions`, `clear`, `suspend`, `up`, `down`, `complete`, `submit`, `newline`, and editor actions such as `left` and `backspace`. Supported key names are the default action keys and `ctrl-g`, `ctrl-r`, `ctrl-v`, and `ctrl-x`. Typed command prefixes (`/`, `!`, `#`, `@`) are not keybindings.
+
+While a reply is running, **Enter** queues your message: it is saved on the server, shown as *queued*, and starts the next turn when the current one finishes. **/steer** instead joins the reply in progress at its next round, so it can change the work rather than wait behind it. Both are labelled in the transcript, and a queued message survives quitting and reopening the chat.
 
 Use **↑** for this session's input history and **Tab** to complete slash commands. **Ctrl+C** stops the current reply and returns to the prompt (or clears unfinished input); **Ctrl+D** leaves. Piped input uses plain input without terminal animations.
 
@@ -250,7 +256,7 @@ Switch with `/mode` inside a chat, or start one with `kova --mode chat`. `kova a
 
 Work mode includes:
 
-- `run_command`: runs a shell command **in this chat's working folder**, as your current user. It returns combined stdout/stderr and the exit code, keeps at most **32 KB** of output, and has a **60-second** default timeout (**300 seconds** maximum). No interactive stdin or automatic elevation. Uses Bash/sh on Linux/macOS, PowerShell on Windows (cmd fallback). Stop and timeout kill the process tree; changes already made are not undone.
+- `run_command`: runs a shell command **in this chat's working folder**, as your current user. It returns combined stdout/stderr and the exit code, keeps at most **32 KB** of output, and has a **60-second** default timeout (**300 seconds** maximum). No interactive stdin or automatic elevation. Uses Bash/sh on Linux/macOS, PowerShell on Windows (cmd fallback). Stop and timeout kill the process tree; changes already made are not undone. On Linux with Landlock (kernel 5.13+), commands run in a kernel sandbox that may create, change, rename or delete files only inside the working folder and temporary space; reads and program execution are unrestricted. If the kernel cannot provide the sandbox (or `KOVA_SANDBOX=off` disables it), Kova asks instead of running the command unconfined. Full access runs commands without the sandbox.
 - `read_file`, `list_files`, `search_files`: read text, list project files, or search with ripgrep (Python fallback). Reads keep the original plain-text result, capped at 100 KB; optional `start_line`/`end_line` return numbered lines. Listings/search skip dependency and build folders, and searches don't follow symlinks.
 - `edit_file`: replaces exact text only when it matches once. `write_file`: creates or overwrites UTF-8 text, creating parent folders as needed. Both save atomically; file modes are preserved. Files changed since a prior read, during approval, or during saving are rejected so you can read them again.
 - `ask_user`: asks a clarifying question with optional choices and waits for an answer in the web UI or full-screen terminal. Noninteractive clients skip the question instead of hanging.
@@ -259,7 +265,13 @@ Work mode includes:
 
 File tools resolve relative paths against the **working folder** and reject paths or symlinks that escape it, even in Full access mode. Existing file-tool names are unchanged; chats default to the configured Kova files folder (`~/Kova Files`). Set an existing absolute folder using the desktop composer or `PATCH /chats/{id}` with `{"cwd": "/absolute/project"}`. Commands are not a filesystem sandbox: they can access anything your user can access.
 
-In work mode, `KOVA.md` and `AGENTS.md` from that folder are included as project guidance in the system prompt, capped at **4,096 characters total**. They cannot override permissions. Chat mode neither offers nor executes commands, file tools, or plan tools, and does not load project instructions.
+In work mode, `KOVA.md` and `AGENTS.md` are discovered at three levels: your Kova home folder (preferences for every chat), the nearest project root above the working folder (a folder with `.git`, so a chat inside `src/` still sees the repository's rules), and the working folder itself. A subdirectory's guidance is loaded only when a chat works there; Kova never scans the whole tree. Later, more specific sections take precedence, and the whole block is capped at **16 KiB** of UTF-8, keeping the most specific guidance when the budget is tight. None of it can override your request or Kova's permissions. Chat mode neither offers nor executes commands, file tools, or plan tools, and does not load project instructions.
+
+## Reviewing changes
+
+After a turn that changed files, Kova records a **change set**: the unified diff for each path, with line counts and a preview of both sides. `/changes` lists them, `/diff <n>` shows one, and `/restore <n>` puts the working folder back to that point (creating, restoring or removing only the paths those turns touched), after a confirmation. The web UI shows the same card after each turn, with expandable diffs and a Restore button.
+
+Checkpoints are local and independent of Git: file contents live compressed under `KOVA_HOME/checkpoints`, outside the working folder, and Kova never reads or writes your repository's Git state. Files above **8 MB** are listed as skipped rather than copied. Only Kova's own file tools are checkpointed; files a shell command changes are not.
 
 ## Permissions
 
@@ -267,11 +279,11 @@ Each chat has a saved `permission` setting, selectable in the desktop composer o
 
 | Mode | Commands | File writes/edits |
 | --- | --- | --- |
-| **manual** (default) | Approve every command | Approve outside the configured Kova files folder |
-| **auto** | Run normal commands; approve destructive ones | Run inside the working folder |
-| **full** | Never ask, including destructive commands | Never ask, still folder-contained |
+| **manual** (default) | Sandboxed normal commands run; destructive or unconfined commands need approval | Approve outside the configured Kova files folder |
+| **auto** | Sandboxed normal commands run; destructive or unconfined commands need approval | Run inside the working folder |
+| **full** | Never ask, including destructive commands, and no sandbox | Never ask, still folder-contained |
 
-Reads, listings, searches, and plans never ask. The destructive-command classifier flags deletion, disk operations, pipe-to-shell, package removal, elevation, discarding Git work and other destructive actions, including Windows equivalents. This is a heuristic, not a shell security boundary; Manual keeps every command behind approval.
+Reads, listings, searches, and plans never ask. A sandboxed command that cannot be confined (no Landlock, or `KOVA_SANDBOX=off`) asks in every mode except Full, so a missing sandbox never becomes an unconfined auto-run. The destructive-command classifier still gates obvious data loss inside the working folder — deletion, disk operations, pipe-to-shell, package removal, elevation and discarding Git work, including Windows equivalents — even when the write itself would be contained.
 
 Approvals appear inline with a summary, risk badge, optional guidance, and **Allow**, **Allow for this chat**, or **Deny**. A session allowance lasts only for that chat while this server runs; destructive commands always need individual approval unless the chat is in Full access. For a destructive call, an API `allow_session` answer allows that single call only and never creates a session allowance. Changing the folder or permission mode clears a session allowance. Stop denies pending requests; unanswered requests are denied after **10 minutes**. Denial and optional guidance are returned to the model. Noninteractive `kova ask` denies approval-requiring actions immediately and prints a hint to continue in interactive chat, so scripts do not hang waiting for a prompt. Settings cannot change during an active turn: stop it first.
 
@@ -295,7 +307,16 @@ Content-Type: application/json
 
 `decision` is `allow`, `allow_session`, or `deny`. The optional `message` gives guidance on a denied action. Unknown, already answered, expired, stopped, or other-chat approval IDs return 404; malformed decisions return 422. All existing bearer/session and browser same-origin checks apply.
 
-An additive `approval_resolved` event carries `id`, `decision`, and `message` so clients can retire cards on answers or timeout. Stop ends the stream with the existing `stopped` event. Chat create/get/list/update responses include `permission` and `cwd`; get/create also include the latest `plan`. `PATCH /chats/{id}` accepts `permission` and `cwd` alongside `title`, `mode`, and `web`. `KovaClient.answer_approval(...)` answers approvals; `create_chat` and `update_chat` accept both new settings. Approvals and session allowances are server memory only; chat settings and the latest plan survive restart.
+An additive `approval_resolved` event carries `id`, `decision`, and `message` so clients can retire cards on answers or timeout. Stop ends the stream with the existing `stopped` event.
+
+While a turn runs, two endpoints decide where a new message goes:
+
+```http
+POST /chats/{chat_id}/queue        {"text": "also update the docs"}
+POST /chats/{chat_id}/steer        {"text": "use the other file"}
+```
+
+`GET /chats/{chat_id}/queue` lists queued messages oldest first; `DELETE /chats/{chat_id}/queue/{id}` removes one; `POST /chats/{chat_id}/queue/next` takes the oldest so a client can send it as the next turn. Queued messages are stored in the chat database and survive restarts. Steering requires a running turn (otherwise **409**) and delivers the message to that turn at its next model round, followed by a `{"type":"steer","text":...}` event; a steer that arrives after the last round is moved to the queue rather than lost. `KovaClient` exposes `queue_message`, `queued_messages`, `delete_queued_message`, `next_queued_message` and `steer_message`. Chat create/get/list/update responses include `permission` and `cwd`; get/create also include the latest `plan`. `PATCH /chats/{id}` accepts `permission` and `cwd` alongside `title`, `mode`, and `web`. `KovaClient.answer_approval(...)` answers approvals; `create_chat` and `update_chat` accept both new settings. Approvals and session allowances are server memory only; chat settings and the latest plan survive restart.
 
 ## Memory and Obsidian mode
 

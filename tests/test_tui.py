@@ -482,6 +482,11 @@ class StubClient:
         if permissions:
             self.chat.update(permission="manual", cwd=os.getcwd())
         self.approvals, self.stops, self.notes, self.sent = [], [], [], []
+        self.queues: list[dict] = []
+        self.steers: list[str] = []
+        self.checkpoints: list[dict] = []
+        self.diffs: dict[tuple[int, str], dict] = {}
+        self.restores: list[int] = []
 
     def get_chat(self, _chat_id):
         return self.chat
@@ -506,6 +511,36 @@ class StubClient:
     def memory_add(self, title, body, tags=None):
         self.notes.append((title, body))
         return {}
+
+    def queue_message(self, _chat_id, text, model=None):
+        row = {"id": len(self.queues) + 1, "text": text, "model": model}
+        self.queues.append(row)
+        return dict(row)
+
+    def queued_messages(self, _chat_id):
+        return [dict(row) for row in self.queues]
+
+    def next_queued_message(self, _chat_id):
+        return self.queues.pop(0) if self.queues else None
+
+    def delete_queued_message(self, _chat_id, message_id):
+        return bool(self.queues) and self.queues.pop(0).get("id") == message_id
+
+    def steer_message(self, _chat_id, text):
+        self.steers.append(text)
+        return {"ok": True}
+
+    def list_checkpoints(self, _chat_id):
+        return [dict(entry) for entry in self.checkpoints]
+
+    def checkpoint_diff(self, _chat_id, checkpoint_id, path):
+        return self.diffs.get((checkpoint_id, path),
+                              {"path": path, "diff": "", "truncated": False})
+
+    def restore_checkpoint(self, _chat_id, checkpoint_id):
+        self.restores.append(checkpoint_id)
+        return {"ok": True, "checkpoint_id": checkpoint_id, "root": "/p",
+                "restored": ["notes.txt"], "deleted": ["new.txt"], "failed": []}
 
 
 def chat_app(client):
@@ -588,6 +623,53 @@ def test_messages_typed_during_a_reply_queue_and_run_next():
     drain(app, until=lambda app: app.job is None and not app.queued)
     drain(app)
     assert client.sent == ["first", "second"]
+
+
+def test_a_queued_message_is_persisted_on_the_server():
+    client = StubClient([{"type": "text", "text": "hi"}, {"type": "done"}])
+    app = chat_app(client)
+    app.submit("first")
+    app.submit("second")
+    assert [row["text"] for row in client.queues] == ["second"]
+    drain(app, until=lambda app: app.job is None and not app.queued)
+    drain(app)
+    assert client.queues == [] and client.sent == ["first", "second"]
+
+
+def test_queued_messages_survive_a_reload():
+    client = StubClient()
+    client.queues = [{"id": 4, "text": "waiting here", "model": None}]
+    app = chat_app(client)
+    app.refresh_chat()
+    assert app.queued == ["waiting here"]
+
+
+def test_steering_reaches_the_running_reply():
+    def slow():
+        yield {"type": "text", "text": "working"}
+        while not client.steers:
+            time.sleep(0.01)
+        yield {"type": "steer", "text": client.steers[0]}
+        yield {"type": "done"}
+
+    client = StubClient()
+    client.stream_message = lambda _chat_id, _text: slow()
+    app = chat_app(client)
+    app.submit("start")
+    app.command("/steer use the other file")
+    drain(app)
+    assert client.steers == ["use the other file"]
+    text = transcript(app)
+    assert "Steered the reply: use the other file" in text
+    assert "No reply is running" not in text
+
+
+def test_steering_outside_a_reply_explains_instead_of_sending():
+    client = StubClient()
+    app = chat_app(client)
+    app.command("/steer too late")
+    assert client.steers == []
+    assert "No reply is running" in transcript(app)
 
 
 def test_stopping_calls_the_stop_endpoint_and_returns_the_queue_to_the_input():
@@ -1111,3 +1193,79 @@ def test_fork_command_copies_the_current_chat_and_a_numbered_one():
     app.submit("/fork nope")
     assert "No chat matches" in transcript(app)
     assert forks == ["c1", "c2"]
+
+# ------------------------------------------------- per-turn change review
+CHANGE_SET = {"id": 7, "label": "fix the notes", "root": "/p", "created": "2026-11-13T09:00:00Z",
+              "files": {"notes.txt": {"status": "modified", "additions": 3, "deletions": 1}}}
+
+
+def test_a_turn_that_changed_files_prints_one_summary_line():
+    client = StubClient([{"type": "review", "checkpoint_id": 7, "label": "fix the notes",
+                          "files": [{"path": "notes.txt", "status": "modified",
+                                     "additions": 3, "deletions": 1}]},
+                         {"type": "text", "text": "Done"}, {"type": "done"}])
+    app = chat_app(client)
+    app.submit("edit the notes")
+    drain(app)
+    text = transcript(app)
+    assert "1 file changed" in text and "+3 −1" in text and "/changes to review" in text
+
+
+def test_changes_lists_every_change_set():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET,
+                          {"id": 3, "label": "add a file", "root": "/p", "created": "2026-11-13T08:00:00Z",
+                           "files": {"new.txt": {"status": "added", "additions": 2, "deletions": 0}}}]
+    app = chat_app(client)
+    app.command("/changes")
+    text = transcript(app)
+    assert "Changes · 2 change sets" in text
+    assert "fix the notes" in text and "+3 −1" in text
+    assert "+2 −0" in text and "/diff <n> shows one" in text
+
+
+def test_diff_prints_the_unified_diff_of_one_change_set():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    client.diffs[(7, "notes.txt")] = {
+        "path": "notes.txt", "status": "modified", "additions": 3, "deletions": 1,
+        "truncated": False, "diff": "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-one\n+ONE"}
+    app = chat_app(client)
+    app.command("/diff")
+    text = transcript(app)
+    assert "Change set 7" in text and "fix the notes" in text
+    assert "notes.txt" in text and "-one" in text and "+ONE" in text
+
+
+def test_restore_asks_before_putting_the_files_back():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/restore 7")
+    assert client.restores == [] and isinstance(app.overlay, Picker)
+    assert app.overlay.title == "Restore change set 7?"
+    assert "notes.txt" in "\n".join(transcript(app).splitlines()[:6] or [""])
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert client.restores == [7]
+    text = transcript(app)
+    assert "Restore change set 7" in text
+    assert "put back notes.txt" in text and "removed new.txt" in text
+
+
+def test_restore_can_be_cancelled():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/restore 7")
+    app.on_key(SimpleNamespace(name="down", text=""))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert client.restores == []
+    assert "Cancelled" in transcript(app)
+
+
+def test_an_unknown_change_set_is_reported():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/diff 99")
+    assert "No change set '99'" in transcript(app)

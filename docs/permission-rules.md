@@ -4,6 +4,13 @@ Rules are checked before manual/auto/full mode: **deny > ask > allow**.
 Without a matching rule, the existing mode and destructive classifier apply.
 A denial's optional `message` goes back to the model.
 
+On Linux with Landlock, normal commands run inside a kernel sandbox that can
+only write to the working folder and temporary space, so Manual and Auto do not
+prompt for them. The destructive classifier still prompts (deleting the working
+folder is data loss even when it is contained), and Full access runs without the
+sandbox. When the sandbox is unavailable, every command asks instead of running
+unconfined. Rules are checked first either way.
+
 Open **Permission rules** in the web composer, or `/permissions rules` in the
 TUI, to edit the JSON array. `/permissions manual|auto|full` remains available.
 Example:

@@ -67,13 +67,29 @@ def command_risk(command: str) -> str:
 
 
 def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Path,
-                   session_allowed: bool = False) -> bool:
+                   session_allowed: bool = False, sandboxed: bool | None = None) -> bool:
+    """Whether a tool call needs an explicit answer.
+
+    ``sandboxed`` describes what the OS will actually enforce for a command:
+    True when it can be confined to the working folder, False when no sandbox
+    is available. When it is False even Auto asks, so a missing sandbox never
+    turns into an unconfined auto-run. ``None`` keeps the legacy heuristic for
+    callers that do not spawn commands.
+
+    A confined normal command runs without a prompt. Confinement contains what
+    a command can reach, but deleting the working folder itself is still the
+    user's data, so plainly destructive commands keep asking.
+    """
     if permission == "full":
         return False
     if name == "run_command":
-        if command_risk(args["command"]) == "destructive":
-            return True
-        return permission != "auto" and not session_allowed
+        if sandboxed is None:
+            if command_risk(args["command"]) == "destructive":
+                return True
+            return permission != "auto" and not session_allowed
+        if sandboxed:
+            return command_risk(args["command"]) == "destructive"
+        return True       # fail closed: no sandbox means ask
     if name in {"write_file", "edit_file"}:
         from kova.tools.code_files import resolve_path
         target = resolve_path(args["path"], str(cwd))
