@@ -8,13 +8,33 @@ inline, and word-wraps to the terminal with hanging indents. Tables and fenced
 code are held until they are complete enough to align. Nothing here touches the
 terminal directly; output goes through a ``write`` callable.
 
-Ported and adapted from Kaine's ``kaine/cli_markdown.py``; the colour palette
-now matches Kova's ``theme``.
+Ported and adapted from Kaine's ``kaine/cli_markdown.py``; colours come from
+``style`` (Kova's ``theme`` at the terminal's colour depth).
 """
 from __future__ import annotations
 
 import re
 import unicodedata
+
+from kova import theme
+
+from .style import (
+    ACCENT,
+    ACCENT_SOFT,
+    BASH,
+    BORDER,
+    CODE,
+    ERROR,
+    FAINT,
+    HEADING,
+    MEMORY,
+    MUTED,
+    SELECT,
+    SUCCESS,
+    USER,
+    WARNING,
+    Palette,
+)
 
 _HEADING = re.compile(r"(#{1,6})\s+")
 _BULLET = re.compile(r"([-*+])\s+")
@@ -25,25 +45,15 @@ _TABLE_SEPARATOR = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 _LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
 _FENCE = re.compile(r"(`{3,}|~{3,})\s*([\w+#.-]*)")
 
-# Kova's palette as 256-colour SGR codes (see kova/theme.py).
-ACCENT = "38;5;141"        # Kova violet: brand, highlights
-ACCENT_SOFT = "38;5;147"   # lighter violet: secondary highlights, links
-USER = "38;5;79"           # the user's own messages and prompt
-MUTED = "38;5;244"         # hints, timings, secondary text
-SUCCESS = "38;5;78"
-WARNING = "38;5;215"
-ERROR = "38;5;203"
-BASH = "38;5;205"          # the ``!`` shell prefix
-MEMORY = "38;5;111"        # the ``#`` memory prefix
-SELECT = "38;5;147"        # selected rows in menus and pickers
-CODE = "38;5;216"          # inline code: a warm peach that reads on dark and light themes
-HEADING = "1;38;5;141"     # headings: bold violet
 
 # Zero-width markers the inline scanner turns into styles.
 _UNDERLINE_ON, _UNDERLINE_OFF, _DIM_ON, _DIM_OFF = "\ue000", "\ue001", "\ue002", "\ue003"
 _MARKERS = {_UNDERLINE_ON: ("underline", True), _UNDERLINE_OFF: ("underline", False),
             _DIM_ON: ("dim", True), _DIM_OFF: ("dim", False)}
 _BULLETS = ("\u2022", "\u25e6", "\u25aa")
+
+_PANEL_BG = "48;2;" + ";".join(str(c) for c in (30, 29, 40))   # the code panel's tint
+_RESET = re.compile(r"\x1b\[(?:0|00|39;49;00|49)?m")
 
 _CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
@@ -67,31 +77,6 @@ def display_width(text: str) -> int:
 
 def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
-
-
-class Palette:
-    """ANSI styles, or none at all when colour is off."""
-
-    def __init__(self, color: bool = True):
-        self.color = bool(color)
-
-    def paint(self, codes: str, text: str) -> str:
-        return f"\x1b[{codes}m{text}\x1b[0m" if self.color and text else text
-
-    def sgr(self, codes: list[str]) -> str:
-        if not self.color:
-            return ""
-        return f"\x1b[0;{';'.join(codes)}m" if codes else "\x1b[0m"
-
-    def bold(self, text): return self.paint("1", text)
-    def dim(self, text): return self.paint("2", text)
-    def italic(self, text): return self.paint("3", text)
-    def green(self, text): return self.paint(SUCCESS, text)
-    def red(self, text): return self.paint(ERROR, text)
-    def yellow(self, text): return self.paint(WARNING, text)
-    def blue(self, text): return self.paint(MEMORY, text)
-    def accent(self, text): return self.paint(ACCENT, text)
-    def code(self, text): return self.paint(CODE, text)
 
 
 _STYLE_CODES = {"bold": "1", "dim": "2", "italic": "3", "underline": "4", "strike": "9",
@@ -182,11 +167,16 @@ def _links(text: str) -> str:
     return _LINK.sub(replace, text)
 
 
-def _highlighter(language: str):
-    """A Pygments line highlighter when Pygments is installed; otherwise None."""
+def _highlighter(language: str, level: int = 2):
+    """A Pygments line highlighter at the terminal's colour depth, or None
+    when Pygments is missing or does not know the language."""
     try:
         from pygments import highlight
-        from pygments.formatters import Terminal256Formatter
+        from pygments.formatters import (
+            Terminal256Formatter,
+            TerminalFormatter,
+            TerminalTrueColorFormatter,
+        )
         from pygments.lexers import get_lexer_by_name
         from pygments.util import ClassNotFound
     except ImportError:
@@ -195,7 +185,12 @@ def _highlighter(language: str):
         lexer = get_lexer_by_name(language or "text", stripnl=False, ensurenl=False)
     except ClassNotFound:
         return None
-    formatter = Terminal256Formatter(style="monokai")
+    if level >= 3:
+        formatter = TerminalTrueColorFormatter(style=theme.CODE_THEME)
+    elif level == 2:
+        formatter = Terminal256Formatter(style=theme.CODE_THEME)
+    else:
+        formatter = TerminalFormatter()
     return lambda line: highlight(line, lexer, formatter).rstrip("\n")
 
 
@@ -232,7 +227,7 @@ class MarkdownStream:
         if self.column:
             self._newline()
         if self.fence is not None:
-            self.fence = None
+            self._close_fence()
         self.inline.reset()
 
     # ------------------------------------------------------------ output
@@ -327,7 +322,7 @@ class MarkdownStream:
         if complete and _RULE.match(stripped):
             self._take_line()
             self._start_line(self.margin, self.margin)
-            self._emit(self.palette.dim("\u2500" * min(40, self.width - len(self.margin))))
+            self._emit(self.palette.faint("\u2500" * min(40, self.width - len(self.margin))))
             self._end_line()
             return True
 
@@ -347,17 +342,20 @@ class MarkdownStream:
             mark = ("\u2611" if task.group(1).strip() else "\u2610") if task else \
                 _BULLETS[min(depth, 2)]
             prefix = self.margin + "  " * depth
-            marker = self.palette.dim(mark) if not task else mark
+            if task:
+                marker = self.palette.green(mark) if task.group(1).strip() else self.palette.dim(mark)
+            else:
+                marker = self.palette.paint(ACCENT, mark)
             self._start_line(prefix + marker + " ", prefix + "  ")
             self.buffer = self.buffer[body_start + bullet.end() + (task.end() if task else 0):]
         elif ordered:
             prefix = self.margin + "  " * depth
             number = f"{ordered.group(1)}."
-            self._start_line(prefix + self.palette.dim(number) + " ",
+            self._start_line(prefix + self.palette.paint(ACCENT_SOFT, number) + " ",
                              prefix + " " * (len(number) + 1))
             self.buffer = self.buffer[body_start + ordered.end():]
         elif stripped.startswith(">"):
-            bar = self.palette.dim("\u2502") + " "
+            bar = self.palette.paint(ACCENT_SOFT, "\u2502") + " "
             self.inline.base = [*self.base, "3"]
             self._start_line(self.margin + bar, self.margin + bar)
             self.buffer = self.buffer[body_start + 1:].lstrip(" ")
@@ -377,10 +375,11 @@ class MarkdownStream:
                 # row never ends in a space that would make the terminal wrap.
                 self.space_pending = self.column > indent_width
                 continue
+            style = self.inline.current()  # the word's style before it toggles any
             rendered, size = self.inline.word(token)
             gap = 1 if self.space_pending else 0
             if self.column + gap + size > self.width and self.column > indent_width:
-                self._emit(self.palette.sgr([]) + "\n" + self.indent + self.inline.current())
+                self._emit(self.palette.sgr([]) + "\n" + self.indent + style)
                 self.column, gap = indent_width, 0
             self._emit(" " * gap + rendered)
             self.column += gap + size
@@ -391,26 +390,50 @@ class MarkdownStream:
         if self.column:
             self._newline()
         self.blank_pending = self.blank_pending or self.started
-        highlighter = _highlighter(language) if self.palette.color else None
+        highlighter = _highlighter(language, self.palette.level) if self.palette.color else None
         self.fence = (marker, highlighter)
         if self.blank_pending and self.started:
             self._emit("\n")
         self.blank_pending = False
         self.started = True
-        if language:
+        if self._panel:
+            label = self.palette.paint(f"{MUTED};{_PANEL_BG}", f"  {language}" if language else "")
+            self._emit(self.margin + self._panel_row(label, len(language) + 2 if language else 0))
+        elif language:
             self._emit(self.margin + self.palette.dim(language) + "\n")
+
+    @property
+    def _panel(self) -> bool:
+        """Code sits on a tinted panel when the terminal has colours to spare."""
+        return self.palette.level >= 2
+
+    def _panel_row(self, styled: str, size: int) -> str:
+        """One row of the code panel: ``styled`` text padded across on the tint."""
+        room = self.width - len(self.margin)
+        fill = self.palette.paint(_PANEL_BG, " " * max(0, room - size))
+        return styled + fill + self.palette.sgr([]) + "\n"
+
+    def _close_fence(self) -> None:
+        if self._panel:
+            self._emit(self.margin + self._panel_row("", 0))
+        self.fence = None
 
     def _code_line(self, line: str) -> None:
         marker, highlighter = self.fence
         if line.strip().startswith(marker[0] * 3) and not line.strip().strip(marker[0]):
-            self.fence = None
+            self._close_fence()
             self.blank_pending = True
             self.at_line_start = True
             return
-        room = max(10, self.width - len(self.margin) - 2)
+        room = max(10, self.width - len(self.margin) - 4)
+        tint = self.palette.sgr([_PANEL_BG])
         for piece in _chunks(line, room):
             text = highlighter(piece) if highlighter else self.palette.code(piece)
-            self._emit(self.margin + "  " + text + self.palette.sgr([]) + "\n")
+            if self._panel:
+                text = _RESET.sub(lambda match: match.group(0) + tint, text)
+                self._emit(self.margin + self._panel_row(tint + "  " + text, 2 + display_width(piece)))
+            else:
+                self._emit(self.margin + "  " + text + self.palette.sgr([]) + "\n")
         self.column = 0
 
     # ------------------------------------------------------------- table
@@ -433,24 +456,26 @@ class MarkdownStream:
             self._emit("\n")
         self.blank_pending = True
         self.started = True
-        dim = self.palette.dim
+        def dim(text):
+            return self.palette.faint(text)
 
         def border(left, middle, right):
             return self.margin + dim(left + middle.join("\u2500" * (w + 2) for w in widths) + right)
 
-        self._emit(border("\u250c", "\u252c", "\u2510") + "\n")
+        self._emit(border("\u256d", "\u252c", "\u256e") + "\n")
         for index, row in enumerate(rendered):
             parts = []
             for (text, size), width, raw in zip(row, widths, cells[index], strict=False):
                 if size > width:
                     text, size = renderer.static(_clip(raw, width))
                 if index == 0:
-                    text = self.palette.bold(strip_ansi(text)) if self.palette.color else text
+                    text = self.palette.paint("1;" + ACCENT_SOFT, strip_ansi(text)) \
+                        if self.palette.color else text
                 parts.append(" " + text + " " * (width - size) + " ")
             self._emit(self.margin + dim("\u2502") + dim("\u2502").join(parts) + dim("\u2502") + "\n")
             if index == 0 and len(rendered) > 1:
                 self._emit(border("\u251c", "\u253c", "\u2524") + "\n")
-        self._emit(border("\u2514", "\u2534", "\u2518") + "\n")
+        self._emit(border("\u2570", "\u2534", "\u256f") + "\n")
         self.column = 0
 
 
@@ -516,6 +541,7 @@ def _hold_point(text: str) -> int:
     return cut
 
 
-__all__ = ['ACCENT', 'ACCENT_SOFT', 'BASH', 'CODE', 'ERROR', 'HEADING', 'MEMORY', 'MUTED',
+__all__ = ['ACCENT', 'ACCENT_SOFT', 'BASH', 'BORDER', 'CODE', 'ERROR', 'FAINT', 'HEADING', 'MEMORY',
+           'MUTED',
            'SELECT', 'SUCCESS', 'USER', 'WARNING', 'Inline', 'MarkdownStream', 'Palette',
            'clean', 'display_width', 'strip_ansi']

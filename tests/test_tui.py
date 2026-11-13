@@ -236,14 +236,14 @@ def test_input_box_places_the_caret_on_wrapped_and_prefixed_text():
     lines, caret = input_box("!ls -la", 7, 30, p)
     assert lines[1].startswith("│ ! ls -la") and caret == (1, 10)
     lines, caret = input_box("", 0, 30, p, placeholder='Try "x"')
-    assert 'Try "x"' in lines[1] and lines[1].startswith("│ › ") and caret == (1, 4)
+    assert 'Try "x"' in lines[1] and lines[1].startswith("│ ❯ ") and caret == (1, 4)
 
 
 def test_menu_dialog_and_picker_render():
     p = Palette(False)
     shown = menu([Suggestion("/model ", "/model", "Choose"), Suggestion("/mode ", "/mode", "")],
                  1, 40, p)
-    assert shown == ["  /model  Choose", "  /mode"]
+    assert shown == ["    /model  Choose", "  ❯ /mode"]
     choice = Choice("Run a shell command?", ["  rm -rf x"],
                     [("Yes", "allow", "y"), ("No", "deny", "n")])
     assert choice.pick("2") == "deny" and choice.pick("y") == "allow" and choice.pick("z") is None
@@ -258,14 +258,16 @@ def test_spinner_and_welcome_read_plainly_without_colour():
     p = Palette(False)
     assert shimmer("Thinking", 3, p) == "Thinking"
     line = spinner_line(p, verb="Pondering", frame=4, elapsed=12.0, tokens=1500, stopping=False)
-    assert line.endswith("Pondering… (12s · ↓ 1.5K tokens · esc to interrupt)")
+    assert line.endswith("Pondering…  12s · ↓ 1.5K tokens · esc to interrupt")
     coloured = shimmer("Thinking", 3, Palette(True))
     assert coloured.count("\x1b[38;") == len("Thinking")
     card = "\n".join(welcome(p, 80, version="1.0.0", model="local", mode="work", cwd="/p",
                              memory="~/notes", notes=2, offline=True))
-    assert "◆ Kova  ·  model local  ·  offline  ·  mode work" in card
-    assert "Tips for getting started" in card and "2 notes" in card
+    assert "model    local" in card and "● offline" in card and "mode     work" in card
+    assert "Ask anything." in card and "2 notes" in card and "█▄▀ █▀█" in card
     assert "unreachable" in card and "\x1b" not in card
+    narrow = welcome(p, 34, version="1.0.0", model="local", mode="work", cwd="/p")
+    assert "◆ Kova" in "\n".join(narrow) and all(len(line) <= 34 for line in narrow)
 
 
 # ------------------------------------------------------------------ Markdown
@@ -359,8 +361,8 @@ def test_a_reply_has_one_kova_line_and_tool_rows_in_kova_style():
         r.handle(event)
     r.finish_turn()
     text = r.out.getvalue()
-    assert text.count("● Kova") == 1 and text.index("● Kova") < text.index("thought for")
-    assert "  ✓ web_search · 5 results" in text and "  ✗ read_file · missing" in text
+    assert text.count("◆ Kova") == 1 and text.index("◆ Kova") < text.index("Thought for")
+    assert "  ✓ Search(berlin) · 5 results" in text and "  ✗ Read(x) · missing" in text
     assert "Done." in text and "**" not in text
     assert "Worked for" in text
 
@@ -373,9 +375,9 @@ def test_command_rows_show_a_few_lines_of_output():
     r.handle({"type": "tool_result", "name": "run_command", "ok": True, "summary": output})
     r.tool_row("run_command", {"command": "false"}, False, "")
     text = r.out.getvalue()
-    assert "  ✓ Bash(ls -la)\n    ⎿  line 1\n" in text and "       line 4" in text
+    assert "  ✓ Bash(ls -la)\n    │ line 1\n" in text and "    │ line 4" in text
     assert "… +2 lines" in text and "line 5" not in text
-    assert "  ✗ Bash(false)\n    ⎿  Failed" in text
+    assert "  ✗ Bash(false)\n    │ Failed" in text
     assert command_output('{"output": "hi\\n", "exit_code": 2}') == "hi\n\nexit code 2"
     assert command_output("plain") == "plain"
 
@@ -385,20 +387,20 @@ def test_running_tools_show_name_and_arguments_in_the_live_region():
     r.begin_turn()
     r.handle({"type": "tool_call", "name": "web_search", "args": {"query": "weather berlin"}})
     live = plain("\n".join(r.live_lines(0)))
-    assert '⚙ web_search  "weather berlin"' in live and "esc to interrupt" in live
+    assert "⠋ Search(weather berlin)" in live and "esc to interrupt" in live
     r.handle({"type": "tool_result", "name": "web_search", "ok": True, "summary": "ok"})
     r.handle({"type": "tool_call", "name": "run_command", "args": {"command": "git status"}})
-    assert "⚙ Bash(git status)" in plain("\n".join(r.live_lines(0)))
+    assert "⠋ Bash(git status)" in plain("\n".join(r.live_lines(0)))
 
 
-def test_plan_is_an_update_todos_checklist():
+def test_plan_is_a_checklist():
     r = renderer()
     r.begin_turn()
     r.handle({"type": "plan", "items": [{"text": "Inspect", "status": "done"},
                                         {"text": "Change", "status": "in_progress"},
                                         {"text": "Verify", "status": "pending"}]})
     text = r.out.getvalue()
-    assert "● Update Todos\n    ⎿  ☑ Inspect\n       ◐ Change\n       ☐ Verify" in text
+    assert "◆ Plan 1/3\n    ✓ Inspect\n    ◐ Change\n    ○ Verify" in text
 
 
 def test_permission_card_warns_before_destruction():
@@ -686,7 +688,7 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
     term = Terminal(home, project, "--new", columns=90, rows=30)
     try:
         term.screen(IDLE, 30)
-        assert "◆ Kova  ·  model local  ·  mode work" in term.vt.text()
+        assert "model    local" in term.vt.text() and "mode     work" in term.vt.text()
         term.type(b"/mo")
         term.screen("List models; /model <name> switches")            # the suggestion menu
         term.type(b"\x15/model\r")
@@ -704,7 +706,7 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         assert "git status" in term.vt.text() and "don't ask again" in term.vt.text()
         term.type(b"1")
         term.screen("The tree is clean.")
-        assert "☑ Report what changed" in term.vt.text()
+        assert "✓ Report what changed" in term.vt.text()
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"rm it\r")
         term.screen("Destructive")
@@ -715,7 +717,7 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("Okay, I won't run it.")
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"!echo shell-ok\r")
-        term.screen("Bash(echo shell-ok)")
+        term.screen("Bash  echo shell-ok")
         term.type(b"# I like tea\r")
         term.screen("Saved to memory")
         term.type(b"summarize @no")
@@ -729,20 +731,20 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("(queued)")
         term.type(b"\x1b")                                             # esc interrupts
         term.screen("Interrupted")
-        term.screen("│ › queued one")                                  # the queue comes back
+        term.screen("│ ❯ queued one")                                  # the queue comes back
         term.type(b"\x15/cd sub\r")
         term.screen("Folder:")
         term.type(b"?")
-        term.screen("double tap esc to clear input")
+        term.screen("clear the input")
         term.type(b"?")
-        term.gone("double tap esc to clear input")
+        term.gone("clear the input")
         term.type(b"\x04")
         status = term.exit_status()
         assert status == 0, "kova did not exit cleanly on ctrl+d"
     finally:
         term.close()
     history = term.history()
-    assert "Bash(git status)" in history and "shell-ok" in history and "Until next time." in history
+    assert "Bash  git status" in history and "shell-ok" in history and "Until next time." in history
     for transient in ("Select model", "Do you want to proceed?", "esc to interrupt", IDLE):
         assert transient not in history, transient
     assert [d["decision"] for d in fake.decisions] == ["allow", "deny"]
