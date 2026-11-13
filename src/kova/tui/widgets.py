@@ -289,8 +289,11 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
     chip = p.pill(mode.upper(), MODE_CHIPS.get(mode, theme.ACCENT), solid=True) if p.color \
         else f"[{mode}]"
     dot = p.paint(WARNING if offline else SUCCESS, "\u25cf")
-    parts: list[tuple[int, str]] = [(0, dot + " " + p.bold(model or "no model")
-                                     + (p.yellow(" offline") if offline else ""))]
+
+    def model_part(room: int) -> str:
+        return (dot + " " + p.bold(fit(model or "no model", max(1, room)))
+                + (p.yellow(" offline") if offline else ""))
+    parts: list[tuple[int, str]] = [(0, model_part(60))]
     if title:
         parts.append((2, p.dim(fit(title, 28))))
     if permission:
@@ -321,7 +324,8 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
         elif len(keep) > 1:
             keep.remove(max(keep[1:], key=lambda part: part[0]))
         else:
-            return render(keep, [])
+            room = width - 1 - visible(render([(0, model_part(1))], [])) + 1
+            return render([(0, model_part(room))], [])
 
 
 def shortcuts(width: int, p: Palette) -> list[str]:

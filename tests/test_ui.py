@@ -63,7 +63,7 @@ def test_tools_replace_pending_status_and_escape_server_markup():
         {"type": "error", "message": "[bold]server error[/bold]"},
         {"type": "done"},
     ], terminal=True)
-    final = rendered[rendered.rfind("● Kova"):]
+    final = rendered[rendered.rfind("◆ Kova"):]
     assert final.count("memory_search") == 1
     assert "✓ memory_search · Found 2 notes" in final
     assert "✗ read_file · [red]not allowed[/red]" in final
@@ -76,7 +76,7 @@ def test_tall_reply_commits_all_lines_to_scrollback():
         {"type": "text", "text": "\n\n".join(f"Paragraph {i}" for i in range(30))},
         {"type": "done"},
     ], terminal=True)
-    final = rendered[rendered.rfind("● Kova"):]
+    final = rendered[rendered.rfind("◆ Kova"):]
     assert {f"Paragraph {i}" for i in range(30)} <= {line.rstrip() for line in final.splitlines()}
 
 

@@ -47,9 +47,13 @@ def _secret(prompt: str) -> str:
 
 def _select(title: str, choices: list[str], *, default: int | None = 0) -> int:
     if console.is_terminal and sys.stdin.isatty():
-        from prompt_toolkit.shortcuts import radiolist_dialog
-        selected = radiolist_dialog(title=title, text='↑/↓ to move · Enter to choose · Cancel to leave',
-                                    values=list(enumerate(choices))).run()
+        from kova.tui import prompts
+        try:
+            selected = prompts.select(title, choices, default=default)
+        except prompts.Unavailable:
+            from prompt_toolkit.shortcuts import radiolist_dialog
+            selected = radiolist_dialog(title=title, text='↑/↓ to move · Enter to choose · Cancel to leave',
+                                        values=list(enumerate(choices))).run()
         if selected is None:
             raise SetupError('Setup cancelled. Nothing saved.')
         return selected
@@ -106,9 +110,14 @@ def _pick_models(models: list[str]) -> tuple[list[str], str]:
                 break
             console.print('No matches. Try another filter.')
     if console.is_terminal and sys.stdin.isatty():
-        from prompt_toolkit.shortcuts import checkboxlist_dialog
-        selected = checkboxlist_dialog(title='Choose models', text='Space to select · Enter to continue',
-                                       values=[(m, m) for m in filtered], default_values=[filtered[0]]).run()
+        from kova.tui import prompts
+        try:
+            marked = prompts.multi_select('Choose models', filtered)
+            selected = [filtered[i] for i in marked] if marked is not None else None
+        except prompts.Unavailable:
+            from prompt_toolkit.shortcuts import checkboxlist_dialog
+            selected = checkboxlist_dialog(title='Choose models', text='Space to select · Enter to continue',
+                                           values=[(m, m) for m in filtered], default_values=[filtered[0]]).run()
         if not selected:
             raise SetupError('Setup cancelled. Nothing saved.')
         return selected, selected[_select('Active model', selected)]

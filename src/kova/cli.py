@@ -18,7 +18,6 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
@@ -28,6 +27,7 @@ from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.modes import MODES
 from kova.tools.reminders import format_relative, format_when
+from kova.tui import brand
 from kova.ui import _run_chat
 
 console = Console()
@@ -121,6 +121,13 @@ def _clip(value: str, limit: int = 60) -> str:
 
 
 class _KovaGroup(TyperGroup):
+    def format_help(self, ctx, formatter):
+        brand.style_help(self)
+        if ctx.parent is None:
+            console.print()
+            console.print(brand.wordmark(__version__))
+        return super().format_help(ctx, formatter)
+
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
@@ -140,7 +147,7 @@ app = typer.Typer(
 def _version(value: bool) -> None:
     if value:
         console.print(Text.assemble(
-            ("Kova", f"bold {theme.ACCENT}"),
+            brand.gradient_text("Kova"),
             ("  ·  ", theme.BORDER),
             (f"v{__version__}", theme.MUTED),
         ))
@@ -389,6 +396,9 @@ def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
     _check_mode(mode)
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
+        console.print()
+        console.print(brand.wordmark(__version__))
+        console.print()
         configured = any(m.model for m in cfg.models)
         question = (f"Can't reach your model \"{cfg.active}\" right now. Run the setup wizard?"
                     if configured else "Kova isn't set up yet. Run the setup wizard first?")
@@ -411,6 +421,8 @@ def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="Use defaults for scripted setup (never bypasses credential validation)."),
 ):
     """Connect a provider and choose models. No scan or test chat."""
+    if not url and sys.stdin.isatty() and console.is_terminal:
+        brand.setup_banner(console, __version__)
     try:
         onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
     except onboarding.SetupError as exc:
@@ -488,16 +500,8 @@ def status():
     except KovaError as exc:
         if exc.status is not None:
             raise
-        panel = Panel(
-            _status_rows(cfg, None, notes=None, reminders=None),
-            title=Text.assemble(("Kova", f"bold {theme.ACCENT}"), (" status", theme.MUTED)),
-            title_align="left",
-            border_style=theme.BORDER,
-            box=box.ROUNDED,
-            padding=(0, 1),
-            expand=False,
-        )
-        console.print(panel)
+        console.print(brand.card(_status_rows(cfg, None, notes=None, reminders=None),
+                                 "Kova status", tone=theme.ERROR))
         _muted("It starts by itself when you run kova.")
         return
 
@@ -515,16 +519,9 @@ def status():
     except KovaError:
         reminders = None
 
-    panel = Panel(
-        _status_rows(cfg, info, notes=notes, reminders=reminders),
-        title=Text.assemble(("Kova", f"bold {theme.ACCENT}"), (" status", theme.MUTED)),
-        title_align="left",
-        border_style=theme.BORDER,
-        box=box.ROUNDED,
-        padding=(0, 1),
-        expand=False,
-    )
-    console.print(panel)
+    console.print(brand.card(_status_rows(cfg, info, notes=notes, reminders=reminders),
+                             "Kova status",
+                             tone=theme.ACCENT if info.get("model_ok") else theme.WARNING))
     if not info.get("model_ok"):
         _muted("The model server isn't answering; run: kova setup")
 
