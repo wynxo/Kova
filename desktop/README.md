@@ -36,3 +36,7 @@ Electron dependencies and registers this checkout in the application menu.
 Keep the checkout in place. npm must be on PATH. electron-builder supplies
 desktop integration for packaged Linux builds; kova.desktop is the reference.
 `./desktop-app --browser` retains the original Python/browser path.
+
+Build notes: electron-builder's Linux deb helper needs libcrypt.so.1
+(on Fedora, provided by libxcrypt-compat). AppImage builds do not need it.
+Windows/macOS installers must be built and smoke-tested on their platforms.

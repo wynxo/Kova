@@ -3,6 +3,22 @@ rem Open Kova's desktop client: desktop-app.bat [--browser]
 setlocal
 cd /d "%~dp0"
 
+if "%~1"=="--browser" goto python
+where npm >nul 2>nul
+if errorlevel 1 goto python
+if not exist desktop\package.json goto python
+cd desktop
+if exist node_modules\.bin\electron.cmd goto electron
+call npm ci
+if errorlevel 1 (
+    cd ..
+    goto python
+)
+:electron
+set ELECTRON_RUN_AS_NODE=
+call npm start -- %*
+exit /b %errorlevel%
+:python
 where uv >nul 2>nul
 if not errorlevel 1 goto run
 if not exist "%USERPROFILE%\.local\bin\uv.exe" goto no_uv

@@ -7,11 +7,13 @@ main() {
     die() { say "Error: $*" >&2; exit 1; }
     ref=${KOVA_REF-main}
     dev=0
+    register_desktop=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --ref) [ "$#" -ge 2 ] || die '--ref needs a value'; ref=$2; shift 2 ;;
             --dev) dev=1; shift ;;
-            -h|--help) say 'Usage: install.sh [--ref REF] [--dev]'; return 0 ;;
+            --desktop) register_desktop=1; shift ;;
+            -h|--help) say 'Usage: install.sh [--ref REF] [--dev] [--desktop]'; return 0 ;;
             *) die "Unknown option: $1" ;;
         esac
     done
@@ -68,6 +70,32 @@ main() {
     say 'To use kova in this terminal, run (or add to your shell profile):'
     # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
     say '  export PATH="$HOME/.local/bin:$PATH"'
+    if [ "$register_desktop" -eq 1 ]; then
+        [ "$(uname -s)" = Linux ] || die '--desktop registration is Linux-only.'
+        checkout=${KOVA_SOURCE-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}
+        [ -f "$checkout/desktop/package.json" ] ||
+            die '--desktop needs a local checkout; rerun from it with --dev --desktop.'
+        command -v npm >/dev/null 2>&1 || die '--desktop needs Node.js and npm on PATH.'
+        (cd "$checkout/desktop" && npm ci)
+        apps="$HOME/.local/share/applications"
+        icons="$HOME/.local/share/icons/hicolor/512x512/apps"
+        mkdir -p "$apps" "$icons"
+        cp "$checkout/desktop/assets/icon.png" "$icons/kova.png"
+        # Desktop Exec has its own quoting rules; reject unusual checkout paths.
+        case "$checkout" in *[!a-zA-Z0-9_./\ -]*) die 'Unsupported desktop checkout path.' ;; esac
+        {
+            say '[Desktop Entry]'
+            say 'Type=Application'
+            say 'Name=Kova'
+            say 'Comment=Private local AI assistant'
+            printf 'Exec="%s/desktop-app"\n' "$checkout"
+            say 'Icon=kova'
+            say 'Terminal=false'
+            say 'Categories=Utility;'
+            say 'StartupWMClass=Kova'
+        } > "$apps/kova.desktop"
+        say 'Registered Kova in your application menu (keep this checkout in place).'
+    fi
     say 'Done. Run: kova setup'
     say 'Then: kova'
 }
