@@ -16,6 +16,7 @@ results``); reasoning collapses to one quiet ``\u273b Thought for 2s`` line.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import sys
@@ -146,6 +147,11 @@ class Renderer:
             color = self.tty and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
         self.p = Palette(color)
         self.verbose = verbose
+        self.tools_expanded = False
+        self.reasoning_text = ""
+        self.tool_drafts: dict = {}
+        self.tool_history: list = []
+        self.detail_offset = 0
         self.stream: MarkdownStream | None = None
         self.thinking: MarkdownStream | None = None
         self.spinner = ""
@@ -172,7 +178,7 @@ class Renderer:
     @property
     def width(self) -> int:
         """Where text wraps: the terminal, but never wider than is comfortable to read."""
-        return max(30, min(self.columns - 1, 104))
+        return max(10, min(self.columns - 1, 104))
 
     def write(self, text: str) -> None:
         self.out.write(text)
@@ -211,6 +217,48 @@ class Renderer:
                                   stopping=self.stopping,
                                   thinking=bool(self.think_started and not self.stream)))
         return lines
+
+    def _on_tool_call_delta(self, event) -> None:
+        # Snapshots are keyed by model call index; they never execute a tool.
+        self.end_text()
+        self.tool_drafts[event.get("index", 0)] = event
+
+    def detail_lines(self) -> list[str]:
+        """Replaceable live details, never appended token-by-token to scrollback."""
+        from pathlib import Path
+        from .markdown import _highlighter
+        rows = []
+        if self.reasoning_text and not self.no_think:
+            if self.verbose:
+                rows.append(self.p.faint("  Thinking · ctrl+t collapse"))
+                rows.extend(self.p.faint("  " + row) for row in
+                            wrap_words(self.reasoning_text, self.width - 4))
+            elif self.think_started:
+                rows.append(self.p.faint("  thinking…"))
+        for draft in self.tool_drafts.values():
+            name = draft.get("name", "tool")
+            raw = draft.get("arguments", "")
+            args = partial_arguments(raw)
+            filename = args.get("path", args.get("filename", ""))
+            rows.append(self.p.dim("  " + name + (" · " + filename if filename else "") + " · generating…"))
+            code = next((args[k] for k in ("command", "content", "new_text", "new_string", "replacement") if k in args), raw)
+            language = "bash" if name == "run_command" else Path(filename).suffix.lstrip(".") or "text"
+            highlight = _highlighter(language, self.p.level) if self.p.color else None
+            for row in code.split("\n"):
+                for piece in wrap_literal(row, self.width - 6):
+                    rows.append("    " + (highlight(piece) if highlight else piece))
+        if self.tools_expanded:
+            if self.pending_tool:
+                name, args = self.pending_tool
+                rows.append(self.p.dim("  " + name + " · running"))
+                rows.extend("    " + row for row in wrap_words(json.dumps(args, ensure_ascii=False, indent=2), self.width - 6))
+            for name, args, ok, output in self.tool_history:
+                rows.append(self.p.dim("  " + ("✓ " if ok else "✗ ") + name))
+                for value in (json.dumps(args, ensure_ascii=False, indent=2), output):
+                    rows.extend("    " + row for row in wrap_literal(value, self.width - 6))
+        if self.detail_offset:
+            rows = rows[:-self.detail_offset] if self.detail_offset < len(rows) else rows[:1]
+        return rows
 
     # ------------------------------------------------------------ prompts
     def user(self, text: str, *, mark: str = "\u276f", colour: str = USER,
@@ -251,6 +299,10 @@ class Renderer:
 
     # ------------------------------------------------------------ events
     def begin_turn(self) -> None:
+        self.reasoning_text = ""
+        self.tool_drafts.clear()
+        self.tool_history.clear()
+        self.detail_offset = 0
         self.turn_started = time.monotonic()
         self.think_started = 0.0
         self.stopping = False
@@ -280,14 +332,7 @@ class Renderer:
         if not self.think_started:
             self.think_started = time.monotonic()
             self.status("Thinking")
-        if self.verbose and not self.no_think:
-            if self.thinking is None:
-                self.reply_header()
-                self.line(self.p.faint("  \u273b Thinking"))
-                base = ["3", FAINT] if self.p.level >= 2 else ["2", "3"]
-                self.thinking = MarkdownStream(self.write, self.width, self.p, margin="    ",
-                                               base=base)
-            self.thinking.feed(text)
+        self.reasoning_text += text
 
     def _end_thinking(self) -> None:
         if self.thinking is not None:
@@ -328,6 +373,8 @@ class Renderer:
     def _on_tool_call(self, event) -> None:
         self.end_text()
         name = str(event.get("name", ""))
+        self.tool_drafts = {i: draft for i, draft in self.tool_drafts.items()
+                            if draft.get("id") != event.get("id") and draft.get("name") != name}
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         self.pending_tool = (name, args)
         self.activity = ACTIVE_TITLES.get(name, "Working")
@@ -339,6 +386,7 @@ class Renderer:
         self.activity = ""
         ok = bool(event.get("ok", True))
         summary = str(event.get("summary") or "")
+        self.tool_history.append((name, args, ok, str(event.get("output", summary))))
         self.tool_row(name, args, ok, summary)
 
     def _on_error(self, event) -> None:
@@ -393,8 +441,7 @@ class Renderer:
         if name == "run_command":
             command = tool_detail(name, args) or "command"
             self.line(f"  {icon} " + self._call(chip, shorten(command, self.width - used)))
-            for text in self._run_command_body(summary, ok):
-                self.line("    " + p.faint("\u2502") + " " + text)
+
             self.after_block = True
             return
         detail = self._detail(name, args, max(8, (self.width - used) // 2))
@@ -482,8 +529,46 @@ class Renderer:
         self.spinner = ""
         self.activity = ""
         self.pending_tool = None
+        self.tool_drafts.clear()
         self.stopping = False
         self.in_turn = False
+
+
+def wrap_literal(text: str, width: int) -> list[str]:
+    """Wrap code/output without discarding indentation or repeated spaces."""
+    rows = []
+    for line in clean(str(text)).expandtabs(4).split("\n"):
+        piece, used = "", 0
+        for char in line:
+            size = display_width(char)
+            if used + size > max(1, width) and piece:
+                rows.append(piece)
+                piece, used = "", 0
+            piece += char
+            used += size
+        rows.append(piece)
+    return rows
+
+
+def partial_arguments(raw: str) -> dict[str, str]:
+    """Decode completed or in-progress JSON string values, including split escapes.
+
+    The trailing incomplete escape is held until its next delta arrives.
+    This is display-only: execution always uses the model's final valid JSON.
+    """
+    values = {}
+    pattern = r'"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)'
+    for match in re.finditer(pattern, raw):
+        value = match[2]
+        while value:
+            try:
+                values[json.loads('"' + match[1] + '"')] = json.loads('"' + value + '"')
+                break
+            except ValueError:
+                value = value[:-1]
+        else:
+            values[match[1]] = ""
+    return values
 
 
 def command_output(summary: str) -> str:

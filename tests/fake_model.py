@@ -24,8 +24,13 @@ def text(s: str) -> list[dict]:
     return [{"content": s[i:i + 3]} for i in range(0, len(s), 3)]
 
 
-def tool(name: str, args: dict, id: str = "call_1") -> list[dict]:
+def tool(name: str, args: dict, id: str = "call_1", chunk_size: int | None = None) -> list[dict]:
     arguments = json.dumps(args)
+    if chunk_size is not None:
+        return [{"tool_calls": [{"index": 0, **({"id": id} if i == 0 else {}),
+                                 "function": {**({"name": name} if i == 0 else {}),
+                                              "arguments": arguments[i:i + chunk_size]}}]}
+                for i in range(0, len(arguments), chunk_size)]
     middle = len(arguments) // 2
     return [
         {"tool_calls": [{"index": 0, "id": id, "type": "function", "function": {"name": name, "arguments": arguments[:middle]}}]},

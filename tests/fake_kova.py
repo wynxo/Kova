@@ -77,8 +77,21 @@ class FakeKova:
         stop = self._stopping.setdefault(chat_id, threading.Event())
         stop.clear()
         # The typed message may follow shell output the chat sends along with it.
-        script = next((name for name in ("run it", "rm it", "slow", "count")
+        script = next((name for name in ("run it", "rm it", "slow", "count", "details")
                        if re.search(rf"(^|\n){name}", text)), "")
+        if script == "details":
+            emit({"type": "reasoning", "text": "reasoning-visible-marker"})
+            time.sleep(1)
+            raw = json.dumps({"path": "demo.py", "content": "print('live-marker')"})
+            for i in range(1, len(raw) + 1):
+                emit({"type": "tool_call_delta", "index": 0, "id": "d1", "name": "write_file", "arguments": raw[:i]})
+                time.sleep(.02)
+            time.sleep(1)
+            emit({"type": "tool_call", "id": "d1", "name": "write_file", "args": {"path": "demo.py"}})
+            emit({"type": "tool_result", "name": "write_file", "ok": True, "summary": "written", "output": "full-output-marker"})
+            emit({"type": "text", "text": "details done"})
+            emit({"type": "done"})
+            return
         if script in ("run it", "rm it"):
             destructive = script == "rm it"
             command = "rm -rf build" if destructive else "git status"

@@ -4,6 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from typing import TypedDict
+
+
+class ToolCallDelta(TypedDict):
+    """Display-only cumulative argument snapshot, keyed by index within a model pass.
+
+    The arguments string may be incomplete JSON. Only the subsequent tool_call
+    event is executable. Consumers that do not display previews may ignore this.
+    """
+
+    type: str
+    index: int
+    id: str
+    name: str
+    arguments: str
+
 
 
 class EventBus:

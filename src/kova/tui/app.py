@@ -389,7 +389,15 @@ class ChatApp:
     def _editor_key(self, key) -> None:
         editor, name, now = self.editor, key.name, time.monotonic()
         before = editor.text
-        if name == "ctrl-c":
+        if name == "ctrl-t":
+            self.renderer.verbose = not self.renderer.verbose
+            self.renderer.no_think = False
+        elif name in ("pageup", "pagedown"):
+            r = self.renderer
+            r.detail_offset = max(0, r.detail_offset + (10 if name == "pageup" else -10))
+        elif name == "ctrl-o":
+            self.renderer.tools_expanded = not self.renderer.tools_expanded
+        elif name == "ctrl-c":
             if self.job is not None:
                 self._stop()
             elif editor.text:
@@ -774,6 +782,7 @@ class ChatApp:
         r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Keys"))
         for key, text in (("esc", "stop the reply · close a menu · twice to clear the input"),
                           ("ctrl+c", "stop · clear the input · twice to exit"),
+                          ("ctrl+t", "toggle reasoning"), ("ctrl+o", "toggle tool details"),
                           ("ctrl+d", "exit"), ("shift+tab", "cycle permission modes"),
                           ("\\⏎  shift+⏎  ctrl+j", "new line"), ("tab", "complete"),
                           ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
@@ -986,6 +995,7 @@ class ChatApp:
         lines: list[str] = []
         if self.welcome_started is not None:
             lines += [*self._welcome_lines(animate=True), ""]
+        lines += self.renderer.detail_lines()
         if self.job is not None:
             lines += self.renderer.live_lines(self.frame)
         for text in self.queued[-3:]:
@@ -1025,14 +1035,14 @@ class ChatApp:
         if text.startswith("#"):
             return p.paint(MEMORY, "# save a memory note")
         if self.job is not None:
-            return p.faint("esc to interrupt · enter queues a message")
+            return p.faint("esc stop · ctrl+t thinking · ctrl+o tools")
         if self.permission in PERMISSIONS and self.permission != "manual":
             return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
                             f"⏵⏵ {self.permission} permissions")
                     + p.faint(" · shift+tab to cycle"))
         if text:
             return p.faint("⏎ send · \\⏎ new line")
-        return p.faint("? for shortcuts")
+        return p.faint("ctrl+t thinking · ctrl+o tools · ? help")
 
     def _status(self, width: int) -> str:
         plan = ""

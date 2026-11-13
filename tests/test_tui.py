@@ -367,7 +367,7 @@ def test_a_reply_has_one_kova_line_and_tool_rows_in_kova_style():
     assert "Worked for" in text
 
 
-def test_command_rows_show_a_few_lines_of_output():
+def test_command_rows_collapse_and_expand_full_output():
     r = renderer()
     r.begin_turn()
     output = "\n".join(f"line {n}" for n in range(1, 7))
@@ -375,9 +375,12 @@ def test_command_rows_show_a_few_lines_of_output():
     r.handle({"type": "tool_result", "name": "run_command", "ok": True, "summary": output})
     r.tool_row("run_command", {"command": "false"}, False, "")
     text = r.out.getvalue()
-    assert "  ✓ Bash(ls -la)\n    │ line 1\n" in text and "    │ line 4" in text
-    assert "… +2 lines" in text and "line 5" not in text
-    assert "  ✗ Bash(false)\n    │ Failed" in text
+    assert "  ✓ Bash(ls -la)" in text and "line 1" not in text
+    assert "  ✗ Bash(false)" in text
+    r.tools_expanded = True
+    assert "line 6" in "\n".join(r.detail_lines())
+    r.tools_expanded = False
+    assert "line 6" not in "\n".join(r.detail_lines())
     assert command_output('{"output": "hi\\n", "exit_code": 2}') == "hi\n\nexit code 2"
     assert command_output("plain") == "plain"
 
@@ -800,3 +803,56 @@ def test_kova_simple_keeps_the_plain_prompt(kova_home):
     finally:
         term.close()
     assert "╭" not in term.history()
+
+
+def test_live_reasoning_and_partial_tool_arguments_toggle_without_transcript_spam():
+    import json
+    from kova.tui.render import partial_arguments
+    r = renderer()
+    r.begin_turn()
+    r.handle({"type": "reasoning", "text": "private thought"})
+    assert "private thought" not in "\n".join(r.detail_lines())
+    r.verbose = True
+    assert "private thought" in "\n".join(r.detail_lines())
+    r.verbose = False
+    assert "private thought" not in "\n".join(r.detail_lines())
+    raw = json.dumps({"path": "demo.py", "content": 'print("hi")\n'})
+    for i in range(1, len(raw) + 1):
+        r.handle({"type": "tool_call_delta", "index": 0, "name": "write_file", "arguments": raw[:i]})
+        assert "\x1b" not in "\n".join(r.detail_lines())
+    assert partial_arguments(raw)["content"] == 'print("hi")\n'
+    assert "demo.py" in "\n".join(r.detail_lines())
+    assert 'print("hi")' in "\n".join(r.detail_lines())
+    assert 'print("hi")' not in r.out.getvalue()
+    r.handle({"type": "tool_call", "name": "write_file", "args": {}})
+    assert not r.tool_drafts
+
+
+def test_toggle_control_keys(keys):
+    assert keys(b"\x14\x0f") == [("ctrl-t", ""), ("ctrl-o", "")]
+
+
+@linux_only
+@pytest.mark.parametrize("no_color", [False, True])
+def test_live_details_in_narrow_pty(kova_home, no_color):
+    fake, home, project = kova_home
+    term = Terminal(home, project, "--new", columns=55, rows=30,
+                    env={"NO_COLOR": "1"} if no_color else {})
+    try:
+        term.screen(IDLE, 30)
+        term.type(b"\x14details\r")
+        term.screen("reasoning-visible-marker")
+        term.type(b"\x14")
+        term.gone("reasoning-visible-marker")
+        term.screen("demo.py")
+        term.screen("live-marker")
+        term.screen("details done")
+        term.type(b"\x0f")
+        term.screen("full-output-marker")
+        term.type(b"\x0f")
+        term.gone("full-output-marker")
+        term.gone("generating")
+        term.type(b"\x04")
+        assert term.exit_status() == 0
+    finally:
+        term.close()

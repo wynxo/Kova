@@ -85,6 +85,7 @@ async def stream_native(client, url, payload, adapter):
                     calls[index] = {'id': block['id'], 'name': block['name'], 'arguments': '', '_input': block.get('input', {})}
                 if delta.get('type') == 'input_json_delta' and index in calls:
                     calls[index]['arguments'] += delta.get('partial_json', '')
+                    yield ModelEvent('tool_call_delta', tool_call={'index': index, **calls[index]})
                 if delta.get('type') == 'text_delta':
                     has_text = has_text or bool(delta.get('text', '').strip())
                     yield ModelEvent('text', delta.get('text', ''))
@@ -97,6 +98,7 @@ async def stream_native(client, url, payload, adapter):
                     calls[index] = {'id': item['call_id'], 'name': item['name'], 'arguments': item.get('arguments', '')}
                 elif kind == 'response.function_call_arguments.delta' and index in calls:
                     calls[index]['arguments'] += event.get('delta', '')
+                    yield ModelEvent('tool_call_delta', tool_call={'index': index, **calls[index]})
                 elif kind == 'response.output_item.done' and item.get('type') == 'function_call':
                     calls[index] = {'id': item['call_id'], 'name': item['name'], 'arguments': item.get('arguments', '{}')}
                 elif kind == 'response.output_text.delta':

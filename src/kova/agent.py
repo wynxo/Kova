@@ -222,6 +222,8 @@ class Agent:
                         if event.type == 'text':
                             content.append(event.text)
                         yield {'type': event.type, 'text': event.text}
+                    elif event.type == 'tool_call_delta' and event.tool_call is not None and step < 10:
+                        yield {'type': 'tool_call_delta', **event.tool_call}
                     elif event.type == 'tool_call' and event.tool_call is not None and step < 10:
                         calls.append(event.tool_call)
                 answer = ''.join(content)
@@ -245,7 +247,7 @@ class Agent:
                         result, ok = 'Error: arguments were not valid JSON', False
                     else:
                         result, ok = '', True
-                    yield {'type': 'tool_call', 'name': name, 'args': args}
+                    yield {'type': 'tool_call', 'id': call['id'], 'name': name, 'args': args}
                     if ok:
                         if name not in tools:
                             result, ok = f'Error: unknown tool {name}', False
@@ -294,9 +296,10 @@ class Agent:
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
                     result = str(result)
+                    full_output = result
                     if name != 'run_command' and len(result) > MAX_TOOL_RESULT_CHARS:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
-                    yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200]}
+                    yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
         except ModelError as exc:
             yield {'type': 'error', 'message': str(exc)}

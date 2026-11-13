@@ -168,6 +168,7 @@ class ModelClient:
                             function = part.get("function") or {}
                             call["name"] += function.get("name") or ""
                             call["arguments"] += function.get("arguments") or ""
+                            yield ModelEvent("tool_call_delta", tool_call={"index": index, **call})
         except httpx.TimeoutException:
             raise ModelError('Model response timed out. Check the model server, then retry or select a smaller model with kova setup.') from None
         except httpx.RequestError as exc:
