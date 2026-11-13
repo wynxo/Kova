@@ -47,6 +47,7 @@ class Config:
     memory_path: Path
     files_path: Path
     port: int = 7700
+    compact_threshold: float = 0.75
     memory_write_subdir: str | None = None
     providers: list[ProviderEntry] = field(default_factory=list)
     oauth_host_id: str = field(default_factory=lambda: 'urn:uuid:' + str(uuid.uuid4()))
@@ -113,6 +114,7 @@ def load_config(home: Path | None = None) -> Config:
                  memory_write_subdir=mem.get('write_subdir') or None,
                  files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
                  port=int(data.get('port', 7700)),
+                 compact_threshold=float(data.get('compact_threshold', 0.75)),
                  oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())))
     cfg.bind_providers()
     # Tighten legacy credential files too, not only new writes.
@@ -150,7 +152,7 @@ def save_config(cfg: Config) -> None:
         if p.api_key:
             raw['api_key'] = p.api_key
         providers.append(raw)
-    data = {'schema_version': 2, 'oauth_host_id': cfg.oauth_host_id, 'active': cfg.active, 'port': cfg.port, 'files_path': str(cfg.files_path),
+    data = {'schema_version': 2, 'oauth_host_id': cfg.oauth_host_id, 'active': cfg.active, 'port': cfg.port, 'compact_threshold': cfg.compact_threshold, 'files_path': str(cfg.files_path),
             'memory': memory, 'providers': providers,
             'models': [{'name': m.name, 'provider': m.provider, 'base_url': m.base_url,
                         'model': m.model, 'context': m.context} for m in cfg.models]}

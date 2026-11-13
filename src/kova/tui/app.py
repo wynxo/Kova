@@ -75,6 +75,7 @@ COMMANDS = {
     "model": ("/model [name]", "List models; /model <name> switches"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
+    "compact": ("/compact", "Summarize older conversation context"),
     "clear": ("/clear", "Clear the screen, keeping this conversation"),
     "exit": ("/exit", "Leave Kova (also /quit)"),
     "quit": ("/quit", "Leave Kova"),
@@ -768,6 +769,16 @@ class ChatApp:
     def _choose(self, title: str, items: list[tuple[str, str, object]], on_pick, *,
                 current=None, subtitle: str = "", groups: dict | None = None) -> None:
         self.overlay = Picker(title, items, on_pick, current=current, subtitle=subtitle, groups=groups)
+
+    def _cmd_compact(self, _rest: str) -> None:
+        self.renderer.begin_turn()
+        client, chat_id = self.client, self.chat_id
+
+        def run(emit, cancel):
+            event = client.compact_chat(chat_id)
+            emit(event)
+            emit({"type": "done"})
+        self.job = Job("reply", run, label="/compact")
 
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer

@@ -127,6 +127,9 @@ class Store:
                 tool_call_id TEXT,
                 created TEXT
             );
+            CREATE TABLE IF NOT EXISTS chat_compactions (
+                chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL, summary TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 reminder_at TEXT NOT NULL,
@@ -308,6 +311,7 @@ class Store:
 
     def delete_chat(self, chat_id: str) -> bool:
         with self._lock:
+            self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
             cur = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
             self._conn.commit()
@@ -316,6 +320,7 @@ class Store:
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
         with self._lock:
+            self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM chats")
             self._conn.commit()
@@ -489,6 +494,38 @@ class Store:
                 message["created"] = created
             messages.append(message)
         return messages
+
+    def context_snapshot(self, chat_id: str) -> tuple[str | None, int, list[tuple[int, dict]]]:
+        """Return the stored summary and uncompressed messages with stable IDs."""
+        with self._lock:
+            compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
+            cutoff, summary = (compact[0], compact[1]) if compact else (0, None)
+            rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE chat_id = ? AND id > ? ORDER BY id", (chat_id, cutoff)).fetchall()
+        messages = []
+        for row in rows:
+            message = {"role": row[1], "content": row[2]}
+            if row[3] is not None:
+                message["tool_calls"] = json.loads(row[3])
+            if row[4] is not None:
+                message["tool_call_id"] = row[4]
+            messages.append((row[0], message))
+        return summary, cutoff, messages
+
+    def get_context(self, chat_id: str) -> list[dict]:
+        summary, _, rows = self.context_snapshot(chat_id)
+        prefix = [{"role": "user", "content": "Conversation summary (earlier context):\n" + summary}] if summary else []
+        return prefix + [message for _, message in rows]
+
+    def save_compaction(self, chat_id: str, expected_cutoff: int, cutoff: int, summary: str) -> bool:
+        with self._lock:
+            current = self._conn.execute("SELECT cutoff FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
+            if (current[0] if current else 0) != expected_cutoff:
+                return False
+            if not self._conn.execute("SELECT 1 FROM messages WHERE chat_id = ? AND id = ?", (chat_id, cutoff)).fetchone():
+                return False
+            self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET cutoff=excluded.cutoff, summary=excluded.summary", (chat_id, cutoff, summary))
+            self._conn.commit()
+            return True
 
     # -- reminders --------------------------------------------------------
     def add_reminder(self, when: datetime, text: str) -> int:
