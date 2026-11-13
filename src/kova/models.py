@@ -78,13 +78,19 @@ class ModelClient:
 
     async def stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
         from kova.providers import ProviderError
+        if not self.entry.model.strip():
+            raise ModelError("No model is configured. Run: kova setup")
         try:
             headers = await asyncio.to_thread(self._headers)
         except ProviderError as exc:
             raise ModelError(str(exc)) from None
         adapter = self.entry._provider.adapter if self.entry._provider else 'openai'
         if adapter != 'openai':
-            from kova.model_adapters import anthropic_request, responses_request, stream_native
+            from kova.model_adapters import (
+                anthropic_request,
+                responses_request,
+                stream_native,
+            )
             build = anthropic_request if adapter == 'anthropic' else responses_request
             path, payload = build(self.entry.model, messages, tools)
             try:
@@ -99,12 +105,28 @@ class ModelClient:
             payload["tools"] = tools
         splitter = ThinkSplitter()
         calls: dict[int, dict] = {}
+        received_text = False
         error = f"Can't reach model '{self.entry.name}' at {self.entry.base_url}"
         try:
             async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
                 async with client.stream("POST", self._url("chat/completions"), json=payload) as response:
                     if response.status_code >= 400:
-                        raise ModelError(f"{error}: HTTP {response.status_code}")
+                        await response.aread()
+                        # Retry only an explicit capability rejection, before any output.
+                        body = response.text.lower()
+                        if tools and response.status_code in (400, 422) and 'tool' in body and any(
+                            word in body for word in ('not supported', 'unsupported', 'does not support')
+                        ):
+                            async for event in self.stream(messages, tools=None):
+                                yield event
+                            return
+                        hint = {
+                            401: 'Check your API key or sign in again with kova setup.',
+                            403: 'Check provider access or sign in again with kova setup.',
+                            404: 'Check the base URL and model with kova setup.',
+                            429: 'Check provider usage limits, then retry.',
+                        }.get(response.status_code, 'Run kova doctor, then retry.')
+                        raise ModelError(f"Provider request failed: HTTP {response.status_code}. {hint}")
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -114,16 +136,25 @@ class ModelClient:
                         if not data:
                             continue
                         try:
-                            choices = json.loads(data).get("choices") or []
+                            frame = json.loads(data)
+                            if isinstance(frame, dict) and frame.get('error'):
+                                raise ModelError('Provider could not complete the response. Check access and usage limits, then retry.')
+                            choices = frame.get("choices") or []
                         except (json.JSONDecodeError, AttributeError):
                             continue  # skip a garbled stream line instead of killing the turn
                         if not choices:
                             continue
+                        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+                            raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.')
                         delta = choices[0].get("delta") or {}
+                        if not isinstance(delta, dict) or not isinstance(delta.get('content', ''), (str, type(None))):
+                            raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.')
                         reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                         if reasoning:
+                            received_text = received_text or bool(str(reasoning).strip())
                             yield ModelEvent("reasoning", reasoning)
                         if delta.get("content"):
+                            received_text = received_text or bool(delta["content"].strip())
                             for kind, value in splitter.feed(delta["content"]):
                                 yield ModelEvent(kind, value)
                         for part in delta.get("tool_calls") or []:
@@ -137,8 +168,14 @@ class ModelClient:
                             function = part.get("function") or {}
                             call["name"] += function.get("name") or ""
                             call["arguments"] += function.get("arguments") or ""
+        except httpx.TimeoutException:
+            raise ModelError('Model response timed out. Check the model server, then retry or select a smaller model with kova setup.') from None
         except httpx.RequestError as exc:
-            raise ModelError(error) from exc
+            raise ModelError(error + '. Start the model server or run kova setup.') from exc
+        except (KeyError, TypeError, AttributeError, ValueError):
+            raise ModelError('Provider returned an invalid stream. Run kova doctor, then retry.') from None
+        if not received_text and not calls:
+            raise ModelError('Model returned an empty response (no reply). Load a chat model with kova setup, then retry.')
         for kind, value in splitter.flush():
             yield ModelEvent(kind, value)
         for index, call in sorted(calls.items()):

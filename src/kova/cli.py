@@ -124,8 +124,10 @@ class _KovaGroup(TyperGroup):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except KovaError as exc:
+        except (KovaError, onboarding.SetupError) as exc:
             _fail(str(exc))
+        except (ValueError, TypeError, KeyError, OSError):
+            _fail('Cannot read configuration or local files. Check config.toml and directory permissions, then run kova doctor.')
 
 
 app = typer.Typer(
@@ -1084,3 +1086,14 @@ def provider_login(name: str):
     except (ProviderError, onboarding.SetupError) as exc:
         _fail(str(exc))
     _ok(f'Connected {name}.')
+
+
+@app.command()
+def doctor() -> None:
+    """Check local configuration and provider access without sending a chat."""
+    from kova.diagnostics import diagnose
+    issues = diagnose()
+    for ok, message in issues:
+        console.print(Text(('✓ ' if ok else '✗ ') + message))
+    if any(not ok for ok, _ in issues):
+        raise typer.Exit(1)

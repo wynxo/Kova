@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -15,7 +16,6 @@ from collections.abc import Iterator
 import httpx
 
 from kova.config import Config, ensure_token
-
 
 ASK_TITLE_PREFIX = "[ask] "
 
@@ -59,7 +59,13 @@ def _iter_events(response: httpx.Response) -> Iterator[dict]:
                     data = line[len("data:"):]
                     break
             if data.strip():
-                yield json.loads(data)
+                try:
+                    event = json.loads(data)
+                    if not isinstance(event, dict):
+                        raise TypeError()
+                except (ValueError, TypeError):
+                    raise KovaError(None, 'Kova returned an invalid stream. Run kova doctor, then retry.') from None
+                yield event
 
 
 class KovaClient:
@@ -68,7 +74,7 @@ class KovaClient:
     def __init__(self, base_url: str, token: str, http: httpx.Client | None = None):
         self.base_url = base_url
         self.token = token
-        self.http = http if http is not None else httpx.Client(base_url=base_url, timeout=None)
+        self.http = http if http is not None else httpx.Client(base_url=base_url, timeout=30, trust_env=False)
 
     def _request(self, method: str, path: str, *, missing_ok: bool = False, **kwargs) -> httpx.Response:
         try:
@@ -81,7 +87,7 @@ class KovaClient:
 
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
-            with self.http.stream(method, path, headers=_auth(self.token), timeout=None, **kwargs) as response:
+            with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:
                 _check_response(response)
                 yield from _iter_events(response)
         except httpx.RequestError as exc:
@@ -92,7 +98,13 @@ class KovaClient:
         return self._request("POST", "/app/session").json()["ticket"]
 
     def health(self) -> dict:
-        return self._request("GET", "/health").json()
+        try:
+            data = self._request("GET", "/health", timeout=4).json()
+            if not isinstance(data, dict) or 'version' not in data or 'model_ok' not in data:
+                raise ValueError()
+            return data
+        except ValueError:
+            raise KovaError(502, 'This port is not serving Kova. Choose another port in config.toml, then retry.') from None
 
     def create_chat(self, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
@@ -134,7 +146,12 @@ class KovaClient:
     def stream_message(self, chat_id: str, text: str, model: str | None = None) -> Iterator[dict]:
         """Stream one turn's events; ``model`` overrides the active model for this turn only."""
         payload = {"text": text} if model is None else {"text": text, "model": model}
-        yield from self._stream("POST", f"/chats/{chat_id}/messages", json=payload)
+        finished = False
+        for event in self._stream("POST", f"/chats/{chat_id}/messages", json=payload, timeout=330):
+            finished = finished or event.get('type') in ('done', 'error', 'stopped')
+            yield event
+        if not finished:
+            raise KovaError(None, 'Chat stream ended before completion. Run kova doctor, then retry.')
 
     def stop_chat(self, chat_id: str) -> bool:
         """Cancel the chat's running turn on the server; True if one was running."""
@@ -208,12 +225,14 @@ class KovaClient:
 def _spawn_server(cfg: Config) -> int:
     """Start ``kova serve`` detached and record its pid; return the pid."""
     log = cfg.home / "server.log"
+    cfg.home.mkdir(parents=True, exist_ok=True)
     with open(log, "w") as handle:
         process = subprocess.Popen(
             [sys.executable, "-m", "kova", "serve"],
             stdout=handle,
             stderr=handle,
             start_new_session=True,
+            env={**os.environ, "KOVA_HOME": str(cfg.home)},
         )
     cfg.home.mkdir(parents=True, exist_ok=True)
     (cfg.home / "server.pid").write_text(str(process.pid))
@@ -235,7 +254,11 @@ def ensure_server(cfg: Config, timeout: float = 10) -> KovaClient:
         if exc.status is not None:
             raise
 
-    _spawn_server(cfg)
+    try:
+        _spawn_server(cfg)
+    except OSError:
+        client.http.close()
+        raise KovaError(None, f'Could not start Kova. Check permissions on {cfg.home}, then run kova serve.') from None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -245,4 +268,5 @@ def ensure_server(cfg: Config, timeout: float = 10) -> KovaClient:
             if exc.status is not None:
                 raise
             time.sleep(0.1)
+    client.http.close()
     raise KovaError(None, f"Cannot reach Kova server at {base}; server didn't start, see {log}")
