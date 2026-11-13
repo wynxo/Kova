@@ -47,3 +47,22 @@ class EventBus:
             queues = list(self._subscribers)
         for queue in queues:
             queue.put_nowait(event)
+
+
+class ConversationStates:
+    """In-memory lifecycle state; a restarted server has no active turns."""
+
+    def __init__(self, bus: EventBus) -> None:
+        self.bus = bus
+        self.states: dict[str, str] = {}
+
+    def get(self, chat_id: str) -> str:
+        return self.states.get(chat_id, "done")
+
+    def transition(self, chat_id: str, event: str) -> None:
+        state = {"turn_start": "working", "approval": "blocked-on-approval",
+                 "question": "blocked-on-approval", "approval_resolved": "working",
+                 "question_resolved": "working", "turn_end": "done"}.get(event)
+        if state is not None:
+            self.states[chat_id] = state
+            self.bus.publish({"type": "conversation_state", "chat_id": chat_id, "state": state})

@@ -356,7 +356,7 @@ def ask(
                     sys.stdout.flush()
             elif kind == "tool_call":
                 tools.append(event["name"])
-            elif kind == "approval":
+            elif kind in {"approval", "question"}:
                 # `ask` is the noninteractive/script interface. Do not silently
                 # leave it waiting ten minutes for an approval it cannot show.
                 guidance = "This action needs approval. Continue in interactive Kova chat to approve it."

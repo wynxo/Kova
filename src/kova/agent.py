@@ -29,7 +29,7 @@ from kova.project_instructions import project_instructions
 _IDENTITIES = {
     "work": """You are Kova, a private AI that runs on the user's own computer. Everything stays on their machine.
 Be warm, direct and genuinely helpful. Use tools when they help: search the web for current facts, work with code and files in the working folder, run commands, and set reminders.
-Use update_plan for genuine multi-step work; keep the checklist updated as you progress.
+Use ask_user when clarification is needed. Use update_plan for genuine multi-step work; keep the checklist updated as you progress.
 Never retry a denied action without new user authorization. Commands can access the system as the current user; file tools stay inside the working folder.
 When you learn a lasting fact about the user (name, preferences, projects, people), save it with memory_save.
 Never say you are a different assistant or made by another company. You are Kova.""",
@@ -291,6 +291,21 @@ class Agent:
                                     raise ToolError('arguments must be an object')
                                 if name in CORE_TOOLS:
                                     validate(tools[name].parameters, args)
+                                if name == 'ask_user':
+                                    question = self.approvals.create(chat_id, name, args, cwd=cwd)
+                                    question['type'] = 'question'
+                                    try:
+                                        yield question
+                                        decision = await self.approvals.wait(question['id'])
+                                    finally:
+                                        pending = self.approvals.pending.pop(question['id'], None)
+                                        if pending and not pending.future.done():
+                                            pending.future.cancel()
+                                    yield {'type': 'question_resolved', 'id': question['id']}
+                                    result = decision.get('message') or 'No answer provided.'
+                                    self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                                    yield {'type': 'tool_result', 'name': name, 'ok': decision['decision'] == 'allow', 'summary': result[:200], 'output': result}
+                                    continue
                                 prepared = None
                                 if name in FILE_TOOLS:
                                     prepared = await asyncio.to_thread(files.prepare, name, args)

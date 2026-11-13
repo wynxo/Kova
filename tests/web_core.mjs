@@ -76,6 +76,19 @@ for (const decision of ['allow', 'allow_session', 'allow_always', 'deny']) {
   assert.equal(input.disabled, true);
   view.finish();
 }
+for (const options of [[], ['A', 'B']]) {
+  const questionBody = new Element(), questionView = turnView(questionBody);
+  questionView.accept({type: 'question', id: 'q1', args: {question: 'Which?', options}});
+  const card = byClass(questionBody, 'approval-card')[0];
+  assert.ok(card.textContent.includes('Which?'));
+  if (!options.length) walk(card).find(n => n.tagName === 'input').value = 'typed answer';
+  buttons(card)[options.length ? 1 : 0].onclick();
+  await tick(); await tick();
+  assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/q1', body: {decision: 'allow', message: options.length ? 'B' : 'typed answer'}});
+  questionView.accept({type: 'question_resolved', id: 'q1'});
+  assert.ok(buttons(card).every(b => b.disabled));
+  questionView.finish();
+}
 const body = new Element(), view = turnView(body);
 view.accept({type: 'approval', id: 'danger', risk: 'destructive', summary: 'rm file'});
 const dangerous = byClass(body, 'approval-card')[0];

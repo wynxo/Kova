@@ -52,7 +52,7 @@ async def test_work_mode_sends_all_tools(setup):
                                  'recall', 'search_chats',
                                  'memory_add', 'memory_patch', 'memory_remove', 'memory_list',
                                  'memory_search', 'memory_save',
-                                 'system_info', 'run_command', 'update_plan']
+                                 'system_info', 'ask_user', 'run_command', 'update_plan']
     assert 'Current mode: work' in fake.requests[0]['messages'][0]['content']
 
 

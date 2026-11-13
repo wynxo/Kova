@@ -119,7 +119,7 @@
       const title = chat.title || 'New conversation';
       button.append(el('span', 'history-title', title)); button.title = title;
       const date = new Date(chat.last_message || chat.created);
-      button.append(el('span', 'history-date', `${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
+      button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
       button.onclick = () => safe(() => openChat(chat.id));
       const actions = el('div', 'history-actions');
       for (const [symbol, name, fn] of [['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
@@ -278,6 +278,36 @@
       if (!status.textContent) status.textContent = 'No longer pending';
     }};
   }
+  function questionCard(event) {
+    const chatId = state.chat.id;
+    const card = el('section', 'approval-card');
+    card.setAttribute('aria-label', 'Question from Kova');
+    card.append(el('strong', '', event.args.question));
+    const actions = el('div', 'approval-actions'), status = el('div', 'approval-status');
+    const input = el('input'); input.maxLength = 4000; input.placeholder = 'Your answer';
+    const buttons = [];
+    async function answer(value) {
+      if (!value?.trim()) { status.textContent = 'Enter an answer first.'; return; }
+      buttons.forEach(b => b.disabled = true); input.disabled = true;
+      try {
+        await json(`/chats/${chatId}/approvals/${event.id}`, write('POST', {decision: 'allow', message: value}));
+        status.textContent = `Answered: ${value}`;
+      } catch (error) { buttons.forEach(b => b.disabled = false); input.disabled = false; throw error; }
+    }
+    for (const option of event.args.options || []) {
+      const button = el('button', 'btn', option); button.type = 'button';
+      button.onclick = () => safe(() => answer(option)); actions.append(button); buttons.push(button);
+    }
+    if (!event.args.options?.length) {
+      card.append(input); const button = el('button', 'btn primary', 'Send answer'); button.type = 'button';
+      button.onclick = () => safe(() => answer(input.value));
+      input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); button.click(); } };
+      actions.append(button); buttons.push(button);
+    }
+    card.append(actions, status);
+    return {card, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
+      finish() { buttons.forEach(b => b.disabled = true); input.disabled = true; if (!status.textContent) status.textContent = 'No longer pending'; }};
+  }
   function turnView(body) {
     let current = null, scheduled = false, finished = false;
     const blocks = [], pendingTools = [], approvals = new Map();
@@ -319,6 +349,12 @@
           const row = el('div', 'tool-row'); const icon = el('span', 'spinner'); const detail = el('span', 'tool-detail', 'Running…');
           row.append(icon, el('strong', '', event.name), detail); body.insertBefore(row, activity);
           pendingTools.push({name: event.name, row, icon, detail, done: false});
+        } else if (kind === 'question') {
+          activity.hidden = true;
+          const question = questionCard(event); approvals.set(event.id, question);
+          body.insertBefore(question.card, activity);
+        } else if (kind === 'question_resolved') {
+          approvals.get(event.id)?.resolve();
         } else if (kind === 'approval') {
           activity.hidden = true;
           const approval = approvalCard(event); approvals.set(event.id, approval);
@@ -327,7 +363,8 @@
           approvals.get(event.id)?.resolve(event.decision, event.message);
         } else if (kind === 'plan') {
           const next = planView(event.items);
-          if (plan) plan.replaceWith(next); else body.insertBefore(next, activity);
+          if (plan) plan.replaceWith(next);
+          else { document.querySelectorAll('.plan-view').forEach(old => old.remove()); body.insertBefore(next, activity); }
           plan = next;
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
@@ -483,6 +520,7 @@
       $('model').value = status.model; selectedModel = status.model;
       await refreshChats(); controls(); await health();
       state.events = new EventSource('/events');
+      state.events.addEventListener('conversation_state', event => { try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) state.chat.state = update.state; } catch (_) {} });
       state.events.addEventListener('reminder', event => { try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
       state.events.onerror = () => { if (state.connected) health(); };
       $('prompt').focus();

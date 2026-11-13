@@ -537,3 +537,18 @@ def test_rule_denial_overrides_full_mode_and_returns_comment(tmp_path):
         assert not any(e['type']=='approval' for e in events)
         replies=[m['content'] for m in fake.requests[1]['messages'] if m['role']=='tool']
         assert any('Use read_file instead' in reply for reply in replies)
+
+
+def test_question_blocks_until_answer_and_tracks_state(tmp_path):
+    with real_server(tmp_path, [tool('ask_user', {'question': 'Which?', 'options': ['A', 'B']}), text('Got it')]) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        events = []
+        for event in client.stream_message(chat['id'], 'choose'):
+            events.append(event)
+            if event['type'] == 'question':
+                assert client.get_chat(chat['id'])['state'] == 'blocked-on-approval'
+                client.answer_approval(chat['id'], event['id'], 'allow', 'B')
+        assert any(e['type'] == 'question_resolved' for e in events)
+        assert any(e['type'] == 'tool_result' and e['output'] == 'B' for e in events)
+        assert client.get_chat(chat['id'])['state'] == 'done'
+        assert any(m.get('role') == 'tool' and m['content'] == 'B' for m in client.get_chat(chat['id'])['messages'])
