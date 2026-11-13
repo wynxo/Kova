@@ -284,8 +284,9 @@ class Renderer:
             if self.thinking is None:
                 self.reply_header()
                 self.line(self.p.faint("  \u273b Thinking"))
+                base = ["3", FAINT] if self.p.level >= 2 else ["2", "3"]
                 self.thinking = MarkdownStream(self.write, self.width, self.p, margin="    ",
-                                               base=["2", "3"])
+                                               base=base)
             self.thinking.feed(text)
 
     def _end_thinking(self) -> None:
