@@ -146,13 +146,15 @@ missing or the system webview fails, it falls back to the default browser;
 The webview runs with private mode, so cookies do not persist between
 launches.
 
-The UI itself is `src/kova/web_assets/`: `index.html`, `app.js`, `app.css`,
-and vendored copies of marked, DOMPurify and highlight.js (no CDN). `app.js`
-is a client only — it has no agent logic and no permanent token. It renders
-Markdown through DOMPurify, streams turns with `fetch` + a hand-rolled SSE
-reader, shows collapsible reasoning and live tool rows, and listens to
-`/events` with `EventSource` for reminders. Light/dark choice is a
-`data-theme` attribute stored in `localStorage`.
+The UI itself is `src/kova/web_assets/`: `index.html`, `app.css`, `app.js`,
+vendored copies of marked, DOMPurify and highlight.js, and the variable fonts
+Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
+CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
+only: it has no agent logic and no permanent token. It renders Markdown
+through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
+shows collapsible reasoning and live tool rows, and listens to `/events` with
+`EventSource` for reminders. Light/dark choice is a `data-theme` attribute
+stored in `localStorage`.
 
 ## One turn
 
