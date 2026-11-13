@@ -19,7 +19,7 @@ cd Kova
 
 ./cli            # terminal chat (starts the background server)
 ./cli status     # is the server up, which model is active
-./desktop-app    # the same chats in a native window or your browser
+./desktop-app    # the desktop app (Electron); --browser opens the web UI
 ```
 
 `./cli` is a small wrapper around `uv run kova`, so the first run creates
@@ -30,15 +30,10 @@ The server only listens on `127.0.0.1:7700`, and the clients start it for you.
 `./cli serve` runs it in the foreground when you want to see logs; `./cli stop`
 stops a background one.
 
-The native desktop window needs the optional GUI extra:
-
-```sh
-uv sync --extra app
-./desktop-app
-```
-
-Without it (or if the system webview is unavailable), `./desktop-app` opens
-your default browser instead; `./desktop-app --browser` always does.
+The desktop app needs Node.js 22+ and npm; `./desktop-app` installs its
+Electron dependencies on first run. Without Node/npm it says so and opens the
+web UI instead, which `./desktop-app --browser` selects directly (the installed
+equivalent is `kova-web`).
 
 If you have never picked a model, run `./cli setup`, or point Kova at a server
 with the recipe below.

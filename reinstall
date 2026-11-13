@@ -21,3 +21,4 @@ fi
 say "→ Installing Kova from this folder ..."
 ./install.sh --dev || die "install failed. Run ./install to see why."
 say "Done. Your chats and memory are still in ${KOVA_HOME:-$HOME/.kova}."
+say "Run kova to chat, kova-app for the desktop app, or kova-web in your browser."

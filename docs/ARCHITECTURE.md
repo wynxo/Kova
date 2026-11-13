@@ -90,7 +90,7 @@ their own ticket or cookie. `_require_bearer` compares with
 
 ### Browser login
 
-The desktop launcher never puts the bearer token in a URL. `kova-app`
+The web launcher never puts the bearer token in a URL. `kova-web`
 (`src/kova/app.py`) asks the server for a ticket with the token, then opens:
 
 ```
@@ -139,12 +139,16 @@ prints reminder pop-ups while you chat.
 
 ### Desktop and web app
 
-`src/kova/app.py` starts (or reuses) the server, mints the ticket, and opens a
-pywebview window when the optional `app` extra is installed. If pywebview is
-missing or the system webview fails, it falls back to the default browser;
-`kova-app --browser` (and `./desktop-app --browser`) skips the native window.
-The webview runs with private mode, so cookies do not persist between
-launches.
+`src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
+`desktop/` — the checkout it runs from, or the copy the installers stage under
+`KOVA_HOME/desktop` — and installs the Electron dependencies with `npm ci` while
+`node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
+the browser; for any other failure it exits non-zero. The Electron shell starts
+(or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use
+ticket; the bearer token never reaches a command line or a URL. `kova-web` (and
+the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
+and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
+over `uv run kova-app`.
 
 The UI itself is `src/kova/web_assets/`: `index.html`, `app.css`, `app.js`,
 vendored copies of marked, DOMPurify and highlight.js, and the variable fonts

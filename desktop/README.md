@@ -31,11 +31,13 @@ exits and terminates only a server this shell spawned. A pre-existing server
 is left running. Ctrl/Cmd+W hides, Ctrl/Cmd+R reconnects, F11 toggles fullscreen.
 Startup failures show Retry and the exact server log path.
 
-Linux: `./install.sh --dev --desktop` installs the Python CLI, installs
-Electron dependencies and registers this checkout in the application menu.
-Keep the checkout in place. npm must be on PATH. electron-builder supplies
+Linux: `./install.sh --desktop` installs the Python CLI and registers
+`kova-app` in the application menu; `./install.sh --dev --desktop` stages this
+checkout instead. The installers copy `desktop/` to `$KOVA_HOME/desktop`, which
+is what the installed `kova-app` runs — it installs the Electron dependencies
+there on first use, so npm must be on PATH. electron-builder supplies
 desktop integration for packaged Linux builds; kova.desktop is the reference.
-`./desktop-app --browser` retains the original Python/browser path.
+`kova-web` (or `./desktop-app --browser`) opens the same UI in your browser.
 
 Build notes: electron-builder's Linux deb helper needs libcrypt.so.1
 (on Fedora, provided by libxcrypt-compat). AppImage builds do not need it.

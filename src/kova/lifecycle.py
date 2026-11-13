@@ -152,12 +152,20 @@ def _windows_uninstall(uv: str, home: Path, purge: bool) -> None:
     def ps(value: str) -> str:
         return "'" + value.replace("'", "''") + "'"
 
+    if purge:
+        data = f"Remove-Item -LiteralPath {ps(str(home))} -Recurse -Force"
+    else:
+        # Staged desktop app files are reinstalled by the installer, unlike data.
+        staged = home / 'desktop'
+        data = (f"if (Test-Path -LiteralPath {ps(str(staged / 'package.json'))}) {{ "
+                f"Remove-Item -LiteralPath {ps(str(staged))} -Recurse -Force -ErrorAction SilentlyContinue }}")
+
     script = f"""
 $ErrorActionPreference = 'Stop'
 Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue
 & {ps(uv)} tool uninstall kova-ai
 if ($LASTEXITCODE -ne 0) {{ throw 'uv uninstall failed; data was kept.' }}
-{"Remove-Item -LiteralPath " + ps(str(home)) + " -Recurse -Force" if purge else ""}
+{data}
 Remove-Item -LiteralPath 'HKCU:\\{UNINSTALL_KEY}' -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath {ps(str(Path.home() / '.local/share/kova/uninstall.ps1'))} -ErrorAction SilentlyContinue
 Write-Host 'Done. Kova is removed.'
@@ -181,7 +189,7 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
     emit("→ Stopping the Kova server (if running) ...")
     stop_server(home)
     uv = find_uv()
-    emit("→ Removing the kova command: uv tool uninstall kova-ai")
+    emit("→ Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai")
     try:
         if sys.platform == "win32":
             _windows_uninstall(uv, home, purge and home.exists())
@@ -194,6 +202,12 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
         shutil.rmtree(home)
         emit(f"✓ Deleted {home}.")
     elif home.exists():
+        # The staged desktop app files are reinstalled by the installer, unlike
+        # user data; keep only what --keep-data means to keep.
+        staged = home / "desktop"
+        if (staged / "package.json").is_file() and not staged.is_symlink():
+            shutil.rmtree(staged)
+            emit(f"✓ Removed the desktop app files in {staged}.")
         emit(f"✓ Keeping your data in {home}. Use --purge to delete it.")
     emit("✓ External memory folders and files are left alone.")
     emit("✓ Done. Kova is removed.")
