@@ -8,7 +8,7 @@ running tool, input box) below it. In live mode the spinner is not drawn here;
 
 Ported and adapted from Kaine's ``kaine/cli_render.py`` for Kova's event
 protocol (``text``, ``reasoning``, ``tool_call``, ``tool_result``, ``error``,
-``done``, ``plan``, ``approval``, ``stopped``). The look: the user's turn is a
+``done``, ``plan``, ``approval``, ``review``, ``stopped``). The look: the user's turn is a
 ``\u276f`` line on a faint teal tint; Kova's starts with a gradient
 ``\u25c6 Kova``; tools are small coloured chips (``\u2713 Search  query \u00b7 5
 results``); reasoning collapses to one quiet ``\u273b Thought for 2s`` line.
@@ -415,9 +415,39 @@ class Renderer:
             self.line("  " + self.p.yellow("\u25fc Interrupted")
                       + self.p.dim(" \u00b7 send another message when ready"))
 
+    def _on_steer(self, event) -> None:
+        """A message the user slipped into the reply while it was working."""
+        self.end_text()
+        text = str(event.get("text", ""))
+        self.line("  " + self.p.paint("1;" + ACCENT, "\u21b3")
+                  + self.p.dim(" Steered the reply: ") + text)
+        self.after_block = True
+
     def _on_plan(self, event) -> None:
         self.end_text()
         self.plan(event.get("items") or [])
+
+    def _on_review(self, event) -> None:
+        """A turn that changed files: one summary line, reviewable with /changes."""
+        self.end_text()
+        files = event.get("files") or []
+        if not files:
+            skipped = event.get("skipped") or []
+            if skipped:
+                self.reply_header()
+                self.line("  " + self.p.faint(
+                    f"{len(skipped)} file{'' if len(skipped) == 1 else 's'} too large to checkpoint"))
+                self.after_block = True
+            return
+        p = self.p
+        additions = sum(int(entry.get("additions") or 0) for entry in files)
+        deletions = sum(int(entry.get("deletions") or 0) for entry in files)
+        self.reply_header()
+        self.line("  " + p.paint("1;" + ACCENT, "\u25c6") + " "
+                  + p.bold(f"{len(files)} file{'' if len(files) == 1 else 's'} changed") + "  "
+                  + p.green(f"+{additions}") + " " + p.red(f"\u2212{deletions}")
+                  + p.faint("  \u00b7 /changes to review"))
+        self.after_block = True
 
     # ------------------------------------------------------------ tool rows
     def chip(self, name: str, ok: bool = True) -> str:

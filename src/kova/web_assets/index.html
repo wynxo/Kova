@@ -56,6 +56,7 @@
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
     <div class="compose-wrap">
+      <div id="queue-strip" class="queue-strip" aria-label="Queued messages" hidden></div>
       <form id="composer" class="composer" data-mode="work">
         <label class="sr-only" for="prompt">Message Kova</label>
         <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
@@ -73,6 +74,8 @@
           <span id="model-slot"></span>
           <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>
+          <button id="queue" type="button" class="stop" hidden title="Run this message after the current reply"><span class="icon i-plus" aria-hidden="true"></span>Queue</button>
+          <button id="steer" type="button" class="stop" hidden title="Send this message into the reply that is running"><span class="icon i-arrow-up" aria-hidden="true"></span>Steer</button>
           <button id="stop" type="button" class="stop" hidden><span class="icon i-square" aria-hidden="true"></span>Stop</button>
         </div>
       </form>

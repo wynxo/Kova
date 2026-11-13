@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from kova.client import KovaClient, KovaError
 from kova.config import ensure_token, load_config
 from kova.permissions import Approvals, command_risk, needs_approval
-from kova.project_instructions import project_instructions
+from kova.project_instructions import TOTAL_BUDGET, project_instructions
 from kova.server import create_app
 from kova.store import Store
 from kova.tools import ToolError
@@ -180,7 +180,7 @@ def test_project_instructions_bounded_root_contained(tmp_path):
     (tmp_path / 'KOVA.md').write_text('Use project style.\n' * 400)
     (tmp_path / 'AGENTS.md').write_text('Use pytest.')
     result = project_instructions(tmp_path)
-    assert len(result) <= 4096 and 'Use project style.' in result
+    assert len(result.encode()) <= TOTAL_BUDGET and 'Use project style.' in result
     (tmp_path / 'KOVA.md').unlink()
     outside = tmp_path.parent / (tmp_path.name + '-instructions')
     outside.write_text('external secret')
@@ -255,7 +255,7 @@ def real_server(tmp_path, scripts):
 
 
 @pytest.mark.parametrize('decision', ['allow', 'deny'])
-def test_real_server_approval_round_trip(tmp_path, decision):
+def test_real_server_approval_round_trip(tmp_path, decision, no_sandbox):
     command = python_command("from pathlib import Path; Path('proof').write_text('executed'); print('approval round trip')")
     with real_server(tmp_path, [tool('run_command', {'command': command}), text('Finished')]) as (client, cfg, fake, app):
         chat = client.create_chat()
@@ -277,7 +277,7 @@ def test_real_server_approval_round_trip(tmp_path, decision):
         assert not app.state.agent.approvals.pending
 
 
-def test_real_server_allow_session_scoped_and_destructive_still_asks(tmp_path):
+def test_real_server_allow_session_scoped_and_destructive_still_asks(tmp_path, no_sandbox):
     scripts = [tool('run_command', {'command': 'echo first'}), tool('run_command', {'command': 'echo second'}),
                tool('run_command', {'command': 'rm missing'}), text('Done'),
                tool('run_command', {'command': 'echo other chat'}), text('Done')]
@@ -296,7 +296,69 @@ def test_real_server_allow_session_scoped_and_destructive_still_asks(tmp_path):
         assert len(approvals) == 4
 
 
-def test_real_server_approval_timeout_and_stop(tmp_path):
+def test_queued_messages_persist_and_are_taken_in_order(tmp_path):
+    with real_server(tmp_path, []) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        first = client.queue_message(chat['id'], 'first queued')
+        second = client.queue_message(chat['id'], 'second queued')
+        assert [row['text'] for row in client.queued_messages(chat['id'])] == [
+            'first queued', 'second queued']
+        # The row survives a brand-new store, i.e. a server restart.
+        reopened = Store(cfg.home / 'kova.db')
+        assert [row['text'] for row in reopened.queued_messages(chat['id'])] == [
+            'first queued', 'second queued']
+        assert client.next_queued_message(chat['id'])['text'] == 'first queued'
+        assert client.delete_queued_message(chat['id'], second['id']) is True
+        assert client.queued_messages(chat['id']) == []
+        assert first['id'] != second['id']
+        with pytest.raises(KovaError) as missing:
+            client.queue_message('no-such-chat', 'lost')
+        assert missing.value.status == 404
+
+
+def test_a_steer_reaches_the_turn_that_is_running(tmp_path):
+    scripts = [tool('ask_user', {'question': 'Proceed?'}, 'q1'), text('Finished with the steer')]
+    with real_server(tmp_path, scripts) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        other = KovaClient(client.base_url, client.token)
+        events = []
+
+        def stream():
+            events.extend(client.stream_message(chat['id'], 'start working'))
+
+        thread = threading.Thread(target=stream, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not any(event['type'] == 'question' for event in events):
+            assert time.monotonic() < deadline, 'the turn never asked its question'
+            time.sleep(.01)
+        question = next(event for event in events if event['type'] == 'question')
+        assert other.steer_message(chat['id'], 'also run the tests') == {
+            'ok': True, 'text': 'also run the tests'}
+        other.answer_approval(chat['id'], question['id'], 'allow', 'yes')
+        thread.join(10)
+        other.http.close()
+        assert not thread.is_alive()
+        assert any(event['type'] == 'steer' and event['text'] == 'also run the tests'
+                   for event in events)
+        assert events[-1]['type'] == 'done'
+        # The steer joined the model's next request as a real user message.
+        users = [message['content'] for message in fake.requests[1]['messages']
+                 if message['role'] == 'user']
+        assert users[-1] == 'also run the tests'
+        assert [message['content'] for message in client.get_chat(chat['id'])['messages']
+                if message['role'] == 'user'][-1] == 'also run the tests'
+
+
+def test_a_steer_without_a_running_turn_is_rejected(tmp_path):
+    with real_server(tmp_path, []) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        with pytest.raises(KovaError) as rejected:
+            client.steer_message(chat['id'], 'nobody is listening')
+        assert rejected.value.status == 409
+
+
+def test_real_server_approval_timeout_and_stop(tmp_path, no_sandbox):
     scripts = [tool('run_command', {'command': 'echo denied'}), text('Denied'),
                tool('run_command', {'command': 'echo stopped'})]
     with real_server(tmp_path, scripts) as (client, cfg, fake, app):
@@ -496,7 +558,56 @@ def test_work_instructions_loaded_in_system_prompt_but_not_history(tmp_path):
         assert 'Build with uv' not in fake.requests[1]['messages'][0]['content']
 
 
-def test_ask_denies_pending_approval_without_stalling(tmp_path, monkeypatch):
+def test_instructions_from_several_levels_reach_the_system_prompt(tmp_path):
+    cfg = load_config(tmp_path / 'home'); cfg.files_path = tmp_path / 'files'; cfg.files_path.mkdir()
+    project, sub = tmp_path / 'repo', tmp_path / 'repo' / 'src'
+    sub.mkdir(parents=True)
+    (project / '.git').mkdir()
+    (cfg.home / 'KOVA.md').write_text('user-level preference')
+    (project / 'KOVA.md').write_text('repository rule')
+    (sub / 'AGENTS.md').write_text('src rule')
+    fake = FakeModel([text('Hi')])
+    app = create_app(cfg, transport=fake.transport)
+    with TestClient(app) as http:
+        client = KovaClient('http://testserver', ensure_token(cfg.home), http=http)
+        chat = client.create_chat(cwd=str(sub))
+        list(client.stream_message(chat['id'], 'go'))
+        prompt = fake.requests[0]['messages'][0]['content']
+        assert prompt.index('user-level preference') < prompt.index('repository rule') \
+            < prompt.index('src rule')
+        assert '### AGENTS.md (project: src)' in prompt
+
+
+def test_a_sandboxed_safe_command_runs_without_a_prompt(tmp_path):
+    from kova import sandbox
+    if not sandbox.available():
+        pytest.skip('Landlock is not available on this kernel')
+    scripts = [tool('run_command', {'command': 'echo sandboxed > proof'}), text('Done')]
+    with real_server(tmp_path, scripts) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        events = list(client.stream_message(chat['id'], 'write proof'))
+        assert not any(event['type'] == 'approval' for event in events)
+        assert (cfg.files_path / 'proof').read_text().strip() == 'sandboxed'
+        result = next(event for event in events
+                      if event['type'] == 'tool_result' and event['name'] == 'run_command')
+        assert result['ok'] and '"sandboxed": true' in result['output']
+
+
+def test_no_sandbox_asks_even_in_auto_and_never_runs_unconfined(tmp_path, no_sandbox):
+    scripts = [tool('run_command', {'command': 'echo oops > proof'}), text('Done')]
+    with real_server(tmp_path, scripts) as (client, cfg, fake, app):
+        chat = client.create_chat()
+        client.update_chat(chat['id'], permission='auto')
+        events = []
+        for event in client.stream_message(chat['id'], 'write proof'):
+            events.append(event)
+            if event['type'] == 'approval':
+                client.answer_approval(chat['id'], event['id'], 'deny')
+        assert any(event['type'] == 'approval' for event in events)
+        assert not (cfg.files_path / 'proof').exists()
+
+
+def test_ask_denies_pending_approval_without_stalling(tmp_path, monkeypatch, no_sandbox):
     from typer.testing import CliRunner
     from kova import cli
     scripts = [tool('run_command', {'command': 'echo should-not-run'}), text('Please continue in interactive chat.')]

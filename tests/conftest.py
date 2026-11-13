@@ -21,3 +21,10 @@ def _test_default_model(request, monkeypatch):
     monkeypatch.setattr(kova.config, "DEFAULT_MODEL", {
         "name": "local", "base_url": "http://model.test/v1", "model": "test-model", "context": 32768,
     })
+
+
+@pytest.fixture
+def no_sandbox(monkeypatch):
+    """Pretend the OS sandbox is unavailable (for approval-flow tests)."""
+    from kova import sandbox
+    monkeypatch.setattr(sandbox, "available", lambda: False)

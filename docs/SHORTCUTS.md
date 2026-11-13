@@ -25,6 +25,17 @@ below lists every key the terminal chat understands.
 
 Every key here is remappable under `[tui.keys]` in `config.toml`; see the README.
 
+## While a reply runs
+
+| Action | What it does |
+| --- | --- |
+| `enter` | Queue the message; it is saved on the server and starts when this reply finishes |
+| `/steer <text>` | Join the running reply at its next round instead of waiting behind it |
+| `esc` | Stop the reply; messages queued in this session return to the input |
+
+Queued messages are labelled in the live region and come back when you reopen
+the chat.
+
 ## Reasoning and tools
 
 Toggle live details for the current turn:
