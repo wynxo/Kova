@@ -187,8 +187,32 @@ class KovaClient:
         payload = {"title": title, "body": body, "tags": tags or []}
         return self._request("POST", "/memory", json=payload).json()
 
+    def memory_edit(self, slug: str, *, title: str | None = None, body: str | None = None,
+                    tags: list[str] | None = None) -> dict:
+        """Rewrite one note in place, keeping its slug and provenance."""
+        payload = {"title": title, "body": body, "tags": tags}
+        payload = {key: value for key, value in payload.items() if value is not None}
+        return self._request("PATCH", f"/memory/{slug}", json=payload).json()
+
     def memory_delete(self, slug: str) -> bool:
         return self._request("DELETE", f"/memory/{slug}", missing_ok=True).status_code == 200
+
+    def memory_forget(self, slug: str) -> bool:
+        """Delete one note; the user-facing name for :meth:`memory_delete`."""
+        return self.memory_delete(slug)
+
+    def memory_diary(self, limit: int = 50) -> list[dict]:
+        return self._request("GET", "/memory/diary", params={"limit": limit}).json()
+
+    def memory_undo(self, revision_id: int | None = None) -> list[str]:
+        """Undo background memory writes; returns the slugs put back."""
+        payload = {} if revision_id is None else {"revision_id": revision_id}
+        return self._request("POST", "/memory/undo", json=payload, timeout=60).json()["undone"]
+
+    def memory_consolidate(self, dry_run: bool = False) -> dict:
+        """Plan one consolidation run; applies it unless ``dry_run``."""
+        return self._request("POST", "/memory/consolidate", json={"dry_run": dry_run},
+                             timeout=330).json()
 
     def memory_use(self, path: str, obsidian: bool) -> None:
         self._request("POST", "/memory/location", json={"path": path, "obsidian": obsidian}, timeout=5)

@@ -685,6 +685,7 @@ def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
     table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
     table.add_column("Note", no_wrap=True, max_width=32, overflow="ellipsis")
     table.add_column("Tags", style=theme.MUTED, no_wrap=True, max_width=24, overflow="ellipsis")
+    table.add_column("From", style=theme.MUTED, no_wrap=True)
     table.add_column("Updated", style=theme.MUTED, no_wrap=True)
     table.add_column("About", max_width=52, overflow="fold")
     for number, note in enumerate(notes, start=1):
@@ -692,10 +693,17 @@ def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
             str(number),
             Text(note["title"], style="bold"),
             ", ".join(note.get("tags") or []) or "—",
+            _origin_label(note),
             _relative_when(note.get("updated")),
             _clip(note.get("body", "")),
         )
     return table
+
+
+def _origin_label(note: dict) -> str:
+    """Where a memory came from: the user's own words, or Kova's own note."""
+    origin = note.get("origin") or "user"
+    return "you said" if origin == "user" else "Kova noted"
 
 
 @_memory.command("list")
@@ -728,6 +736,13 @@ def memory_show(slug: str):
         if note["slug"] == slug:
             console.print(Text(note["title"], style=f"bold {theme.ACCENT}"))
             console.print(Text(note["slug"], style=theme.MUTED))
+            console.print(Text(
+                f"{_origin_label(note)}"
+                + (f" · from chat {note['source']}" if note.get("source") else "")
+                + (f" · first recorded {_relative_when(note.get('created'))}"
+                   if note.get("created") else "")
+                + f" · updated {_relative_when(note.get('updated'))}",
+                style=theme.MUTED))
             console.print()
             console.print(note["body"], markup=False, soft_wrap=True)
             return
@@ -740,12 +755,171 @@ def memory_add(title: str, body: str, tags: list[str] = typer.Option([], "--tags
     _ok(f"Saved {note['title']}.")
 
 
+@_memory.command("edit")
+def memory_edit(
+    slug: str,
+    body: str | None = typer.Option(None, "--body", help="Replacement text for the note."),
+    title: str | None = typer.Option(None, "--title", help="New title for the note."),
+    tag: list[str] = typer.Option([], "--tag", help="Replace the note's tags; repeatable."),
+):
+    """Rewrite one note in place; the slug and where it came from are kept."""
+    if body is None and title is None and not tag:
+        _fail("Nothing to change.", hint=f"Usage: kova memory edit {slug} --body \"new text\"")
+    note = get_client().memory_edit(slug, title=title, body=body, tags=tag or None)
+    _ok(f"Updated {note['title']}.")
+
+
 @_memory.command("rm")
 def memory_rm(slug: str):
     if get_client().memory_delete(slug):
         _ok(f"Removed {slug}.")
     else:
         _fail(f'No note named "{slug}".')
+
+
+@_memory.command("forget")
+def memory_forget(slug: str):
+    """Delete one note; the same as `memory rm`, named for the review notices."""
+    if get_client().memory_forget(slug):
+        _ok(f"Forgot {slug}.")
+    else:
+        _fail(f'No note named "{slug}".')
+
+
+@_memory.command("review")
+def memory_review(
+    state: str = typer.Argument(..., help="on or off"),
+    every: int | None = typer.Option(None, "--every", min=1,
+                                     help="Review after this many user turns."),
+):
+    """Turn post-turn memory review on or off; it is off until you opt in."""
+    if state not in ("on", "off"):
+        _fail(f'Unknown state "{state}".', hint="Usage: kova memory review on|off")
+    try:
+        settings = get_client().memory_settings(review=state == "on", review_every=every)
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        cfg = load_config()
+        cfg.memory_review = state == "on"
+        if every:
+            cfg.memory_review_every = every
+        save_config(cfg)
+        settings = {"review": cfg.memory_review, "review_every": cfg.memory_review_every}
+    if settings.get("review"):
+        _ok(f"Memory review is on (every {settings.get('review_every')} turns).")
+    else:
+        _muted("Memory review is off.")
+
+
+@_memory.command("nightly")
+def memory_nightly(
+    state: str = typer.Argument(..., help="on or off"),
+    hour: int | None = typer.Option(None, "--hour", min=0, max=23,
+                                    help="Earliest local hour it may run."),
+):
+    """Turn nightly consolidation on or off; it is off until you opt in."""
+    if state not in ("on", "off"):
+        _fail(f'Unknown state "{state}".', hint="Usage: kova memory nightly on|off")
+    try:
+        settings = get_client().memory_settings(consolidate=state == "on",
+                                               consolidate_hour=hour)
+    except KovaError as exc:
+        if exc.status is not None:
+            raise
+        cfg = load_config()
+        cfg.memory_consolidate = state == "on"
+        if hour is not None:
+            cfg.memory_consolidate_hour = hour
+        save_config(cfg)
+        settings = {"consolidate": cfg.memory_consolidate,
+                    "consolidate_hour": cfg.memory_consolidate_hour}
+    if settings.get("consolidate"):
+        _ok(f"Nightly consolidation is on (from {settings.get('consolidate_hour')}:00).")
+    else:
+        _muted("Nightly consolidation is off.")
+
+
+@_memory.command("consolidate")
+def memory_consolidate(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan without changing notes."),
+    yes: bool = typer.Option(False, "--yes", help="Apply without asking."),
+    min_confidence: float | None = typer.Option(None, "--min-confidence",
+                                               help="Score gate for each operation."),
+    max_loss: float | None = typer.Option(None, "--max-loss",
+                                          help="Most of the store one run may drop (0-1)."),
+):
+    """Ask the model for operations over memory, gate them, then apply them."""
+    if (min_confidence is not None or max_loss is not None):
+        get_client().memory_settings(consolidate_min_confidence=min_confidence,
+                                     consolidate_max_loss=max_loss)
+    if not dry_run and not yes and not typer.confirm(
+            "Apply the planned memory changes?", default=False):
+        _muted("Nothing changed.")
+        return
+    result = get_client().memory_consolidate(dry_run=dry_run)
+    planned = result.get("planned") or []
+    if not planned:
+        _muted("Nothing worth consolidating.")
+    for operation in planned:
+        title = f" → {operation['title']}" if operation.get("title") else ""
+        _muted(f"{operation['op']} {', '.join(operation['slugs'])}{title} "
+               f"(confidence {operation['confidence']:.2f})")
+    for reason in result.get("refused") or []:
+        _muted(f"refused: {reason}")
+    if dry_run:
+        _ok(f"Planned {len(result.get('accepted') or [])} operation(s); nothing was changed.")
+    elif result.get("applied"):
+        _ok(f"Applied {len(result['applied'])} change(s); `kova memory undo` reverses them.")
+    else:
+        _muted("No changes were applied.")
+
+
+@_memory.command("diary")
+def memory_diary(limit: int = typer.Option(20, "--limit", min=1, max=500)):
+    """What Kova's background memory passes did, and why."""
+    entries = get_client().memory_diary(limit)
+    if not entries:
+        _empty("No memory diary entries yet.",
+               "Nightly consolidation and reviews write them; both are off by default.")
+        return
+    table = _table(caption=f"{len(entries)} entries")
+    table.add_column("When", style=theme.MUTED, no_wrap=True)
+    table.add_column("Kind", no_wrap=True)
+    table.add_column("What", overflow="fold")
+    for entry in entries:
+        table.add_row(_relative_when(entry.get("created")), entry.get("kind", ""),
+                      entry.get("entry", ""))
+    console.print(table)
+
+
+@_memory.command("undo")
+def memory_undo(revision_id: int | None = typer.Argument(None),
+                list_revisions: bool = typer.Option(False, "--list",
+                                                    help="Show recent changes instead.")):
+    """Reverse remembered changes made by review or consolidation."""
+    if list_revisions:
+        entries = get_client().memory_revisions()
+        if not entries:
+            _empty("No memory changes to undo.", "Kova has not rewritten memory behind your back.")
+            return
+        table = _table(caption=f"{len(entries)} recent change(s)")
+        table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+        table.add_column("When", style=theme.MUTED, no_wrap=True)
+        table.add_column("Kind", no_wrap=True)
+        table.add_column("Note", no_wrap=True)
+        table.add_column("Undone", no_wrap=True)
+        for entry in entries:
+            table.add_row(str(entry["id"]), _relative_when(entry.get("created")),
+                          entry.get("kind", ""), entry.get("slug", ""),
+                          "yes" if entry.get("undone") else "no")
+        console.print(table)
+        return
+    undone = get_client().memory_undo(revision_id)
+    if undone:
+        _ok(f"Put back: {', '.join(undone)}.")
+    else:
+        _muted("Nothing to undo.")
 
 
 @_memory.command("use")
