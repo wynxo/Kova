@@ -242,7 +242,8 @@
     const card = el('section', 'approval-card'); card.setAttribute('aria-label', 'Tool approval');
     const heading = el('div', 'approval-heading');
     heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
-    card.append(heading, el('pre', '', event.args?.command || event.summary));
+    card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
+    if (event.change_summary) card.append(el('small', '', event.change_summary));
     if (event.args && event.tool !== 'run_command') {
       const details = el('details', 'approval-arguments');
       details.append(el('summary', '', 'Requested changes'), el('pre', '', JSON.stringify(event.args, null, 2)));
@@ -254,18 +255,15 @@
     const actions = el('div', 'approval-actions'), status = el('div', 'approval-status');
     status.setAttribute('role', 'status');
     const buttons = [];
-    for (const [decision, text] of [['allow', 'Allow'], ['allow_session', 'Allow for this chat'], ['deny', 'Deny']]) {
+    for (const [decision, text] of [['allow', 'Allow once'], ['allow_session', 'Allow for session'], ['allow_always', 'Always allow this'], ['deny', 'Deny']]) {
       const button = el('button', decision === 'allow' ? 'btn primary' : decision === 'deny' ? 'btn danger' : 'btn', text); button.type = 'button';
-      if (event.risk === 'destructive' && decision === 'allow_session') {
-        button.disabled = true; button.title = 'Destructive commands always need individual approval';
-      }
       button.onclick = () => safe(async () => {
         buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
         try {
           await json(`/chats/${state.chat.id}/approvals/${event.id}`, write('POST', {decision, message: input.value || null}));
           status.textContent = decision === 'deny' ? 'Denied' : 'Allowed';
         } catch (error) {
-          buttons.forEach(b => { b.disabled = event.risk === 'destructive' && b === buttons[1]; });
+          buttons.forEach(b => { b.disabled = false; });
           input.disabled = false; throw error;
         }
       });
@@ -274,7 +272,7 @@
     card.append(actions, status);
     return {card, resolve(decision, message) {
       buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
-      status.textContent = decision === 'allow_session' ? 'Allowed for this chat' : decision === 'allow' ? 'Allowed' : message || 'Denied';
+      status.textContent = decision === 'allow_always' ? 'Always allowed: this exact action' : decision === 'allow_session' ? 'Allowed for session: this exact action' : decision === 'allow' ? 'Allowed once' : message || 'Denied';
     }, finish() {
       buttons.forEach(b => { b.disabled = true; }); input.disabled = true;
       if (!status.textContent) status.textContent = 'No longer pending';
@@ -418,6 +416,27 @@
   $('mode').onchange = () => safe(async () => {
     try { await chatSetting({mode: $('mode').value}); controls(); }
     catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
+  });
+  const rulesButton = el('button', 'btn quiet', 'Permission rules');
+  rulesButton.type = 'button';
+  $('permission').parentNode?.append(rulesButton);
+  rulesButton.onclick = () => safe(async () => {
+    const dialog = el('dialog', 'rules-dialog');
+    const title = el('h2', '', 'Permission rules');
+    const help = el('p', '', 'Deny beats ask beats allow. Patterns are case-sensitive globs. Session rules expire on restart. Exact grants include all arguments and the working folder.');
+    const label = el('label', '', 'Rules (JSON array: action, tool, pattern, scope, optional message)');
+    const input = el('textarea'); input.setAttribute('aria-label', 'Permission rules JSON');
+    input.value = JSON.stringify(await json('/permission-rules'), null, 2);
+    label.append(input);
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn', 'Cancel'), save = el('button', 'btn primary', 'Save rules');
+    cancel.onclick = () => dialog.close();
+    save.onclick = () => safe(async () => {
+      const rules = JSON.parse(input.value);
+      await json('/permission-rules', write('PUT', rules)); dialog.close();
+    });
+    actions.append(cancel, save); dialog.append(title, help, label, actions);
+    document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
   });
   $('permission').onchange = () => safe(async () => {
     try { await chatSetting({permission: $('permission').value}); }

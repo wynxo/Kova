@@ -795,3 +795,10 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
   *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
   .spinner { animation-duration:1.2s !important; animation-iteration-count:infinite !important; }
 }
+
+.rules-dialog { width:min(640px, calc(100vw - 24px)); max-height:90dvh; overflow:auto; }
+.rules-dialog p { color:var(--text-2); line-height:1.5; }
+.rules-dialog label { display:grid; gap:8px; }
+.rules-dialog textarea { box-sizing:border-box; width:100%; min-height:260px; padding:12px; background:var(--code-bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-md); font:12px/1.5 var(--mono); }
+.approval-heading { flex-wrap:wrap; }
+.approval-card { min-width:0; }
