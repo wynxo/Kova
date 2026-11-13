@@ -49,7 +49,10 @@ async def test_work_mode_sends_all_tools(setup):
     _, fake = await run(setup, [text('Hi')])
     assert _sent_tools(fake) == ['web_search', 'web_fetch', 'list_files', 'read_file',
                                  'write_file', 'search_files', 'edit_file', 'reminder_add', 'reminder_list',
-                                 'memory_save', 'memory_search', 'system_info', 'run_command', 'update_plan']
+                                 'recall', 'search_chats',
+                                 'memory_add', 'memory_patch', 'memory_remove', 'memory_list',
+                                 'memory_search', 'memory_save',
+                                 'system_info', 'run_command', 'update_plan']
     assert 'Current mode: work' in fake.requests[0]['messages'][0]['content']
 
 
@@ -145,6 +148,29 @@ async def test_system_prompt_identity(setup):
     prompt = fake.requests[0]['messages'][0]['content']
     assert prompt.startswith('You are Kova')
     assert '## Dog\nRex is my dog' in prompt
+
+
+async def test_system_prompt_shows_memory_budget_and_usage(setup):
+    setup[2].save('Dog', 'Rex is my dog', ['pets'])
+    used = setup[2].usage()
+    _, fake = await run(setup, [text('Hi')], 'dog')
+    prompt = fake.requests[0]['messages'][0]['content']
+    assert f'memory {used:,} of 8,000 chars used' in prompt
+    assert 'over-budget writes fail' in prompt
+    assert '## Dog\nRex is my dog' in prompt
+
+
+async def test_over_budget_memory_tool_reports_the_error_instead_of_truncating(setup):
+    setup[2].budget = 12
+    events, fake = await run(setup, [
+        tool('memory_add', {'title': 'Dog', 'body': 'Rex is a very good boy'}),
+        text('Could not save'),
+    ])
+    result = next(e for e in events if e['type'] == 'tool_result')
+    assert result['name'] == 'memory_add' and result['ok'] is False
+    assert 'over budget by' in result['summary']
+    assert setup[2].list() == []
+    assert fake.requests[1]['messages'][-1]['content'].startswith('Error: Memory over budget')
 
 
 def test_trim_history_keeps_latest_user():

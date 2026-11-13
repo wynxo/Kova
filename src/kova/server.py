@@ -138,7 +138,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     config: Config = app.state.config
     now: Callable[[], datetime] = app.state.now
     store = Store(config.home / "kova.db", default_cwd=str(config.files_path.resolve()))
-    memory = Memory(config.memory_path, config.memory_write_subdir)
+    memory = Memory(config.memory_path, config.memory_write_subdir, config.memory_budget)
     tool_context = ToolContext(config, store, memory, now)
     tools = build_tools(tool_context)
     agent = Agent(config, store, memory, tools, transport=app.state.transport, now=now)
@@ -350,7 +350,7 @@ def create_app(
 
     @api.post("/memory/location")
     async def memory_use(body: MemoryLocationBody) -> dict:
-        memory = Memory(Path(body.path), "Kova" if body.obsidian else None)
+        memory = Memory(Path(body.path), "Kova" if body.obsidian else None, config.memory_budget)
         config.memory_path = memory.root
         config.memory_write_subdir = memory.write_subdir
         save_config(config)

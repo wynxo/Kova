@@ -236,6 +236,15 @@ paths outside the root. `list` walks the root recursively, skipping hidden
 directories such as `.obsidian`; a broken file is skipped instead of failing
 the list. `search` scores each query word: title ×3, tag ×2, body ×1.
 
+The store has a character budget (`memory.budget`, default 8000) covering
+titles, tags and bodies. Model-facing writes are `memory_add`, `memory_patch`
+(one unique find/replace span inside one note), `memory_remove` and
+`memory_list`; there is deliberately no whole-note replace. An over-budget
+write raises `MemoryBudgetError` with the exact overflow instead of
+truncating, and the current usage is shown in the system prompt memory header.
+`Memory.save` keeps its upsert behaviour for the CLI and HTTP API, and backup
+restores bypass the cap so old archives always import.
+
 The root is `memory.path` (default `~/.kova/memory`). In normal mode the write
 directory is the root. In Obsidian mode (`kova memory use <vault> --obsidian`,
 or `POST /memory/location`) the root becomes the vault, so Kova can read all
@@ -318,6 +327,7 @@ files_path = "/home/you/Kova Files"
 
 [memory]
 path = "/home/you/.kova/memory"
+budget = 8000            # characters across all notes; 0 = unlimited
 # write_subdir = "Kova"   # set in Obsidian mode
 
 [[models]]

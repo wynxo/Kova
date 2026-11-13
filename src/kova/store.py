@@ -377,12 +377,15 @@ class Store:
             return True
 
     # -- search -----------------------------------------------------------
-    def search_chats(self, query: str, limit: int = 20) -> list[dict]:
+    def search_chats(self, query: str, limit: int = 20,
+                     exclude_chat_id: str | None = None) -> list[dict]:
         """Chats with a user/assistant message matching ``query``, newest first.
 
         Each result carries the surrounding ``snippet`` and the role of the
         message it came from. FTS5 is used when it is compiled in; otherwise
         this falls back to a case-insensitive LIKE scan of the same messages.
+        ``exclude_chat_id`` drops one chat (typically the current one) before
+        the result cap is applied.
         """
         terms = _search_terms(query)
         if not terms:
@@ -443,6 +446,8 @@ class Store:
             key=lambda r: (r["last_message"] or "", r["created"] or "", r["id"]),
             reverse=True,
         )
+        if exclude_chat_id is not None:
+            results = [r for r in results if r["id"] != exclude_chat_id]
         return results[: max(1, limit)]
 
     # -- messages ---------------------------------------------------------

@@ -113,6 +113,24 @@ def test_disconnect_does_not_lose_the_turn(server):
     assert messages[1]["content"] == "Hello there!"
 
 
+def test_memory_over_budget_returns_422(server):
+    client, headers, cfg, fake = server
+    response = client.post("/memory", json={"title": "Huge", "body": "x" * 9000},
+                           headers=headers)
+    assert response.status_code == 422
+    assert "over budget by" in response.json()["detail"]
+    assert client.get("/memory", headers=headers).json() == []
+
+
+def test_memory_location_keeps_the_configured_budget(server, tmp_path):
+    client, headers, cfg, fake = server
+    response = client.post("/memory/location",
+                           json={"path": str(tmp_path / "vault"), "obsidian": False},
+                           headers=headers)
+    assert response.status_code == 200
+    assert client.app.state.memory.budget == cfg.memory_budget
+
+
 def test_memory_crud(server):
     client, headers, cfg, fake = server
     response = client.post("/memory", json={"title": "Dog", "body": "Rex", "tags": ["pet"]},

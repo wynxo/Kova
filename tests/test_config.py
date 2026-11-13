@@ -17,6 +17,7 @@ def test_default_config_created(tmp_path):
     assert cfg.port == 7700
     assert cfg.memory_path == tmp_path / "memory"
     assert cfg.memory_write_subdir is None
+    assert cfg.memory_budget == 8000
 
 
 def test_roundtrip(tmp_path):
@@ -24,10 +25,12 @@ def test_roundtrip(tmp_path):
     cfg.models.append(ModelEntry("ollama", "http://localhost:11434/v1", "qwen3"))
     cfg.active = "ollama"
     cfg.memory_write_subdir = "Kova"
+    cfg.memory_budget = 5000
     save_config(cfg)
     again = load_config(tmp_path)
     assert again.active_model().model == "qwen3"
     assert again.memory_write_subdir == "Kova"
+    assert again.memory_budget == 5000
 
 
 def test_kova_home_env(monkeypatch, tmp_path):
