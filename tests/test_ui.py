@@ -234,3 +234,67 @@ class TestHeader:
         rendered = _header_text(monkeypatch, model_ok=False)
         assert "offline" in rendered
         assert "local" in rendered
+
+
+# ------------------------------------------------- per-turn change review
+CHANGE_SET = {"id": 7, "label": "fix the notes", "root": "/p", "created": "2026-11-13T09:00:00Z",
+              "files": {"notes.txt": {"status": "modified", "additions": 3, "deletions": 1}}}
+DIFF = "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-one\n+ONE"
+
+
+class _ChangeClient:
+    def __init__(self, checkpoints=(), diff=DIFF):
+        self.checkpoints = list(checkpoints)
+        self.diff = diff
+        self.restores = []
+
+    def list_checkpoints(self, _chat_id):
+        return [dict(entry) for entry in self.checkpoints]
+
+    def checkpoint_diff(self, _chat_id, _checkpoint_id, path):
+        return {"path": path, "status": "modified", "additions": 3, "deletions": 1,
+                "truncated": False, "diff": self.diff}
+
+    def restore_checkpoint(self, _chat_id, checkpoint_id):
+        self.restores.append(checkpoint_id)
+        return {"ok": True, "restored": ["notes.txt"], "deleted": ["new.txt"], "failed": []}
+
+
+def _console():
+    out = io.StringIO()
+    return Console(file=out, width=100, record=True), out
+
+
+def test_changes_and_diff_render_in_the_plain_chat():
+    client = _ChangeClient([CHANGE_SET])
+    console, out = _console()
+    _ui._changes(client, console, "c1")
+    assert "fix the notes" in out.getvalue() and "+3 −1" in out.getvalue()
+    console, out = _console()
+    _ui._diff(client, console, "c1", "")
+    assert "Change set 7" in out.getvalue()
+    assert "-one" in out.getvalue() and "+ONE" in out.getvalue()
+
+
+def test_restore_requires_an_explicit_confirmation(monkeypatch):
+    monkeypatch.setattr(_ui.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    client = _ChangeClient([CHANGE_SET])
+    console, out = _console()
+    _ui._restore(client, console, "c1", "7")
+    assert client.restores == []
+    assert "/restore 7 yes" in out.getvalue()
+
+    console, out = _console()
+    _ui._restore(client, console, "c1", "7 yes")
+    assert client.restores == [7]
+    assert "put back notes.txt" in out.getvalue() and "removed new.txt" in out.getvalue()
+
+
+def test_a_review_event_renders_one_summary_line():
+    rendered, _ = render([
+        {"type": "review", "checkpoint_id": 7, "files": [
+            {"path": "notes.txt", "status": "modified", "additions": 3, "deletions": 1}]},
+        {"type": "done"},
+    ])
+    assert "1 file changed" in rendered and "+3 −1" in rendered
+    assert "/changes to review" in rendered

@@ -482,6 +482,9 @@ class StubClient:
         if permissions:
             self.chat.update(permission="manual", cwd=os.getcwd())
         self.approvals, self.stops, self.notes, self.sent = [], [], [], []
+        self.checkpoints: list[dict] = []
+        self.diffs: dict[tuple[int, str], dict] = {}
+        self.restores: list[int] = []
 
     def get_chat(self, _chat_id):
         return self.chat
@@ -506,6 +509,18 @@ class StubClient:
     def memory_add(self, title, body, tags=None):
         self.notes.append((title, body))
         return {}
+
+    def list_checkpoints(self, _chat_id):
+        return [dict(entry) for entry in self.checkpoints]
+
+    def checkpoint_diff(self, _chat_id, checkpoint_id, path):
+        return self.diffs.get((checkpoint_id, path),
+                              {"path": path, "diff": "", "truncated": False})
+
+    def restore_checkpoint(self, _chat_id, checkpoint_id):
+        self.restores.append(checkpoint_id)
+        return {"ok": True, "checkpoint_id": checkpoint_id, "root": "/p",
+                "restored": ["notes.txt"], "deleted": ["new.txt"], "failed": []}
 
 
 def chat_app(client):
@@ -1028,3 +1043,80 @@ def test_permissions_rules_editor_can_save_and_cancel():
     app.submit('/permissions rules')
     app.on_key(SimpleNamespace(name='esc',text=''))
     assert len(saved)==1
+
+
+# ------------------------------------------------- per-turn change review
+CHANGE_SET = {"id": 7, "label": "fix the notes", "root": "/p", "created": "2026-11-13T09:00:00Z",
+              "files": {"notes.txt": {"status": "modified", "additions": 3, "deletions": 1}}}
+
+
+def test_a_turn_that_changed_files_prints_one_summary_line():
+    client = StubClient([{"type": "review", "checkpoint_id": 7, "label": "fix the notes",
+                          "files": [{"path": "notes.txt", "status": "modified",
+                                     "additions": 3, "deletions": 1}]},
+                         {"type": "text", "text": "Done"}, {"type": "done"}])
+    app = chat_app(client)
+    app.submit("edit the notes")
+    drain(app)
+    text = transcript(app)
+    assert "1 file changed" in text and "+3 −1" in text and "/changes to review" in text
+
+
+def test_changes_lists_every_change_set():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET,
+                          {"id": 3, "label": "add a file", "root": "/p", "created": "2026-11-13T08:00:00Z",
+                           "files": {"new.txt": {"status": "added", "additions": 2, "deletions": 0}}}]
+    app = chat_app(client)
+    app.command("/changes")
+    text = transcript(app)
+    assert "Changes · 2 change sets" in text
+    assert "fix the notes" in text and "+3 −1" in text
+    assert "+2 −0" in text and "/diff <n> shows one" in text
+
+
+def test_diff_prints_the_unified_diff_of_one_change_set():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    client.diffs[(7, "notes.txt")] = {
+        "path": "notes.txt", "status": "modified", "additions": 3, "deletions": 1,
+        "truncated": False, "diff": "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-one\n+ONE"}
+    app = chat_app(client)
+    app.command("/diff")
+    text = transcript(app)
+    assert "Change set 7" in text and "fix the notes" in text
+    assert "notes.txt" in text and "-one" in text and "+ONE" in text
+
+
+def test_restore_asks_before_putting_the_files_back():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/restore 7")
+    assert client.restores == [] and isinstance(app.overlay, Picker)
+    assert app.overlay.title == "Restore change set 7?"
+    assert "notes.txt" in "\n".join(transcript(app).splitlines()[:6] or [""])
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert client.restores == [7]
+    text = transcript(app)
+    assert "Restore change set 7" in text
+    assert "put back notes.txt" in text and "removed new.txt" in text
+
+
+def test_restore_can_be_cancelled():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/restore 7")
+    app.on_key(SimpleNamespace(name="down", text=""))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert client.restores == []
+    assert "Cancelled" in transcript(app)
+
+
+def test_an_unknown_change_set_is_reported():
+    client = StubClient()
+    client.checkpoints = [CHANGE_SET]
+    app = chat_app(client)
+    app.command("/diff 99")
+    assert "No change set '99'" in transcript(app)

@@ -162,7 +162,18 @@
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
+    if (chat?.id) safe(() => loadChanges(chat.id));
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
+  }
+  async function loadChanges(chatId) {
+    const version = state.navigationVersion;
+    const checkpoints = await json(`/chats/${chatId}/checkpoints`);
+    if (version !== state.navigationVersion || state.chat?.id !== chatId || !checkpoints.length) return;
+    const section = el('section', 'changes-view');
+    section.setAttribute('aria-label', 'Changes Kova made');
+    section.append(el('strong', '', 'Changes Kova made'));
+    for (const checkpoint of checkpoints) section.append(reviewCard(checkpoint));
+    $('messages').append(section); follow();
   }
   async function openChat(id) {
     if (state.busy) return;
@@ -225,6 +236,105 @@
       buffer += decoder.decode(); parse();
       if (buffer.trim()) throw new Error('Reply stream ended mid-frame. Reopen the conversation to check saved messages.');
     } finally { reader.releaseLock(); }
+  }
+  const STATUS_LABELS = {added: 'Added', modified: 'Modified', deleted: 'Deleted'};
+  function changeTotals(files) {
+    const totals = {added: 0, modified: 0, deleted: 0, additions: 0, deletions: 0};
+    for (const file of files) {
+      if (file.status in totals) totals[file.status] += 1;
+      totals.additions += file.additions || 0; totals.deletions += file.deletions || 0;
+    }
+    return totals;
+  }
+  function diffView(preview) {
+    const pre = el('pre', 'diff');
+    for (const line of (preview.diff || '').split('\n')) {
+      const row = el('span', 'diff-line');
+      if (line.startsWith('+++') || line.startsWith('---')) row.className += ' meta';
+      else if (line.startsWith('@@')) row.className += ' hunk';
+      else if (line.startsWith('+')) row.className += ' add';
+      else if (line.startsWith('-')) row.className += ' del';
+      row.textContent = line || ' ';
+      pre.append(row);
+    }
+    if (!preview.diff) pre.append(el('span', 'diff-line meta', 'No textual changes.'));
+    if (preview.truncated) pre.append(el('span', 'diff-line meta', '… preview truncated'));
+    return pre;
+  }
+  function changeFile(chatId, checkpointId, file) {
+    const details = el('details', 'change-file');
+    const summary = el('summary');
+    summary.append(el('span', `status-badge status-${file.status}`, STATUS_LABELS[file.status] || file.status),
+                   el('span', 'change-path', file.path),
+                   el('span', 'change-stats', `+${file.additions || 0} −${file.deletions || 0}`));
+    details.append(summary);
+    let loaded = false;
+    details.addEventListener('toggle', () => safe(async () => {
+      if (!details.open || loaded || !checkpointId) return;
+      loaded = true;
+      try {
+        const preview = await json(`/chats/${chatId}/checkpoints/${checkpointId}/diff?path=${encodeURIComponent(file.path)}`);
+        details.append(diffView(preview));
+      } catch (error) { loaded = false; throw error; }
+    }));
+    return details;
+  }
+  function confirmRestore(checkpoint) {
+    const chatId = state.chat?.id;
+    if (!chatId) return;
+    safe(async () => {
+      // Everything at or after this change set is undone, not only its own files.
+      const checkpoints = await json(`/chats/${chatId}/checkpoints`);
+      const affected = new Map();
+      for (const entry of checkpoints) {
+        if (entry.id < checkpoint.id) continue;
+        for (const file of entry.files || []) if (!affected.has(file.path)) affected.set(file.path, file.status);
+      }
+      const dialog = el('dialog', 'restore-dialog');
+      dialog.append(el('h2', '', `Restore to change set ${checkpoint.id}?`));
+      dialog.append(el('p', '', 'Files Kova changed since then are put back the way they were, and files it created are removed. Your git repository is never touched.'));
+      const list = el('ul', 'restore-list');
+      for (const [path, status] of affected) list.append(el('li', '', `${STATUS_LABELS[status] || status} ${path}`));
+      if (!affected.size) list.append(el('li', '', 'Nothing to restore.'));
+      dialog.append(list);
+      const actions = el('div', 'dialog-actions');
+      const cancel = el('button', 'btn', 'Cancel'), confirm = el('button', 'btn primary', 'Restore files');
+      cancel.onclick = () => dialog.close();
+      confirm.onclick = () => safe(async () => {
+        confirm.disabled = true;
+        try {
+          const result = await json(`/chats/${chatId}/checkpoints/${checkpoint.id}/restore`, {method: 'POST'});
+          dialog.close();
+          const count = result.restored.length;
+          toast(`Restored ${count} file${count === 1 ? '' : 's'}${result.deleted.length ? `, removed ${result.deleted.length}` : ''}.`);
+        } catch (error) { confirm.disabled = false; throw error; }
+      });
+      actions.append(cancel, confirm); dialog.append(actions);
+      document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
+    });
+  }
+  function reviewCard(checkpoint) {
+    const files = checkpoint.files || [], skipped = checkpoint.skipped || [];
+    const card = el('section', 'changes-card');
+    card.setAttribute('aria-label', 'Changes Kova made');
+    const totals = changeTotals(files);
+    const head = el('div', 'changes-head');
+    head.append(icon('pencil'), el('strong', '', checkpoint.live ? 'Changed in this turn' : `Change set ${checkpoint.id}`));
+    if (checkpoint.label) head.append(el('span', 'changes-label', checkpoint.label));
+    if (files.length) head.append(el('span', 'change-stats', `+${totals.additions} −${totals.deletions}`));
+    card.append(head);
+    if (files.length) {
+      const list = el('div', 'change-list');
+      for (const file of files) list.append(changeFile(state.chat?.id, checkpoint.id, file));
+      card.append(list);
+    }
+    if (skipped.length) card.append(el('small', 'changes-skipped', `${skipped.length} file${skipped.length === 1 ? ' is' : 's are'} too large to checkpoint: ${skipped.join(', ')}`));
+    if (files.length && checkpoint.id) {
+      const restore = el('button', 'btn quiet', 'Restore files'); restore.type = 'button';
+      restore.onclick = () => confirmRestore(checkpoint);
+      card.append(restore);
+    }
+    return card;
   }
   function planView(items) {
     const section = el('section', 'plan-view'); section.setAttribute('aria-label', 'Plan');
@@ -366,6 +476,12 @@
           if (plan) plan.replaceWith(next);
           else { document.querySelectorAll('.plan-view').forEach(old => old.remove()); body.insertBefore(next, activity); }
           plan = next;
+        } else if (kind === 'review') {
+          current = null; activity.hidden = true;
+          if (event.files?.length || event.skipped?.length) {
+            body.insertBefore(reviewCard({id: event.checkpoint_id, label: event.label, live: true,
+                                          files: event.files || [], skipped: event.skipped || []}), activity);
+          }
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
           if (tool) { tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok); tool.detail.textContent = event.ok && event.name === 'update_plan' ? 'Plan updated' : (event.summary || '').replace(/\s+/g, ' ').slice(0, 200); tool.detail.title = event.summary || ''; }

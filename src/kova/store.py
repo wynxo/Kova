@@ -136,6 +136,14 @@ class Store:
                 text TEXT NOT NULL,
                 done INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                created TEXT NOT NULL,
+                label TEXT,
+                root TEXT NOT NULL,
+                files TEXT NOT NULL
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
@@ -313,6 +321,7 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+            self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
             cur = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
             self._conn.commit()
             return cur.rowcount > 0
@@ -322,6 +331,7 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")
+            self._conn.execute("DELETE FROM checkpoints")
             self._conn.execute("DELETE FROM chats")
             self._conn.commit()
 
@@ -531,6 +541,49 @@ class Store:
             self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET cutoff=excluded.cutoff, summary=excluded.summary", (chat_id, cutoff, summary))
             self._conn.commit()
             return True
+
+    # -- checkpoints ------------------------------------------------------
+    def add_checkpoint(self, chat_id: str, root: str, files: dict, label: str | None = None) -> int:
+        """Record one turn's changed files: path -> before/after digests and stats."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO checkpoints (chat_id, created, label, root, files) VALUES (?, ?, ?, ?, ?)",
+                (chat_id, _utc_now_iso(), label, root, json.dumps(files)),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def _checkpoint(self, row: sqlite3.Row) -> dict:
+        return {"id": row["id"], "chat_id": row["chat_id"], "created": row["created"],
+                "label": row["label"], "root": row["root"], "files": json.loads(row["files"])}
+
+    def list_checkpoints(self, chat_id: str) -> list[dict]:
+        """One chat's checkpoints, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, chat_id, created, label, root, files FROM checkpoints "
+                "WHERE chat_id = ? ORDER BY id DESC", (chat_id,)).fetchall()
+        return [self._checkpoint(row) for row in rows]
+
+    def get_checkpoint(self, chat_id: str, checkpoint_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, chat_id, created, label, root, files FROM checkpoints "
+                "WHERE chat_id = ? AND id = ?", (chat_id, checkpoint_id)).fetchone()
+        return self._checkpoint(row) if row is not None else None
+
+    def checkpoints_from(self, chat_id: str, checkpoint_id: int) -> list[dict]:
+        """Checkpoints at or after one id, oldest first, for a restore plan."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, chat_id, created, label, root, files FROM checkpoints "
+                "WHERE chat_id = ? AND id >= ? ORDER BY id", (chat_id, checkpoint_id)).fetchall()
+        return [self._checkpoint(row) for row in rows]
+
+    def delete_checkpoints(self, chat_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
+            self._conn.commit()
 
     # -- reminders --------------------------------------------------------
     def add_reminder(self, when: datetime, text: str) -> int:

@@ -29,12 +29,17 @@ from rich.table import Table
 from rich.text import Text
 
 from kova import theme
+from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
 from kova.modes import MODES
 from kova.tui.app import COMMANDS, PERMISSIONS
 
 _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
+
+#: Diff lines ``/diff`` prints per file, and paths listed before a restore.
+DIFF_LINES = 200
+RESTORE_PREVIEW = 10
 
 # Arguments the commands offer for Tab completion, if any.
 _COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off"), "/permissions": tuple(PERMISSIONS)}
@@ -143,6 +148,9 @@ class _Turn:
         elif kind == "plan":
             self.blocks.append(_Block("plan", items=[item for item in event.get("items") or []
                                                      if isinstance(item, dict)]))
+        elif kind == "review":
+            self.blocks.append(_Block("review", items=[file for file in event.get("files") or []
+                                                       if isinstance(file, dict)]))
         elif kind == "stopped":
             self.blocks.append(_Block("stopped"))
 
@@ -197,6 +205,16 @@ class _Turn:
                     items.append(Text(f"    {_PLAN_MARKS.get(status, '☐')} "
                                       f"{_short(str(item.get('text', '')))}",
                                       style=style.get(status, "")))
+            elif block.kind == "review":
+                additions = sum(int(file.get("additions") or 0) for file in block.items)
+                deletions = sum(int(file.get("deletions") or 0) for file in block.items)
+                row = Text("  ")
+                row.append("◆ ", style=f"bold {theme.ACCENT}")
+                row.append(f"{len(block.items)} file{'' if len(block.items) == 1 else 's'} changed",
+                           style="bold")
+                row.append(f"  +{additions} −{deletions}", style=theme.MUTED)
+                row.append("  · /changes to review", style=theme.FAINT)
+                items.append(row)
             elif block.kind == "stopped":
                 items.append(Text("  Interrupted.", style=theme.MUTED))
         # Keep activity visible before the first token and between tool calls.
@@ -363,6 +381,130 @@ def _models(client: KovaClient, console: Console) -> None:
     console.print()
 
 
+def _changes(client: KovaClient, console: Console, chat_id: str) -> None:
+    """Every change set in this chat, newest first."""
+    checkpoints = client.list_checkpoints(chat_id)
+    if not checkpoints:
+        console.print("No changes recorded yet. Kova checkpoints the files it edits.",
+                      style=theme.MUTED)
+        console.print()
+        return
+    table = Table(box=None, padding=(0, 2, 0, 0), header_style=theme.MUTED)
+    table.add_column("#", style=theme.ACCENT, justify="right", no_wrap=True)
+    table.add_column("Change")
+    table.add_column("Files", justify="right")
+    table.add_column("Lines", justify="right")
+    for checkpoint in checkpoints:
+        totals = summarize(checkpoint.get("files") or {})
+        table.add_row(str(checkpoint["id"]), checkpoint.get("label") or "change set",
+                      str(totals["files"]), f"+{totals['additions']} −{totals['deletions']}")
+    console.print(table)
+    console.print("/diff <n> shows one · /restore <n> puts the files back", style=theme.MUTED)
+    console.print()
+
+
+def _checkpoint_at(client: KovaClient, console: Console, chat_id: str, rest: str) -> dict | None:
+    """The change set named by ``rest``, or the newest one when it is empty."""
+    checkpoints = client.list_checkpoints(chat_id)
+    if not checkpoints:
+        console.print("No changes recorded yet. Kova checkpoints the files it edits.",
+                      style=theme.MUTED)
+        return None
+    if not rest:
+        return checkpoints[0]
+    if rest.isdigit():
+        found = next((entry for entry in checkpoints if entry["id"] == int(rest)), None)
+        if found is not None:
+            return found
+    console.print(f"No change set {rest!r}. Type /changes to list them.", style=theme.ERROR)
+    return None
+
+
+def _restore_paths(client: KovaClient, chat_id: str, checkpoint_id: int) -> list[str]:
+    """Every path a change set at or after ``checkpoint_id`` wrote, in order."""
+    paths: list[str] = []
+    for entry in client.list_checkpoints(chat_id):
+        if entry["id"] < checkpoint_id:
+            continue
+        for path in entry.get("files") or {}:
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _diff(client: KovaClient, console: Console, chat_id: str, rest: str) -> None:
+    """One change set's unified diff, file by file."""
+    checkpoint = _checkpoint_at(client, console, chat_id, rest)
+    if checkpoint is None:
+        return
+    files = list((checkpoint.get("files") or {}).items())
+    if not files:
+        console.print("That change set recorded no files.", style=theme.MUTED)
+        return
+    console.print(Text.assemble((f"Change set {checkpoint['id']}  ", f"bold {theme.ACCENT}"),
+                                (str(checkpoint.get("label") or ""), theme.MUTED)))
+    for path, entry in files:
+        preview = client.checkpoint_diff(chat_id, checkpoint["id"], path)
+        console.print(Text.assemble((f"  {entry.get('status', 'modified')} ", theme.ACCENT),
+                                    (path, "bold"),
+                                    (f"  +{entry.get('additions', 0)} −{entry.get('deletions', 0)}",
+                                     theme.MUTED)))
+        lines = (preview.get("diff") or "").splitlines()
+        for line in lines[:DIFF_LINES]:
+            if line.startswith(("+++", "---")):
+                style = theme.FAINT
+            elif line.startswith("+"):
+                style = theme.SUCCESS
+            elif line.startswith("-"):
+                style = theme.ERROR
+            elif line.startswith("@@"):
+                style = theme.ACCENT
+            else:
+                style = theme.MUTED
+            console.print(Text("    " + line, style=style))
+        if len(lines) > DIFF_LINES:
+            console.print(f"    … {len(lines) - DIFF_LINES} more lines", style=theme.FAINT)
+        if preview.get("truncated"):
+            console.print("    (preview truncated)", style=theme.FAINT)
+    console.print()
+
+
+def _restore(client: KovaClient, console: Console, chat_id: str, rest: str) -> None:
+    """Put the working folder back to a change set, confirming first."""
+    words = rest.split()
+    confirmed = any(word.lower() == "yes" for word in words)
+    words = [word for word in words if word.lower() != "yes"]
+    checkpoint = _checkpoint_at(client, console, chat_id, words[0] if words else "")
+    if checkpoint is None:
+        return
+    paths = _restore_paths(client, chat_id, checkpoint["id"])
+    if not paths:
+        console.print("That change set recorded no files to restore.", style=theme.MUTED)
+        return
+    for path in paths[:RESTORE_PREVIEW]:
+        console.print("  " + path, style=theme.MUTED)
+    if len(paths) > RESTORE_PREVIEW:
+        console.print(f"  … {len(paths) - RESTORE_PREVIEW} more", style=theme.FAINT)
+    if not confirmed and sys.stdin.isatty() and console.is_terminal:
+        answer = console.input(f"  Restore change set {checkpoint['id']}? Kova's later edits are "
+                               "undone and files it created are removed. [y/N] › ").strip().lower()
+        confirmed = answer in ("y", "yes")
+    if not confirmed:
+        console.print("Cancelled. Re-run as "
+                      f"/restore {checkpoint['id']} yes to confirm.", style=theme.MUTED)
+        return
+    result = client.restore_checkpoint(chat_id, checkpoint["id"])
+    console.print(Text.assemble(("  ✓ ", f"bold {theme.SUCCESS}"),
+                                (f"Restored change set {checkpoint['id']}", "bold")))
+    for path in result.get("restored") or []:
+        console.print(f"    put back {path}", style=theme.MUTED)
+    for path in result.get("deleted") or []:
+        console.print(f"    removed {path}", style=theme.MUTED)
+    for failure in result.get("failed") or []:
+        console.print(f"    {failure.get('path')}: {failure.get('error')}", style=theme.ERROR)
+    console.print()
+
+
 def _watch_reminders(client: KovaClient, console: Console) -> None:
     try:
         for event in client.events():
@@ -519,6 +661,16 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 console.print(f"Folder: {target}", style=theme.MUTED)
             else:
                 console.print(f"Not a folder: {target}", style=theme.ERROR)
+        elif command in ("/changes", "/diff", "/restore"):
+            try:
+                if command == "/changes":
+                    _changes(client, console, chat_id)
+                elif command == "/diff":
+                    _diff(client, console, chat_id, args[0] if args else "")
+                else:
+                    _restore(client, console, chat_id, args[0] if args else "")
+            except KovaError as exc:
+                console.print(exc.message, style=theme.ERROR)
         elif command == "/resume":
             chats = client.list_chats()[:15]
             if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):

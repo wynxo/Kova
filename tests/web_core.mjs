@@ -26,6 +26,8 @@ class Element {
   addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
   focus() {}
+  showModal() {}
+  close() {}
   get lastElementChild() { return this.children.at(-1); }
 }
 const elements = new Map();
@@ -43,7 +45,8 @@ const sandbox = {
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options) => {
     requests.push({path, body: options.body ? JSON.parse(options.body) : null});
-    return {ok: true, json: async () => path === '/chats' ? [] : {ok: true}};
+    const payload = path.endsWith('/checkpoints') ? [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}] : {ok: true};
+    return {ok: true, json: async () => path === '/chats' ? [] : payload};
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
@@ -183,3 +186,26 @@ const followBody = new Element(), following = turnView(followBody);
 following.accept({type:'tool_call',name:'test'}); assert.equal(area.scrollTop,450);
 area.scrollTop = 500; area.listeners.scroll(); following.finish(); assert.equal(area.scrollTop,1000);
 console.log('IME, keyboard and user-controlled auto-scroll passed');
+
+// Per-turn change review: the card, its diff preview, and its restore call.
+state.chat = {id: 'chat-1', cwd: '/project'};
+const reviewBody = new Element(), reviewView = turnView(reviewBody);
+reviewView.accept({type: 'review', checkpoint_id: 7, label: 'fix the notes',
+                   files: [{path: 'notes.txt', status: 'modified', additions: 1, deletions: 1}]});
+const changes = byClass(reviewBody, 'changes-card')[0];
+assert.ok(changes.textContent.includes('Changed in this turn'));
+assert.ok(changes.textContent.includes('fix the notes'));
+assert.equal(byClass(changes, 'status-modified').length, 1);
+assert.ok(changes.textContent.includes('+1 −1'));
+const file = byClass(changes, 'change-file')[0];
+file.open = true; file.listeners.toggle(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/diff?path=notes.txt'));
+assert.equal(byClass(file, 'diff').length, 1);
+buttons(changes)[0].onclick(); await tick(); await tick();
+const restore = byClass(sandbox.document.body, 'restore-dialog').at(-1);
+assert.ok(restore.textContent.includes('Restore to change set 7?'));
+assert.ok(restore.textContent.includes('notes.txt'));
+buttons(restore)[1].onclick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/restore' && r.body === null));
+reviewView.finish();
+console.log('Per-turn change review, preview and restore passed');

@@ -160,6 +160,20 @@ class KovaClient:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))
 
+    def list_checkpoints(self, chat_id: str) -> list[dict]:
+        """This chat's change sets, newest first: what each turn changed."""
+        return self._request("GET", f"/chats/{chat_id}/checkpoints").json()
+
+    def checkpoint_diff(self, chat_id: str, checkpoint_id: int, path: str) -> dict:
+        """One changed file's diff and both sides, to preview before restoring."""
+        return self._request("GET", f"/chats/{chat_id}/checkpoints/{checkpoint_id}/diff",
+                             params={"path": path}).json()
+
+    def restore_checkpoint(self, chat_id: str, checkpoint_id: int) -> dict:
+        """Put the working folder back to a checkpoint; never touches git."""
+        return self._request("POST", f"/chats/{chat_id}/checkpoints/{checkpoint_id}/restore",
+                             timeout=120).json()
+
     def permission_rules(self) -> list[dict]:
         return self._request("GET", "/permission-rules").json()
 

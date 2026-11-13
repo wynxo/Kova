@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from kova.compact import compact
+from kova.checkpoints import BlobStore, ChangeTracker
 from kova.config import Config
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
@@ -177,6 +178,32 @@ class Agent:
         self.now = now
         self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
+        # File contents for per-turn checkpoints, outside every working folder.
+        self.blobs = BlobStore(config.home / "checkpoints")
+
+    async def _review(self, chat_id: str, cwd: Path, tracker: ChangeTracker | None,
+                      label: str) -> dict | None:
+        """Record the files this turn changed and describe them for review.
+
+        A checkpoint never fails a turn: any problem recording one is dropped
+        and the turn ends normally.
+        """
+        if tracker is None or not tracker.touched:
+            return None
+        try:
+            files, skipped = await asyncio.to_thread(tracker.finish)
+            if not files:
+                return {'type': 'review', 'checkpoint_id': None, 'files': [], 'skipped': skipped} \
+                    if skipped else None
+            checkpoint_id = await asyncio.to_thread(self.store.add_checkpoint,
+                                                    chat_id, str(cwd), files, label)
+        except Exception:
+            return None
+        return {'type': 'review', 'checkpoint_id': checkpoint_id, 'root': str(cwd), 'label': label,
+                'files': [{'path': path, 'status': entry['status'],
+                           'additions': entry['additions'], 'deletions': entry['deletions']}
+                          for path, entry in sorted(files.items())],
+                'skipped': skipped}
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
@@ -201,6 +228,7 @@ class Agent:
             # Bind per-chat state, never mutate the server-wide registry.
             replacements = [*files.tools(), *core.tools(cwd)]
             tools.update({tool.name: tool for tool in replacements if tool.name in tools})
+        tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
         title_source = text
         if chat is not None:
@@ -267,6 +295,9 @@ class Agent:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
                             self.store.set_title(chat_id, derive_title(title_source))
+                    review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
+                    if review is not None:
+                        yield review
                     yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
@@ -333,6 +364,9 @@ class Agent:
                                                         (f" User guidance: {decision['message']}" if decision.get('message') else ''))
                                 if prepared is not None:
                                     await asyncio.to_thread(files.check, args, prepared)
+                                    if tracker is not None:
+                                        # Remember the file as it is now, before the write lands.
+                                        await asyncio.to_thread(tracker.note, prepared[0])
                                 if inspect.iscoroutinefunction(tools[name].run):
                                     result = await tools[name].run(args)
                                 else:
@@ -357,4 +391,7 @@ class Agent:
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
         except ModelError as exc:
+            review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
+            if review is not None:
+                yield review
             yield {'type': 'error', 'message': str(exc)}

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__
+from kova import __version__, checkpoints
 from kova.agent import Agent
 from kova.config import Config, ModelEntry, ensure_token, save_config
 from kova.events import EventBus, ConversationStates
@@ -393,6 +393,48 @@ def create_app(
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return {"stopped": bool(tasks)}
+
+    def checkpoint_or_404(chat_id: str, checkpoint_id: int) -> dict:
+        row = app.state.store.get_checkpoint(chat_id, checkpoint_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="checkpoint not found")
+        return row
+
+    @api.get("/chats/{chat_id}/checkpoints")
+    async def list_checkpoints(chat_id: str) -> list[dict]:
+        """This chat's change sets, newest first: what each turn changed."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return await asyncio.to_thread(app.state.store.list_checkpoints, chat_id)
+
+    @api.get("/chats/{chat_id}/checkpoints/{checkpoint_id}")
+    async def get_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+        return checkpoint_or_404(chat_id, checkpoint_id)
+
+    @api.get("/chats/{chat_id}/checkpoints/{checkpoint_id}/diff")
+    async def checkpoint_diff(chat_id: str, checkpoint_id: int, path: str) -> dict:
+        """One changed file's diff and both sides, to preview before restoring."""
+        row = checkpoint_or_404(chat_id, checkpoint_id)
+        entry = (row.get("files") or {}).get(path)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="file is not part of this checkpoint")
+        return await asyncio.to_thread(checkpoints.preview, app.state.agent.blobs, path, entry)
+
+    @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/restore")
+    async def restore_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+        """Put the working folder back to this checkpoint.
+
+        Only the paths the reverted turns changed are touched; the user's git
+        repository is never read or written.
+        """
+        row = checkpoint_or_404(chat_id, checkpoint_id)
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Stop the active turn before restoring files")
+        rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
+        plan = checkpoints.revert_plan(rows, checkpoint_id)
+        result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
+                                         app.state.agent.blobs)
+        return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
 
 
     @api.post("/memory/location")
