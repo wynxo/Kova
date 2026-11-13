@@ -156,6 +156,16 @@ class KovaClient:
     def compact_chat(self, chat_id: str) -> dict:
         return self._request("POST", f"/chats/{chat_id}/compact", timeout=330).json()
 
+    def submit_input(self, chat_id: str, text: str, kind: str,
+                     model: str | None = None) -> dict:
+        """Persist a queued message or steering for the running turn."""
+        return self._request("POST", f"/chats/{chat_id}/inputs",
+                             json={"text": text, "kind": kind, "model": model}).json()
+
+    def stream_chat(self, chat_id: str) -> Iterator[dict]:
+        """Reconnect to live turns and resume a saved pending queue."""
+        yield from self._stream("GET", f"/chats/{chat_id}/stream")
+
     def stop_chat(self, chat_id: str) -> bool:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))

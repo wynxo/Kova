@@ -78,6 +78,8 @@ COMMANDS = {
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
     "compact": ("/compact", "Summarize older conversation context"),
+    "queue": ("/queue <message>", "Save a message for after the current turn"),
+    "steer": ("/steer <message>", "Guide the running turn at its next boundary"),
     "clear": ("/clear", "Clear the screen, keeping this conversation"),
     "exit": ("/exit", "Leave Kova (also /quit)"),
     "quit": ("/quit", "Leave Kova"),
@@ -206,6 +208,7 @@ class ChatApp:
         self.approval: dict | None = None
         self.job: Job | None = None
         self.queued: list[str] = []
+        self.server_inputs = False
         self.context_notes: list[str] = []
         self.notices: queue.Queue = queue.Queue()   # reminders from the event stream
         self.show_shortcuts = False
@@ -282,6 +285,11 @@ class ChatApp:
     def refresh_chat(self) -> None:
         chat = self.client.get_chat(self.chat_id) or {}
         self._read_chat(chat)
+        self.server_inputs = "pending_inputs" in chat
+        if self.server_inputs:
+            self.queued = [i["text"] for i in chat["pending_inputs"] if i["kind"] == "queue"]
+            if self.job is None and (chat.get("running") or self.queued):
+                self._follow_chat()
         cwd = chat.get("cwd")
         if cwd and os.path.isdir(cwd) and cwd != self.cwd:
             self.cwd = cwd
@@ -635,10 +643,40 @@ class ChatApp:
     def submit(self, text: str) -> None:
         if not text.strip():
             return
+        command, _, guidance = text.strip().partition(" ")
+        if self.server_inputs and (command in {"/queue", "/steer"} or
+                                   (self.job is not None and self.job.kind == "reply")):
+            kind = "steer" if command == "/steer" else "queue"
+            message = guidance.strip() if command in {"/queue", "/steer"} else text
+            if not message:
+                self._flash(f"Usage: /{kind} <message>", 3)
+                return
+            try:
+                self.client.submit_input(self.chat_id, message, kind)
+            except KovaError as exc:
+                self.editor.set(text)
+                self._flash(exc.message, 3)
+                return
+            if kind == "queue":
+                self.queued.append(message)
+            self._flash("Steering saved · applies at the next boundary" if kind == "steer" else
+                        "Queued · saved on the server", 3)
+            if self.job is None:
+                self._follow_chat()
+            return
         if self.job is not None:
             self.queued.append(text)
             return
         self._dispatch(text)
+
+    def _follow_chat(self) -> None:
+        self.renderer.begin_turn()
+        client, chat_id = self.client, self.chat_id
+
+        def follow(emit, cancel):
+            for event in client.stream_chat(chat_id):
+                emit(event)
+        self.job = Job("reply", follow)
 
     def _dispatch(self, text: str) -> None:
         stripped = text.strip()
@@ -678,7 +716,7 @@ class ChatApp:
             try:
                 for event in events:
                     emit(event)
-                    if event.get("type") == "done":
+                    if event.get("type") == "done" and not self.server_inputs:
                         break
             finally:
                 events.close()
@@ -733,6 +771,16 @@ class ChatApp:
                 self._finish(job)
                 return
             kind = event.get("type")
+            if kind == "inputs":
+                self.queued = [i["text"] for i in event["items"] if i["kind"] == "queue"]
+                continue
+            if kind in {"user_message", "steer"}:
+                self.renderer.finish_turn()
+                self.renderer.user(event["content"])
+                if kind == "user_message" and event["text"] in self.queued:
+                    self.queued.remove(event["text"])
+                self.renderer.begin_turn()
+                continue
             if kind == "approval":
                 if job.cancel.is_set():
                     self._send_approval(event, "deny")
@@ -771,7 +819,7 @@ class ChatApp:
                 r.error(error.message if isinstance(error, KovaError) else str(error))
             r.finish_turn(stopped=stopped)
             self._refresh_title_later()
-        if self.queued:
+        if self.queued and not self.server_inputs:
             if stopped:
                 # Stopping a reply also holds what was queued behind it.
                 waiting = "\n".join(self.queued)
@@ -1163,7 +1211,7 @@ class ChatApp:
         if text.startswith("#"):
             return p.paint(MEMORY, "# save a memory note")
         if self.job is not None:
-            return p.faint("esc stop · ctrl+t thinking · ctrl+o tools")
+            return p.faint("⏎ queue (saved) · /steer <message> · esc stop")
         if self.permission in PERMISSIONS and self.permission != "manual":
             return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
                             f"⏵⏵ {self.permission} permissions")

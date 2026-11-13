@@ -433,7 +433,7 @@ async def test_run_turn_executes_a_batch_of_tool_calls_in_order(setup):
 
 
 async def test_run_turn_stops_after_ten_tool_rounds(setup):
-    scripts = [tool("missing", {}) for _ in range(12)] + [text("never used")]
+    scripts = [tool("missing", {"attempt": i}) for i in range(12)] + [text("never used")]
     events, fake = await run_turn(setup, scripts)
     assert len(fake.requests) == 11
     assert "tools" not in fake.requests[-1]

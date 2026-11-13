@@ -36,6 +36,13 @@ class TurnBody(BaseModel):
     model: str | None = None
 
 
+class InputBody(BaseModel):
+    """Queue a later turn or guide the current turn at its next boundary."""
+    text: str = Field(min_length=1, max_length=1_000_000)
+    kind: Literal["queue", "steer"]
+    model: str | None = None
+
+
 class ChatBody(BaseModel):
     """Optional fields for a new or updated chat; every field may be omitted."""
     title: str | None = None
@@ -228,6 +235,8 @@ def create_app(
         chat = app.state.store.get_chat(chat_id)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        chat["pending_inputs"] = app.state.store.pending_inputs(chat_id)
+        chat["running"] = bool(app.state.chat_turns.get(chat_id))
         return chat
 
     @api.patch("/chats/{chat_id}")
@@ -317,30 +326,49 @@ def create_app(
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
-    @api.post("/chats/{chat_id}/messages")
-    async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
-        if app.state.store.get_chat(chat_id) is None:
-            raise HTTPException(status_code=404, detail="chat not found")
-        if body.model is not None and not any(m.name == body.model for m in config.models):
-            raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
-        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    def publish_turn(chat_id: str, event: dict, queue: asyncio.Queue | None = None) -> None:
+        if queue is not None:
+            queue.put_nowait(event)
+        app.state.bus.publish({"type": "chat_event", "chat_id": chat_id, "event": event})
 
+    def start_turn(chat_id: str, body: TurnBody | None = None,
+                   queue: asyncio.Queue | None = None) -> None:
         async def run_turn() -> None:
-            """Drive the turn to completion even if the client disconnects."""
+            """The server owns the turn and durable queue, not its HTTP connection."""
             try:
                 async with chat_lock(chat_id):
                     if app.state.store.get_chat(chat_id) is None:
-                        queue.put_nowait({"type": "error", "message": "chat was deleted"})
+                        publish_turn(chat_id, {"type": "error", "message": "chat was deleted"}, queue)
                         return
-                    async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model):
-                        queue.put_nowait(event)
+                    current = body
+                    while True:
+                        if current is None:
+                            item = app.state.store.apply_next_input(chat_id, "queue")
+                            if item is None:
+                                return
+                            publish_turn(chat_id, {"type": "user_message", **item}, queue)
+                            current = TurnBody(text=item["content"], model=item["model"])
+                            persisted = True
+                        else:
+                            persisted = False
+                        async for event in app.state.agent.run_turn(
+                                chat_id, current.text, model=current.model, persisted=persisted):
+                            publish_turn(chat_id, event, queue)
+                        # Guidance accepted just before a stop/guard/final pass must
+                        # not leak into a later, unrelated turn. Keep it in history.
+                        while guidance := app.state.store.apply_next_input(chat_id, "steer"):
+                            publish_turn(chat_id, {"type": "steer", **guidance}, queue)
+                        current = None
             except asyncio.CancelledError:
-                queue.put_nowait({"type": "stopped"})
+                while guidance := app.state.store.apply_next_input(chat_id, "steer"):
+                    publish_turn(chat_id, {"type": "steer", **guidance}, queue)
+                publish_turn(chat_id, {"type": "stopped"}, queue)
                 raise
-            except Exception as exc:  # never leave the stream without an ending
-                queue.put_nowait({"type": "error", "message": str(exc)})
+            except Exception as exc:
+                publish_turn(chat_id, {"type": "error", "message": str(exc)}, queue)
             finally:
-                queue.put_nowait(None)
+                if queue is not None:
+                    queue.put_nowait(None)
 
         task = asyncio.create_task(run_turn())
         app.state.turns.add(task)
@@ -352,9 +380,73 @@ def create_app(
             tasks.discard(done)
             if not tasks:
                 app.state.chat_turns.pop(chat_id, None)
-            queue.put_nowait(None)  # also handles cancellation before task startup
+                publish_turn(chat_id, {"type": "idle"})
+            if queue is not None:
+                queue.put_nowait(None)
 
         task.add_done_callback(finished)
+
+    @api.post("/chats/{chat_id}/inputs")
+    async def post_input(chat_id: str, body: InputBody) -> dict:
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(404, "chat not found")
+        if not body.text.strip():
+            raise HTTPException(422, "message cannot be empty")
+        if body.model is not None and not any(m.name == body.model for m in config.models):
+            raise HTTPException(404, f"unknown model '{body.model}'")
+        running = bool(app.state.chat_turns.get(chat_id))
+        if body.kind == "steer" and not running:
+            raise HTTPException(409, "No running turn to steer. Send or queue a message instead.")
+        item = app.state.store.enqueue_input(chat_id, body.text, body.kind, body.model)
+        publish_turn(chat_id, {"type": "input_pending", **item})
+        if body.kind == "queue" and not running:
+            start_turn(chat_id)
+        return item
+
+    @api.get("/chats/{chat_id}/stream")
+    async def chat_stream(chat_id: str) -> StreamingResponse:
+        """Reconnect to a running chat; pending queues also resume after restart."""
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(404, "chat not found")
+        queue = app.state.bus.subscribe()
+        if not app.state.chat_turns.get(chat_id) and any(
+                i["kind"] == "queue" for i in app.state.store.pending_inputs(chat_id)):
+            start_turn(chat_id)
+
+        async def drain() -> AsyncIterator[str]:
+            try:
+                if not app.state.chat_turns.get(chat_id):
+                    yield _sse({"type": "idle"})
+                    return
+                # Refresh queue state after subscribing to close the reload race.
+                yield _sse({"type": "inputs", "items": app.state.store.pending_inputs(chat_id)})
+                for identifier, approval in list(app.state.agent.approvals.pending.items()):
+                    if approval.chat_id == chat_id:
+                        yield _sse({"type": "approval", "id": identifier, "tool": approval.tool,
+                                    "args": approval.args, "risk": approval.risk,
+                                    "summary": approval.args.get("command") or approval.args.get("path") or approval.tool})
+                while True:
+                    envelope = await queue.get()
+                    if envelope is None:
+                        return
+                    if envelope.get("type") != "chat_event" or envelope.get("chat_id") != chat_id:
+                        continue
+                    event = envelope["event"]
+                    yield _sse(event)
+                    if event["type"] == "idle":
+                        return
+            finally:
+                app.state.bus.unsubscribe(queue)
+        return StreamingResponse(drain(), media_type="text/event-stream")
+
+    @api.post("/chats/{chat_id}/messages")
+    async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        if body.model is not None and not any(m.name == body.model for m in config.models):
+            raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        start_turn(chat_id, body, queue)
 
         async def drain() -> AsyncIterator[str]:
             while True:
@@ -362,7 +454,6 @@ def create_app(
                 if event is None:
                     return
                 yield _sse(event)
-
         return StreamingResponse(drain(), media_type="text/event-stream")
 
 

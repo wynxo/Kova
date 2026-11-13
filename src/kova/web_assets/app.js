@@ -2,8 +2,18 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, pending: [], submittingInput: false};
   const scroll = $('scroll-area');
+  const queueButton = el('button', 'btn quiet', 'Queue');
+  const steerButton = el('button', 'btn quiet', 'Steer');
+  const pendingBox = el('div', 'turn-status');
+  for (const [button, kind, title] of [[queueButton, 'queue', 'Save for after this turn (Enter)'], [steerButton, 'steer', 'Guide this turn at the next model/tool boundary']]) {
+    button.type = 'button'; button.title = title; button.hidden = true;
+    button.onclick = () => safe(() => submitInput(kind));
+    $('stop').before(button);
+  }
+  pendingBox.setAttribute('role', 'status'); pendingBox.setAttribute('aria-live', 'polite');
+  $('composer').prepend(pendingBox);
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
   scroll.addEventListener('touchmove', () => { nearBottom = false; }, {passive: true});
@@ -42,6 +52,11 @@
     $('send').hidden = busy; $('stop').hidden = !busy;
     $('send').disabled = !state.connected || !$('prompt').value.trim();
     $('stop').disabled = state.stopRequested;
+    for (const button of [queueButton, steerButton]) {
+      button.hidden = !busy;
+      button.disabled = !state.connected || !state.turnReady || state.stopRequested || state.submittingInput || !$('prompt').value.trim();
+    }
+    $('prompt').placeholder = busy ? 'Enter queues for later; Steer guides this turn…' : 'What’s on your mind?';
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
@@ -143,6 +158,8 @@
   }
   function setChat(chat) {
     state.chat = chat;
+    if (chat) localStorage.setItem('kova:last-chat', chat.id); else localStorage.removeItem('kova:last-chat');
+    showPending(chat?.pending_inputs || []);
     $('chat-title').textContent = chat?.title || 'New conversation';
     $('mode').value = chat?.mode || 'work';
     $('permission').value = chat?.permission || 'manual';
@@ -163,6 +180,7 @@
     }
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
+    if (chat && (chat.running || state.pending.some(i => i.kind === 'queue'))) safe(followChat);
   }
   async function openChat(id) {
     if (state.busy) return;
@@ -336,6 +354,9 @@
         } else if (kind === 'error') {
           const error = el('div', 'turn-error'); error.setAttribute('role', 'alert'); error.append(icon('triangle-alert'), el('span', '', event.message));
           body.insertBefore(error, activity);
+        } else if (kind === 'steer') {
+          current = null;
+          body.insertBefore(el('div', 'turn-status', event.content), activity);
         } else if (kind === 'stopped') {
           body.insertBefore(el('div', 'turn-status', 'Reply stopped.'), activity);
         }
@@ -350,37 +371,91 @@
       }
     };
   }
+  function showPending(items) {
+    state.pending = items;
+    pendingBox.replaceChildren(); pendingBox.hidden = !items.length;
+    for (const item of items) pendingBox.append(el('div', '', `${item.kind === 'queue' ? 'Queued' : 'Steer'} (saved): ${item.text}`));
+  }
+  async function submitInput(kind) {
+    const text = $('prompt').value.trim();
+    if (!text || !state.chat || state.submittingInput || !state.turnReady || state.stopRequested) return;
+    state.submittingInput = true; controls();
+    try {
+      await json(`/chats/${state.chat.id}/inputs`, write('POST', {text, kind, model: kind === 'queue' ? $('model').value || null : null}));
+      // The live stream may already have consumed it by the time fetch resolves.
+      const chat = await json(`/chats/${state.chat.id}`);
+      showPending(chat.pending_inputs || []);
+      if ($('prompt').value.trim() === text) $('prompt').value = '';
+      resize(); toast(kind === 'queue' ? 'Queued and saved for after this turn.' : 'Steering saved for the next model/tool boundary.');
+    } finally { state.submittingInput = false; controls(); }
+  }
+  async function watchTurn(response, initialTurn) {
+    let turn = initialTurn, terminal = false;
+    try {
+      await readEvents(response, data => {
+        if (data.type === 'inputs') { showPending(data.items); return; }
+        if (data.type === 'input_pending') {
+          showPending([...state.pending.filter(i => i.id !== data.id), data]); return;
+        }
+        if (['user_message', 'steer'].includes(data.type)) showPending(state.pending.filter(i => i.id !== data.id));
+        if (data.type === 'user_message') {
+          turn?.finish(); message('user', data.content); turn = turnView(message('assistant')); terminal = false;
+        } else if (data.type === 'idle') terminal = true;
+        else {
+          if (['done', 'error', 'stopped'].includes(data.type)) terminal = true;
+          turn?.accept(data);
+        }
+      });
+      if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
+    } finally { turn?.finish(); }
+  }
+  async function finishChat() {
+    state.busy = false; state.turnReady = false; state.stopRequested = false; controls();
+    if (state.connected) {
+      try {
+        if (state.chat) {
+          state.chat = await json(`/chats/${state.chat.id}`);
+          $('chat-title').textContent = state.chat.title || 'New conversation';
+          showPending(state.chat.pending_inputs || []);
+        }
+        await refreshChats(); await health();
+      } catch (error) { toast(error.message); }
+    }
+  }
+  async function followChat() {
+    if (state.busy || !state.chat) return;
+    state.busy = true; state.turnReady = true; state.stopRequested = false; controls();
+    const turn = turnView(message('assistant'));
+    try {
+      await watchTurn(await api(`/chats/${state.chat.id}/stream`), turn);
+      // A reload can miss already-streamed text; the saved transcript is canonical.
+      const chat = await json(`/chats/${state.chat.id}`);
+      state.busy = false; setChat({...chat, running: false, pending_inputs: []});
+      showPending(chat.pending_inputs || []);
+    } catch (error) { toast(error.message); turn.finish(); }
+    finally { await finishChat(); }
+  }
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
-    if (!text || state.busy || !state.connected) return;
+    if (!text || !state.connected) return;
+    if (state.busy) { await submitInput('queue'); return; }
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
-    let turn, terminal = false;
+    let turn;
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
+      localStorage.setItem('kova:last-chat', state.chat.id);
       empty(false); message('user', text); $('prompt').value = ''; resize();
       nearBottom = true; turn = turnView(message('assistant')); follow();
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
-      state.turnReady = true;
+      state.turnReady = true; controls();
       if (state.stopRequested) await cancelTurn();
-      await readEvents(response, data => {
-        if (terminal) return;
-        terminal = ['done', 'error', 'stopped'].includes(data.type);
-        turn.accept(data);
-      });
-      if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
+      await watchTurn(response, turn);
     } catch (error) {
-      if (turn) turn.accept({type: 'error', message: error.message}); else toast(error.message);
+      if (turn) { turn.accept({type: 'error', message: error.message}); turn.finish(); } else toast(error.message);
     } finally {
-      turn?.finish(); state.busy = false; state.turnReady = false; state.stopRequested = false; controls();
+      await finishChat();
       if (document.activeElement === $('prompt')) $('prompt').focus({preventScroll: true});
-      if (state.connected) {
-        try {
-          // Update title/history without replacing the live reasoning and tool rows.
-          if (state.chat) { state.chat = await json(`/chats/${state.chat.id}`); $('chat-title').textContent = state.chat.title || 'New conversation'; }
-          await refreshChats(); await health();
-        } catch (error) { toast(error.message); }
-      }
     }
   }
   async function cancelTurn() {
@@ -482,6 +557,8 @@
       renderModels(models);
       $('model').value = status.model; selectedModel = status.model;
       await refreshChats(); controls(); await health();
+      const lastChat = localStorage.getItem('kova:last-chat');
+      if (lastChat && state.chats.some(chat => chat.id === lastChat)) await openChat(lastChat);
       state.events = new EventSource('/events');
       state.events.addEventListener('reminder', event => { try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
       state.events.onerror = () => { if (state.connected) health(); };

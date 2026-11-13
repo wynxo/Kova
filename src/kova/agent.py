@@ -178,12 +178,14 @@ class Agent:
         self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
 
-    async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
+    async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
+                       persisted: bool = False) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` names a configured model for this turn only; the active one otherwise.
         """
-        self.store.add_message(chat_id, 'user', text)
+        if not persisted:
+            self.store.add_message(chat_id, 'user', text)
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
@@ -236,7 +238,13 @@ class Agent:
         schemas = openai_schemas(tools) or None
         try:
             attempted_compaction = False
-            for step in range(11):
+            last_error = None
+            identical_errors = 0
+            step = 0
+            while True:
+                while guidance := self.store.apply_next_input(chat_id, 'steer'):
+                    last_error, identical_errors = None, 0
+                    yield {'type': 'steer', **guidance}
                 history = self.store.get_context(chat_id)
                 threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))
                 size = len(prompt) + sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
@@ -262,6 +270,11 @@ class Agent:
                         calls.append(event.tool_call)
                 answer = ''.join(content)
                 if not calls:
+                    # Guidance arriving during generation gets another model pass,
+                    # rather than being silently stranded after the final answer.
+                    if any(i['kind'] == 'steer' for i in self.store.pending_inputs(chat_id)):
+                        self.store.add_message(chat_id, 'assistant', answer)
+                        continue
                     message_id = self.store.add_message(chat_id, 'assistant', answer)
                     if needs_title:
                         current = self.store.get_chat(chat_id)
@@ -272,7 +285,13 @@ class Agent:
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]
                 self.store.add_message(chat_id, 'assistant', answer or None, tool_calls=formatted)
-                for call in calls:
+                step += 1
+                for call_index, call in enumerate(calls):
+                    if any(i['kind'] == 'steer' for i in self.store.pending_inputs(chat_id)):
+                        for skipped in calls[call_index:]:
+                            self.store.add_message(chat_id, 'tool', 'Error: skipped because new user steering arrived.',
+                                                   tool_call_id=skipped['id'])
+                        break
                     name = call['name']
                     try:
                         args = json.loads(call['arguments'])
@@ -341,5 +360,20 @@ class Agent:
                         result = result[:MAX_TOOL_RESULT_CHARS] + '\n[truncated]'
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                    error = None if ok else (action_key(name, args if isinstance(args, dict) else
+                                                       {'invalid_arguments': call['arguments']}, cwd), full_output)
+                    identical_errors = identical_errors + 1 if error is not None and error == last_error else int(error is not None)
+                    last_error = error
+                    if identical_errors >= 3:
+                        for skipped in calls[call_index + 1:]:
+                            self.store.add_message(chat_id, 'tool', 'Error: skipped because the loop guard stopped this turn.',
+                                                   tool_call_id=skipped['id'])
+                        notice = f'Loop guard: stopped after 3 identical tool errors from {name}. Change the action or give new guidance before retrying.'
+                        message_id = self.store.add_message(chat_id, 'assistant', notice)
+                        if needs_title:
+                            self.store.set_title(chat_id, derive_title(title_source))
+                        yield {'type': 'text', 'text': '\n\n' + notice}
+                        yield {'type': 'done', 'message_id': message_id, 'model': entry.name, 'reason': 'loop_guard'}
+                        return
         except ModelError as exc:
             yield {'type': 'error', 'message': str(exc)}

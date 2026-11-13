@@ -130,6 +130,14 @@ class Store:
             CREATE TABLE IF NOT EXISTS chat_compactions (
                 chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL, summary TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS chat_inputs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                model TEXT,
+                created TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 reminder_at TEXT NOT NULL,
@@ -311,6 +319,7 @@ class Store:
 
     def delete_chat(self, chat_id: str) -> bool:
         with self._lock:
+            self._conn.execute("DELETE FROM chat_inputs WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
             cur = self._conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
@@ -320,6 +329,7 @@ class Store:
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
         with self._lock:
+            self._conn.execute("DELETE FROM chat_inputs")
             self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM chats")
@@ -454,6 +464,44 @@ class Store:
         if exclude_chat_id is not None:
             results = [r for r in results if r["id"] != exclude_chat_id]
         return results[: max(1, limit)]
+
+    # -- pending user input -----------------------------------------------
+    def enqueue_input(self, chat_id: str, text: str, kind: str, model: str | None) -> dict:
+        if kind not in {"queue", "steer"} or not text.strip():
+            raise ValueError("Input must be non-empty queue or steer text")
+        with self._lock:
+            if self.get_chat(chat_id) is None:
+                raise KeyError(chat_id)
+            created = _utc_now_iso()
+            cur = self._conn.execute(
+                "INSERT INTO chat_inputs (chat_id, text, kind, model, created) VALUES (?, ?, ?, ?, ?)",
+                (chat_id, text, kind, model, created))
+            self._conn.commit()
+            return {"id": cur.lastrowid, "text": text, "kind": kind, "model": model, "created": created}
+
+    def pending_inputs(self, chat_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, text, kind, model, created FROM chat_inputs WHERE chat_id = ? ORDER BY id",
+                (chat_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_next_input(self, chat_id: str, kind: str) -> dict | None:
+        """Atomically move one pending input into the labelled user transcript."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, text, kind, model, created FROM chat_inputs "
+                "WHERE chat_id = ? AND kind = ? ORDER BY id LIMIT 1", (chat_id, kind)).fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["content"] = f"[{'Queued' if kind == 'queue' else 'Steer'}] {item['text']}"
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO messages (chat_id, role, content, created) VALUES (?, 'user', ?, ?)",
+                    (chat_id, item["content"], item["created"]))
+                self._conn.execute("DELETE FROM chat_inputs WHERE id = ?", (item["id"],))
+            return item
 
     # -- messages ---------------------------------------------------------
     def add_message(
