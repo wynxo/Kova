@@ -23,6 +23,8 @@ below lists every key the terminal chat understands.
 | `↑` `↓` | Earlier messages |
 | `ctrl+l` | Clear the screen |
 
+Every key here is remappable under `[tui.keys]` in `config.toml`; see the README.
+
 ## Reasoning and tools
 
 Toggle live details for the current turn:
@@ -40,6 +42,13 @@ Type to filter (the filter is fuzzy: `/mdl` finds `/model`), move with `↑` `�
 press `enter` to run or open the chosen item, and `esc` to close. Commands that
 need an argument (such as `/cd`) are put in the input box for you to finish.
 Recent chats resume exactly like `/resume`.
+
+## Sessions
+
+`/resume` opens a picker of recent chats: `↑` `↓` and `enter` switch to one,
+and `ctrl+s` forks the highlighted chat — a full copy (messages, plan and
+compacted context) that continues independently. `/fork` copies the current
+chat the same way, and `/fork 2` copies the second chat in the list.
 
 ## Status line
 

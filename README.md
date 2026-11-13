@@ -187,6 +187,25 @@ Inside a chat:
 - `/help` — list chat commands
 - `/exit` or `/quit` — leave the chat
 
+Use `/resume` to pick an earlier chat (its picker marks the current one, and **Ctrl+S** forks the highlighted chat and switches to the copy), or type `/fork` to copy the current chat, or `/fork 2` to copy the second one in `/resume`'s list. Forks include messages and compacted context, and the original is left untouched.
+
+The first setup asks you to name your assistant and choose a tone (warm, concise, professional or playful). Desktop and web also ask on first connection. The name and tone are saved in `~/.kova/config.toml` (or `$KOVA_HOME/config.toml`) under `[persona]` and used wherever your assistant appears: its replies' headers and the chat's welcome card, the desktop window title and tray menu, and how it speaks. Restarting the desktop refreshes its tray menu.
+
+Each chat start shows the welcome card plus one short tip, rotating through keyboard and command tips a run at a time, so you learn a little at a time instead of reading a wall of keys. `?` still shows every shortcut at once.
+
+For a light terminal background, set `theme = "light"` under `[tui]` in that file. The default is `"dark"`; colours still adapt to terminal colour depth and `NO_COLOR`. Bindings can be changed under `[tui.keys]`, using terminal key names; for example, to swap the palette and reasoning keys:
+
+```toml
+[tui]
+theme = "light"
+
+[tui.keys]
+palette = "ctrl-t"
+thinking = "ctrl-p"
+```
+
+Bindings must be unique, so swapping two keys requires both entries. Actions include `shortcuts`, `palette`, `thinking`, `tools`, `scroll_up`, `scroll_down`, `cancel`, `interrupt`, `exit`, `permissions`, `clear`, `suspend`, `up`, `down`, `complete`, `submit`, `newline`, and editor actions such as `left` and `backspace`. Supported key names are the default action keys and `ctrl-g`, `ctrl-r`, `ctrl-v`, and `ctrl-x`. Typed command prefixes (`/`, `!`, `#`, `@`) are not keybindings.
+
 Use **↑** for this session's input history and **Tab** to complete slash commands. **Ctrl+C** stops the current reply and returns to the prompt (or clears unfinished input); **Ctrl+D** leaves. Piped input uses plain input without terminal animations.
 
 Memory:

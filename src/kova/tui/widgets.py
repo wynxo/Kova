@@ -330,12 +330,13 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
             return render([(0, model_part(room))], [])
 
 
-def shortcuts(width: int, p: Palette) -> list[str]:
+def shortcuts(width: int, p: Palette, keys=None) -> list[str]:
+    bindings = [(keys.format_help(key) if keys else key, text) for key, text in SHORTCUTS]
     columns = 3 if width >= 100 else 2 if width >= 64 else 1
-    per = -(-len(SHORTCUTS) // columns)
-    groups = [SHORTCUTS[i * per:(i + 1) * per] for i in range(columns)]
+    per = -(-len(bindings) // columns)
+    groups = [bindings[i * per:(i + 1) * per] for i in range(columns)]
     column_width = (width - 4) // columns
-    key_width = max(display_width(key) for key, _ in SHORTCUTS) + 2
+    key_width = max(display_width(key) for key, _ in bindings) + 2
     lines = []
     for row in range(per):
         cells = []
@@ -357,11 +358,13 @@ def logo(p: Palette) -> list[str]:
 
 def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd: str,
             memory: str = "", notes: int | None = None, web: bool = True, offline: bool = False,
-            phase: float | None = None, tips: bool = True, title: str = "",
-            permission: str | None = None) -> list[str]:
+            phase: float | None = None, title: str = "",
+            permission: str | None = None, assistant_name: str = "Kova") -> list[str]:
     """The start-up card: the wordmark, then model, mode, folder and memory,
     in a frame drawn in Kova's gradient. ``phase`` sweeps a highlight across
-    the tagline while the card animates in."""
+    the tagline while the card animates in. ``assistant_name`` replaces the
+    wordmark when the user has named their assistant; key tips are shown
+    progressively by the chat, not here."""
     size = max(30, min(width, 72))
     inner = size - 4
     tagline = "your private AI"
@@ -371,11 +374,14 @@ def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd:
         tagline = p.dim(tagline)
     tagline += p.faint(f"  v{version}")
     content = [""]
-    if inner >= 40:
+    if assistant_name != "Kova":
+        content.append("  " + p.gradient(fit(assistant_name, inner - 4), bold=True) + "  " + tagline)
+    elif inner >= 40:
         mark = logo(p)
         content += ["  " + mark[0], "  " + mark[1] + "   " + tagline]
     else:
-        content.append("  " + p.paint("1;" + ACCENT, "\u25c6") + " " + p.gradient("Kova", bold=True)
+        content.append("  " + p.paint("1;" + ACCENT, "\u25c6") + " "
+                       + p.gradient(assistant_name, bold=True)
                        + ("  " + tagline if inner >= 36 else ""))
     content.append("")
     label_width = 9
@@ -404,22 +410,9 @@ def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd:
     if offline:
         lines += ["", "  " + p.yellow("The model is unreachable \u2014 replies may fail. "
                                       "Run kova setup or /model.")]
-    if tips:
-        def key(glyph: str, text: str) -> str:
-            return p.paint("1;" + ACCENT_SOFT, glyph) + " " + p.dim(text)
-        keys = [key("/", "commands"), key("@", "attach a file"), key("!", "shell"),
-                key("#", "remember"), key("?", "shortcuts")]
-        lines += ["", "  " + p.bold("Ask anything.") + p.dim(" Kova can search the web, work "
-                                                            "with files and set reminders.")
-                  if width >= 80 else "  " + p.bold("Ask anything."), ""]
-        row_text, rows_out = "  ", []
-        for item in keys:
-            if visible(row_text) + visible(item) + 3 > width and row_text.strip():
-                rows_out.append(row_text.rstrip())
-                row_text = "  "
-            row_text += item + "   "
-        rows_out.append(row_text.rstrip())
-        lines += rows_out
+    lines += ["", "  " + p.bold("Ask anything.") + p.dim(f" {assistant_name} can search the web, "
+                                                        "work with files and set reminders.")
+              if width >= 80 else "  " + p.bold("Ask anything.")]
     return lines
 
 
@@ -470,9 +463,14 @@ class Picker:
     ROWS = 10
 
     def __init__(self, title: str, items: list[tuple[str, str, object]], on_pick, *,
-                 current=None, subtitle: str = "", groups: dict | None = None):
+                 current=None, subtitle: str = "", groups: dict | None = None,
+                 actions: dict | None = None):
         self.title, self.items, self.on_pick = title, items, on_pick  # (label, detail, value)
         self.groups = groups or {}
+        # Extra actions on the highlighted row, as {key name: (label, callback)};
+        # ``ctrl-s`` forks in the session picker. Typing still filters, so only
+        # key names the editor never sees are offered.
+        self.actions = actions or {}
         self.subtitle, self.current = subtitle, current
         self.query = ""
         self.selected = next((i for i, item in enumerate(items) if item[2] == current), 0)
@@ -530,7 +528,10 @@ class Picker:
         if not shown:
             lines.append(p.dim("  Nothing matches"))
         lines.append("")
-        footer = "\u2191\u2193 move \u00b7 enter select \u00b7 esc cancel"
+        footer = "\u2191\u2193 move \u00b7 enter select"
+        for hotkey, (label, _callback) in self.actions.items():
+            footer += f" \u00b7 {hotkey.replace('ctrl-', 'ctrl+')} {label}"
+        footer += " \u00b7 esc cancel"
         return box(lines, width, p, ACCENT, title=p.bold(fit(self.title, width - 8)),
                    footer=p.faint(fit(footer, width - 10)))
 

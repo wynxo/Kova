@@ -147,7 +147,9 @@ class _Turn:
             self.blocks.append(_Block("stopped"))
 
     def render(self) -> Group:
-        items: list = [Text.assemble(("◆ ", f"bold {theme.ACCENT}"), ("Kova", f"bold {theme.ACCENT}"))]
+        from kova.tui.brand import assistant_name
+        items: list = [Text.assemble(("◆ ", f"bold {theme.ACCENT}"),
+                                     (assistant_name(), f"bold {theme.ACCENT}"))]
         for block in self.blocks:
             text = "".join(block.chunks)
             if block.kind == "text":
@@ -305,7 +307,7 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None) ->
     web = (chat.get("web", True) if chat else True)
 
     from kova import __version__
-    from kova.tui.brand import gradient_text, wordmark
+    from kova.tui.brand import assistant_name, gradient_text, wordmark
 
     console.print()
     console.print(wordmark(__version__))
@@ -313,7 +315,7 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None) ->
     status = Text("  ")
     status.append("●", style=theme.SUCCESS if health["model_ok"] else theme.WARNING)
     status.append("  ")
-    status.append_text(gradient_text("Kova"))
+    status.append_text(gradient_text(assistant_name()))
     status.append("  ·  model ", style=theme.MUTED)
     status.append(str(health["model"]), style="bold")
     if not health["model_ok"]:

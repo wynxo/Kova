@@ -930,7 +930,7 @@ def test_older_server_without_permissions_and_no_color(tmp_path):
         term.screen("Hello from the fake server.")
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"\x03")
-        term.screen("Press Ctrl+C again to exit")
+        term.screen("Press ctrl+c again to exit")
         term.type(b"\x03")
         status = term.exit_status()
         assert status == 0
@@ -1028,3 +1028,86 @@ def test_permissions_rules_editor_can_save_and_cancel():
     app.submit('/permissions rules')
     app.on_key(SimpleNamespace(name='esc',text=''))
     assert len(saved)==1
+
+
+def test_key_remapping_swaps_actions_without_leaving_old_binding():
+    from kova.tui.terminal import Key
+    from kova.tui.keymap import Keymap
+    keys = Keymap({'palette': 'ctrl-t', 'thinking': 'ctrl-p'})
+    assert keys.translate(Key('ctrl-t')).name == 'ctrl-p'
+    assert keys.translate(Key('ctrl-p')).name == 'ctrl-t'
+    assert keys.label('palette') == 'ctrl-t'
+    with pytest.raises(ValueError):
+        Keymap({'palette': 'ctrl-t'})
+
+
+def test_keymap_shows_bindings_the_way_keys_are_written():
+    from kova.tui.keymap import Keymap
+    keys = Keymap()
+    assert keys.pretty('clear') == 'ctrl+l' and keys.pretty('shortcuts') == '?'
+    assert keys.pretty('palette') == 'ctrl+p' and keys.pretty('permissions') == 'shift+tab'
+    # Help text written the default way follows a remap; names stay readable.
+    assert keys.format_help("ctrl+l") == "ctrl+l"
+    assert Keymap({'clear': 'ctrl-g'}).format_help("ctrl+l") == "ctrl+g"
+    assert Keymap({'cancel': 'ctrl-r'}).format_help("esc again") == "ctrl+r again"
+
+
+def test_remapped_key_toggles_shortcuts_and_question_still_types_in_a_picker():
+    from kova.tui.keymap import Keymap
+    from kova.tui.terminal import Key
+    client = StubClient()
+    client.list_chats = lambda: [{"id": "c1", "title": "First"}, {"id": "c2", "title": "Second"}]
+    app = chat_app(client)
+    app.keys = Keymap({'shortcuts': 'ctrl-g'})
+    app.on_key(Key("text", "?"))
+    assert app.editor.text == "?"          # unbound from shortcuts, so it is text
+    app.on_key(Key("ctrl-g"))
+    assert app.show_shortcuts
+    app.on_key(Key("esc"))
+    app.on_key(Key("ctrl-p"))
+    app.keys = Keymap()                     # default shortcuts, over the palette
+    app.on_key(Key("ctrl-g"))
+    assert isinstance(app.overlay, Picker)
+    app.on_key(Key("text", "?"))            # '?' filters; it never toggles a panel here
+    assert app.overlay.query == "?"
+    app.on_key(Key("esc"))
+
+
+def test_session_picker_forks_the_highlighted_chat():
+    client = StubClient()
+    client.list_chats = lambda: [{"id": "c1", "title": "First", "mode": "work", "message_count": 2},
+                                 {"id": "c2", "title": "Second", "mode": "chat", "message_count": 1}]
+    forks = []
+
+    def fork(chat_id):
+        forks.append(chat_id)
+        return {"id": "f" + chat_id, "title": "Second (fork)", "mode": "chat", "messages": []}
+    client.fork_chat = fork
+    app = chat_app(client)
+    app.submit("/resume")
+    assert isinstance(app.overlay, Picker) and app.overlay.actions
+    app.on_key(SimpleNamespace(name="down", text=""))          # highlight the second chat
+    app.on_key(SimpleNamespace(name="ctrl-s", text=""))        # fork it
+    assert forks == ["c2"] and app.chat_id == "fc2"
+    assert "Forked" in transcript(app)
+
+
+def test_fork_command_copies_the_current_chat_and_a_numbered_one():
+    client = StubClient()
+    chats = [{"id": "c1", "title": "First", "mode": "work", "message_count": 2},
+             {"id": "c2", "title": "Second", "mode": "work", "message_count": 0}]
+    client.list_chats = lambda: chats
+    forks = []
+
+    def fork(chat_id):
+        forks.append(chat_id)
+        return {"id": "f" + chat_id, "title": "Forked", "mode": "work", "messages": []}
+    client.fork_chat = fork
+    app = chat_app(client)
+    app.submit("/fork")
+    assert forks == ["c1"] and app.chat_id == "fc1"
+    app.submit("/fork 2")
+    assert forks == ["c1", "c2"] and app.chat_id == "fc2"
+    app.submit("/fork nope")
+    assert "No chat matches" in transcript(app)
+    assert forks == ["c1", "c2"]
