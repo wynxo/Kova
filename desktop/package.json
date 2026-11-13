@@ -1,0 +1,56 @@
+{
+  "name": "kova-desktop",
+  "version": "0.1.0",
+  "description": "Private local AI, on your desktop",
+  "author": "Kova contributors",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --ozone-platform-hint=auto",
+    "test": "node --test",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "io.github.wynxo.kova",
+    "productName": "Kova",
+    "files": [
+      "*.js",
+      "status.html",
+      "assets/*",
+      "!*.test.js"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "maintainer": "Kova contributors",
+      "syncDesktopName": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity"
+    }
+  },
+  "homepage": "https://github.com/wynxo/Kova",
+  "desktopName": "kova.desktop"
+}
