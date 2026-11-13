@@ -41,7 +41,9 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
     assert app.state.token not in page.text
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     assert page.headers["referrer-policy"] == "no-referrer"
-    for name in ("app.js", "app.css", "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js"):
+    for name in ("app.js", "app.css", "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
+                 "fonts/InterVariable.woff2", "fonts/InterVariable-Italic.woff2",
+                 "fonts/JetBrainsMonoVariable.woff2"):
         response = client.get(f"/app/assets/{name}")
         assert response.status_code == 200
         assert response.content
