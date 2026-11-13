@@ -78,6 +78,7 @@ COMMANDS = {
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
     "compact": ("/compact", "Summarize older conversation context"),
+    "restore": ("/restore [checkpoint-id]", "Restore the latest reviewed file changes"),
     "clear": ("/clear", "Clear the screen, keeping this conversation"),
     "exit": ("/exit", "Leave Kova (also /quit)"),
     "quit": ("/quit", "Leave Kova"),
@@ -193,6 +194,7 @@ class ChatApp:
         self.model, self.model_ok = "", True
         self.notes: int | None = None
         self.plan: list[dict] = []
+        self.last_checkpoint_id: str | None = None
         self.files = FileIndex(self.cwd)
         # Rough context accounting for the status line: characters in the
         # conversation so far, and the active model's window in tokens.
@@ -733,6 +735,8 @@ class ChatApp:
                 self._finish(job)
                 return
             kind = event.get("type")
+            if kind == "review":
+                self.last_checkpoint_id = str(event.get("checkpoint_id") or "") or None
             if kind == "approval":
                 if job.cancel.is_set():
                     self._send_approval(event, "deny")
@@ -880,6 +884,23 @@ class ChatApp:
             emit(event)
             emit({"type": "done"})
         self.job = Job("reply", run, label="/compact")
+
+    def _cmd_restore(self, rest: str) -> None:
+        client, chat_id = self.client, self.chat_id
+        checkpoint_id = rest or self.last_checkpoint_id
+
+        def run(emit, _cancel):
+            nonlocal checkpoint_id
+            if not checkpoint_id:
+                records = client.checkpoints_list(chat_id)
+                checkpoint_id = records[0]["id"] if records else None
+            if not checkpoint_id:
+                raise KovaError(404, "No local checkpoint is available for this conversation.")
+            result = client.restore_checkpoint(chat_id, checkpoint_id)
+            emit({"type": "review_restored", "files": result["files"]})
+
+        self.renderer.begin_turn()
+        self.job = Job("reply", run, label="/restore")
 
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer

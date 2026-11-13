@@ -60,6 +60,7 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 - Remembers facts about you and brings the relevant ones into every chat
 - Web search and page reading, with a per-chat on/off toggle
 - Reads, searches and atomically edits project files in a per-chat working folder (`~/Kova Files` by default)
+- Shows a per-turn file diff in the web UI and TUI; restore a turn from its local checkpoint
 - Runs local commands with approval controls, bounded output and Stop support
 - Streams a checklist for multi-step work
 - Reminders that pop in while you chat, with desktop notifications
@@ -86,7 +87,7 @@ under `KOVA_HOME`. Closing the window hides it to the tray. Packaged builds
 they are built per platform and need the Kova Python CLI installed separately.
 
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
-live tool status, approval cards, plan checklists, working-folder and permission
+live tool status, per-turn file diffs with local restore checkpoints, approval cards, plan checklists, working-folder and permission
 controls, chat history/search, modes, web search, model selection, Stop,
 reminder popups, and dark/light themes. The UI loads even when the model is offline;
 run `kova setup` or start your model server to chat.
@@ -183,6 +184,7 @@ Inside a chat:
 - `/web` — show whether web search is on; `/web on` or `/web off` toggles it
 - `/model` — list models and mark the active one; `/model <name>` switches models
 - `/think` — toggle full reasoning; by default you see a spinner, then a compact elapsed-time summary
+- `/restore [checkpoint-id]` — restore the latest reviewed turn, or a named checkpoint
 - `/clear` — clear the screen without resetting the conversation
 - `/help` — list chat commands
 - `/exit` or `/quit` — leave the chat
@@ -291,7 +293,7 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 ## Where your data lives
 
-Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.
+Everything Kova keeps — config, the chat database, memory notes, and local turn checkpoints — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Checkpoints are independent of git and only contain changed-file restore data; they never stage, commit, or alter git state. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.
 
 The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and API requests need a local bearer token or an authenticated browser session. The app shell and health check are public, but contain no chat data or credentials. 🔒
 

@@ -329,6 +329,24 @@
           const next = planView(event.items);
           if (plan) plan.replaceWith(next); else body.insertBefore(next, activity);
           plan = next;
+        } else if (kind === 'review') {
+          current = null; activity.hidden = true;
+          const review = el('section', 'turn-review');
+          const heading = el('strong', '', `Turn review · ${(event.files || []).length} file(s) changed`);
+          const files = el('ul', 'review-files');
+          for (const file of event.files || []) files.append(el('li', '', `${file.status}  ${file.path}`));
+          const diff = el('pre', 'review-diff', event.diff || 'No text diff available for these files.');
+          const restore = el('button', 'btn secondary', 'Restore checkpoint'); restore.type = 'button';
+          restore.onclick = async () => {
+            if (!window.confirm('Restore these files to their state before this turn?')) return;
+            restore.disabled = true;
+            try {
+              const result = await json(`/chats/${state.chat.id}/checkpoints/${encodeURIComponent(event.checkpoint_id)}/restore`, {method: 'POST'});
+              restore.textContent = `Restored ${result.files.length} file(s)`;
+              restore.className = 'btn secondary restored';
+            } catch (error) { restore.disabled = false; toast(error.message); }
+          };
+          review.append(heading, files, diff, restore); body.insertBefore(review, activity);
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
           if (tool) { tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok); tool.detail.textContent = event.ok && event.name === 'update_plan' ? 'Plan updated' : (event.summary || '').replace(/\s+/g, ' ').slice(0, 200); tool.detail.title = event.summary || ''; }

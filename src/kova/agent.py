@@ -21,6 +21,7 @@ from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
+from kova.tools.checkpoints import Checkpoints, Snapshot
 from kova.tools.sessions import set_current_chat
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
@@ -177,6 +178,7 @@ class Agent:
         self.now = now
         self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
+        self.checkpoints = Checkpoints(config.home)
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
@@ -232,6 +234,13 @@ class Agent:
         if not entry.model:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
+        snapshot: Snapshot | None = None
+        if mode != 'chat':
+            try:
+                snapshot = await asyncio.to_thread(self.checkpoints.begin, cwd)
+            except OSError as exc:
+                yield {'type': 'error', 'message': f'Could not create a local checkpoint: {exc}'}
+                return
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(tools) or None
         try:
@@ -267,6 +276,9 @@ class Agent:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
                             self.store.set_title(chat_id, derive_title(title_source))
+                    review = await self._finish_review(snapshot, chat_id)
+                    if review is not None:
+                        yield review
                     yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
@@ -342,4 +354,22 @@ class Agent:
                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
                     yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
         except ModelError as exc:
+            review = await self._finish_review(snapshot, chat_id)
+            if review is not None:
+                yield review
             yield {'type': 'error', 'message': str(exc)}
+        finally:
+            await asyncio.to_thread(self.checkpoints.discard, snapshot)
+
+    async def _finish_review(self, snapshot: Snapshot | None, chat_id: str) -> dict | None:
+        """Finalize the turn's local checkpoint and return its review event."""
+        if snapshot is None:
+            return None
+        try:
+            record = await asyncio.to_thread(self.checkpoints.finish, snapshot, chat_id)
+        except OSError:
+            return None
+        if record is None:
+            return None
+        return {'type': 'review', 'checkpoint_id': record['id'], 'files': record['files'],
+                'diff': record['diff']}

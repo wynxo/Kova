@@ -617,6 +617,12 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .tool-detail { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--text-3); }
 .tool-row.failed { border-color:color-mix(in srgb, var(--danger) 28%, transparent); }
 .tool-row.failed > .icon { color:var(--danger); }
+.turn-review { display:grid; gap:10px; padding:14px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--surface); }
+.turn-review > strong { font-size:13px; }
+.review-files { margin:0; padding-left:20px; color:var(--text-2); font:12px/1.6 var(--mono); }
+.review-diff { box-sizing:border-box; max-height:360px; overflow:auto; margin:0; padding:12px; border-radius:var(--r-sm); background:var(--code-bg); color:var(--text); white-space:pre; font:12px/1.55 var(--mono); }
+.turn-review .btn { justify-self:start; }
+.turn-review .btn.restored { color:var(--ok); }
 
 .plan-view { padding:12px 14px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); }
 .plan-view > strong { display:block; margin-bottom:8px; color:var(--text-3); font-size:11.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }

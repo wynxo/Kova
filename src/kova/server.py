@@ -317,6 +317,27 @@ def create_app(
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
+    @api.get("/chats/{chat_id}/checkpoints")
+    async def list_checkpoints(chat_id: str) -> list[dict]:
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return app.state.agent.checkpoints.list(chat_id)
+
+    @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/restore")
+    async def restore_checkpoint(chat_id: str, checkpoint_id: str) -> dict:
+        async with chat_lock(chat_id):
+            chat = app.state.store.get_chat(chat_id)
+            if chat is None:
+                raise HTTPException(status_code=404, detail="chat not found")
+            try:
+                files = await asyncio.to_thread(app.state.agent.checkpoints.restore,
+                                                checkpoint_id, Path(chat["cwd"]), chat_id=chat_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {"ok": True, "files": files}
+
     @api.post("/chats/{chat_id}/messages")
     async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:

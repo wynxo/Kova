@@ -156,6 +156,12 @@ class KovaClient:
     def compact_chat(self, chat_id: str) -> dict:
         return self._request("POST", f"/chats/{chat_id}/compact", timeout=330).json()
 
+    def checkpoints_list(self, chat_id: str) -> list[dict]:
+        return self._request("GET", f"/chats/{chat_id}/checkpoints").json()
+
+    def restore_checkpoint(self, chat_id: str, checkpoint_id: str) -> dict:
+        return self._request("POST", f"/chats/{chat_id}/checkpoints/{checkpoint_id}/restore").json()
+
     def stop_chat(self, chat_id: str) -> bool:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))

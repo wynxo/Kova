@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-turn file diffs with local, git-independent checkpoints and restore controls in the web UI and TUI.
 - `kova-web` command opens Kova's web UI in your browser.
 - Terminal shortcut `Ctrl+T` toggles full model reasoning, streamed live.
 - Terminal shortcut `Ctrl+O` expands and collapses tool calls and their output.

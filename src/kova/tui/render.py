@@ -376,6 +376,29 @@ class Renderer:
     def _on_compact_skipped(self, event) -> None:
         self.line(str(event.get('message', 'Nothing to compact.')))
 
+    def _on_review(self, event) -> None:
+        self.end_text()
+        self.reply_header()
+        files = event.get("files") if isinstance(event.get("files"), list) else []
+        self.line(self.p.bold(f"  Turn review · {len(files)} file(s) changed"))
+        for item in files:
+            if isinstance(item, dict):
+                self.line(self.p.dim(f"    {item.get('status', 'changed')}  {item.get('path', '')}"))
+        diff = str(event.get("diff") or "")
+        if diff:
+            for row in diff.splitlines():
+                if row.startswith("+") and not row.startswith("+++"):
+                    self.line(self.p.green("    " + row))
+                elif row.startswith("-") and not row.startswith("---"):
+                    self.line(self.p.red("    " + row))
+                else:
+                    self.line(self.p.dim("    " + row))
+        self.line(self.p.dim("  Restore with /restore, or /restore <checkpoint-id> for an older checkpoint."))
+
+    def _on_review_restored(self, event) -> None:
+        files = event.get("files") if isinstance(event.get("files"), list) else []
+        self.line(self.p.green(f"  Restored {len(files)} file(s) to the local checkpoint."))
+
     def _on_done(self, _event) -> None:
         self.end_text()
         self.status("")
