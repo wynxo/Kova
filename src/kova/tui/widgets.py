@@ -298,8 +298,9 @@ class Picker:
     ROWS = 10
 
     def __init__(self, title: str, items: list[tuple[str, str, object]], on_pick, *,
-                 current=None, subtitle: str = ""):
+                 current=None, subtitle: str = "", groups: dict | None = None):
         self.title, self.items, self.on_pick = title, items, on_pick  # (label, detail, value)
+        self.groups = groups or {}
         self.subtitle, self.current = subtitle, current
         self.query = ""
         self.selected = next((i for i, item in enumerate(items) if item[2] == current), 0)
@@ -339,7 +340,12 @@ class Picker:
         shown = self.shown
         start = max(0, min(self.selected - self.ROWS // 2, len(shown) - self.ROWS))
         label_width = min(40, max([display_width(item[0]) for item in shown] + [8]) + 2)
+        previous_group = None
         for index, (label, detail, value) in enumerate(shown[start:start + self.ROWS], start):
+            group = self.groups.get(value)
+            if group and group != previous_group:
+                lines.append(p.bold(fit(group, inner)))
+                previous_group = group
             mark = " \u2714" if value == self.current and self.current is not None else ""
             text = fit(f"{index + 1}. {label}", label_width + 3).ljust(label_width + 4)
             rest = fit(detail + mark, max(0, inner - label_width - 8))

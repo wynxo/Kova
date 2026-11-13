@@ -18,7 +18,7 @@ Windows (PowerShell, not Administrator):
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/install.ps1 | iex"
 ```
 
-Then set up a model server and chat:
+Then connect a provider and chat:
 
 ```sh
 kova setup
@@ -43,7 +43,7 @@ Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --
 
 ## Features
 
-Kova is an assistant you run yourself, so it's private, free, and has no usage limits. Your chats and its memory of you stay on your machine, not on someone else's server. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
+Kova runs on your computer. Your chat history and memory stay on your machine; messages and tool results are sent to the model provider you choose. Local models can keep inference on your own hardware. Hosted providers have their own pricing, privacy policies and usage limits. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
 
 - Two modes per chat: **work** (default) with every tool, and **chat** for plain conversation with nothing but web search
 - Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning
@@ -54,14 +54,14 @@ Kova is an assistant you run yourself, so it's private, free, and has no usage l
 - Streams a checklist for multi-step work
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
-- Works with any OpenAI-compatible model server
+- Connect API-key providers, a ChatGPT subscription, an installed login, or your own model server
 
 ## Desktop app
 
 Run `kova-app` (or `./desktop-app` from a checkout; `desktop-app.bat` on Windows).
 It starts the same local server as the CLI and opens your chats in a native window
 when **pywebview** is installed, otherwise in your default browser. Force the browser
-with `kova-app --browser`. No Node, CDN, account, or token pasting is needed.
+with `kova-app --browser`. No Node or CDN is needed, and Kova itself requires no account.
 
 Native windows are optional: from a checkout, run `uv sync --extra app`, then
 `./desktop-app`. For a tool install, use
@@ -86,11 +86,59 @@ Stop cancels the model turn, denies pending approvals, and kills running command
 and their child processes. It cannot undo changes already made or a synchronous
 file operation that has already started.
 
-## Model setup
+## Setup / Providers
 
-`kova setup` finds a local model server, tests it, and saves it. No server on this computer? Type its address the way you think of it (`192.168.1.50`, `homelab:8080`, `openrouter`) and Kova tries the usual ports, or type `scan` to search your network (only when you ask). `kova model add NAME ADDRESS [MODEL]` takes the same loose addresses and picks the model if the server has only one. For another machine: `kova setup --url http://192.168.1.20:8080 --model MODEL` (add `--key KEY` if needed).
+Run `kova setup`, choose a provider, connect it, and select one or more models.
+Choose the active model at the end. Arrow keys work in interactive terminals;
+numbered prompts work in simpler terminals. Long catalogs can be filtered by name.
+Setup **only reads model catalogs**: it never sends a test chat, scans localhost,
+or searches your LAN. Run setup again to add another connection without replacing
+existing ones. Memory keeps its current location; `kova memory use` changes it.
 
-Kova works with OpenAI-compatible servers, including llama.cpp / PolyStrata, Ollama (`http://localhost:11434/v1`), and LM Studio (`http://localhost:1234/v1`). You can also add one manually with `kova model add NAME URL MODEL` then `kova model use NAME`.
+| Connection | What it does |
+| --- | --- |
+| **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
+| **ChatGPT subscription** | Continue with ChatGPT in your browser using OAuth with PKCE. Kova verifies the account token, obtains your explicit ChatGPT-plan permission, and uses the public Responses endpoint. Availability and limits depend on your account and the sign-in preview. This is separate from an OpenAI API key. |
+| **Installed Codex login** | With your consent, read this machine's `~/.codex/auth.json` on each request. Kova never copies, changes, refreshes or revokes that login. If it expires, sign in again in the installed CLI. Only ChatGPT-token logins are supported, not API-key-only logins. |
+| **Local server** | Type an address such as `homelab:8080`, `192.168.178.29:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
+| **Custom provider** | Give any OpenAI-compatible base URL (including its API path), a connection name, optional key and optional JSON headers. Nonstandard paths are preserved. |
+
+The desktop sidebar has **Add provider** with key/custom/local setup, browser
+sign-in and consented installed-login reuse. Its model menu groups choices by
+provider. Terminal chat's `/model` picker has the same groups and type-to-filter.
+
+```sh
+kova providers                     # connected providers, never credentials
+kova providers add                 # provider wizard
+kova providers add openai          # start with a provider type
+kova providers login CONNECTION    # sign in again / replace a key
+kova providers logout CONNECTION   # forget credentials; keep selected models
+kova providers remove CONNECTION   # remove connection and its selected models
+kova model list                    # selected models, grouped by provider
+kova model use CONNECTION/MODEL_ID
+```
+
+Existing `[[models]]` configs still load with the same names and active model.
+The next save writes schema version 2 with `[[providers]]`; matching legacy
+URL/key pairs share one provider. The old command still works:
+
+```sh
+kova model add home homelab:8080 MODEL_ID
+kova model use home
+kova setup --url http://192.168.178.29:11434 --model MODEL_ID --name home
+```
+
+Keys, custom headers and owned OAuth tokens are stored only in
+`~/.kova/config.toml`, written atomically with **0600** permissions on Unix.
+There is no extra keyring dependency. Avoid putting keys directly in shell
+history; interactive setup hides input. Owned tokens refresh near expiry under
+a cross-process lock. Logging out attempts to revoke the owned renewable session;
+Kova reports if remote revocation could not be confirmed. Borrowed logins are
+only disconnected locally. Exports omit all keys, headers and OAuth data.
+
+Kova uses OpenAI-compatible endpoints where available, Anthropic's native
+Messages API for its tool-call format, and a Responses adapter for subscription
+connections. There is no provider-specific logic in the agent's tool loop.
 
 ## Usage
 
@@ -107,7 +155,7 @@ The CLI starts the server for you in the background, so normally you don't have 
   - `--chat ID` continues a chat; otherwise each ask gets its own chat titled `[ask] …`.
   - `--think` shows the reasoning on stderr, so stdout stays clean.
   - Exit code 0 on success, 1 on a model or server error (message on stderr).
-- `kova setup` — find a model server, test it, and pick a memory folder.
+- `kova setup` — connect a provider and select models, without a test chat or scan.
 - `kova chats search <words>` — search inside your chats; results show the chat number, title, when, and a snippet with the match highlighted.
 - `kova chats export <#|id> [--md|--json]` — print one chat to stdout, as Markdown (default) or JSON.
 - `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
@@ -137,7 +185,7 @@ Memory:
 
 Models:
 
-- `kova model list` — configured models
+- `kova model list` — selected models grouped by provider
 - `kova model add NAME URL MODEL [--key KEY]` — add one
 - `kova model use NAME` — set the active one
 
@@ -228,7 +276,7 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 ## Where your data lives
 
-Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. There is no cloud service and no account.
+Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.
 
 The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and API requests need a local bearer token or an authenticated browser session. The app shell and health check are public, but contain no chat data or credentials. 🔒
 

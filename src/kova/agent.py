@@ -202,6 +202,7 @@ class Agent:
                 prompt += f"\n\n{instructions}"
             if (chat or {}).get('plan'):
                 prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
+        self.config.bind_providers()
         entry = (next(m for m in self.config.models if m.name == model)
                  if model is not None else self.config.active_model())
         if not entry.model:
@@ -232,7 +233,7 @@ class Agent:
                             self.store.set_title(chat_id, derive_title(title_source))
                     yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
                     return
-                formatted = [{'id': call['id'], 'type': 'function', 'function': {
+                formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]
                 self.store.add_message(chat_id, 'assistant', answer or None, tool_calls=formatted)
                 for call in calls:

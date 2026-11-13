@@ -338,12 +338,13 @@ def _models(client: KovaClient, console: Console) -> None:
     table = Table(box=None, padding=(0, 2, 0, 0))
     table.add_column("Model", style=theme.ACCENT)
     table.add_column("Identifier")
+    table.add_column("Provider", style=theme.MUTED)
     table.add_column("Server", style=theme.MUTED)
-    for entry in client.models_list():
+    for entry in sorted(client.models_list(), key=lambda m: (m.get("provider_name", ""), m["name"])):
         name = Text(entry["name"])
         if entry["name"] == active:
             name.append(" (active)", style=theme.SUCCESS)
-        table.add_row(name, Text(entry["model"]), Text(entry["base_url"]))
+        table.add_row(name, Text(entry["model"]), Text(entry.get("provider_name", "Custom")), Text(entry["base_url"]))
     console.print(table)
     console.print()
 

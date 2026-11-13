@@ -38,7 +38,7 @@ const sandbox = {
     querySelectorAll: () => [], addEventListener() {}, body: new Element(), documentElement: new Element()},
   window: {addEventListener() {}}, location: {hash: ''},
   performance, URLSearchParams, TextDecoder, console,
-  requestAnimationFrame: fn => { fn(); }, setTimeout() {}, setInterval() {},
+  requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options) => {
     requests.push({path, body: options.body ? JSON.parse(options.body) : null});
@@ -46,7 +46,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, renderModels, closeProvider, showProviderModels};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -100,3 +100,28 @@ assert.ok(requests.some(r => r.path === '/chats/saved' && r.body?.permission ===
 $('cwd').value = '/other'; $('cwd').onchange(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/chats/saved' && r.body?.cwd === '/other'));
 console.log('Frontend approval, plan, saved settings, and control behavior passed');
+
+// Provider grouping is real DOM structure, not a label prefix on a flat list.
+sandbox.test.renderModels([
+  {name:'home/a',model:'alpha',provider_name:'Home'},
+  {name:'cloud/b',model:'beta',provider_name:'Cloud'},
+  {name:'home/c',model:'gamma',provider_name:'Home'},
+]);
+assert.deepEqual($('model').children.map(g => [g.tagName,g.label,g.children.length]),
+                 [['optgroup','Home',2],['optgroup','Cloud',1]]);
+assert.equal($('model').children[0].children[1].value, 'home/c');
+$('provider-dialog').close = () => {};
+$('provider-key').value = 'never-save-this'; $('provider-headers').value = '{"X-Secret":"private"}';
+sandbox.test.closeProvider();
+assert.equal($('provider-key').value, ''); assert.equal($('provider-headers').value, '');
+sandbox.test.showProviderModels(['alpha','beta']);
+assert.equal($('provider-models').children.length, 2);
+$('provider-filter').value = 'beta'; $('provider-filter').oninput();
+assert.equal($('provider-models').children[0].hidden, true);
+assert.equal($('provider-models').children[1].hidden, false);
+const choices = $('provider-models').children.map(label => label.children[0]);
+choices[0].checked = false; choices[1].checked = true; choices[1].onchange();
+assert.equal($('provider-active').children.length, 1);
+assert.equal($('provider-active').children[0].value, 'beta');
+assert.equal($('provider-next').disabled, false);
+console.log('Provider grouping, filtering, selection and secret cleanup passed');

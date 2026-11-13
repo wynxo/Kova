@@ -107,7 +107,8 @@ def _note_dict(note: Note) -> dict:
 def _model_dict(entry: ModelEntry) -> dict:
     """The JSON shape of a model entry."""
     return {"name": entry.name, "base_url": entry.base_url, "model": entry.model,
-            "api_key": "***" if entry.api_key else None, "context": entry.context}
+            "api_key": "***" if entry.api_key else None, "context": entry.context,
+            "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
 def _sse(event: dict) -> str:
@@ -181,6 +182,9 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     install_web(app, _require_bearer)
+    from kova.provider_routes import install_provider_routes
+    config.bind_providers()
+    install_provider_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""
@@ -396,6 +400,7 @@ def create_app(
 
     @api.get("/models")
     async def models_list() -> list[dict]:
+        config.bind_providers()
         return [_model_dict(entry) for entry in config.models]
 
     @api.post("/models")
