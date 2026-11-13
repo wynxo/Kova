@@ -1,13 +1,27 @@
 """Server-side permission policy, adapted from Kaine's agent_tools.py.
 
-The classifier is a heuristic, not a shell sandbox. Manual is the default.
+Two layers decide whether a tool call runs, asks or is refused:
+
+1. Rules (``RuleBook``): a list the user edits. A matching ``deny`` rule beats
+   ``ask``, which beats ``allow``. Shell commands are split into their simple
+   commands first and every part is judged, so ``git status; rm -rf x`` is
+   never allowed because its first part is.
+2. The permission mode (manual / auto / full) and the destructive classifier,
+   the fallback when no rule decides.
+
+The classifier and the command splitter are heuristics, not a shell sandbox.
+Manual is the default.
 """
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+import difflib
+import hashlib
+import json
 from pathlib import Path
 import re
+import shlex
 from uuid import uuid4
 
 PERMISSIONS = ("manual", "auto", "full")
@@ -73,6 +87,9 @@ def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Pat
         target = resolve_path(args["path"], str(cwd))
         return permission != "auto" and not session_allowed and not target.is_relative_to(files.resolve())
     return False
+
+
+#RULES#
 
 
 @dataclass
