@@ -136,6 +136,28 @@ class Store:
                 text TEXT NOT NULL,
                 done INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS memory_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                before TEXT,
+                after TEXT,
+                chat_id TEXT,
+                detail TEXT,
+                undone INTEGER NOT NULL DEFAULT 0,
+                created TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_diary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                entry TEXT NOT NULL,
+                created TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_reviews (
+                chat_id TEXT PRIMARY KEY,
+                turns INTEGER NOT NULL,
+                created TEXT NOT NULL
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
@@ -531,6 +553,115 @@ class Store:
             self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET cutoff=excluded.cutoff, summary=excluded.summary", (chat_id, cutoff, summary))
             self._conn.commit()
             return True
+
+    # -- memory maintenance ------------------------------------------------
+    def record_memory_revision(self, slug: str, kind: str, *, before: str | None = None,
+                               after: str | None = None, chat_id: str | None = None,
+                               detail: dict | None = None) -> int:
+        """Store a memory preimage, so every write behind a background pass is reversible.
+
+        ``before`` is the note's whole previous file text (``None`` when the
+        note did not exist) and ``after`` what replaced it; ``detail`` carries
+        whatever the caller needs to describe the change to a person.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (slug, kind, before, after, chat_id,
+                 json.dumps(detail, ensure_ascii=False) if detail is not None else None,
+                 _utc_now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def _revision_row(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "slug": row["slug"],
+            "kind": row["kind"],
+            "before": row["before"],
+            "after": row["after"],
+            "chat_id": row["chat_id"],
+            "detail": json.loads(row["detail"]) if row["detail"] else None,
+            "undone": bool(row["undone"]),
+            "created": row["created"],
+        }
+
+    def get_memory_revision(self, revision_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memory_revisions WHERE id = ?", (revision_id,)
+            ).fetchone()
+        return self._revision_row(row) if row is not None else None
+
+    def memory_revisions(self, *, limit: int = 50, kind: str | None = None,
+                         pending_only: bool = False) -> list[dict]:
+        """Recent memory revisions, newest first; ``pending_only`` drops undone ones."""
+        sql = "SELECT * FROM memory_revisions"
+        conditions, params = [], []
+        if kind is not None:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if pending_only:
+            conditions.append("undone = 0")
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, limit))
+        with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [self._revision_row(row) for row in rows]
+
+    def mark_memory_revision_undone(self, revision_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE memory_revisions SET undone = 1 WHERE id = ?", (revision_id,))
+            self._conn.commit()
+
+    def add_memory_diary(self, kind: str, entry: str) -> int:
+        """One human-readable line of what a background pass did, and why."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO memory_diary (kind, entry, created) VALUES (?, ?, ?)",
+                (kind, entry, _utc_now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def memory_diary(self, *, limit: int = 50, kind: str | None = None) -> list[dict]:
+        """Recent diary entries, oldest first, so they read as a log."""
+        sql = "SELECT id, kind, entry, created FROM memory_diary"
+        params: list = []
+        if kind is not None:
+            sql += " WHERE kind = ?"
+            params.append(kind)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, limit))
+        with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [{"id": r["id"], "kind": r["kind"], "entry": r["entry"], "created": r["created"]}
+                for r in reversed(rows)]
+
+    def last_memory_diary(self, kind: str) -> dict | None:
+        entries = self.memory_diary(limit=1, kind=kind)
+        return entries[-1] if entries else None
+
+    def memory_review_turns(self, chat_id: str) -> int:
+        """How many user turns this chat had when it was last reviewed (0 if never)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT turns FROM memory_reviews WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        return int(row["turns"]) if row is not None else 0
+
+    def set_memory_review_turns(self, chat_id: str, turns: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO memory_reviews (chat_id, turns, created) VALUES (?, ?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET turns = excluded.turns, created = excluded.created",
+                (chat_id, turns, _utc_now_iso()),
+            )
+            self._conn.commit()
 
     # -- reminders --------------------------------------------------------
     def add_reminder(self, when: datetime, text: str) -> int:

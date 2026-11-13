@@ -72,6 +72,23 @@ class NoteBody(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class MemoryEditBody(BaseModel):
+    """An in-place edit of one memory note; omitted fields stay as they are."""
+    title: str | None = None
+    body: str | None = None
+    tags: list[str] | None = None
+
+
+class MemoryUndoBody(BaseModel):
+    """Undo the most recent background memory changes, or one named revision."""
+    revision_id: int | None = None
+
+
+class ConsolidateBody(BaseModel):
+    """Plan (and by default apply) one consolidation run."""
+    dry_run: bool = False
+
+
 class MemoryLocationBody(BaseModel):
     """The root and write mode for memory."""
     path: str
@@ -99,9 +116,10 @@ class ActiveBody(BaseModel):
 
 
 def _note_dict(note: Note) -> dict:
-    """The JSON shape of a memory note."""
+    """The JSON shape of a memory note, including where the fact came from."""
     return {"slug": note.slug, "title": note.title, "body": note.body,
-            "tags": note.tags, "updated": note.updated}
+            "tags": note.tags, "updated": note.updated,
+            "origin": note.origin, "source": note.source, "created": note.created}
 
 
 def _model_dict(entry: ModelEntry) -> dict:
@@ -425,6 +443,58 @@ def create_app(
         if not app.state.memory.delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
+
+    @api.patch("/memory/{slug}")
+    async def memory_edit(slug: str, body: MemoryEditBody) -> dict:
+        """Rewrite one note in place, keeping its slug, provenance and creation date."""
+        if body.title is None and body.body is None and body.tags is None:
+            raise HTTPException(status_code=422, detail="nothing to update")
+        try:
+            note = await asyncio.to_thread(app.state.memory.update, slug,
+                                           title=body.title, body=body.body, tags=body.tags)
+        except ValueError as exc:
+            status = 422 if "No note named" not in str(exc) else 404
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return _note_dict(note)
+
+    @api.get("/memory/diary")
+    async def memory_diary(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+        """What the background memory passes did, oldest first, for a person to read."""
+        return app.state.store.memory_diary(limit=limit)
+
+    @api.post("/memory/undo")
+    async def memory_undo(body: MemoryUndoBody | None = None) -> dict:
+        """Reverse recorded review/consolidation writes from their preimages."""
+        from kova.review import undo
+        undone = await asyncio.to_thread(undo, app.state.memory, app.state.store,
+                                         revision_id=body.revision_id if body else None)
+        return {"undone": undone}
+
+    @api.post("/memory/consolidate")
+    async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
+        """Plan one consolidation run and, unless asked to dry-run, apply it."""
+        from kova.review import gate_operations, plan_consolidation, apply_operations
+        entry = config.active_model()
+        if not entry.model:
+            raise HTTPException(status_code=422, detail="No model is configured")
+        client = ModelClient(entry, transport=app.state.agent.transport)
+        memory, store = app.state.memory, app.state.store
+        operations = await plan_consolidation(memory, client)
+        accepted, refused = await asyncio.to_thread(
+            gate_operations, operations, memory.list(),
+            min_confidence=config.memory_consolidate_min_confidence,
+            max_loss=config.memory_consolidate_max_loss)
+        applied = [] if (body and body.dry_run) else await asyncio.to_thread(
+            apply_operations, store, memory, accepted)
+        return {
+            "planned": [{"op": op.kind, "slugs": op.slugs, "title": op.title,
+                         "body": op.body, "confidence": op.confidence,
+                         "reason": op.reason} for op in operations],
+            "accepted": [{"op": op.kind, "slugs": op.slugs} for op in accepted],
+            "refused": refused,
+            "applied": applied,
+            "dry_run": bool(body and body.dry_run),
+        }
 
     @api.get("/reminders")
     async def reminders_list() -> list[dict]:
