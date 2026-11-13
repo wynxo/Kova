@@ -204,6 +204,18 @@ class KovaClient:
     def memory_diary(self, limit: int = 50) -> list[dict]:
         return self._request("GET", "/memory/diary", params={"limit": limit}).json()
 
+    def memory_revisions(self, limit: int = 50) -> list[dict]:
+        """Recent background memory changes, newest first, with their undo state."""
+        return self._request("GET", "/memory/revisions", params={"limit": limit}).json()
+
+    def memory_settings(self, **kwargs) -> dict:
+        """Read the background passes' switches, or PATCH the ones given."""
+        if kwargs:
+            payload = {key: value for key, value in kwargs.items() if value is not None}
+            if payload:
+                return self._request("PATCH", "/memory/settings", json=payload).json()
+        return self._request("GET", "/memory/settings").json()
+
     def memory_undo(self, revision_id: int | None = None) -> list[str]:
         """Undo background memory writes; returns the slugs put back."""
         payload = {} if revision_id is None else {"revision_id": revision_id}

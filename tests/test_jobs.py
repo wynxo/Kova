@@ -185,7 +185,7 @@ async def test_a_broken_job_does_not_spin_or_stop_other_jobs(store, tmp_path):
     await scheduler.drain()
     assert events.get_nowait()["id"] == good
     # A job whose schedule cannot be parsed is finished instead of retried forever.
-    assert next(job for job in store.list_jobs() if job["id"] == broken)["done"] is True
+    assert next(job for job in store.list_jobs(include_done=True) if job["id"] == broken)["done"] is True
 
 
 def test_job_tools_add_list_and_remove(store, tmp_path):

@@ -85,6 +85,17 @@ class MemoryUndoBody(BaseModel):
     revision_id: int | None = None
 
 
+class MemorySettingsBody(BaseModel):
+    """Opt-in switches and gates for the background memory passes; omitted fields stay."""
+
+    review: bool | None = None
+    review_every: int | None = None
+    consolidate: bool | None = None
+    consolidate_hour: int | None = None
+    consolidate_min_confidence: float | None = None
+    consolidate_max_loss: float | None = None
+
+
 class ConsolidateBody(BaseModel):
     """Plan (and by default apply) one consolidation run."""
     dry_run: bool = False
@@ -131,6 +142,22 @@ def _note_dict(note: Note) -> dict:
     return {"slug": note.slug, "title": note.title, "body": note.body,
             "tags": note.tags, "updated": note.updated,
             "origin": note.origin, "source": note.source, "created": note.created}
+
+
+def _memory_settings(config: Config) -> dict:
+    """The background memory passes' switches and gates, as the CLI shows them."""
+    return {"review": config.memory_review, "review_every": config.memory_review_every,
+            "consolidate": config.memory_consolidate,
+            "consolidate_hour": config.memory_consolidate_hour,
+            "consolidate_min_confidence": config.memory_consolidate_min_confidence,
+            "consolidate_max_loss": config.memory_consolidate_max_loss}
+
+
+def _refresh_review(store: Store, config: Config):
+    """Rebuild the agent's background passes after a settings change, or None when off."""
+    from kova.review import MemoryReview, ReviewSettings
+    settings = ReviewSettings.from_config(config)
+    return MemoryReview(store, settings) if settings.enabled else None
 
 
 def _model_dict(entry: ModelEntry) -> dict:
@@ -358,18 +385,15 @@ def create_app(
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
-<<<<<<< HEAD
-        pending = app.state.agent.approvals.pending.get(approval_id)
-        if pending and pending.chat_id == chat_id and pending.tool == "ask_user":
-            if body.decision not in {"allow", "deny"} or (body.decision == "allow" and not (body.message or "").strip()):
-                raise HTTPException(status_code=422, detail="A question requires a non-empty answer")
-=======
         chat = app.state.store.get_chat(chat_id)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
             raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
->>>>>>> f4e526f (wip: partial work saved when workers were stopped)
+        pending = app.state.agent.approvals.pending.get(approval_id)
+        if pending and pending.chat_id == chat_id and pending.tool == "ask_user":
+            if body.decision not in {"allow", "deny"} or (body.decision == "allow" and not (body.message or "").strip()):
+                raise HTTPException(status_code=422, detail="A question requires a non-empty answer")
         try:
             app.state.agent.approvals.answer(chat_id, approval_id, body.decision, body.message)
         except KeyError as exc:
@@ -476,7 +500,10 @@ def create_app(
     @api.get("/memory")
     async def memory_list(q: str | None = None) -> list[dict]:
         mem = app.state.memory
-        notes = await asyncio.to_thread(mem.search, q) if q else await asyncio.to_thread(mem.list)
+        # The same hybrid ranking the prompt recall uses: keyword hits ordered
+        # by the deterministic lexical signal, so CLI and web searches agree.
+        notes = await asyncio.to_thread(mem.search, q, 50, mode="hybrid") if q \
+            else await asyncio.to_thread(mem.list)
         return [_note_dict(note) for note in notes]
 
     @api.post("/memory")
@@ -510,6 +537,33 @@ def create_app(
     async def memory_diary(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
         """What the background memory passes did, oldest first, for a person to read."""
         return app.state.store.memory_diary(limit=limit)
+
+    @api.get("/memory/revisions")
+    async def memory_revisions(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+        """Recent background memory changes, newest first, with their undo state."""
+        return app.state.store.memory_revisions(limit=limit)
+
+    @api.get("/memory/settings")
+    async def memory_settings_get() -> dict:
+        """The opt-in switches and gates of the background memory passes."""
+        return _memory_settings(config)
+
+    @api.patch("/memory/settings")
+    async def memory_settings_set(body: MemorySettingsBody) -> dict:
+        """Turn the background memory passes on or off and tune their gates."""
+        updates = body.model_dump(exclude_unset=True)
+        if "review_every" in updates and updates["review_every"] < 1:
+            raise HTTPException(status_code=422, detail="review_every must be at least 1")
+        if "consolidate_hour" in updates and not 0 <= updates["consolidate_hour"] <= 23:
+            raise HTTPException(status_code=422, detail="consolidate_hour must be 0-23")
+        for key in ("consolidate_min_confidence", "consolidate_max_loss"):
+            if key in updates and not 0 <= updates[key] <= 1:
+                raise HTTPException(status_code=422, detail=f"{key} must be 0-1")
+        for key, value in updates.items():
+            setattr(config, f"memory_{key}", value)
+        save_config(config)
+        app.state.agent.memory_review = _refresh_review(app.state.store, config)
+        return _memory_settings(config)
 
     @api.post("/memory/undo")
     async def memory_undo(body: MemoryUndoBody | None = None) -> dict:

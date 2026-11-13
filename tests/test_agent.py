@@ -49,6 +49,8 @@ async def test_work_mode_sends_all_tools(setup):
     _, fake = await run(setup, [text('Hi')])
     assert _sent_tools(fake) == ['web_search', 'web_fetch', 'list_files', 'read_file',
                                  'write_file', 'search_files', 'edit_file', 'reminder_add', 'reminder_list',
+                                 'job_add', 'job_list', 'job_remove',
+                                 'skill_load', 'skill_list', 'skill_write', 'skill_remove',
                                  'recall', 'search_chats',
                                  'memory_add', 'memory_patch', 'memory_remove', 'memory_list',
                                  'memory_search', 'memory_save',
