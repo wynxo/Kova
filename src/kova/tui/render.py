@@ -169,6 +169,8 @@ class Renderer:
         self.stopped = False      # the turn ended with a "stopped" event
         self.after_block = False  # a tool row or plan was the last thing shown
         self.last_stats = ""      # the last turn's tokens and time, for the status bar
+        self.last_tokens = 0      # the last turn's output tokens, for the status bar
+        self.last_elapsed = 0.0   # the last turn's wall-clock time, for the status bar
 
     # ------------------------------------------------------------ basics
     @property
@@ -526,6 +528,8 @@ class Renderer:
         parts = [f"Worked for {duration(elapsed)}"] if elapsed else []
         if self.pass_chars:
             parts.append(f"{compact_number(self.tokens)} tokens")
+        self.last_tokens = self.tokens if self.pass_chars else 0
+        self.last_elapsed = elapsed
         if elapsed:
             self.last_stats = " \u00b7 ".join(
                 ([f"{compact_number(self.tokens)} tokens"] if self.pass_chars else [])

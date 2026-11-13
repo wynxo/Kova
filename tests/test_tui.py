@@ -24,7 +24,17 @@ from kova.tui.editor import Editor, Suggestion, expand_mentions, load_history, s
 from kova.tui.markdown import MarkdownStream, Palette, clean, display_width
 from kova.tui.render import Renderer, command_output
 from kova.tui.terminal import KeyReader, Screen
-from kova.tui.widgets import Choice, Picker, input_box, menu, shimmer, spinner_line, welcome
+from kova.tui.widgets import (
+    Choice,
+    CommandPalette,
+    Picker,
+    input_box,
+    menu,
+    shimmer,
+    spinner_line,
+    visible,
+    welcome,
+)
 from tests.fake_kova import FakeKova, Terminal, write_config
 from tests.vt import VT
 
@@ -252,6 +262,51 @@ def test_menu_dialog_and_picker_render():
     assert picker.value == "b"
     picker.type("alp")
     assert picker.value == "a" and "Filter: alp" in "\n".join(picker.render(40, p))
+
+
+def test_command_palette_filters_commands_models_and_chats():
+    items = [("/model", "List models; /model <name> switches", ("command", "/model")),
+             ("local", "fake-model \u00b7 current", ("model", "local")),
+             ("Trip plans", "work \u00b7 3 messages", ("chat", "c2"))]
+    groups = {("command", "/model"): "Commands", ("model", "local"): "Models",
+              ("chat", "c2"): "Chats"}
+    palette = CommandPalette(items, lambda _value: None, groups=groups)
+    text = "\n".join(palette.render(80, Palette(False)))
+    assert "COMMANDS" in text and "MODELS" in text and "CHATS" in text
+    assert "\u276f /model" in text and "List models" in text
+
+    fuzzy = CommandPalette(items, lambda _value: None, groups=groups)
+    fuzzy.type("mdl")                                   # a subsequence of /model
+    assert fuzzy.value == ("command", "/model")
+    model = CommandPalette(items, lambda _value: None, groups=groups)
+    model.type("fake")                                  # matches the model's id detail
+    assert model.value == ("model", "local")
+    chat = CommandPalette(items, lambda _value: None, groups=groups)
+    chat.type("tp")                                     # fuzzy chat title
+    assert chat.value == ("chat", "c2")
+
+    empty = CommandPalette(items, lambda _value: None, groups=groups)
+    empty.type("zzz")
+    assert empty.value is None and "Nothing matches" in "\n".join(empty.render(40, Palette(False)))
+
+
+@pytest.mark.parametrize("width", [24, 32, 44, 80, 120])
+def test_command_palette_fits_narrow_terminals_without_colour(width):
+    items = [("/model", "List models; /model <name> switches", ("command", "/model")),
+             ("a-very-long-model-name", "some-provider/some-model \u00b7 current",
+              ("model", "a-very-long-model-name")),
+             ("A very long chat title that needs shortening", "work \u00b7 12 messages",
+              ("chat", "c2"))]
+    groups = {value: group for value, group in zip(
+        (item[2] for item in items), ("Commands", "Models", "Chats"), strict=True)}
+    palette = CommandPalette(items, lambda _value: None, groups=groups)
+    palette.type("model")
+    lines = palette.render(width, Palette(False))
+    assert all(visible(line) <= width for line in lines), (width, lines)
+    assert "\x1b" not in "\n".join(lines)
+    assert len(lines) <= 14
+    palette.type("x" * 60)                              # a query longer than the row
+    assert all(visible(line) <= width for line in palette.render(width, Palette(False)))
 
 
 def test_spinner_and_welcome_read_plainly_without_colour():
@@ -612,6 +667,73 @@ def test_pickers_open_without_an_argument():
     assert app.model == "other" and "Now using other" in transcript(app)
 
 
+def test_ctrl_p_palette_runs_commands_and_switches_models_and_chats():
+    client = StubClient()
+    models = [{"name": "local", "model": "fake-model", "context": 32768},
+              {"name": "other", "model": "other-model", "context": 32768}]
+    chats = [{"id": "c2", "title": "Trip plans", "mode": "work", "message_count": 3}]
+    client.models_list = lambda: models
+    client.list_chats = lambda: chats
+    client.model_use = lambda _name: {"ok": True}
+    client.health = lambda: {"model": "other", "model_ok": True}
+    app = chat_app(client)
+    app.refresh_chat()
+    app._models, app._chats, app.model = models, chats, "local"
+    app._sync_context_window()
+
+    app.on_key(SimpleNamespace(name="ctrl-p", text=""))
+    assert isinstance(app.overlay, CommandPalette)
+    app.on_key(SimpleNamespace(name="text", text="hel"))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert app.overlay is None
+    text = transcript(app)
+    assert "Commands" in text and "ctrl+p" in text
+
+    app.on_key(SimpleNamespace(name="ctrl-p", text=""))
+    app.on_key(SimpleNamespace(name="text", text="mode"))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert isinstance(app.overlay, Picker) and app.overlay.title == "Select mode"
+    app.on_key(SimpleNamespace(name="esc", text=""))
+
+    app.on_key(SimpleNamespace(name="ctrl-p", text=""))
+    app.on_key(SimpleNamespace(name="text", text="oth"))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert app.overlay is None and app.model == "other" and app.context_window == 32768
+
+    app.on_key(SimpleNamespace(name="ctrl-p", text=""))
+    app.on_key(SimpleNamespace(name="text", text="trip"))
+    app.on_key(SimpleNamespace(name="enter", text=""))
+    assert app.overlay is None and app.chat_id == "c2"
+
+    app.on_key(SimpleNamespace(name="ctrl-p", text=""))
+    app.on_key(SimpleNamespace(name="esc", text=""))
+    assert app.overlay is None  # esc closes it quietly
+
+
+def test_status_line_shows_tokens_context_fill_and_turn_time():
+    app = chat_app(StubClient())
+    app.model = "local"
+    app.renderer.last_tokens, app.renderer.last_elapsed = 1500, 4.2
+    app.context_window, app.context_chars = 100_000, 80_000       # 20K of 100K tokens
+    line = plain(app._status(120))
+    assert "1.5K tok" in line and "ctx 20%" in line and "4.2s" in line
+    assert "local" in line
+
+    app.job = SimpleNamespace()                                    # a live turn
+    app.renderer.turn_started = time.monotonic() - 2
+    app.renderer.pass_chars = 400                                  # about 100 more tokens
+    live = plain(app._status(120))
+    assert "100 tok" in live and "ctx 20%" in live and "2" in live
+    app.job, app.renderer.turn_started, app.renderer.pass_chars = None, 0, 0
+
+    app.context_chars = 100                                        # a tiny sliver
+    assert "ctx <1%" in plain(app._status(120))
+    for width in (120, 80, 70, 60, 40, 24):
+        assert visible(app._status(width)) <= width - 1, width
+    app.context_window = 0
+    assert "ctx" not in plain(app._status(120))                    # no window, no claim
+
+
 def test_shell_output_and_memory_notes_go_where_they_belong(tmp_path):
     client = StubClient([{"type": "done"}])
     app = chat_app(client)
@@ -762,6 +884,39 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
 
 
 @linux_only
+@pytest.mark.parametrize("no_color", [False, True])
+def test_command_palette_and_status_line_in_a_real_terminal(kova_home, no_color):
+    fake, home, project = kova_home
+    term = Terminal(home, project, "--new", columns=70, rows=30,
+                    env={"NO_COLOR": "1"} if no_color else {})
+    try:
+        term.screen(IDLE, 30)
+        term.type(b"\x10")                                             # ctrl+p
+        term.screen("Command palette")
+        term.type(b"model")
+        term.screen("/model")
+        term.type(b"\x1b")                                             # esc closes
+        term.gone("Command palette")
+        term.screen(IDLE)
+        term.type(b"hello\r")
+        term.screen("Hello from the fake server.")
+        term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
+        term.screen("tok")                                             # tokens used
+        term.screen("ctx")                                             # context fill
+        term.type(b"\x10")
+        term.type(b"nothing-here")
+        term.screen("Nothing matches")
+        term.type(b"\x1b")
+        term.gone("Nothing matches")
+        term.type(b"\x04")
+        assert term.exit_status() == 0
+    finally:
+        term.close()
+    if no_color:
+        assert not re.search(r"\x1b\[[0-9;]*m", term.raw.replace("\x1b[0m", ""))
+
+
+@linux_only
 def test_older_server_without_permissions_and_no_color(tmp_path):
     fake = FakeKova(permissions=False)
     home = tmp_path / ".kova"
@@ -830,6 +985,7 @@ def test_live_reasoning_and_partial_tool_arguments_toggle_without_transcript_spa
 
 def test_toggle_control_keys(keys):
     assert keys(b"\x14\x0f") == [("ctrl-t", ""), ("ctrl-o", "")]
+    assert keys(b"\x10\x0e") == [("ctrl-p", ""), ("ctrl-n", "")]
 
 
 @linux_only

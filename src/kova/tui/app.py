@@ -32,12 +32,13 @@ from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
 from .markdown import ACCENT, BASH, MEMORY
-from .render import Renderer, shorten
+from .render import Renderer, compact_number, duration, shorten
 from .style import ACCENT_SOFT, FAINT, colour_level
 from .terminal import KeyReader, RawMode, Screen
 from .widgets import (
     MODE_COLOURS,
     Choice,
+    CommandPalette,
     Picker,
     box,
     fit,
@@ -192,6 +193,10 @@ class ChatApp:
         self.notes: int | None = None
         self.plan: list[dict] = []
         self.files = FileIndex(self.cwd)
+        # Rough context accounting for the status line: characters in the
+        # conversation so far, and the active model's window in tokens.
+        self.context_chars = 0
+        self.context_window = 0
         # The live region's state.
         self.menu = None
         self.menu_index = 0
@@ -275,14 +280,31 @@ class ChatApp:
     # ================================================================ server state
     def refresh_chat(self) -> None:
         chat = self.client.get_chat(self.chat_id) or {}
-        self.title = str(chat.get("title") or "")
-        self.mode = chat.get("mode") or "work"
-        self.web = chat.get("web", True)
-        self.permission = chat.get("permission")
+        self._read_chat(chat)
         cwd = chat.get("cwd")
         if cwd and os.path.isdir(cwd) and cwd != self.cwd:
             self.cwd = cwd
             self.files = FileIndex(cwd)
+
+    def _read_chat(self, chat: dict) -> None:
+        """Take the server's view of the chat and its rough token size."""
+        self.title = str(chat.get("title") or "")
+        self.mode = chat.get("mode") or "work"
+        self.web = chat.get("web", True)
+        self.permission = chat.get("permission")
+        self.context_chars = sum(len(str(message.get("content") or ""))
+                                 for message in chat.get("messages") or []
+                                 if isinstance(message, dict))
+
+    def _sync_context_window(self) -> None:
+        """The active model's context window, from the server's model list."""
+        if not self._models:
+            return  # nothing loaded yet; keep what we have
+        entry = next((model for model in self._models if model.get("name") == self.model), None)
+        try:
+            self.context_window = max(0, int((entry or {}).get("context") or 0))
+        except (TypeError, ValueError):
+            self.context_window = 0
 
     def _refresh_health(self) -> None:
         try:
@@ -291,6 +313,7 @@ class ChatApp:
             self.model_ok = False
             return
         self.model, self.model_ok = str(health.get("model", "")), bool(health.get("model_ok", True))
+        self._sync_context_window()
 
     def _load_lists_later(self) -> None:
         """Models and chats for suggestions, fetched off the UI thread."""
@@ -302,6 +325,7 @@ class ChatApp:
             try:
                 self._models = self.client.models_list()
                 self._chats = self.client.list_chats()[:30]
+                self._sync_context_window()
             except Exception:  # suggestions are a nicety; a hiccup must not break typing
                 pass
             finally:
@@ -309,7 +333,7 @@ class ChatApp:
         threading.Thread(target=load, daemon=True, name="kova-chat-lists").start()
 
     def _refresh_title_later(self) -> None:
-        """The server names a chat after its first messages; pick that up quietly."""
+        """Pick up the chat's title and token size once the turn is stored."""
         client, chat_id = self.client, self.chat_id
 
         def load():
@@ -317,8 +341,12 @@ class ChatApp:
                 chat = client.get_chat(chat_id) or {}
             except Exception:  # the title is a nicety; never let it break the chat
                 return
-            if chat_id == self.chat_id and chat.get("title"):
-                self.title = str(chat["title"])
+            if chat_id == self.chat_id:
+                if chat.get("title"):
+                    self.title = str(chat["title"])
+                self.context_chars = sum(
+                    len(str(message.get("content") or ""))
+                    for message in chat.get("messages") or [] if isinstance(message, dict))
                 self.screen.dirty = True
         threading.Thread(target=load, daemon=True, name="kova-chat-title").start()
 
@@ -357,11 +385,15 @@ class ChatApp:
                     self._answer(value)
             return
         if isinstance(overlay, Picker):
-            if name in ("up", "down"):
+            if name == "ctrl-p":
+                self.overlay = None
+                return
+            if name in ("up", "down", "ctrl-n"):
                 overlay.move(-1 if name == "up" else 1)
             elif name in ("esc", "ctrl-c"):
                 self.overlay = None
-                self._done("Cancelled", dim=True)
+                if not isinstance(overlay, CommandPalette):
+                    self._done("Cancelled", dim=True)
             elif name == "enter":
                 value = overlay.value
                 self.overlay = None
@@ -390,7 +422,9 @@ class ChatApp:
     def _editor_key(self, key) -> None:
         editor, name, now = self.editor, key.name, time.monotonic()
         before = editor.text
-        if name == "ctrl-t":
+        if name == "ctrl-p":
+            self._open_palette()
+        elif name == "ctrl-t":
             self.renderer.verbose = not self.renderer.verbose
             self.renderer.no_think = False
         elif name in ("pageup", "pagedown"):
@@ -432,7 +466,7 @@ class ChatApp:
             self.screen.clear()
         elif name == "suspend":
             self._suspend()
-        elif name in ("up", "down"):
+        elif name in ("up", "down", "ctrl-n"):
             if self.menu is not None and self.menu.items:
                 self.menu_index = (self.menu_index + (-1 if name == "up" else 1)) \
                     % len(self.menu.items)
@@ -516,6 +550,70 @@ class ChatApp:
             return [("..", "the folder above")] + [(folder, "") for folder in folders[:50]]
         return []
 
+    # ================================================================ palette
+    def _palette_items(self) -> tuple[list[tuple[str, str, object]], dict]:
+        """Everything the Ctrl+P palette can find, grouped by kind."""
+        items: list[tuple[str, str, object]] = []
+        groups: dict = {}
+        for name, (usage, description) in COMMANDS.items():
+            if name == "quit":  # /quit is offered as /exit
+                continue
+            value = ("command", name)
+            items.append((usage, description, value))
+            groups[value] = "Commands"
+        for entry in sorted(self._models, key=lambda model: (model.get("provider_name") or "",
+                                                             model.get("name") or "")):
+            name = str(entry.get("name") or "")
+            if not name:
+                continue
+            value = ("model", name)
+            detail = str(entry.get("model") or "")
+            provider = str(entry.get("provider_name") or "")
+            if provider:
+                detail = f"{detail} \u00b7 {provider}" if detail else provider
+            if name == self.model:
+                detail = f"{detail} \u00b7 current" if detail else "current"
+            items.append((name, detail, value))
+            groups[value] = "Models"
+        for chat in self._chats[:20]:
+            chat_id = str(chat.get("id") or "")
+            if not chat_id:
+                continue
+            value = ("chat", chat_id)
+            detail = f"{chat.get('mode') or 'work'} \u00b7 {chat.get('message_count', 0)} messages"
+            if chat_id == self.chat_id:
+                detail += " \u00b7 current"
+            items.append((str(chat.get("title") or "Untitled"), detail, value))
+            groups[value] = "Chats"
+        return items, groups
+
+    def _open_palette(self) -> None:
+        self._load_lists_later()
+        items, groups = self._palette_items()
+        self.overlay = CommandPalette(items, self._palette_pick, groups=groups)
+
+    def _palette_pick(self, value) -> None:
+        kind, choice = value
+        if kind != "command" and self.job is not None:
+            self._flash("Stop the reply first", 2)
+            return
+        try:
+            if kind == "command":
+                name = str(choice).lstrip("/").split(" ")[0]
+                if "<" in COMMANDS.get(name, ("", ""))[0]:
+                    self.editor.set("/" + name + " ")  # needs an argument: let them finish
+                    self._refresh_menu()
+                else:
+                    self.submit("/" + name)            # optional arguments open their picker
+            elif kind == "model":
+                self._cmd_model(str(choice))
+            elif kind == "chat":
+                self._cmd_resume(str(choice))
+        except KovaError as exc:
+            self.renderer.error(exc.message)
+        except Exception as exc:  # a pick must never take the chat down
+            self.renderer.error(f"Command palette: {exc}")
+
     def _accept(self, submit: bool) -> None:
         found, item = self.menu, self.menu.items[self.menu_index]
         editor = self.editor
@@ -570,6 +668,7 @@ class ChatApp:
         if self.context_notes:
             message = "\n\n".join([*self.context_notes, message])
             self.context_notes.clear()
+        self.context_chars += len(message)
         self.renderer.begin_turn()
         client, chat_id = self.client, self.chat_id
 
@@ -792,6 +891,7 @@ class ChatApp:
         r.line()
         r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Keys"))
         for key, text in (("esc", "stop the reply · close a menu · twice to clear the input"),
+                          ("ctrl+p", "command palette: commands, models and chats"),
                           ("ctrl+c", "stop · clear the input · twice to exit"),
                           ("ctrl+t", "toggle reasoning"), ("ctrl+o", "toggle tool details"),
                           ("ctrl+d", "exit"), ("shift+tab", "cycle permission modes"),
@@ -872,6 +972,7 @@ class ChatApp:
             return
         self.model = rest
         self._refresh_health()
+        self._sync_context_window()
         self._done(f"Now using {self.p.bold(rest)}.")
 
     def _cmd_permissions(self, rest: str) -> None:
@@ -1052,18 +1153,41 @@ class ChatApp:
                             f"⏵⏵ {self.permission} permissions")
                     + p.faint(" · shift+tab to cycle"))
         if text:
-            return p.faint("⏎ send · \\⏎ new line")
-        return p.faint("ctrl+t thinking · ctrl+o tools · ? help")
+            return p.faint("⏎ send · \\⏎ new line · ctrl+p palette")
+        return p.faint("ctrl+p palette · ctrl+t thinking · ? help")
+
+    def _turn_stats(self) -> str:
+        """Tokens, context fill and turn time for the right of the status line.
+
+        While a reply runs these are live; afterwards they describe the last
+        turn. Tokens are estimated from characters, like the spinner's count,
+        and context fill compares that estimate with the model's window.
+        """
+        r, live = self.renderer, self.job is not None
+        tokens = r.tokens if live else r.last_tokens
+        elapsed = (time.monotonic() - r.turn_started if r.turn_started else 0.0) \
+            if live else r.last_elapsed
+        parts = []
+        if tokens:
+            parts.append(f"{compact_number(tokens)} tok")
+        if self.context_window:
+            used = self.context_chars // 4 + (r.pass_chars // 4 if live else 0)
+            fill = max(0.0, used / self.context_window * 100)
+            percent = "<1%" if 0 < fill < 1 else f"{min(100, round(fill))}%"
+            parts.append(f"ctx {percent}")
+        if elapsed:
+            parts.append(duration(elapsed))
+        return " \u00b7 ".join(parts)
 
     def _status(self, width: int) -> str:
         plan = ""
         if self.plan:
             done = sum(item.get("status") == "done" for item in self.plan)
             plan = f"{done}/{len(self.plan)}"
-        stats = "" if self.job is not None else self.renderer.last_stats
         return status_bar(self.p, width, mode=self.mode, model=self.model or "?",
                           title=self.title, permission=self.permission, web=self.web, plan=plan,
-                          stats=stats, offline=not self.model_ok, cwd=_home_short(self.cwd))
+                          stats=self._turn_stats(), offline=not self.model_ok,
+                          cwd=_home_short(self.cwd))
 
 
 __all__ = ["COMMANDS", "ChatApp", "Job", "PERMISSIONS", "TextPrompt", "run_shell"]
