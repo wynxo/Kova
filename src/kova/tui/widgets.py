@@ -294,7 +294,7 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
         return (dot + " " + p.bold(fit(model or "no model", max(1, room)))
                 + (p.yellow(" offline") if offline else ""))
     parts: list[tuple[int, str]] = [(0, model_part(60))]
-    if state:
+    if state and state != "done":
         parts.append((0, p.dim(state.replace("-", " "))))
     if title:
         parts.append((2, p.dim(fit(title, 28))))

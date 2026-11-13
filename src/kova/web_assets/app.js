@@ -119,7 +119,7 @@
       const title = chat.title || 'New conversation';
       button.append(el('span', 'history-title', title)); button.title = title;
       const date = new Date(chat.last_message || chat.created);
-      button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
+      button.append(el('span', 'history-date', `${chat.state && chat.state !== 'done' ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
       button.onclick = () => safe(() => openChat(chat.id));
       const actions = el('div', 'history-actions');
       for (const [symbol, name, fn] of [['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
