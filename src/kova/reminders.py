@@ -1,4 +1,8 @@
-"""Reminder loop: fire due reminders, push an event, show a desktop toast."""
+"""Reminder loop: fire due reminders and scheduled jobs, push events.
+
+One loop drives both: a due reminder publishes a ``reminder`` event and shows a
+desktop toast, and a due job is handed to :class:`kova.scheduler.Scheduler`.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from kova.events import EventBus
+from kova.scheduler import Scheduler
 from kova.store import Store
 
 log = logging.getLogger(__name__)
@@ -29,7 +34,11 @@ def desktop_notify(text: str) -> None:
 
 
 class ReminderLoop:
-    """Fire due reminders on an interval, one notification each."""
+    """Fire due reminders and due jobs on an interval, one notification each.
+
+    ``scheduler`` is optional: without it this loop only fires one-shot
+    reminders, exactly as before jobs existed.
+    """
 
     def __init__(
         self,
@@ -38,12 +47,14 @@ class ReminderLoop:
         now: Callable[[], datetime],
         notify: Callable[[str], None] = desktop_notify,
         interval: float = 15,
+        scheduler: Scheduler | None = None,
     ) -> None:
         self.store = store
         self.bus = bus
         self.now = now
         self.notify = notify
         self.interval = interval
+        self.scheduler = scheduler
 
     def tick(self) -> list[dict]:
         """Fire every reminder due now, once, and return the events published."""
@@ -61,11 +72,17 @@ class ReminderLoop:
 
     async def run(self) -> None:
         """Tick on the interval until the task is cancelled."""
-        while True:
-            try:
-                await asyncio.sleep(self.interval)
-                self.tick()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("reminder loop tick failed")
+        try:
+            while True:
+                try:
+                    await asyncio.sleep(self.interval)
+                    self.tick()
+                    if self.scheduler is not None:
+                        await self.scheduler.due(self.now())
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("reminder loop tick failed")
+        finally:
+            if self.scheduler is not None:
+                await self.scheduler.shutdown()

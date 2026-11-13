@@ -24,6 +24,7 @@ from kova.tools import core
 from kova.tools.sessions import set_current_chat
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
+from kova.skills import Skills
 
 
 _IDENTITIES = {
@@ -172,6 +173,7 @@ class Agent:
         self.config = config
         self.store = store
         self.memory = memory
+        self.skills = Skills.for_home(config.home)
         self.tools = tools
         self.transport = transport
         self.now = now
@@ -216,6 +218,10 @@ class Agent:
             memory_usage = await asyncio.to_thread(self.memory.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
+        try:
+            skills = await asyncio.to_thread(self.skills.prompt_block) if mode != 'chat' else ""
+        except Exception:  # a broken skill file must not block the prompt
+            skills = ""
         prompt = build_system_prompt(self.now(), list(tools), memories, mode,
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0))
@@ -224,6 +230,8 @@ class Agent:
             instructions = await asyncio.to_thread(project_instructions, cwd)
             if instructions:
                 prompt += f"\n\n{instructions}"
+            if skills:
+                prompt += f"\n\n{skills}"
             if (chat or {}).get('plan'):
                 prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
         self.config.bind_providers()
