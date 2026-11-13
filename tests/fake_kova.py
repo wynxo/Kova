@@ -249,7 +249,7 @@ def write_config(home: Path, port: int) -> None:
     """A Kova home whose server and model are the fake on ``port``."""
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.toml").write_text(
-        f'active = "local"\nport = {port}\n\n[memory]\npath = "{home / "memory"}"\n\n'
+        f'active = "local"\nport = {port}\n\n[persona]\nname = "Kova"\ntone = "warm"\nconfigured = true\n\n[memory]\npath = "{home / "memory"}"\n\n'
         f'[[models]]\nname = "local"\nbase_url = "http://127.0.0.1:{port}/v1"\n'
         f'model = "fake-model"\ncontext = 32768\n')
 

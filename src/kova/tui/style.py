@@ -153,23 +153,35 @@ class Palette:
     ``Palette(level)`` at an explicit depth (see ``colour_level``).
     """
 
-    def __init__(self, color: bool | int = True):
+    def __init__(self, color: bool | int = True, *, theme_name: str | None = None):
         if color is True:
             color = 2
         self.level = max(0, min(3, int(color or 0)))
         self.color = self.level > 0
+        self.theme_name = (theme_name or os.environ.get("KOVA_THEME", "dark")).lower()
+
+    def _codes(self, codes: str) -> str:
+        if self.theme_name == "light":
+            def translate(match):
+                kind = match.group(1)
+                values = [int(match.group(i)) for i in (2, 3, 4)]
+                # Keep text dark and tints pale on a light terminal background.
+                values = [round(v * .48) for v in values] if kind == "38" else [round(235 + v * .06) for v in values]
+                return f"{kind};2;{values[0]};{values[1]};{values[2]}"
+            codes = _TRUECOLOR.sub(translate, codes)
+        return downgrade(codes, self.level)
 
     def paint(self, codes: str, text: str) -> str:
         if not (self.color and text):
             return text
-        return f"\x1b[{downgrade(codes, self.level)}m{text}\x1b[0m"
+        return f"\x1b[{self._codes(codes)}m{text}\x1b[0m"
 
     def sgr(self, codes: list[str]) -> str:
         if not self.color:
             return ""
         if not codes:
             return "\x1b[0m"
-        return f"\x1b[0;{downgrade(';'.join(codes), self.level)}m"
+        return f"\x1b[0;{self._codes(';'.join(codes))}m"
 
     def bold(self, text): return self.paint("1", text)
     def dim(self, text): return self.paint(MUTED, text) if self.level >= 2 else self.paint("2", text)
@@ -233,7 +245,7 @@ def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
     out, last = [], None
     for order, index in enumerate(visible):
         colour = blend(stops, order / (len(visible) - 1))
-        codes = downgrade(weight + fg(colour), p.level)
+        codes = p._codes(weight + fg(colour))
         start = visible[order - 1] + 1 if order else 0
         out.append(text[start:index])
         out.append(text[index] if codes == last else f"\x1b[{codes}m{text[index]}")

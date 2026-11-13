@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}};
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
@@ -103,7 +103,7 @@
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode('You'));
-    else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode('Kova')); }
+    else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode(state.persona.name)); }
     const body = el('div', 'message-body');
     if (role === 'user') body.textContent = content || '';
     else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
@@ -468,6 +468,37 @@
   try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
   $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   document.querySelectorAll('[data-prompt]').forEach(button => { button.onclick = () => { $('prompt').value = button.dataset.prompt; resize(); $('prompt').focus(); }; });
+  async function setupIdentity() {
+    state.persona = await json('/persona');
+    if (!state.persona.configured) {
+      const dialog = el('dialog');
+      const form = el('form'); form.method = 'dialog';
+      const title = el('h2', '', 'Meet your assistant');
+      const nameLabel = el('label', '', 'Name');
+      const name = el('input'); name.value = 'Kova'; name.required = true; name.maxLength = 40;
+      nameLabel.append(name);
+      const toneLabel = el('label', '', 'Tone'); const tone = el('select');
+      for (const value of ['warm', 'concise', 'professional', 'playful']) {
+        const option = el('option', '', value[0].toUpperCase() + value.slice(1)); option.value = value; tone.append(option);
+      }
+      toneLabel.append(tone);
+      const error = el('p'); error.setAttribute('role', 'alert');
+      const submit = el('button', 'btn', 'Continue'); submit.type = 'submit';
+      form.append(title, nameLabel, toneLabel, error, submit); dialog.append(form); document.body.append(dialog);
+      dialog.addEventListener('cancel', event => event.preventDefault());
+      await new Promise(resolve => {
+        form.addEventListener('submit', async event => {
+          event.preventDefault(); submit.disabled = true;
+          try { state.persona = await json('/persona', write('POST', {name: name.value, tone: tone.value})); dialog.close(); resolve(); }
+          catch (err) { error.textContent = err.message; submit.disabled = false; }
+        });
+        dialog.showModal(); name.focus();
+      });
+      dialog.remove();
+    }
+    document.title = state.persona.name;
+  }
+
   async function start() {
     if (state.starting) return;
     state.starting = true; state.events?.close();
@@ -477,6 +508,7 @@
     try {
       if (ticket) await json('/app/login', write('POST', {ticket}));
       await json('/chats'); state.connected = true;
+      await setupIdentity();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
       renderModels(models);

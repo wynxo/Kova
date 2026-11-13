@@ -328,12 +328,13 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
             return render([(0, model_part(room))], [])
 
 
-def shortcuts(width: int, p: Palette) -> list[str]:
+def shortcuts(width: int, p: Palette, keys=None) -> list[str]:
+    bindings = [(keys.format_help(key) if keys else key, text) for key, text in SHORTCUTS]
     columns = 3 if width >= 100 else 2 if width >= 64 else 1
-    per = -(-len(SHORTCUTS) // columns)
-    groups = [SHORTCUTS[i * per:(i + 1) * per] for i in range(columns)]
+    per = -(-len(bindings) // columns)
+    groups = [bindings[i * per:(i + 1) * per] for i in range(columns)]
     column_width = (width - 4) // columns
-    key_width = max(display_width(key) for key, _ in SHORTCUTS) + 2
+    key_width = max(display_width(key) for key, _ in bindings) + 2
     lines = []
     for row in range(per):
         cells = []
@@ -356,7 +357,7 @@ def logo(p: Palette) -> list[str]:
 def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd: str,
             memory: str = "", notes: int | None = None, web: bool = True, offline: bool = False,
             phase: float | None = None, tips: bool = True, title: str = "",
-            permission: str | None = None) -> list[str]:
+            permission: str | None = None, assistant_name: str = "Kova") -> list[str]:
     """The start-up card: the wordmark, then model, mode, folder and memory,
     in a frame drawn in Kova's gradient. ``phase`` sweeps a highlight across
     the tagline while the card animates in."""
@@ -369,7 +370,9 @@ def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd:
         tagline = p.dim(tagline)
     tagline += p.faint(f"  v{version}")
     content = [""]
-    if inner >= 40:
+    if assistant_name != "Kova":
+        content.append("  " + p.gradient(fit(assistant_name, inner - 4), bold=True) + "  " + tagline)
+    elif inner >= 40:
         mark = logo(p)
         content += ["  " + mark[0], "  " + mark[1] + "   " + tagline]
     else:

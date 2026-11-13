@@ -243,6 +243,34 @@ class Store:
             self._conn.commit()
             return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": []}
 
+    def fork_chat(self, chat_id: str) -> dict | None:
+        """Atomically clone a conversation, including its compacted context."""
+        with self._lock:
+            source = self._conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if source is None:
+                return None
+            cid, created = uuid4().hex[:12], _utc_now_iso()
+            try:
+                self._conn.execute(
+                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
+                     source['web'], source['permission'], source['cwd'], source['plan']))
+                rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
+                ids = {}
+                for row in rows:
+                    cur = self._conn.execute("INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created) VALUES (?, ?, ?, ?, ?, ?)",
+                                             (cid, row['role'], row['content'], row['tool_calls'], row['tool_call_id'], row['created']))
+                    ids[row['id']] = cur.lastrowid
+                compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
+                if compact and compact['cutoff'] in ids:
+                    self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?)",
+                                       (cid, ids[compact['cutoff']], compact['summary']))
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+        return self.get_chat(cid)
+
     def list_chats(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(

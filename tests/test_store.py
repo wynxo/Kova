@@ -193,3 +193,18 @@ def test_import_chat_keeps_mode_and_web(tmp_path):
     assert store.import_chat({"id": "old", "messages": []})  # backups from before modes
     old = store.get_chat("old")
     assert old["mode"] == "work" and old["web"] is True
+
+
+def test_fork_preserves_context_and_is_independent(store):
+    source = store.create_chat('Original', mode='chat', web=False)
+    cid = source['id']
+    first = store.add_message(cid, 'user', 'earlier')
+    store.add_message(cid, 'assistant', 'later')
+    assert store.save_compaction(cid, 0, first, 'summary')
+    fork = store.fork_chat(cid)
+    assert fork['id'] != cid
+    assert fork['mode'] == 'chat' and not fork['web']
+    assert store.get_context(fork['id']) == store.get_context(cid)
+    store.add_message(fork['id'], 'user', 'different')
+    assert len(store.get_messages(cid)) == 2
+    assert store.fork_chat('missing') is None

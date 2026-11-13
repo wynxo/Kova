@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from kova import __version__
 from kova.agent import Agent
-from kova.config import Config, ModelEntry, ensure_token, save_config
+from kova.config import Config, ModelEntry, ensure_token, save_config, load_config
 from kova.events import EventBus
 from kova.memory import Memory, Note
 from kova.models import ModelClient
@@ -43,6 +43,11 @@ class ChatBody(BaseModel):
     web: bool | None = None
     permission: Literal["manual", "auto", "full"] | None = None
     cwd: str | None = None
+
+
+class PersonaBody(BaseModel):
+    name: str
+    tone: str
 
 
 class ApprovalBody(BaseModel):
@@ -201,6 +206,24 @@ def create_app(
 
     api = APIRouter(dependencies=[Depends(_require_token)])
 
+    @api.get("/persona")
+    async def persona() -> dict:
+        current = load_config(config.home)
+        return {"name": current.persona_name, "tone": current.persona_tone,
+                "configured": current.persona_configured}
+
+    @api.post("/persona")
+    async def set_persona(body: PersonaBody) -> dict:
+        from kova.persona import Persona
+        try:
+            identity = Persona(body.name.strip(), body.tone)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        current = load_config(config.home)
+        current.persona_name, current.persona_tone, current.persona_configured = identity.name, identity.tone, True
+        save_config(current)
+        return {"name": identity.name, "tone": identity.tone, "configured": True}
+
     @api.get("/chats")
     async def list_chats() -> list[dict]:
         return app.state.store.list_chats()
@@ -222,6 +245,14 @@ def create_app(
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
         """Chats with a user/assistant message matching ``q``, newest first."""
         return await asyncio.to_thread(app.state.store.search_chats, q, limit)
+
+    @api.post("/chats/{chat_id}/fork")
+    async def fork_chat(chat_id: str) -> dict:
+        async with chat_lock(chat_id):
+            chat = app.state.store.fork_chat(chat_id)
+            if chat is None:
+                raise HTTPException(status_code=404, detail="chat not found")
+            return chat
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:

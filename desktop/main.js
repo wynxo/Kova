@@ -40,6 +40,13 @@ async function create() {
       preload: path.join(__dirname, 'preload.js')}});
   Menu.setApplicationMenu(null);
   win.once('ready-to-show', show);
+  win.webContents.on('page-title-updated', (_event, title) => {
+    if (tray && title) {
+      tray.setToolTip(title);
+      tray.setContextMenu(Menu.buildFromTemplate([{label: 'Open ' + title, click: show},
+        {type: 'separator'}, {label: 'Quit', click: () => app.quit()}]));
+    }
+  });
   // The page publishes its theme as <meta name="theme-color">; no bridge needed.
   win.webContents.on('did-change-theme-color', (_event, color) => {
     if (/^#[0-9a-f]{6}$/i.test(color || '')) win.setBackgroundColor(color);
@@ -117,6 +124,21 @@ async function start() {
       try { value = await ticket(); } catch {}
     }
     if (!value) throw new Error('Kova did not become ready');
+    if (!quitting) {
+      try {
+        const token = fs.readFileSync(path.join(home, 'token'), 'utf8').trim();
+        const response = await fetch(origin + '/persona', {headers: {Authorization: 'Bearer ' + token}});
+        if (response.ok) {
+          const persona = await response.json();
+          if (typeof persona.name === 'string' && persona.name) {
+            win.setTitle(persona.name);
+            if (tray) { tray.setToolTip(persona.name); tray.setContextMenu(Menu.buildFromTemplate([
+              {label: 'Open ' + persona.name, click: show}, {type: 'separator'},
+              {label: 'Quit', click: () => app.quit()}])); }
+          }
+        }
+      } catch (e) { console.error('Could not load assistant identity:', e.message); }
+    }
     if (!quitting) await win.loadURL(origin + '/app#ticket=' + encodeURIComponent(value));
   } catch (e) {
     console.error(e.message);

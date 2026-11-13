@@ -54,6 +54,11 @@ class Config:
     memory_budget: int = DEFAULT_MEMORY_BUDGET
     providers: list[ProviderEntry] = field(default_factory=list)
     oauth_host_id: str = field(default_factory=lambda: 'urn:uuid:' + str(uuid.uuid4()))
+    tui_theme: str = "dark"
+    tui_keys: dict[str, str] = field(default_factory=dict)
+    persona_name: str = "Kova"
+    persona_tone: str = "warm"
+    persona_configured: bool = False
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -119,7 +124,12 @@ def load_config(home: Path | None = None) -> Config:
                  files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
                  port=int(data.get('port', 7700)),
                  compact_threshold=float(data.get('compact_threshold', 0.75)),
-                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())))
+                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),
+                 tui_theme=data.get('tui', {}).get('theme', 'dark'),
+                 tui_keys=data.get('tui', {}).get('keys', {}),
+                 persona_name=data.get('persona', {}).get('name', 'Kova'),
+                 persona_tone=data.get('persona', {}).get('tone', 'warm'),
+                 persona_configured=data.get('persona', {}).get('configured', False))
     cfg.bind_providers()
     # Tighten legacy credential files too, not only new writes.
     path.chmod(0o600)
@@ -157,7 +167,8 @@ def save_config(cfg: Config) -> None:
             raw['api_key'] = p.api_key
         providers.append(raw)
     data = {'schema_version': 2, 'oauth_host_id': cfg.oauth_host_id, 'active': cfg.active, 'port': cfg.port, 'compact_threshold': cfg.compact_threshold, 'files_path': str(cfg.files_path),
-            'memory': memory, 'providers': providers,
+            'memory': memory, 'tui': {'theme': cfg.tui_theme, 'keys': cfg.tui_keys}, 'persona': {'name': cfg.persona_name, 'tone': cfg.persona_tone,
+                                           'configured': cfg.persona_configured}, 'providers': providers,
             'models': [{'name': m.name, 'provider': m.provider, 'base_url': m.base_url,
                         'model': m.model, 'context': m.context} for m in cfg.models]}
     private_write(cfg.home / 'config.toml', tomli_w.dumps(data))

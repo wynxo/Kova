@@ -290,3 +290,11 @@ def test_permission_rules_authenticated_validated_and_persisted(server):
     for invalid in [{'action':'oops'}, {'action':'allow','tool':4}, {'action':'allow','scope':'session'}]:
         assert client.put('/permission-rules',headers=headers,json=[invalid]).status_code == 422
     assert client.get('/permission-rules',headers=headers).json()[0]['action'] == 'deny'
+
+
+def test_persona_api_rejects_invalid_identity_and_persists(server):
+    client, headers, cfg, _ = server
+    assert client.post('/persona', headers=headers, json={'name': 'Nova', 'tone': 'unknown'}).status_code == 422
+    assert client.post('/persona', headers=headers, json={'name': 'Nova', 'tone': 'concise'}).status_code == 200
+    assert client.get('/persona', headers=headers).json() == {'name': 'Nova', 'tone': 'concise', 'configured': True}
+    assert load_config(cfg.home).persona_name == 'Nova'
