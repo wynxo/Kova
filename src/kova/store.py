@@ -720,12 +720,12 @@ class Store:
 
     def mark_reminder_done(self, rid: int) -> None:
         with self._lock:
-            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (rid,))
+            self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ? AND kind = 'reminder'", (rid,))
             self._conn.commit()
 
     def delete_reminder(self, rid: int) -> bool:
         with self._lock:
-            cur = self._conn.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+            cur = self._conn.execute("DELETE FROM reminders WHERE id = ? AND kind = 'reminder'", (rid,))
             self._conn.commit()
             return cur.rowcount > 0
 

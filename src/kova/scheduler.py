@@ -172,10 +172,15 @@ class Scheduler:
     async def due(self, now: datetime) -> list[dict]:
         """Start every job that is due now, and return those jobs."""
         started: list[dict] = []
-        idle = self.is_idle() if self.is_idle is not None else True
-        for job in self.store.due_jobs(now):
+        # Ordinary jobs first, so a heartbeat that is due at the same moment can
+        # see them and stay quiet instead of running alongside them.
+        jobs = sorted(self.store.due_jobs(now), key=lambda job: (job["idle_only"], job["next_run"]))
+        for job in jobs:
             if job["id"] in self._running:
                 continue
+            # Re-ask for every job: one started earlier in this same tick already
+            # means the machine is no longer idle.
+            idle = not self._running and (self.is_idle() if self.is_idle is not None else True)
             if job["idle_only"] and not idle:
                 continue  # a heartbeat waits until nothing else is running
             if job["prompt"] and self.run_prompt is None:

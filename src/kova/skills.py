@@ -68,17 +68,27 @@ def _md_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
-def _headline(text: str) -> str:
-    """The first real line of a body, used when a file has no description."""
-    for line in text.splitlines():
-        line = " ".join(line.split()).lstrip("#-* ").strip()
-        if line:
-            return line[:MAX_DESCRIPTION_CHARS]
-    return ""
+def _clean_line(line: str) -> str:
+    """One readable line: whitespace collapsed and a Markdown heading/bullet removed."""
+    return " ".join(line.split()).lstrip("#-* ").strip()
+
+
+def _split_headline(text: str) -> tuple[str, str]:
+    """The first real line, and the rest of the file after it."""
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        cleaned = _clean_line(line)
+        if cleaned:
+            return cleaned[:MAX_DESCRIPTION_CHARS], "".join(lines[index + 1:]).strip()
+    return "", ""
 
 
 def _parse(path: Path) -> Skill:
-    """Read one skill: YAML frontmatter when present, else a body-derived summary."""
+    """Read one skill: YAML frontmatter when present, else a body-derived summary.
+
+    Without frontmatter the first line is the skill's name and description, so it
+    is not repeated in the body; with frontmatter the whole body is instructions.
+    """
     text = path.read_text()
     meta: dict = {}
     body = text
@@ -91,7 +101,10 @@ def _parse(path: Path) -> Skill:
         if isinstance(loaded, dict):
             meta = loaded
             body = text[match.end():]
-    headline = _headline(body)
+        headline = _clean_line(next((line for line in body.splitlines() if _clean_line(line)), ""))
+        body = body.strip()
+    else:
+        headline, body = _split_headline(text)
     name = str(meta.get("name") or "").strip() or headline or path.stem
     description = " ".join(str(meta.get("description") or "").split()) or headline
     return Skill(
