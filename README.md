@@ -144,7 +144,7 @@ kova setup --url http://192.168.178.29:11434 --model MODEL_ID --name home
 ```
 
 Keys, custom headers and owned OAuth tokens are stored only in
-`~/.kova/config.toml`, written atomically with **0600** permissions on Unix.
+`~/.kova/config.toml`, written atomically with **0600** permissions on Unix. Set `compact_threshold = 0.75` to change the fraction of model context that triggers automatic conversation compaction. Use `/compact` in the TUI to summarize older turns manually; the original transcript remains available.
 There is no extra keyring dependency. Avoid putting keys directly in shell
 history; interactive setup hides input. Owned tokens refresh near expiry under
 a cross-process lock. Logging out attempts to revoke the owned renewable session;

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from kova.compact import compact
 from kova.config import Config
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
@@ -211,9 +212,19 @@ class Agent:
         client = ModelClient(entry, transport=self.transport)
         schemas = openai_schemas(tools) or None
         try:
+            attempted_compaction = False
             for step in range(11):
-                history = trim_history(repair_tool_pairs(self.store.get_messages(chat_id)),
-                                       entry.context, len(prompt))
+                history = self.store.get_context(chat_id)
+                threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))
+                size = len(prompt) + sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
+                if not attempted_compaction and size > entry.context * 4 * threshold:
+                    attempted_compaction = True
+                    event = await compact(self.store, chat_id, client, context_tokens=entry.context,
+                                          reserved_chars=len(prompt), threshold=threshold)
+                    if event:
+                        yield event
+                        history = self.store.get_context(chat_id)
+                history = trim_history(repair_tool_pairs(history), entry.context, len(prompt))
                 messages = [{'role': 'system', 'content': prompt}, *history]
                 content: list[str] = []
                 calls: list[dict] = []

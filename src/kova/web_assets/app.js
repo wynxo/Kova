@@ -311,6 +311,11 @@
             body.insertBefore(current.node, activity); blocks.push(current);
           }
           current.text += event.text; current.dirty = true;
+        } else if (kind === 'compacted') {
+          current = null;
+          const details = el('details', 'turn-status');
+          details.append(el('summary', '', `Compacted ${event.count} messages`), el('pre', '', event.summary));
+          body.insertBefore(details, activity);
         } else if (kind === 'tool_call') {
           current = null; activity.hidden = true;
           const row = el('div', 'tool-row'); const icon = el('span', 'spinner'); const detail = el('span', 'tool-detail', 'Running…');

@@ -245,3 +245,17 @@ def test_unknown_chat_404(server):
     assert client.delete("/chats/abc", headers=headers).status_code == 404
     response = client.post("/chats/abc/messages", json={"text": "hi"}, headers=headers)
     assert response.status_code == 404
+
+
+def test_manual_compaction_endpoint(server):
+    client, headers, cfg, fake = server
+    chat_id = client.post('/chats', headers=headers).json()['id']
+    store = client.app.state.store
+    for i in range(4):
+        store.add_message(chat_id, 'user', 'message ' + str(i) + 'x' * 100)
+        store.add_message(chat_id, 'assistant', 'reply')
+    response = client.post(f'/chats/{chat_id}/compact', headers=headers)
+    assert response.status_code == 200
+    assert response.json()['type'] == 'compacted'
+    assert response.json()['summary'] == 'Hello there!'
+    assert 'Hello there!' in str(store.get_context(chat_id))

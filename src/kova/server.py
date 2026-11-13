@@ -281,6 +281,20 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {"ok": True}
 
+    @api.post("/chats/{chat_id}/compact")
+    async def compact_chat(chat_id: str) -> dict:
+        from kova.compact import compact
+        from kova.models import ModelClient
+        async with chat_lock(chat_id):
+            if app.state.store.get_chat(chat_id) is None:
+                raise HTTPException(status_code=404, detail="chat not found")
+            entry = config.active_model()
+            if not entry.model:
+                raise HTTPException(status_code=422, detail="No model is configured")
+            event = await compact(app.state.store, chat_id, ModelClient(entry, transport=app.state.agent.transport),
+                                  context_tokens=entry.context, threshold=config.compact_threshold, force=True)
+            return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
+
     @api.post("/chats/{chat_id}/messages")
     async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:

@@ -522,11 +522,10 @@ async def test_run_turn_never_sends_a_half_answered_tool_pair(setup):
         {"id": "call_old", "type": "function",
          "function": {"name": "memory_search", "arguments": "{}"}}])
     store.add_message(chat_id, "tool", "old result", tool_call_id="call_old")
-    _, fake = await run_turn(setup, [text("fresh")], message="current question")
-    sent = fake.requests[0]["messages"]
+    _, fake = await run_turn(setup, [text("Earlier context included a tool result."), text("fresh")], message="current question")
+    sent = fake.requests[-1]["messages"]
     assert sent[0]["role"] == "system"
     assert sent[-1] == {"role": "user", "content": "current question"}
-    assert sent[1]["role"] == "assistant" and sent[1]["tool_calls"][0]["id"] == "call_old"
-    assert sent[2] == {"role": "tool", "tool_call_id": "call_old", "content": "old result"}
+    assert "Earlier context" in str(sent)
     assert not any(m["role"] == "user" and m["content"].startswith("old") for m in sent)
     assert_tool_pairs_wired(sent)

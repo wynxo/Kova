@@ -366,6 +366,14 @@ class Renderer:
         if self.thinking is not None or self.think_started:
             self._end_thinking()
 
+    def _on_compacted(self, event) -> None:
+        self.end_text()
+        self.line(f"  Compacted {event.get('count', 0)} messages:")
+        self.line(str(event.get('summary', '')))
+
+    def _on_compact_skipped(self, event) -> None:
+        self.line(str(event.get('message', 'Nothing to compact.')))
+
     def _on_done(self, _event) -> None:
         self.end_text()
         self.status("")
