@@ -156,3 +156,23 @@ def test_import_rejects_a_non_kova_zip(tmp_path):
         archive.writestr("hello.txt", "not a backup")
     with pytest.raises(BackupError):
         import_archive(load_config(tmp_path / "home"), path)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="symlink permissions vary on Windows")
+def test_backup_skips_symlink_notes_and_replace_preserves_them(tmp_path):
+    cfg = _home(tmp_path)
+    memory = Memory(cfg.memory_path)
+    memory.write_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "secret.md"
+    outside.write_text("do not export")
+    link = memory.write_dir / "linked.md"
+    link.symlink_to(outside)
+    memory.save("Normal", "safe note")
+    target = tmp_path / "backup.zip"
+    export_archive(cfg, target)
+    with zipfile.ZipFile(target) as archive:
+        assert "memory/linked.md" not in archive.namelist()
+        assert archive.read("memory/normal.md")
+    import_archive(cfg, target, merge=False)
+    assert link.is_symlink()
+    assert outside.read_text() == "do not export"

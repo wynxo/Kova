@@ -61,7 +61,10 @@ def _note_files(root: Path) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*.md")
-        if not any(part.startswith(".") for part in path.relative_to(root).parts[:-1])
+        if not path.is_symlink()
+        and path.is_file()
+        and path.resolve().is_relative_to(root.resolve())
+        and not any(part.startswith(".") for part in path.relative_to(root).parts[:-1])
     )
 
 
