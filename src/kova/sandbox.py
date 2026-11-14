@@ -157,16 +157,21 @@ def apply(root: Path) -> None:
         os.close(descriptor)
 
 
-def wrap(argv: list[str], root: Path) -> list[str] | None:
+def wrap(argv: list[str], root: Path, status_fd: int | None = None) -> list[str] | None:
     """The argv that applies the sandbox and then runs ``argv``, or None."""
     if not available():
         return None
-    return [sys.executable, "-m", "kova.sandbox", str(Path(root).resolve()), "--", *argv]
+    status = ["--status-fd", str(status_fd)] if status_fd is not None else []
+    return [sys.executable, "-m", "kova.sandbox", *status, str(Path(root).resolve()), "--", *argv]
 
 
 def main(args: list[str] | None = None) -> int:
     """Apply confinement, then replace this process with the command."""
     arguments = list(sys.argv[1:] if args is None else args)
+    status_fd = None
+    if arguments[:1] == ["--status-fd"]:
+        status_fd = int(arguments[1])
+        arguments = arguments[2:]
     if len(arguments) < 3 or arguments[1] != "--":
         sys.stderr.write("usage: python -m kova.sandbox ROOT -- COMMAND [ARG...]\n")
         return 2
@@ -177,6 +182,9 @@ def main(args: list[str] | None = None) -> int:
         # Never fall through to an unconfined exec: a broken sandbox is an error.
         sys.stderr.write(f"kova: could not establish the command sandbox: {exc}\n")
         return EXIT_UNAVAILABLE
+    if status_fd is not None:
+        os.write(status_fd, b"ready")
+        os.close(status_fd)  # The command cannot forge setup status.
     try:
         os.execvpe(command[0], command, os.environ)
     except OSError as exc:
