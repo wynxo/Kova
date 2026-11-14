@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `kova-app` now launches the desktop app (native window; `--browser` for your browser).
 - `docs/ARCHITECTURE.md` now documents all 72 endpoints with their auth, plus the SSE event vocabulary; `uv run pytest -k architecture` fails when the table and the code drift apart.
 - Redesigned desktop and web UI, with a new app icon.
+- Reminder notifications now work on macOS and Windows and fall back from `notify-send` to `gdbus` on Linux; `kova doctor` reports the notifier in use, and the desktop app allows the Notification permission.
 
 ## History
 

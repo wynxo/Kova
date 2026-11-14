@@ -390,8 +390,9 @@ local times such as `in 10 min`, `tomorrow 5pm`, `monday 9am`, `tonight`,
 `morgen 9 Uhr`, `übermorgen`. It returns a timezone-aware datetime in the
 future. `ReminderLoop` (`src/kova/reminders.py`) wakes every 15 seconds, asks
 the store for due reminders, publishes `{"type": "reminder", ...}` on the
-`EventBus`, shows a desktop toast via `notify-send` when available, and marks
-the reminder done. `GET /events` fans those events out to the terminal chat
+`EventBus`, shows an OS notification with the platform's notifier
+(`notify-send`/`gdbus`, `osascript`, or PowerShell/`msg.exe`), and marks the
+reminder done. `GET /events` fans those events out to the terminal chat
 thread and the desktop `EventSource`.
 
 ## Modes

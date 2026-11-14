@@ -181,6 +181,35 @@ def test_reports_writable_memory_dir(monkeypatch, tmp_path):
                       "Memory directory is writable (or can be created).") in checks
 
 
+def _diagnose_with_plan(monkeypatch, tmp_path, plan):
+    _install(monkeypatch, tmp_path, make_response=lambda: _Resp(200, {"version": "0.1.0", "model_ok": True}),
+             active_model="llama3", available=["llama3"])
+    monkeypatch.setattr(diag, "notification_plan", lambda text: plan)
+    return diag.diagnose()
+
+
+def test_reports_the_notifier_it_will_use(monkeypatch, tmp_path):
+    checks = _diagnose_with_plan(monkeypatch, tmp_path,
+                                 [("notify-send", ["notify-send", "Kova", ""])])
+    assert diag.Check("notifier", True, "Desktop notifications use notify-send.") in checks
+
+
+def test_reports_the_notifier_fallback(monkeypatch, tmp_path):
+    checks = _diagnose_with_plan(monkeypatch, tmp_path,
+                                 [("notify-send", ["notify-send"]), ("gdbus", ["gdbus"])])
+    assert diag.Check("notifier", True,
+                      "Desktop notifications use notify-send (falling back to gdbus).") in checks
+
+
+def test_reports_a_missing_notifier(monkeypatch, tmp_path):
+    checks = _diagnose_with_plan(monkeypatch, tmp_path, [])
+    missing = [check for check in checks if check.name == "notifier"]
+    assert missing and missing[0].ok is False
+    assert missing[0].detail.startswith("No desktop notifier found.")
+    assert "Reminders still appear in an open window." in missing[0].detail
+    assert missing[0].next_step == "Install a desktop notifier"
+
+
 def test_load_config_error_is_first_check(monkeypatch, tmp_path):
     def boom():
         raise ValueError("bad toml")
@@ -196,7 +225,7 @@ def test_checks_keep_the_existing_order(monkeypatch, tmp_path):
     checks = diag.diagnose()
     assert [check.name for check in checks] == [
         "config", "server", "model", "memory", "port-owner", "sandbox", "node",
-        "token", "disk", "schema", "tools",
+        "token", "disk", "schema", "tools", "notifier",
     ]
 
 

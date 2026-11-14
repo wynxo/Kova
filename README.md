@@ -97,9 +97,11 @@ The installer keeps a copy of the desktop app in `~/.kova/desktop` (or your
 
 The Electron shell starts the server when it is down, reads the local token, and
 exchanges it for a one-use ticket; its caches and remembered window bounds live
-under `KOVA_HOME`. Closing the window hides it to the tray. Packaged builds
-(AppImage/deb, NSIS, DMG) are configured in [desktop/README.md](desktop/README.md);
-they are built per platform and need the Kova Python CLI installed separately.
+under `KOVA_HOME`. The page may request the **Notification** permission for OS
+notifications; every other permission request is denied. Closing the window hides
+it to the tray. Packaged builds (AppImage/deb, NSIS, DMG) are configured in
+[desktop/README.md](desktop/README.md); they are built per platform and need the
+Kova Python CLI installed separately.
 
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
 live tool status, approval cards, plan checklists, working-folder and permission
@@ -263,6 +265,8 @@ Reminders:
 - `kova reminders add "<when>" "<text>"` — add one; `when` can be natural local time (`in 10 min`, `tomorrow 5pm`, `monday 9am`, `morgen 9 Uhr`) or ISO 8601
 - `kova reminders rm ID` — delete one
 
+Reminders are fired by the background server, so they still arrive after you close a chat. Kova uses the first OS notifier it finds: `notify-send` on Linux, falling back to `gdbus`; `osascript` on macOS; a PowerShell toast on Windows, falling back to `msg.exe`. If none is installed the reminder still appears in an open terminal chat or desktop window. On Linux install `notify-send` with `sudo apt install libnotify-bin` (Debian/Ubuntu), `sudo dnf install libnotify` (Fedora) or `sudo pacman -S libnotify` (Arch); macOS and Windows include their notifier. `kova doctor` prints which notifier will be used.
+
 Server:
 
 - `kova serve` — run the server in the foreground
@@ -291,7 +295,8 @@ $ kova doctor
 ✓ 32.0 GB free in KOVA_HOME.
 ✓ Config schema version 2; no unknown keys.
 ✓ openai adapter supports tool calling.
-→ All checks passed.    (11 ok)
+✓ Desktop notifications use notify-send.
+→ All checks passed.    (12 ok)
 ```
 
 What each line means:
@@ -313,13 +318,17 @@ What each line means:
 - **Schema** — the config schema is current and has no keys this version
   ignores.
 - **Tools** — the active adapter carries tool calls, so work mode can act.
+- **Notifications** — the OS notifier reminders will use, with its fallback:
+  `notify-send` then `gdbus` on Linux, `osascript` on macOS, or a PowerShell
+  toast then `msg.exe` on Windows. Without one, reminders still appear in an
+  open terminal chat or desktop window.
 
 When a line fails, the verdict names the next step and the command exits 1:
 
 ```console
 $ kova doctor
 ✗ Port is held by a different Kova (its token does not match this KOVA_HOME).
-→ Next: Stop the other server or choose another port    (10 ok, 1 needs attention)
+→ Next: Stop the other server or choose another port    (11 ok, 1 needs attention)
 $ echo $?
 1
 ```
@@ -333,8 +342,8 @@ $ kova doctor --json
 ```
 
 The `check` names are `config`, `server`, `model`, `memory`, `port-owner`,
-`sandbox`, `node`, `token`, `disk`, `schema` and `tools`. Diagnostic output never
-includes API keys, the bearer token or your token's value.
+`sandbox`, `node`, `token`, `disk`, `schema`, `tools` and `notifier`. Diagnostic
+output never includes API keys, the bearer token or your token's value.
 
 ## Chat modes
 
