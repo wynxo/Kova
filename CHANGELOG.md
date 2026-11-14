@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.
+
 ### Added
 
 - Session picker gains fork: `/fork` copies the current chat (or `/fork 2` any earlier one), and **Ctrl+S** in the `/resume` picker forks the highlighted chat; forks keep messages and compacted context and continue independently.
