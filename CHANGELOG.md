@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.
 - Attach up to three local documents or images per chat turn, with bounded local extraction, file chips, rereading and explicit model vision support (#74).
 - Vision is per model: select a vision model to attach images without a reload, turn it on or off in Model settings (persisted to config.toml), and `GET /capabilities?model=…` reports that model's contract with a 404 for an unknown name (#151).
-- File shares from the installed web app become native composer attachments uploaded through the existing attachment API and gated by the selected model's vision setting; text and link shares are unchanged.
+- File shares from the installed web app become native composer attachments uploaded through the existing attachment API and gated by the selected model's vision setting; text and link shares are unchanged. Unredeemed share-draft chats are removed at startup because their in-memory tokens cannot survive a restart.
 
 ### Added
 

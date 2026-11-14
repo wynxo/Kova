@@ -8,7 +8,6 @@ The page exchanges it for an HttpOnly cookie, then removes the fragment.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import secrets
 import time
@@ -152,12 +151,6 @@ def install_web(app, require_bearer) -> None:
         uploads: list[UploadFile] = []
         rows: list[dict] = []
         chat = None
-        # Attachment storage records its own timestamps once the quota work
-        # lands; use the app clock when it does, so shares expire and clean up
-        # under the same clock as every other upload. Before that the parameter
-        # does not exist, and this path keeps working unchanged.
-        save_kwargs = ({'now': app.state.now}
-                       if 'now' in inspect.signature(attachments.save).parameters else {})
         try:
             async with request.form(max_files=SHARE_MAX_FILES, max_fields=3) as form:
                 parts = [str(form.get(key, "")).strip() for key in ("title", "text", "url")]
@@ -172,7 +165,7 @@ def install_web(app, require_bearer) -> None:
                             cwd=str(app.state.config.files_path.resolve()))
                     rows.append(await asyncio.to_thread(
                         attachments.save, app.state.config.home, app.state.store,
-                        chat["id"], file.filename, content, **save_kwargs))
+                        chat["id"], file.filename, content, now=app.state.now))
         except MultiPartException as exc:
             if chat is not None:
                 app.state.store.delete_chat(chat["id"])
@@ -180,10 +173,9 @@ def install_web(app, require_bearer) -> None:
         except attachments.AttachmentError as exc:
             if chat is not None:
                 app.state.store.delete_chat(chat["id"])
-            # Quota work keeps its own 409 contract; older attachment storage
-            # has no such class and every rejection is a 400.
-            quota = getattr(attachments, "AttachmentQuotaError", None)
-            status = 409 if quota is not None and isinstance(exc, quota) else 400
+            # A quota rejection is a conflict with the chat's current usage;
+            # any other attachment problem is a bad request.
+            status = 409 if isinstance(exc, attachments.AttachmentQuotaError) else 400
             raise HTTPException(status, str(exc)) from None
         except Exception:
             if chat is not None:
@@ -197,6 +189,12 @@ def install_web(app, require_bearer) -> None:
                 app.state.store.delete_chat(chat["id"])
             raise HTTPException(429, "Too many pending shares.")
         token = secrets.token_urlsafe(32)
+        if chat is not None:
+            try:
+                app.state.store.add_share_draft(chat["id"])
+            except Exception:
+                app.state.store.delete_chat(chat["id"])
+                raise
         entries[token] = {
             "expires": time.monotonic() + SHARE_SECONDS,
             "owner": _share_owner(request),
@@ -213,6 +211,11 @@ def install_web(app, require_bearer) -> None:
         entry = entries.get(token)
         if entry is None or entry["owner"] != _share_owner(request):
             raise HTTPException(404, "Share expired or already used.")
+        # The draft becomes an ordinary chat here. Retire the journal entry
+        # first so an interrupted handoff can never make a restart delete a
+        # conversation that may already be in use.
+        if entry.get("chat"):
+            app.state.store.drop_share_draft(entry["chat"]["id"])
         entries.pop(token)
         return {"text": entry["text"], "chat": entry["chat"],
                 "attachments": entry["attachments"]}

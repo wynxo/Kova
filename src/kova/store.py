@@ -191,6 +191,9 @@ class Store:
                 turns INTEGER NOT NULL,
                 created TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS share_drafts (
+                chat_id TEXT PRIMARY KEY
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
@@ -475,6 +478,40 @@ class Store:
                 [(chat_id, ident) for ident in unique])
             self._conn.commit()
 
+    def add_share_draft(self, chat_id: str) -> None:
+        """Remember a share's draft chat until the share is redeemed or expires.
+
+        Share tokens deliberately live only in memory, so a restart makes every
+        unredeemed draft unreachable. The journal lets the next startup find
+        and remove those chats instead of leaving empty conversations behind.
+        """
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO share_drafts (chat_id) VALUES (?)", (chat_id,))
+            self._conn.commit()
+
+    def drop_share_draft(self, chat_id: str) -> None:
+        """Forget a draft journal entry once the share is handed off."""
+        with self._lock:
+            self._conn.execute("DELETE FROM share_drafts WHERE chat_id = ?", (chat_id,))
+            self._conn.commit()
+
+    def reap_share_drafts(self) -> list[str]:
+        """Clear the journal and return draft chats with no saved messages.
+
+        Called once at startup: every journal entry belongs to a share token
+        that did not survive the restart. A draft that already has a message
+        is a real conversation (a crash can land between redemption and the
+        journal update), so it is kept.
+        """
+        with self._lock:
+            ids = [row["chat_id"] for row in self._conn.execute(
+                "SELECT chat_id FROM share_drafts")]
+            self._conn.execute("DELETE FROM share_drafts")
+            self._conn.commit()
+            return [chat_id for chat_id in ids if not self._conn.execute(
+                "SELECT 1 FROM messages WHERE chat_id = ? LIMIT 1", (chat_id,)).fetchone()]
+
     def referenced_attachment_ids(self, chat_id: str) -> set[str]:
         """Every attachment id a saved chat still uses.
 
@@ -535,6 +572,7 @@ class Store:
                 pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
+            self._conn.execute("DELETE FROM share_drafts WHERE chat_id = ?", (chat_id,))
             self._conn.execute(
                 "DELETE FROM message_attachments WHERE message_id IN "
                 "(SELECT id FROM messages WHERE chat_id = ?)", (chat_id,))
@@ -552,6 +590,7 @@ class Store:
                 self.delete_attachment(chat["id"], row["id"])
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
+            self._conn.execute("DELETE FROM share_drafts")
             self._conn.execute("DELETE FROM message_attachments")
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM checkpoints")
