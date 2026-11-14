@@ -1,6 +1,6 @@
 # Claude Code vs Codex — research notes for Kova
 
-Research sub-agent output, 2026-11-13. Read-only: nothing in `/home/ox1/Kova` was modified.
+Research sub-agent output, 2026-11-13. Read-only: nothing in `~/Kova` was modified.
 
 **Subjects:** Claude Code (Anthropic CLI, `claude` 2.1.323 installed locally) and Codex (OpenAI CLI 0.167.2 + desktop app).
 
@@ -19,8 +19,8 @@ No secrets, tokens or credential values were read. `~/.claude/.credentials.json`
 
 | What | Path | Notes |
 |---|---|---|
-| Claude Code binary | `/home/ox1/.local/bin/claude` → `~/.local/share/claude/versions/2.1.323` | `claude --version` → `2.1.323 (Claude Code)` — VERIFIED |
-| Codex binary | `/home/ox1/.local/bin/codex` → `~/.codex/packages/standalone/current/bin/codex` | `codex --version` → `codex-cli 0.167.2` — VERIFIED |
+| Claude Code binary | `~/.local/bin/claude` → `~/.local/share/claude/versions/2.1.323` | `claude --version` → `2.1.323 (Claude Code)` — VERIFIED |
+| Codex binary | `~/.local/bin/codex` → `~/.codex/packages/standalone/current/bin/codex` | `codex --version` → `codex-cli 0.167.2` — VERIFIED |
 | Codex desktop app | `/usr/lib/chatgpt/resources/codex`, `app.asar` | Electron app; version `26.1103.60933` in `~/.codex/config.toml` env — VERIFIED |
 | Codex home | `~/.codex/` | `AGENTS.md`, `config.toml`, `hooks.json`, `skills/`, `plugins/cache/`, `memories*/`, plus *separate SQLite files per feature* (`state_5.sqlite`, `thread_history_1.sqlite`, `logs_2.sqlite`, `memories_1.sqlite`, `goals_1.sqlite`, `queue_1.sqlite`) — VERIFIED |
 | Claude home | `~/.claude/` | `settings.json` (56 KB, hooks-heavy), `keybindings.json`, `CLAUDE.md` (symlink into an Obsidian "second brain" vault), `skills/`, `plugins/marketplaces/`, `projects/`, `file-history/`, `history.jsonl` — VERIFIED |
@@ -121,7 +121,7 @@ Claude Code runs **two** memory systems side by side and says plainly that both 
 - `CLAUDE.md` files in *subdirectories* are not loaded at launch. They load lazily the first time Claude reads/writes/edits a file in that subdirectory.
 - `.claude/rules/*.md` splits instructions into per-topic files; YAML `paths:` frontmatter makes a rule load only when matching files are touched.
 - **Block-level HTML comments are stripped before injection** (outside code fences) — free maintainer notes that cost zero context tokens.
-- `@path` imports pull other files in (`~/.claude/CLAUDE.md` on this machine is literally a symlink whose content ends with `@RTK.md`).
+- `@path` imports pull other files in (a user-level `CLAUDE.md` can itself just import other files).
 
 VERIFIED — memory.md § How CLAUDE.md files load, § Organize rules with `.claude/rules/`; local `~/.claude/CLAUDE.md`.
 

@@ -72,7 +72,7 @@ Token: random, made on first run, stored in `~/.kova/token` (mode 600). The serv
 - `kova model list | add NAME URL MODEL [--key] | use NAME`
 - `kova reminders list | add "<when>" "<text>" | rm ID`
 - `kova serve` (foreground), `kova stop`, `kova status`.
-- First run makes a default config with one model, `tiel` → `http://192.168.178.29:8080/v1`, `cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs`. (The public README says to run `kova model add`; the homelab address is only the dev default.)
+- First run makes a default config with one model, `tiel` → `http://192.0.2.10:8080/v1`, `cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs`. (The public README says to run `kova model add`; the homelab address is only the dev default.)
 
 ## Errors
 - Model unreachable or HTTP error → `error` event: "Can't reach model 'tiel' at <url>". Server stays up. `kova status` shows it.

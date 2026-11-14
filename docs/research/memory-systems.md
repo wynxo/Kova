@@ -5,7 +5,6 @@ Research sub-agent report for Kova. Every claim is labeled **VERIFIED** (source 
 - Kova files read: `src/kova/memory.py`, `src/kova/store.py`, `src/kova/tools/memory.py`, `src/kova/project_instructions.py`, `src/kova/agent.py`.
 - Local agent configs read (structure only, not chat contents): `~/.claude/CLAUDE.md` (vault instructions), `~/.claude/hooks.json`, `~/.omp/agent/config.yml`, `~/.hermes/config.yaml`, OpenClaw `~/.openclaw/state/openclaw.sqlite`, `~/.openclaw/workspace/*`.
 - Web docs read: OpenClaw memory/compaction, oh-my-pi (OMP) context-files & memory, OpenClaw docs, Pi/Honcho, Claude Code memory.
-- Vault read: `/home/ox1/Desktop/claude-brain/meta/conventions.md`, `/home/ox1/Desktop/claude-brain/index.md`.
 
 ---
 
@@ -116,10 +115,10 @@ Source: `https://honcho.dev/docs/v3/guides/integrations/pi.md`.
 ---
 
 ## 3. The vault — a hand-built second brain
-Source: `/home/ox1/Desktop/claude-brain/index.md`, `/home/ox1/Desktop/claude-brain/meta/conventions.md` (read-only).
+Source: the maintainer's own note-taking setup (described at a high level only).
 
 **VERIFIED** (these are the user's own instructions to me, the AI, describing how the vault works):
-- **Structure**: `claude-brain/` with `index.md` (the brain's root/navigation) + `meta/` (conventions). It is a **Markdown second brain**, not a live local memory store — it "lives in GitHub and syncs to the AI, not the user's machine."
+- **Structure**: a notes folder with `index.md` (the brain's root/navigation) + `meta/` (conventions). It is a **Markdown second brain**, not a live local memory store — it "lives in GitHub and syncs to the AI, not the user's machine."
 - **Hybrid recall**: `index.md` is a **table of contents** (always-in-context pointer); the vault also has a **searchable index** for recall-by-search. So it combines always-in-context navigation + on-demand search.
 - **Editing**: the user edits the brain in **Obsidian** (their machine); the AI edits via **GitHub commits** (pushed from the AI machine). Sync is GitHub ⇄ Obsidian.
 - **Forgetting/retention**: explicit **forgetting policy** + "memory decay" concept (not all memories are equally durable). The AI writes notes, commits, pushes; the user reviews.

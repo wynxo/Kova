@@ -15,7 +15,7 @@
 - Python `>=3.12`; package `kova` in `src/kova/`; tests in `tests/`; run everything through `uv run`.
 - Data home: `KOVA_HOME` env var, else `~/.kova/`. Files there: `config.toml`, `kova.db`, `memory/`, `token`, `server.pid`, `server.log`.
 - Server binds `127.0.0.1`, default port `7700`. Every route except `GET /health` requires `Authorization: Bearer <token>`; `token` file mode `600`.
-- Default model on first run: name `tiel`, base URL `http://192.168.178.29:8080/v1`, model `cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs`, context `131072`.
+- Default model on first run: name `tiel`, base URL `http://192.0.2.10:8080/v1`, model `cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs`, context `131072`.
 - Default files folder: `~/Kova Files`. Default memory folder: `<home>/memory`.
 - Max 10 tool steps per turn. Memory: up to 5 notes injected. History trimmed at 4 chars/token, keeping 25% of the context free.
 - Tool limits: web_search 5 results, 15 s timeout; web_fetch 1 MB download cap, 8,000 chars returned; read_file 100 KB cap.
@@ -90,7 +90,7 @@ def test_default_config_created(tmp_path):
     assert (tmp_path / "config.toml").exists()
     m = cfg.active_model()
     assert (m.name, m.base_url, m.model, m.context) == (
-        "tiel", "http://192.168.178.29:8080/v1",
+        "tiel", "http://192.0.2.10:8080/v1",
         "cyber-tiel-coder-35b-a3b-mtp-ud-iq3_xxs", 131072)
     assert cfg.port == 7700
     assert cfg.memory_path == tmp_path / "memory"
