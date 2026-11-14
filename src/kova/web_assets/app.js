@@ -200,9 +200,10 @@
       const date = new Date(chat.last_message || chat.created);
       button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
       button.onclick = () => safe(() => openChat(chat.id));
-      const actions = el('div', 'history-actions');
-      for (const [symbol, name, fn] of [['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
-        const action = iconButton(symbol, name, ''); action.setAttribute('aria-label', `${name} ${title}`);
+      const actions = el('details', 'history-actions');
+      actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
+      for (const [symbol, name, fn] of [['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
+        const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
         action.onclick = () => safe(fn); actions.append(action);
       }
       row.append(button, actions); $('chat-list').append(row);
@@ -263,6 +264,8 @@
   }
   async function queueMessage(text) {
     if (!text || !state.chat) return;
+    const command = parseCommand(text);
+    if (command) return dispatchCommand(command);
     const row = await json(`/chats/${state.chat.id}/queue`, write('POST', {text}));
     state.queued.push(row); renderQueue();
     $('prompt').value = ''; resize(); controls();
@@ -270,6 +273,8 @@
   async function steerMessage() {
     const text = $('prompt').value.trim();
     if (!text || !state.chat) return;
+    const command = parseCommand(text);
+    if (command) return dispatchCommand(command);
     await json(`/chats/${state.chat.id}/steer`, write('POST', {text}));
     $('prompt').value = ''; resize(); controls();
     toast('Sent into the running reply.', 'Steering');
@@ -640,6 +645,8 @@
             body.insertBefore(current.node, activity); blocks.push(current);
           }
           current.text += event.text; current.dirty = true;
+        } else if (kind === 'compact_skipped') {
+          toast(event.message);
         } else if (kind === 'compacted') {
           current = null;
           const details = el('details', 'turn-status');
@@ -707,9 +714,87 @@
       }
     };
   }
+  // One catalog drives discovery, help and dispatch. Unknown paths remain messages.
+  const commands = {
+    new: '/new', fork: '/fork [n]', compact: '/compact', mode: '/mode chat|work',
+    web: '/web on|off', model: '/model <name>', memory: '/memory [list]', help: '/help',
+    resume: '/resume [n]', permissions: '/permissions [mode|rules]', think: '/think',
+    diff: '/diff [n]', restore: '/restore <n>', changes: '/changes', cd: '/cd <folder>',
+    steer: '/steer <text>', clear: '/clear', exit: '/exit', quit: '/quit'
+  };
+  const terminalCommands = new Set(['resume', 'permissions', 'think', 'diff', 'restore', 'changes', 'cd', 'steer', 'clear', 'exit', 'quit']);
+  function parseCommand(text) {
+    if (/[\r\n]/.test(text)) return null;
+    const match = /^\/(\S+)(?:\s+(.*))?$/.exec(text.trim());
+    return match && Object.hasOwn(commands, match[1]) ? {name: match[1], args: match[2] || ''} : null;
+  }
+  async function forkChat(id = state.chat?.id) {
+    if (!id) throw new Error('Open a conversation to fork first.');
+    if (state.busy) throw new Error('Wait for the current reply before forking.');
+    const chat = await json(`/chats/${id}/fork`, {method: 'POST'});
+    await openChat(chat.id); await refreshChats();
+  }
+  async function compactChat() {
+    if (!state.chat) throw new Error('Open a conversation to compact first.');
+    if (state.busy) throw new Error('Wait for the current reply before compacting.');
+    const id = state.chat.id;
+    state.busy = true; controls();
+    try {
+      const result = await json(`/chats/${id}/compact`, {method: 'POST'});
+      toast(result.type === 'compact_skipped' ? result.message : `Compacted ${result.count} messages`);
+    } finally { state.busy = false; controls(); }
+  }
+  async function dispatchCommand({name, args}) {
+    if (terminalCommands.has(name)) { toast(`/${name} lives in the terminal chat (kova).`); return; }
+    if (state.busy) throw new Error('Wait for the current reply before running a command.');
+    if (name === 'help') {
+      empty(false);
+      const card = message('assistant', '', 'Kova commands');
+      card.append(el('pre', '', Object.values(commands).join('\n') + '\nTerminal-only commands open in kova.'));
+    } else if (name === 'new' && !args) await newChat();
+    else if (name === 'fork') {
+      const chats = args ? await json('/chats') : null;
+      const n = Number(args);
+      if (args && (!/^\d+$/.test(args) || n < 1 || !chats[n - 1])) throw new Error('Use /fork [n], with a conversation number from history (newest first).');
+      await forkChat(args ? chats[n - 1].id : state.chat?.id);
+    } else if (name === 'compact' && !args) await compactChat();
+    else if (name === 'mode' && ['chat', 'work'].includes(args)) {
+      await chatSetting({mode: args}); $('mode').value = args; controls();
+    } else if (name === 'web' && ['on', 'off'].includes(args)) {
+      await chatSetting({web: args === 'on'}); $('web').setAttribute('aria-pressed', String(args === 'on')); $('web').lastElementChild.textContent = `Web ${args}`; controls();
+    } else if (name === 'model' && args) {
+      if (!state.models.some(model => model.name === args)) throw new Error('Unknown model. Choose a configured model.');
+      await json('/models/active', write('POST', {name: args}));
+      $('model').value = args; selectedModel = args; await health(); await refreshCapabilities();
+    } else if (name === 'model' && !args) { options(true); $('model-slot').querySelector('button')?.click(); }
+    else if (name === 'memory' && (!args || args === 'list')) $('open-memory').onclick();
+    else throw new Error(`Usage: ${commands[name]}`);
+  }
+  function commandPicker() {
+    const text = $('prompt').value.trim(), picker = $('command-picker');
+    picker.replaceChildren();
+    picker.hidden = !text.startsWith('/') || /\s/.test(text);
+    if (picker.hidden) return;
+    for (const [name, usage] of Object.entries(commands)) {
+      if (!name.startsWith(text.slice(1))) continue;
+      const button = el('button', 'btn', usage + (terminalCommands.has(name) ? ' · terminal' : ''));
+      button.type = 'button';
+      button.onclick = () => { $('prompt').value = `/${name} `; picker.hidden = true; resize(); $('prompt').focus(); };
+      picker.append(button);
+    }
+    picker.hidden = !picker.children.length;
+  }
+  $('commands').onclick = () => { $('prompt').value = '/'; commandPicker(); $('prompt').focus(); };
+  $('compact-now').onclick = () => safe(compactChat);
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
     if (!text || !state.connected) return;
+    const command = parseCommand(text);
+    if (command) {
+      try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
+      catch (error) { toast(error.message); }
+      return;
+    }
     if (state.busy) return safe(() => queueMessage(text));
     await sendText(text);
   }
@@ -762,7 +847,7 @@
   function safe(fn) { Promise.resolve().then(fn).catch(error => { toast(error.message); controls(); }); }
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', resize);
+  $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
   $('prompt').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
     // Like a shell: Up in an empty box brings back what you last said.

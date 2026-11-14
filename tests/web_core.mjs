@@ -61,6 +61,8 @@ const sandbox = {
          capabilities: ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']},
       ]},
     };
+    if (path.endsWith('/compact')) return {ok: true, json: async () => ({type: 'compact_skipped', message: 'Nothing to compact'})};
+    if (path.endsWith('/fork')) return {ok: true, json: async () => ({id: 'blocked'})};
     if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
     // A chat whose turn is blocked on an approval that was asked before a reload.
     if (path === '/chats/blocked') return {ok: true, json: async () => ({id: 'blocked', cwd: '/project', state: 'blocked-on-approval', messages: [{role: 'user', content: 'clean up'}]})};
@@ -71,7 +73,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -404,3 +406,37 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+
+// Known commands are intercepted, including invalid arguments; paths and multiline text are not.
+for (const name of Object.keys(sandbox.test.commands)) {
+  assert.equal(sandbox.test.parseCommand(`/${name}`).name, name);
+  assert.equal(sandbox.test.parseCommand(`/${name} bad argument`).name, name);
+}
+for (const text of ['/unknown', '/home/you/project', '/compact\nhello', '/fork\rhello']) {
+  assert.equal(sandbox.test.parseCommand(text), null);
+}
+state.connected = true; state.busy = false;
+for (const name of ['help', 'diff', 'restore', 'changes', 'cd', 'steer']) {
+  const before = requests.length;
+  await sandbox.test.dispatchCommand({name, args: ''});
+  assert.equal(requests.length, before, `${name} never calls the model`);
+}
+await assert.rejects(sandbox.test.dispatchCommand({name: 'fork', args: 'bad'}), /Use \/fork/);
+await assert.rejects(sandbox.test.dispatchCommand({name: 'mode', args: 'bad'}), /Usage/);
+$('prompt').value = '/com'; sandbox.test.commandPicker();
+assert.equal($('command-picker').children.length, 1);
+assert.equal($('command-picker').children[0].textContent, '/compact');
+console.log('Slash command catalog, dispatch guards and picker passed');
+
+state.chat = {id: 'blocked'};
+await sandbox.test.dispatchCommand({name: 'compact', args: ''});
+assert.equal(requests.at(-1).path, '/chats/blocked/compact');
+assert.ok($('toasts').textContent.includes('Nothing to compact'));
+await sandbox.test.dispatchCommand({name: 'fork', args: ''});
+assert.ok(requests.some(r => r.path === '/chats/blocked/fork'));
+state.busy = true;
+const beforeCommands = requests.length;
+$('prompt').value = '/compact';
+await sandbox.test.send({preventDefault() {}});
+assert.equal(requests.length, beforeCommands, 'busy commands are never queued');
+state.busy = false;
