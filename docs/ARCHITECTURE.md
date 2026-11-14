@@ -89,7 +89,7 @@ cookie, so a route added to the router is authenticated by construction.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
-| `GET /capabilities` | token or session | what the active provider declares, and what each mode offers |
+| `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
@@ -121,6 +121,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
 | `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it |
 | `GET/POST /models` | token or session | list / add model servers |
+| `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
 | `GET/PUT /permission-rules` | token or session | read / replace the rules that pre-approve tools |
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
@@ -557,15 +558,17 @@ alone, everything else the provider alone. `providers.offered(provider, mode)`
 combines them, and `providers.capabilities(provider)` is the provider's own
 declaration, which the setup form and `kova providers list` show.
 
-`GET /capabilities` publishes the active provider's declarations and the
-`offered` set for each mode — the one thing the CLI, the terminal chat and the
-web app read. The web provider form shows only the fields a kind declares, chat
-mode disables the permission and folder pickers, and `/think` is refused where
-no reasoning stream exists. The server enforces the same declarations, so a
-client that forces a field a kind does not take (an API key for ChatGPT, custom
-headers for OpenAI, an approval in a mode that never asks) is refused rather
-than silently obeyed. A model with no provider entry — a legacy single-model
-config — declares everything, so nothing is hidden from it.
+`GET /capabilities` publishes a model's declarations and the `offered` set for
+each mode — the one thing the CLI, the terminal chat and the web app read. It
+describes the active model by default, or the model named by `?model=`
+(404 when unknown), so the composer can gate the model it actually sends. The
+web provider form shows only the fields a kind declares, chat mode disables the
+permission and folder pickers, and `/think` is refused where no reasoning stream
+exists. The server enforces the same declarations, so a client that forces a
+field a kind does not take (an API key for ChatGPT, custom headers for OpenAI,
+an approval in a mode that never asks) is refused rather than silently obeyed.
+A model with no provider entry — a legacy single-model config — declares
+everything, so nothing is hidden from it.
 
 ### Authentication research
 
@@ -602,10 +605,12 @@ remains a separately installed prerequisite. See desktop/README.md.
 fallback. `read_attachment` accepts an attachment ID and line range and cannot
 read another chat's uploads. Deleting or purging a chat removes its upload bytes.
 
-Set `vision = true` explicitly on a `[[models]]` entry in config.toml only when
-that model supports images. The adapter must also declare vision; the API and
-composer both enforce it. Non-vision models require an OCR/text alternative
-(local OCR is not bundled). Extracted text, or image data for a declared vision
-model, is sent to the configured model only as part of a requested chat turn;
-no external extraction or file-upload service is used. Raw images are not stored
-in transcript messages and must be attached again for a later visual turn.
+Turn on Vision for one model in the web app's Model settings (or set
+`vision = true` on that `[[models]]` entry in config.toml) only when the model
+supports images. The adapter must also declare vision; the API and composer both
+enforce it, and `GET /capabilities?model=…` reports the selected model's
+contract. Non-vision models require an OCR/text alternative (local OCR is not
+bundled). Extracted text, or image data for a declared vision model, is sent to
+the configured model only as part of a requested chat turn; no external
+extraction or file-upload service is used. Raw images are not stored in
+transcript messages and must be attached again for a later visual turn.

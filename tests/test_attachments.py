@@ -8,6 +8,7 @@ import zipfile
 import pytest
 
 from kova import attachments
+from kova.config import load_config
 from kova.model_adapters import anthropic_request, responses_request
 from tests.test_server import server
 
@@ -90,6 +91,42 @@ def test_vision_gated_and_wire_formats(server):
     assert payload['messages'][0]['content'][1]['source']['media_type'] == 'image/png'
     _, payload = responses_request('demo', messages, None)
     assert payload['input'][0]['content'][1]['type'] == 'input_image'
+
+
+def test_vision_is_per_model_and_round_trips(server):
+    """The contract and the API follow the selected model, not only the active one."""
+    client, headers, cfg, fake = server
+    assert 'vision' not in client.get('/capabilities', headers=headers).json()['capabilities']
+    created = client.post('/models', headers=headers, json={
+        'name': 'vision-model', 'base_url': 'http://model.test/v1', 'model': 'vision-test',
+        'context': 32768, 'vision': True})
+    assert created.status_code == 200
+    assert created.json()['vision'] is True
+    listed = {entry['name']: entry for entry in client.get('/models', headers=headers).json()}
+    assert listed['vision-model']['vision'] is True
+    assert listed['local']['vision'] is False
+    reloaded = {entry.name: entry for entry in load_config(cfg.home).models}
+    assert reloaded['vision-model'].vision is True
+
+    selected = client.get('/capabilities?model=vision-model', headers=headers).json()
+    assert 'vision' in selected['capabilities']
+    assert 'vision' in selected['offered']['work']
+    assert 'vision' not in client.get('/capabilities?model=local', headers=headers).json()['capabilities']
+    assert 'vision' not in client.get('/capabilities', headers=headers).json()['capabilities']
+    assert client.get('/capabilities?model=missing', headers=headers).status_code == 404
+
+    # A named vision model accepts an image even while another model is active.
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    row = upload(client, headers, chat, 'shot.png', b'\x89PNG\r\n\x1a\n').json()
+    response = client.post(f'/chats/{chat}/messages', headers=headers, json={
+        'text': 'describe', 'model': 'vision-model', 'attachments': [row['id']]})
+    assert response.status_code == 200 and 'event: done' in response.text
+
+    patched = client.patch('/models', headers=headers, json={'name': 'vision-model', 'vision': False})
+    assert patched.status_code == 200 and patched.json()['vision'] is False
+    assert 'vision' not in client.get('/capabilities?model=vision-model', headers=headers).json()['capabilities']
+    assert {entry.name: entry for entry in load_config(cfg.home).models}['vision-model'].vision is False
+    assert client.patch('/models', headers=headers, json={'name': 'missing', 'vision': True}).status_code == 404
 
 
 def test_optional_reader_errors(tmp_path, monkeypatch):

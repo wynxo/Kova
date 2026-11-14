@@ -160,6 +160,13 @@ class ModelBody(BaseModel):
     model: str
     api_key: str | None = None
     context: int = 131072
+    vision: bool = False
+
+
+class ModelPatch(BaseModel):
+    """Per-model settings to change; omitted fields stay as they are."""
+    name: str
+    vision: bool | None = None
 
 
 class ActiveBody(BaseModel):
@@ -194,6 +201,7 @@ def _model_dict(entry: ModelEntry) -> dict:
     """The JSON shape of a model entry."""
     return {"name": entry.name, "base_url": entry.base_url, "model": entry.model,
             "api_key": "***" if entry.api_key else None, "context": entry.context,
+            "vision": entry.vision,
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
@@ -625,7 +633,7 @@ def create_app(
         from kova import providers
         if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
             if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
-                raise HTTPException(400, "This model cannot read images; attach OCR text or choose a vision-enabled model.")
+                raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
@@ -962,9 +970,21 @@ def create_app(
     @api.post("/models")
     async def model_add(body: ModelBody) -> dict:
         entry = ModelEntry(name=body.name, base_url=body.base_url, model=body.model,
-                           api_key=body.api_key, context=body.context)
+                           api_key=body.api_key, context=body.context, vision=body.vision)
         config.models[:] = [m for m in config.models if m.name != entry.name]
         config.models.append(entry)
+        save_config(config)
+        return _model_dict(entry)
+
+    @api.patch("/models")
+    async def model_update(body: ModelPatch) -> dict:
+        """Change one model's per-model settings, such as image support."""
+        entry = next((m for m in config.models if m.name == body.name), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"unknown model '{body.name}'")
+        if body.vision is None:
+            raise HTTPException(status_code=422, detail="nothing to update")
+        entry.vision = body.vision
         save_config(config)
         return _model_dict(entry)
 

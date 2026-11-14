@@ -96,10 +96,15 @@ def install_provider_routes(app, config: Config, require_token):
                 'harness_available': provider_auth.detect_harness()}
 
     @router.get('/capabilities')
-    async def contract():
+    async def contract(model: str | None = None):
         """The capability contract, for every UI layer to consult.
 
-        ``capabilities`` is what the active provider declares; ``offered`` is
+        Without a query the contract describes the active model; ``?model=``
+        describes one named model, so a composer can gate the selection it
+        actually sends. An unknown name is a 404 rather than a silent fallback
+        to a different model's declarations.
+
+        ``capabilities`` is what that model's provider declares; ``offered`` is
         what each chat mode offers once every gate has agreed (see
         :data:`kova.providers.CAPABILITY_GATES`), which is what a UI reads for
         the mode it is in. The server enforces the same declarations, so a
@@ -107,10 +112,15 @@ def install_provider_routes(app, config: Config, require_token):
         silently obeyed.
         """
         config.bind_providers()
-        try:
-            entry = config.active_model()
-        except KeyError:
-            entry = None
+        if model:
+            entry = next((m for m in config.models if m.name == model), None)
+            if entry is None:
+                raise HTTPException(404, f"unknown model '{model}'")
+        else:
+            try:
+                entry = config.active_model()
+            except KeyError:
+                entry = None
         provider = entry._provider if entry is not None else None
         caps = providers.capabilities(provider)
         if entry is None or not entry.vision:

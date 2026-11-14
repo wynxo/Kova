@@ -77,8 +77,8 @@
     state.offered = contract.offered || {};
     controls();
   }
-  async function refreshCapabilities() {
-    try { applyCapabilities(await json('/capabilities')); }
+  async function refreshCapabilities(model = '') {
+    try { applyCapabilities(await json(model ? `/capabilities?model=${encodeURIComponent(model)}` : '/capabilities')); }
     catch (_) { state.offered = null; controls(); }  // an older server declares nothing
   }
   function controls() {
@@ -98,7 +98,7 @@
     $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = state.busy || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
-    $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need a vision-enabled model or OCR text';
+    $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need Vision turned on in Model settings';
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
     $('stop').disabled = state.stopRequested;
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
@@ -833,7 +833,7 @@
     } else if (name === 'model' && args) {
       if (!state.models.some(model => model.name === args)) throw new Error('Unknown model. Choose a configured model.');
       await json('/models/active', write('POST', {name: args}));
-      $('model').value = args; selectedModel = args; await health(); await refreshCapabilities();
+      $('model').value = args; selectedModel = args; await health(); await refreshCapabilities(selectedModel);
     } else if (name === 'model' && !args) { options(true); $('model-slot').querySelector('button')?.click(); }
     else if (name === 'memory' && (!args || args === 'list')) $('open-memory').onclick();
     else throw new Error(`Usage: ${commands[name]}`);
@@ -937,7 +937,7 @@
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value}));
       const chatId = state.chat.id;
       for (const file of files) {
-        if (file.type.startsWith('image/') && !offers('vision')) { toast('This model cannot read images; attach OCR text or choose a vision-enabled model.'); continue; }
+        if (file.type.startsWith('image/') && !offers('vision')) { toast('This model cannot read images. Turn on Vision for it in Model settings.'); continue; }
         if (file.size > 25 * 1024 * 1024) { toast('Each attachment must be 25 MB or smaller.'); continue; }
         const form = new FormData(); form.append('file', file);
         pendingAttachments.push(await json(`/chats/${chatId}/attachments`, {method: 'POST', body: form}));
@@ -1041,9 +1041,44 @@
   });
   let selectedModel = '';
   $('model').onchange = () => safe(async () => {
-    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(); }
+    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(selectedModel); }
     catch (error) { $('model').value = selectedModel; throw error; }
   });
+  async function openModelSettings() {
+    const name = $('model').value;
+    const model = state.models.find(entry => entry.name === name);
+    if (!model) return toast('Choose a model first.');
+    const dialog = el('dialog', 'model-dialog');
+    dialog.setAttribute('aria-label', 'Model settings');
+    const form = el('form'); form.method = 'dialog';
+    const head = el('div', 'dialog-head'), title = el('h2', '', 'Model settings');
+    const close = iconButton('x', 'Close model settings'); close.type = 'button'; close.onclick = () => dialog.close();
+    head.append(title, close);
+    const intro = el('p', 'provider-intro', `${model.provider_name || 'Custom'} · ${model.model || model.name}`);
+    const fields = el('div', 'model-fields');
+    for (const [label, value] of [['Provider', model.provider_name || 'Custom'], ['Model', model.model || model.name],
+                                  ['Context', `${model.context} tokens`], ['Address', model.base_url]]) {
+      const row = el('div', 'field'); row.append(el('span', '', label), el('small', '', value)); fields.append(row);
+    }
+    const vision = el('input'); vision.type = 'checkbox'; vision.checked = Boolean(model.vision);
+    const toggle = el('label', 'provider-check'); toggle.append(vision, el('span', '', 'Vision: this model can read images'));
+    const note = el('p', 'provider-footnote', 'Turn this on only when the model itself supports images. Kova never detects this for you.');
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => dialog.close();
+    const save = el('button', 'btn primary', 'Save'); save.type = 'button';
+    save.onclick = () => safe(async () => {
+      save.disabled = true;
+      try {
+        const updated = await json('/models', write('PATCH', {name, vision: vision.checked}));
+        Object.assign(model, updated);
+        if ($('model').value === name) await refreshCapabilities(name);
+        dialog.close();
+        toast(`Vision ${updated.vision ? 'on' : 'off'} for ${model.model || model.name}.`);
+      } catch (error) { save.disabled = false; throw error; }
+    });
+    actions.append(cancel, save); form.append(head, intro, fields, toggle, note, actions);
+    dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
+  }
   function theme(value) {
     document.documentElement.dataset.theme = value;
     const next = value === 'light' ? 'Dark theme' : 'Light theme';
@@ -1158,11 +1193,12 @@
       if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toast('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true;
       await setupIdentity();
-      const [models, status, contract] = await Promise.all([json('/models'), json('/health'), json('/capabilities')]);
+      const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
       renderModels(models);
       $('model').value = status.model; selectedModel = status.model;
-      applyCapabilities(contract);
+      // The contract belongs to the model in the composer, not just the active one.
+      await refreshCapabilities(selectedModel);
       await refreshChats(); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       $('prompt').focus();
@@ -1286,7 +1322,7 @@
         providerLogin = null; closeProvider();
         const [models, status] = await Promise.all([json('/models'), json('/health')]);
         state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
-        await refreshCapabilities();
+        await refreshCapabilities(selectedModel);
         syncMenus(); await health(); toast('Provider connected. Ready when you are.'); return;
       }
       const kind = $('provider-kind').value, caps = providerCaps();
@@ -1647,7 +1683,8 @@
   const permissionNotes = {manual: 'Ask before commands and file changes', auto: 'Ask only before destructive commands', full: 'Never ask. Use with care.'};
   menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value],
     actions: [{glyph: 'sliders-horizontal', label: 'Edit permission rules…', run: openRules}]});
-  menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value});
+  menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value,
+    actions: [{glyph: 'sliders-horizontal', label: 'Model settings…', run: () => safe(openModelSettings)}]});
   menu('provider-kind', 'Provider', {width: 240, labelledby: 'provider-kind-label'});
   menu('provider-active', 'Active model', {width: 240, labelledby: 'provider-active-label'});
   function setMode(value) {
