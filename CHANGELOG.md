@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/health` answers from a 15-second cached model status refreshed in the background (`?probe=1` forces a live check), and the web poll pauses while hidden and backs off to 2–5 minutes, so CLI commands and open windows no longer wait on a down model.
 - `kova-app` now launches the desktop app (native window; `--browser` for your browser).
+- `docs/ARCHITECTURE.md` now documents all 72 endpoints with their auth, plus the SSE event vocabulary; `uv run pytest -k architecture` fails when the table and the code drift apart.
 - Redesigned desktop and web UI, with a new app icon.
 
 ## History
