@@ -349,6 +349,23 @@ class KovaClient:
         payload = {"name": name, "base_url": base_url, "model": model, "api_key": api_key}
         return self._request("POST", "/models", json=payload).json()
 
+    def local_models(self, *, cpu=False) -> dict:
+        """Explicitly inspect this PC and list the curated local catalog."""
+        return self._request('GET', '/local-models', params={'cpu': str(cpu).lower()}, timeout=20).json()
+
+    def local_model_install(self, model: str, *, cpu=False) -> Iterator[dict]:
+        complete = False
+        for event in self._stream('POST', '/local-models/install', json={'model': model, 'cpu': cpu}, timeout=200):
+            if event.get('type') == 'error':
+                raise KovaError(None, event.get('message', 'Local model installation failed. Retry to resume.'))
+            complete = complete or event.get('type') == 'done'
+            yield event
+        if not complete:
+            raise KovaError(None, 'Local model stream ended before completion. Retry to resume the download.')
+
+    def local_model_remove(self, provider: str) -> dict:
+        return self._request('DELETE', f'/local-models/{provider}', timeout=40).json()
+
     def providers_list(self) -> list[dict]:
         return self._request("GET", "/providers").json()
 

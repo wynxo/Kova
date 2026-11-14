@@ -1,6 +1,7 @@
-"""Explicit provider setup. Only model catalogs are requested; never a test chat."""
+"""Explicit provider setup, including opt-in local downloads; never a test chat."""
 from __future__ import annotations
 
+import asyncio
 import getpass
 import json
 import re
@@ -189,6 +190,67 @@ def needs_setup(cfg: Config, **kwargs) -> bool:
         return True
 
 
+def _setup_local_model(cfg: Config, *, transport=None) -> None:
+    from kova import local_models
+    from kova.tools.system_info import human_size
+    from rich.progress import Progress, BarColumn, TextColumn, DownloadColumn
+
+    client = _running_client(cfg)
+    try:
+        hardware = client.local_models()['hardware'] if client else asyncio.run(local_models.inspect(transport=transport))
+        def size(value):
+            return human_size(value) if value is not None else 'unknown'
+        console.print(Text('Use a model on this PC', style='bold'))
+        console.print(Text(f"{hardware.get('gpu') or 'No GPU detected'} · {size(hardware.get('vram_bytes'))} VRAM · "
+                           f"{size(hardware.get('ram_bytes'))} RAM · {size(hardware.get('free_disk'))} free"))
+        console.print('Disk is an estimate for this account / OLLAMA_MODELS. Check the Ollama service volume too.')
+        if 'Ollama' not in hardware['backends']:
+            others = ', '.join(hardware['backends'])
+            raise SetupError(('Found ' + others + '. Use Local server to connect it. ' if others else '') +
+                             'This download flow needs Ollama running on this PC. Install it from https://ollama.com/download, '
+                             'start it (ollama serve), then retry. No model was downloaded.')
+        cpu = False
+        if not hardware.get('vram_bytes'):
+            if _ask('GPU memory is unknown. Offer the small 3B CPU model? It may be slow. [y/N]:').lower() != 'y':
+                raise SetupError('Nothing downloaded. Start a supported GPU backend or connect an existing provider.')
+            cpu = True
+        elif _select('Run on', ['GPU (recommended)', 'CPU only — small 3B model, slower']) == 1:
+            cpu = True
+        rows = local_models.catalog(hardware, cpu=cpu)
+        for row in rows:
+            console.print(Text(f"{row['name']} · {row['quant']} · {size(row['download_bytes'])} · "
+                               f"{row['rating'].replace('-', ' ')}: {row['reason']}"))
+        eligible = [r for r in rows if r['rating'] != 'too-big']
+        if not eligible:
+            raise SetupError('No catalog model fits the measured resources. Free disk/RAM or connect another provider, then retry.')
+        selected = eligible[_select('Choose a local model', [r['name'] for r in eligible])]
+        console.print(Text('Licence: ' + selected['license_url']))
+        if _ask(f"Download {size(selected['download_bytes'])} and load {selected['name']}? Retry resumes partial downloads. [y/N]:").lower() != 'y':
+            raise SetupError('Nothing downloaded. Run kova setup when ready.')
+        with Progress(TextColumn('{task.description}'), BarColumn(), DownloadColumn(), console=console) as progress:
+            task = progress.add_task('Preparing…', total=None)
+            def update(event):
+                if event['type'] == 'progress':
+                    progress.update(task, description=event['message'], total=event.get('total'), completed=event.get('completed', 0))
+                elif event['type'] == 'done':
+                    progress.update(task, description=event['message'])
+            if client:
+                for event in client.local_model_install(selected['id'], cpu=cpu):
+                    update(event)
+            else:
+                async def install():
+                    fresh = await asyncio.to_thread(local_models.measure_hardware)
+                    async for event in local_models.install(cfg, selected['id'], fresh, cpu=cpu, transport=transport):
+                        update(event)
+                asyncio.run(install())
+        console.print('✓ Model ready. Run kova to chat. Ollama manages the download cache and model service.')
+    except local_models.LocalModelError as exc:
+        raise SetupError(str(exc)) from None
+    finally:
+        if client:
+            client.http.close()
+
+
 def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
               name: str | None = None, api_key: str | None = None, yes: bool = False,
               provider_kind: str | None = None, transport=None, timeout: float = 10, **kwargs) -> None:
@@ -218,13 +280,20 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
         if model or name or api_key:
             raise SetupError('Pass --url along with --model, --name, or --key.')
         console.print(Text('\nConnect a provider', style='bold'))
-        console.print('Choose where your messages go. Setup only lists models; it never sends a chat.')
+        console.print('Choose where your messages go. Existing providers only list models; the PC flow downloads and loads a model without sending a chat.')
+        if provider_kind == 'this-pc':
+            _setup_local_model(cfg, transport=transport)
+            return
         if provider_kind:
             spec = next((s for s in CATALOG if s.id == provider_kind), None)
             if spec is None:
                 raise SetupError('Unknown provider type.')
         else:
-            spec = CATALOG[_select('Provider', [s.name for s in CATALOG], default=None)]
+            choice = _select('Provider', [s.name for s in CATALOG] + ['Use a model on this PC'], default=None)
+            if choice == len(CATALOG):
+                _setup_local_model(cfg, transport=transport)
+                return
+            spec = CATALOG[choice]
         if spec.id == 'local':
             address = _ask('Server address (Enter = detect local Ollama / LM Studio / llama.cpp / PolyStrata):')
             if not address:
