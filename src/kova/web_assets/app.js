@@ -1338,12 +1338,12 @@
     syncMenus();
   }
 
-  let localRows = [], localController = null;
+  let localRows = [], localController = null, localBackend = 'ollama';
   const localSize = value => value == null ? 'unknown' : `${(value / 1073741824).toFixed(1)} GiB`;
   function localChoiceChanged() {
     const row = localRows.find(r => r.id === $('local-model-choice').value);
     $('local-model-reason').textContent = row ? `${row.rating.replaceAll('-', ' ')}: ${row.reason}` : 'No model fits. Free disk/RAM or choose explicit CPU mode.';
-    $('local-model-size').textContent = row ? `Download about ${localSize(row.download_bytes)} · ${row.quant} · ${row.context} token context` : '';
+    $('local-model-size').textContent = row ? `Download about ${localSize(row.download_bytes)}${row.engine_download_bytes ? ` + ${localSize(row.engine_download_bytes)} engine` : ''} · ${row.quant} · ${row.context} token context` : '';
     $('local-license').hidden = !row;
     if (row) $('local-license').href = row.license_url;
     $('local-install').disabled = !row || row.rating === 'too-big';
@@ -1367,20 +1367,24 @@
       $('local-disk-note').textContent = data.disk_note;
       $('local-fit-details').replaceChildren(...data.models.map(row =>
         el('li', '', `${row.name} · ${row.rating.replaceAll('-', ' ')}: ${row.reason}`)));
-      localRows = data.ollama_present ? data.models : [];
+      localBackend = data.backend || (data.ollama_present ? 'ollama' : 'managed');
+      localRows = data.models;
       $('local-model-choice').replaceChildren(...localRows.map(row => {
         const option = el('option', '', `${row.name} · ${row.rating.replaceAll('-', ' ')}`);
         option.value = row.id; option.disabled = row.rating === 'too-big'; return option;
       }));
       $('local-model-choice').value = localRows.find(r => r.rating !== 'too-big')?.id || '';
       localChoiceChanged();
-      $('provider-status').textContent = data.ollama_present ? 'Choose a model, review its licence and download size, then download.'
-        : 'Ollama is not running. Install it from https://ollama.com/download and start it (ollama serve), then retry. Other detected backends can be connected using Local server.';
+      $('provider-status').textContent = data.engine_error || (localBackend === 'ollama'
+        ? 'Choose a model, review its licence and download size, then download.'
+        : 'Ollama is not running. Download will install a pinned llama.cpp engine plus the GGUF. Kova manages startup and idle unload. Alternatively install Ollama from https://ollama.com/download and run ollama serve, then recheck.');
       $('local-installed').replaceChildren(...data.installed.map(model => {
         const row = el('div', 'local-installed-row'), button = el('button', 'btn quiet', 'Remove');
         button.type = 'button'; button.setAttribute('aria-label', `Remove ${model.name}`);
         button.onclick = () => safe(async () => {
-          if (!confirm('Remove this model from Ollama and Kova? Other apps using its source tag may be affected. Shared layers may remain.')) return;
+          if (!confirm(model.backend === 'managed'
+            ? 'Remove this GGUF and its Kova connection? The file is kept if another managed variant uses it.'
+            : 'Remove this model from Ollama and Kova? Other apps using its source tag may be affected. Shared layers may remain.')) return;
           button.disabled = true;
           try {
             const result = await json(`/local-models/${encodeURIComponent(model.provider)}`, {method: 'DELETE'});
@@ -1411,7 +1415,7 @@
     $('provider-status').textContent = 'Starting download…';
     let complete = false;
     try {
-      const response = await api('/local-models/install', {...write('POST', {model: $('local-model-choice').value, cpu: $('local-cpu').checked}), signal: controller.signal});
+      const response = await api('/local-models/install', {...write('POST', {model: $('local-model-choice').value, cpu: $('local-cpu').checked, backend: localBackend}), signal: controller.signal});
       await readEvents(response, event => {
         if (version !== providerVersion) return;
         if (event.type === 'error') throw new Error(event.message);
@@ -1427,7 +1431,7 @@
       await refreshLocalSelection(); closeProvider(); toast('Model ready on this PC. Start chatting.');
     } catch (error) {
       if (version === providerVersion) $('provider-status').textContent = controller.signal.aborted
-        ? 'Download cancelled. Retry to resume cached layers. Check the model picker if setup had already finished.' : error.message;
+        ? 'Download cancelled. Retry to resume partial downloads. Check the model picker if setup had already finished.' : error.message;
     } finally {
       localController = null;
       $('local-stop').hidden = true; $('provider-back').disabled = false;

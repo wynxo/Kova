@@ -821,7 +821,7 @@ consequence: a title generated for an attachment-only turn uses the file name,
 and an assistant answer that quotes the document is still stored like any
 other reply.
 
-### Getting a model on this PC (Ollama)
+### Getting a model on this PC (Ollama or managed llama.cpp)
 
 `local_models.py` owns the curated Q4_K_M catalog, conservative fit estimates
 and explicit Ollama lifecycle. `tools/system_info.hardware_profile()` reuses
@@ -863,6 +863,36 @@ credentials or stack traces. Successful download alone is not reported as a
 ready model. Ollama HTTP, lifecycle, auth, fitting and UI behavior are tested
 with synthetic hardware and mocked HTTP; tests never download models.
 
-Managed llama.cpp binaries, GGUF downloads, process supervision and idle
-unload (Path B of #69) remain a follow-up; this path requires an existing
-Ollama installation and tells the user how to install/start it when absent.
+Without a running Ollama, the same explicit setup/desktop step offers Path B.
+`engine_downloads.py` pins llama.cpp b12387 release assets with GitHub SHA-256
+metadata and curated GGUFs by repository revision, LFS hash and exact length.
+It keeps resumable `.part` files, validates Range responses, restarts safely
+when Range is ignored, and promotes only verified downloads. Verified archives
+are extracted into a staging directory with traversal/link/expansion checks;
+the executable and its shared libraries are published together under
+`KOVA_HOME/engine/`. Weights live under `KOVA_HOME/models/`.
+
+`managed_engine.py` owns one engine per home, guarded by both an async lock and
+a cross-process file lock. It binds llama-server to a free loopback port,
+uses a private API key, fixes one inference slot and a bounded 4096-token
+context (2048 for tight fits), and disables automatic fit changes. Full GPU
+offload is requested only after the VRAM reserve check; readiness additionally
+requires healthy status, authenticated model listing and a full GPU-layer loading log entry.
+Explicit CPU mode passes zero GPU layers. Providers are saved only after that
+readiness check; failed/cancelled starts are stopped and never registered.
+
+`engine.pid`, `engine.log` and an ownership record allow crash recovery without
+signalling a recycled PID: executable, full argv and process birth time must
+match. Server startup/shutdown and `kova stop` stop owned engines, never Ollama
+or another model service. `ModelClient.stream` takes a supervisor lease before
+constructing request URLs, so the first real chat after restart/idle unload
+reloads the engine and updates the live provider's dynamic loopback port.
+Health probes never download or load a model. Active streams prevent removal,
+switching and idle unload. A server task checks `[local] idle_unload_minutes`
+(default 5, 0 disables) every 15 seconds. Removing a connection through the
+local-model API, desktop Remove or `kova model remove-local` deletes its GGUF,
+unless another managed variant references it; engine bundles stay cached.
+Both paths share the existing authenticated SSE and lifecycle-operation lock.
+All download and process tests are offline, using tiny synthetic artifacts,
+HTTP transports and mocked process boundaries; real inference is not verified
+by those tests.

@@ -622,10 +622,11 @@ assert.equal(textDropPrevented, false);
 // Local-model setup is opt-in, hides blocked choices and requires a terminal done.
 let localStream = [{type: 'progress', total: 100, completed: 30, message: 'Downloading'}, {type: 'done'}];
 const localRequests = [];
+let localBackend = 'ollama';
 sandbox.fetch = async (path, options = {}) => {
   localRequests.push({path, options});
   const data = {hardware: {gpu: 'Demo GPU', vram_bytes: 8589934592, ram_bytes: 17179869184, free_disk: 53687091200},
-    ollama_present: true, disk_note: 'Estimated model volume', installed: [], models: [
+    ollama_present: localBackend === 'ollama', backend: localBackend, disk_note: 'Estimated model volume', installed: [], models: [
       {id: 'small:demo', name: 'Small demo model', quant: 'Q4_K_M', download_bytes: 2000000000, context: 4096,
        license_url: 'https://example.test/license', rating: 'fits-comfortably', reason: 'Estimated fit'},
       {id: 'huge:demo', name: 'Huge demo model', rating: 'too-big', reason: 'Need 123456 more bytes'},
@@ -652,3 +653,14 @@ localStream = [{type: 'done'}];
 await sandbox.test.installLocalModel();
 assert.equal(JSON.parse(localRequests.find(r => r.path === '/local-models/install').options.body).model, 'small:demo');
 console.log('Local hardware, fit gating, streamed progress and retry checks passed');
+
+// A machine without Ollama offers the same explicit flow with the managed backend.
+localBackend = 'managed';
+await sandbox.test.openLocalModels();
+assert.equal($('local-install').disabled, false, 'missing Ollama must not hide managed downloads');
+assert.ok($('provider-status').textContent.includes('pinned llama.cpp engine'));
+localStream = [{type: 'progress', message: 'Downloading GGUF'}, {type: 'done'}];
+await sandbox.test.installLocalModel();
+const lastLocalInstall = localRequests.filter(r => r.path === '/local-models/install').at(-1);
+assert.equal(JSON.parse(lastLocalInstall.options.body).backend, 'managed');
+console.log('Managed engine desktop selection and explicit install passed');

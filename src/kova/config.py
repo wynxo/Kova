@@ -27,7 +27,7 @@ CONFIG_SCHEMA = 2
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'catalog',
+    'mcp', 'local', 'catalog',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -38,6 +38,7 @@ CONFIG_SECTION_KEYS = {
     'tui': frozenset({'theme', 'keys'}),
     'persona': frozenset({'name', 'tone', 'configured'}),
     'privacy': frozenset({'secrets'}),
+    'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
@@ -217,6 +218,7 @@ class Config:
     #: MCP servers whose tools Kova may use (``[[mcp]]``, see kova.mcp).
     mcp: list[McpServerEntry] = field(default_factory=list)
     #: Outbound secret handling: "off" (compatible default), "redact" or "block".
+    local_idle_unload_minutes: int = 5
     privacy_secrets: str = "off"
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
@@ -319,6 +321,7 @@ def load_config(home: Path | None = None) -> Config:
                  mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
                       if entry is not None] if isinstance(data.get('mcp'), list) else [],
                  privacy_secrets=privacy_secrets,
+                 local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
                  catalog_url=_catalog_url(data.get('catalog')))
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
@@ -506,6 +509,7 @@ def save_config(cfg: Config) -> None:
     _put(memory, 'consolidate_max_loss', cfg.memory_consolidate_max_loss)
     _put(memory, 'write_subdir', cfg.memory_write_subdir or _UNSET)
     _put(_section(doc, 'privacy'), 'secrets', normalize_mode(cfg.privacy_secrets))
+    _put(_section(doc, 'local'), 'idle_unload_minutes', max(0, cfg.local_idle_unload_minutes))
     tui = _section(doc, 'tui')
     _put(tui, 'theme', cfg.tui_theme)
     _merge_map(_section(tui, 'keys'), cfg.tui_keys)

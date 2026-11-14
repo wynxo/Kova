@@ -418,7 +418,7 @@ class Agent:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         client = ModelClient(entry, transport=self.transport,
-                             privacy=getattr(self.config, "privacy_secrets", "off"))
+                             privacy=getattr(self.config, "privacy_secrets", "off"), config=self.config)
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None

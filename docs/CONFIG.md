@@ -70,6 +70,7 @@ compare. Defaults are what a fresh install writes.
 | `compact_threshold` | `compact_threshold` | `0.75` | 0.1–0.99 | Fraction of the model's context that triggers automatic conversation compaction. `/compact` in the terminal does the same thing on demand. |
 | `files_path` | `files_path` | `~/Kova Files` | non-empty path | Root for the file tools. Relative paths are resolved when set; every resolved path must stay inside this folder. |
 | `bind` | `bind` | `loopback` | `loopback` or `lan` | `loopback` listens only on `127.0.0.1`. `lan` also starts the private-network listener used by paired phones; it never opens the public internet. `kova pair` toggles this too. |
+| `[local] idle_unload_minutes` | `local_idle_unload_minutes` | `5` | integer ≥ 0 | Unload the managed llama.cpp engine after this many idle minutes; `0` disables idle unload. Active model streams are protected; the next chat reloads it automatically. Restart the Kova server after changing this setting. |
 | `[privacy] secrets` | `privacy_secrets` | `off` | `off`, `redact` or `block` | Opt-in outbound secret guard at the model boundary. `off` keeps previous behaviour; `redact` replaces known credential shapes before a non-loopback request; `block` refuses the turn before any request. |
 | `[catalog] url` | `catalog_url` | unset (Kova's index on GitHub) | an `https://` URL, a local path, `bundled`, or empty to clear | Where `kova catalog` and the Extensions page read the extensions index. When it cannot be read, Kova uses the index bundled with it. See [EXTENSIONS.md](EXTENSIONS.md). |
 | `[memory] path` | `memory_path` | `~/.kova/memory` | non-empty path | Root folder for Markdown memory notes. An empty value falls back to the default rather than the working directory. `kova memory use PATH` changes it live when the server is up. |
@@ -343,3 +344,42 @@ The example omits `api_key`; when one is present, `config show` still prints
 See also [ARCHITECTURE.md](ARCHITECTURE.md) for how config fits into the server
 and [CONTRIBUTING.md](../CONTRIBUTING.md) for the invariants around tokens and
 keys.
+
+## Managed local models
+
+When Ollama is not running, **Use a model on this PC** in setup or desktop
+**Add provider** offers a managed llama.cpp engine. Nothing downloads until
+you choose a model and confirm. GPU builds use Vulkan on Linux/Windows or
+Metal on Apple Silicon; explicit CPU mode offers the small 3B model with a
+speed warning. Unsupported platforms and failed GPU loading show a next step
+instead of claiming the model is ready. Install a working Vulkan/Metal driver,
+choose CPU mode, or install/start Ollama and recheck.
+
+Kova pins [llama.cpp b12387](https://github.com/ggml-org/llama.cpp/releases/tag/b12387)
+and the GGUF repository revisions in `engine_downloads.py`. Both engine archives
+and GGUFs require an exact length and SHA-256 match before use. Engine archives
+and their shared libraries live in `KOVA_HOME/engine/`, GGUFs in
+`KOVA_HOME/models/`. Interrupted downloads keep `.part` files and use HTTP Range
+on retry; a server ignoring Range replaces rather than appends the partial file.
+There is no automatic download, binary update, or cloud fallback during chat.
+
+The engine binds only to a free `127.0.0.1` port and requires a random API key
+stored with its local provider. Context is bounded to 4096 tokens (2048 for a
+tight fit); only a model that passes the VRAM reserve check is fully offloaded.
+CPU mode uses zero GPU layers. `engine.pid` and `engine.log` sit beside
+`server.pid`; diagnostics remain local. PID recovery verifies process birth
+time, executable and full arguments before signalling anything.
+
+```sh
+kova config set local.idle_unload_minutes 5
+kova stop                              # stops Kova and its managed engine
+kova model remove-local PROVIDER       # deletes GGUF and connection
+```
+
+The desktop **Remove** action does the same thing. A GGUF shared by another
+managed CPU/GPU variant is retained until its last connection is removed.
+The engine bundle stays cached. Restart and shutdown stop an owned old process;
+idle unload frees it after the configured interval, and the next chat starts
+it again without downloading. Disk fit includes model bytes, engine archive,
+extraction headroom and a reserve. Low disk reports the estimated exact
+shortfall; unreachable hosts report retry/manual Ollama instructions.

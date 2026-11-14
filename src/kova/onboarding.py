@@ -191,24 +191,25 @@ def needs_setup(cfg: Config, **kwargs) -> bool:
 
 
 def _setup_local_model(cfg: Config, *, transport=None) -> None:
-    from kova import local_models
+    from kova import local_models, managed_engine
     from kova.tools.system_info import human_size
     from rich.progress import Progress, BarColumn, TextColumn, DownloadColumn
 
     client = _running_client(cfg)
     try:
-        hardware = client.local_models()['hardware'] if client else asyncio.run(local_models.inspect(transport=transport))
+        hardware = client.local_models()['hardware'] if client else asyncio.run(local_models.inspect(transport=transport, home=cfg.home))
+        backend = 'ollama' if 'Ollama' in hardware['backends'] else 'managed'
+        implementation = local_models if backend == 'ollama' else managed_engine
         def size(value):
             return human_size(value) if value is not None else 'unknown'
         console.print(Text('Use a model on this PC', style='bold'))
         console.print(Text(f"{hardware.get('gpu') or 'No GPU detected'} · {size(hardware.get('vram_bytes'))} VRAM · "
                            f"{size(hardware.get('ram_bytes'))} RAM · {size(hardware.get('free_disk'))} free"))
-        console.print('Disk is an estimate for this account / OLLAMA_MODELS. Check the Ollama service volume too.')
-        if 'Ollama' not in hardware['backends']:
-            others = ', '.join(hardware['backends'])
-            raise SetupError(('Found ' + others + '. Use Local server to connect it. ' if others else '') +
-                             'This download flow needs Ollama running on this PC. Install it from https://ollama.com/download, '
-                             'start it (ollama serve), then retry. No model was downloaded.')
+        console.print('Disk is measured on the Kova model volume; the engine is included.' if backend == 'managed' else
+                      'Disk is an estimate for this account / OLLAMA_MODELS. Check the Ollama service volume too.')
+        if backend == 'managed':
+            console.print('Ollama is not running. Kova can download and manage a pinned llama.cpp engine with your model. '
+                          'Alternatively install Ollama from https://ollama.com/download and run ollama serve, then retry.')
         cpu = False
         if not hardware.get('vram_bytes'):
             if _ask('GPU memory is unknown. Offer the small 3B CPU model? It may be slow. [y/N]:').lower() != 'y':
@@ -216,7 +217,7 @@ def _setup_local_model(cfg: Config, *, transport=None) -> None:
             cpu = True
         elif _select('Run on', ['GPU (recommended)', 'CPU only — small 3B model, slower']) == 1:
             cpu = True
-        rows = local_models.catalog(hardware, cpu=cpu)
+        rows = implementation.catalog(hardware, cpu=cpu)
         for row in rows:
             console.print(Text(f"{row['name']} · {row['quant']} · {size(row['download_bytes'])} · "
                                f"{row['rating'].replace('-', ' ')}: {row['reason']}"))
@@ -225,7 +226,9 @@ def _setup_local_model(cfg: Config, *, transport=None) -> None:
             raise SetupError('No catalog model fits the measured resources. Free disk/RAM or connect another provider, then retry.')
         selected = eligible[_select('Choose a local model', [r['name'] for r in eligible])]
         console.print(Text('Licence: ' + selected['license_url']))
-        if _ask(f"Download {size(selected['download_bytes'])} and load {selected['name']}? Retry resumes partial downloads. [y/N]:").lower() != 'y':
+        if _ask(f"Download {size(selected['download_bytes'])} and load {selected['name']}" +
+                (f" plus the {size(selected['engine_download_bytes'])} pinned llama.cpp engine" if backend == 'managed' else '') +
+                '? Retry resumes partial downloads. [y/N]:').lower() != 'y':
             raise SetupError('Nothing downloaded. Run kova setup when ready.')
         with Progress(TextColumn('{task.description}'), BarColumn(), DownloadColumn(), console=console) as progress:
             task = progress.add_task('Preparing…', total=None)
@@ -235,15 +238,16 @@ def _setup_local_model(cfg: Config, *, transport=None) -> None:
                 elif event['type'] == 'done':
                     progress.update(task, description=event['message'])
             if client:
-                for event in client.local_model_install(selected['id'], cpu=cpu):
+                for event in client.local_model_install(selected['id'], cpu=cpu, backend=backend):
                     update(event)
             else:
                 async def install():
-                    fresh = await asyncio.to_thread(local_models.measure_hardware)
-                    async for event in local_models.install(cfg, selected['id'], fresh, cpu=cpu, transport=transport):
+                    fresh = await asyncio.to_thread(local_models.measure_hardware, cfg.home) if backend == 'managed' else await asyncio.to_thread(local_models.measure_hardware)
+                    async for event in implementation.install(cfg, selected['id'], fresh, cpu=cpu, transport=transport):
                         update(event)
                 asyncio.run(install())
-        console.print('✓ Model ready. Run kova to chat. Ollama manages the download cache and model service.')
+        console.print('✓ Model ready. Run kova to chat. ' + ('Kova manages the engine; idle unload defaults to 5 minutes.'
+                      if backend == 'managed' else 'Ollama manages the download cache and model service.'))
     except local_models.LocalModelError as exc:
         raise SetupError(str(exc)) from None
     finally:

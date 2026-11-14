@@ -1,8 +1,8 @@
 """Conservative local-model recommendations and explicit Ollama operations.
 
 Only curated tags and the fixed loopback Ollama endpoint are accepted. Ollama
-owns its downloads, including resuming partially downloaded layers. No engine,
-model weights or hardware inventory is downloaded/saved by Kova itself.
+owns its downloads, including resuming partially downloaded layers. The managed
+llama.cpp alternative lives in managed_engine.py and engine_downloads.py.
 """
 from __future__ import annotations
 
@@ -67,15 +67,15 @@ def _names(model: LocalModel, cpu: bool) -> tuple[str, str]:
     return stem, stem + ':latest'
 
 
-def rate(model: LocalModel, profile: dict, *, cpu: bool = False) -> dict:
+def rate(model: LocalModel, profile: dict, *, cpu: bool = False, check_disk: bool = True) -> dict:
     """Estimate fit with explicit reserves; unknown resources never imply fit."""
     result = dict(rating='too-big', reason='', disk_shortfall_bytes=0)
     free = profile.get('free_disk')
     required_disk = model.download_bytes + DISK_RESERVE
-    if free is None:
+    if check_disk and free is None:
         result['reason'] = 'Free disk space could not be measured. Check the Ollama model volume before retrying.'
         return result
-    if free < required_disk:
+    if check_disk and free < required_disk:
         shortfall = required_disk - free
         result.update(disk_shortfall_bytes=shortfall,
                       reason=f'Not enough disk space: need {shortfall} more bytes on the estimated model volume.')
@@ -113,12 +113,12 @@ def rate(model: LocalModel, profile: dict, *, cpu: bool = False) -> dict:
     return result
 
 
-def measure_hardware() -> dict:
+def measure_hardware(home=None) -> dict:
     """Read hardware using the optional model-volume hint, without opening weights."""
-    return hardware_profile(os.environ.get('OLLAMA_MODELS'))
+    return hardware_profile(home if home is not None else os.environ.get('OLLAMA_MODELS'))
 
 
-async def inspect(*, transport=None) -> dict:
+async def inspect(*, transport=None, home=None) -> dict:
     """Opt-in local hardware and backend check; never scan a LAN or pull a model."""
     # OLLAMA_MODELS is a hint only: a separately launched daemon may use another
     # account, volume or environment. Never expose that path to clients.
@@ -136,6 +136,8 @@ async def inspect(*, transport=None) -> dict:
             check('LM Studio', 'http://127.0.0.1:1234/v1/models', 'data'),
             check('llama.cpp', 'http://127.0.0.1:8080/v1/models', 'data'))
     profile['backends'] = [name for name in found if name]
+    if home is not None and 'Ollama' not in profile['backends']:
+        profile = {**await asyncio.to_thread(measure_hardware, home), 'backends': profile['backends']}
     return profile
 
 
