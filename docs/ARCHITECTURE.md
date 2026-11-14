@@ -107,6 +107,19 @@ rejects non-loopback hosts, cross-origin requests and wrong ports. Every
 response gets `nosniff`, `no-referrer` and `no-store`; `/app` also gets a
 strict CSP. `Disconnect` in the app calls `/app/logout`.
 
+### Phone pairing (`src/kova/pairing.py`)
+
+With `bind = "lan"` in `config.toml` (set by `kova pair` or *Connect your
+phone*), the server's lifespan starts a second, in-process uvicorn listener for
+the same app on the private LAN address only. Requests through it are marked
+`scope["kova_lan"]` by an ASGI guard that refuses non-private peers, any `Host`
+but the LAN address (DNS rebinding) and, outside the page and the pairing claim,
+anything without a paired device's cookie. On those requests the bearer token,
+browser sessions and the local-only routes (`/phone`, `/phone/pair`,
+`/devices`) are refused. Pairing secrets are one-use and live for two minutes in
+memory; device tokens are stored as SHA-256 hashes in `devices.json` and survive
+restarts. See [remote-access.md](remote-access.md).
+
 ## Clients
 
 ### CLI (`src/kova/cli.py`)

@@ -113,7 +113,20 @@ in the URL fragment, which never goes into HTTP access logs. The page removes it
 and exchanges it for an **HttpOnly, SameSite=Strict cookie** valid for 12 hours.
 Browser API calls enforce a loopback host and same origin (including port).
 Disconnect revokes the cookie; restarting the server revokes all sessions.
-The server still binds only to `127.0.0.1`; phone/network access is not enabled.
+By default the server binds only to `127.0.0.1`.
+
+### Use Kova from your phone
+
+Run `kova pair` (or choose **Connect your phone** in the web or desktop app),
+turn on phone access, and scan the QR code with your phone's camera while it is
+on the same Wi-Fi. That phone is now paired: it opens Kova in its browser,
+keeps working after restarts, and can be unpaired with `kova devices revoke`
+(or from the same dialog). `kova pair --off` turns phone access off again.
+
+Phone access is opt-in and LAN-only: Kova then also listens on this computer's
+private network address, never on `0.0.0.0` or the internet, and only paired
+phones get in. See [docs/remote-access.md](docs/remote-access.md) for how it
+works and its threat model.
 Stop cancels the model turn, denies pending approvals, and kills running commands
 and their child processes. It cannot undo changes already made or a synchronous
 file operation that has already started.
@@ -361,7 +374,7 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.
 
-The server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and API requests need a local bearer token or an authenticated browser session. The app shell and health check are public, but contain no chat data or credentials. 🔒
+By default the server only listens on `127.0.0.1`, so nothing outside your machine can reach it, and API requests need a local bearer token or an authenticated browser session. The app shell and health check are public, but contain no chat data or credentials. If you turn on phone access (`kova pair`), Kova also listens on your private LAN address and lets in only phones you paired with a one-use QR code; anything from outside your local network is refused ([details](docs/remote-access.md)). 🔒
 
 ## Development
 

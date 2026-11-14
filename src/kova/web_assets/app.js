@@ -76,7 +76,8 @@
     state.events?.close();
     $('connection').className = 'connection';
     $('connection').lastElementChild.textContent = 'Disconnected';
-    banner(message || 'Open kova-web on this computer to connect. No token or account needed.');
+    banner(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
+      : 'Open kova-web on this computer to connect. No token or account needed.'));
     controls();
   }
   async function api(path, options = {}) {
@@ -87,7 +88,8 @@
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
       try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; else if (Array.isArray(body.detail)) message = body.detail.map(item => `${item.loc?.slice(1).join('.') || 'Field'}: ${item.msg}`).join('; '); } catch (_) {}
-      if (response.status === 401) disconnected('Your connection expired. Open kova-web again to reconnect.');
+      if (response.status === 401) disconnected(onPhone() ? 'This phone is no longer paired. On your computer, run kova pair (or choose Connect your phone) and scan the new code.'
+        : 'Your connection expired. Open kova-web again to reconnect.');
       throw new Error(message);
     }
     return response;
@@ -896,10 +898,13 @@
     if (state.starting) return;
     state.starting = true; state.events?.close();
     // Strip before any asynchronous work, so a consumed ticket never stays in history.
-    const ticket = new URLSearchParams(location.hash.slice(1)).get('ticket');
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    const ticket = fragment.get('ticket'), pairing = fragment.get('pair');
     historyReplace();
     try {
       if (ticket) await json('/app/login', write('POST', {ticket}));
+      // A phone that scanned a pairing QR code trades its one-use secret for a device cookie.
+      if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toast('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true;
       await setupIdentity();
       const [models, status, contract] = await Promise.all([json('/models'), json('/health'), json('/capabilities')]);
@@ -1127,6 +1132,120 @@
       });
     };
   }
+  // Phone pairing (#66). The page on this computer shows a one-use QR code; the
+  // phone that scans it opens /app#pair=… over the Wi-Fi and becomes a paired device.
+  function onPhone() { return Boolean(location.hostname) && !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname); }
+  {
+    const launch = $('connect-phone');
+    const dialog = el('dialog', 'panel phone-dialog'); dialog.setAttribute('aria-label', 'Connect your phone');
+    const head = el('div', 'dialog-head'), close = iconButton('x', 'Close');
+    close.onclick = () => dialog.close(); head.append(el('h2', '', 'Connect your phone'), close);
+    const body = el('div', 'phone-body'), devices = el('div', 'phone-devices');
+    dialog.append(head, body, devices); document.body.append(dialog);
+    let code = null, timer = null, version = 0;
+    function forget() {
+      clearTimeout(timer); timer = null;
+      if (code?.state === 'waiting') api(`/phone/pair/${code.id}`, {method: 'DELETE'}).catch(() => {});
+      code = null;
+    }
+    dialog.addEventListener('close', () => { ++version; forget(); });
+    function button(text, cls, action) {
+      const node = el('button', cls, text); node.type = 'button';
+      node.onclick = () => safe(async () => { node.disabled = true; try { await action(); } finally { node.disabled = false; } });
+      return node;
+    }
+    async function setAccess(enabled) { await json('/phone', write('POST', {enabled})); await render(); }
+    async function render() {
+      const current = ++version; forget();
+      const status = await json('/phone');
+      if (current !== version) return;
+      body.replaceChildren();
+      if (!status.enabled) {
+        const points = el('ul', 'phone-points');
+        for (const text of ['Your chats, memory and model stay on this computer. The phone is a window into it.',
+                            'Kova also listens on your home network, never the internet.',
+                            'Only phones you pair with a QR code get in. Unpair any of them at any time.'])
+          points.append(el('li', '', text));
+        body.append(el('p', 'panel-intro', 'Use Kova from your phone on the same Wi-Fi.'), points,
+                    button('Turn on phone access', 'btn primary', () => setAccess(true)));
+      } else if (!status.listening) {
+        const error = el('p', 'phone-error', status.error || 'Phone access is on but not listening.'); error.setAttribute('role', 'alert');
+        body.append(error, button('Try again', 'btn primary', () => setAccess(true)));
+      } else {
+        const box = el('div', 'phone-qr'); body.append(box);
+        await newCode(box, current);
+      }
+      renderDevices(status);
+    }
+    async function newCode(box, current) {
+      forget();
+      const pair = await json('/phone/pair', {method: 'POST'});
+      if (current !== version) { api(`/phone/pair/${pair.id}`, {method: 'DELETE'}).catch(() => {}); return; }
+      code = {id: pair.id, state: 'waiting'};
+      const expires = Date.now() + pair.expires_in * 1000;
+      const img = el('img', 'phone-code'); img.src = pair.qr; img.alt = 'QR code that connects your phone to Kova'; img.width = 216; img.height = 216;
+      const steps = el('ol', 'phone-steps');
+      for (const text of ['Put your phone on the same Wi-Fi as this computer.', 'Point its camera at the code.', 'Tap the link that appears.']) steps.append(el('li', '', text));
+      const status = el('p', 'phone-status'); status.setAttribute('role', 'status');
+      const copy = button('Copy link instead', 'btn quiet', async () => {
+        try { await navigator.clipboard.writeText(pair.url); toast('Link copied. It works once, for two minutes.'); }
+        catch (_) { toast('Clipboard unavailable here.'); }
+      });
+      const card = el('div', 'phone-card'); card.append(img, el('small', 'phone-address', pair.address));
+      const side = el('div', 'phone-side'); side.append(steps, status, copy);
+      box.replaceChildren(card, side);
+      async function poll() {
+        if (code?.id !== pair.id) return;
+        const result = await json(`/phone/pair/${pair.id}`);
+        if (code?.id !== pair.id) return;
+        if (result.status === 'paired') {
+          code.state = 'paired';
+          const done = el('div', 'phone-done'); done.append(icon('check'), el('strong', '', `Paired ${result.device?.name || 'your phone'}`),
+            el('p', '', 'Kova is ready on it. Tip: add it to the home screen for one-tap access.'),
+            button('Pair another phone', 'btn', render));
+          box.replaceChildren(done); renderDevices(await json('/phone'));
+          return;
+        }
+        const left = Math.max(0, Math.round((expires - Date.now()) / 1000));
+        if (result.status === 'expired' || !left) {
+          code.state = 'expired'; img.classList.toggle('expired', true);
+          status.textContent = 'This code expired.';
+          side.append(button('Show a new code', 'btn primary', () => newCode(box, version)));
+          return;
+        }
+        status.textContent = `Waiting for your phone… ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+        timer = setTimeout(() => safe(poll), 1500);
+      }
+      await poll();
+    }
+    function renderDevices(status) {
+      devices.replaceChildren();
+      if (!status.devices.length && !status.enabled) return;
+      devices.append(el('strong', 'phone-devices-title', status.devices.length ? 'Paired devices' : 'No phones paired yet'));
+      for (const device of status.devices) {
+        const row = el('div', 'panel-item'), text = el('div');
+        const seen = new Date(device.last_seen);
+        text.append(el('strong', '', device.name), el('p', 'panel-meta', `Last seen ${Number.isNaN(seen.getTime()) ? 'never' : seen.toLocaleString()}`));
+        const remove = button('Unpair', 'btn quiet', async () => {
+          await json(`/devices/${encodeURIComponent(device.id)}`, {method: 'DELETE'});
+          renderDevices(await json('/phone'));
+        });
+        remove.setAttribute('aria-label', `Unpair ${device.name}`);
+        row.append(text, remove); devices.append(row);
+      }
+      if (status.enabled) devices.append(button('Turn off phone access', 'btn quiet phone-off', () => setAccess(false)));
+    }
+    launch.hidden = onPhone();
+    launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); await render(); });
+    if (onPhone()) {
+      // On the phone itself: say where the thinking happens, and make Disconnect mean unpair.
+      const note = document.querySelector('.local-note div');
+      if (note) { note.replaceChildren(el('strong', '', 'Connected over Wi-Fi'), el('small', '', 'Your computer does the thinking.')); }
+      $('disconnect').title = 'Unpair this phone'; $('disconnect').setAttribute('aria-label', 'Unpair this phone');
+      const unpair = $('disconnect').onclick;
+      $('disconnect').onclick = () => { if (window.confirm('Unpair this phone? You will need to scan a new code from your computer to come back.')) unpair(); };
+    }
+  }
   /* Custom menus. The hidden <select> stays the single source of truth, so every
      handler above keeps reading .value; these only draw and drive it. */
   const menus = [], modeButtons = [...document.querySelectorAll('#mode-switch [role="radio"]')];
@@ -1310,6 +1429,6 @@
   function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname + location.search); }
   window.addEventListener('beforeunload', () => state.events?.close());
   setInterval(() => { if (state.connected) health(); }, 30000);
-  window.addEventListener('hashchange', () => { if (location.hash.includes('ticket=') && !state.busy) { state.events?.close(); start(); } });
+  window.addEventListener('hashchange', () => { if (/(ticket|pair)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
   controls(); start();
 })();
