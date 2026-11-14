@@ -86,6 +86,35 @@ async def test_native_adapters_stream_tools_and_text(adapter):
     assert events[-1].type == 'done'
 
 
+async def test_anthropic_history_with_bad_tool_arguments_still_streams():
+    """One unparsable stored tool call must not poison every later turn (#89)."""
+    from kova.config import ProviderEntry, ModelEntry
+    provider = ProviderEntry('p', 'Provider', 'https://example.test/v1', adapter='anthropic', api_key='private')
+    entry = ModelEntry('m', provider.base_url, 'model', provider='p', _provider=provider)
+    seen = []
+    def handle(request):
+        payload = json.loads(request.content)
+        seen.append(payload)
+        assert request.url.path == '/v1/messages'
+        events = [{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'ok'}},
+                  {'type':'message_stop'}]
+        return httpx.Response(200, text=''.join('data: '+json.dumps(e)+'\n\n' for e in events))
+    messages = [
+        {'role':'user','content':'hi'},
+        {'role':'assistant','content':None,
+         'tool_calls':[{'id':'c1','type':'function',
+                        'function':{'name':'read_file','arguments':'{"path": "a.txt"'}}]},
+        {'role':'tool','tool_call_id':'c1','content':'Error: arguments were not valid JSON'},
+    ]
+    transport = httpx.MockTransport(handle)
+    for _ in range(2):
+        events = [e async for e in ModelClient(entry, transport=transport).stream(messages)]
+        assert ''.join(e.text for e in events if e.type == 'text') == 'ok'
+        assert events[-1].type == 'done'
+    tool_use = seen[0]['messages'][1]['content'][0]
+    assert tool_use['type'] == 'tool_use' and tool_use['input'] == {}
+
+
 def test_harness_reuse_requires_consent_and_does_not_copy_tokens(tmp_path, monkeypatch):
     from kova import provider_auth
     from kova.providers import make_provider, headers_for, ProviderError
