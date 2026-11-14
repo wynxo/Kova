@@ -37,6 +37,34 @@
     if (title !== 'Reminder') setTimeout(() => node.remove(), 9000);
   }
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
+  // Screen readers get one short sentence for what needs an answer and for how a
+  // turn ended. The transcript stays aria-live="off", so streamed text is never
+  // read out token by token. A new node each time re-announces repeated words.
+  function announce(message) {
+    const region = $('announce');
+    region.append(el('span', '', message));
+    while (region.children.length > 3) region.children[0].remove();
+  }
+  function firstOf(node, tags) {
+    for (const child of node.children || []) {
+      if (tags.test(child.tagName || '')) return child;
+      const nested = firstOf(child, tags);
+      if (nested) return nested;
+    }
+    return null;
+  }
+  // A card that needs an answer takes focus, unless the user is typing somewhere:
+  // its first button (or, for a free-text question, the field to type in).
+  function focusCard(card, preferred = null) {
+    if (typingIn(document.activeElement)) return;
+    const target = preferred || firstOf(card, /^button$/i) || firstOf(card, /^(input|select|textarea)$/i) || card;
+    target.focus?.({preventScroll: true});
+  }
+  function describeApproval(event) {
+    const detail = event.args?.command || event.args?.path || event.summary || event.tool;
+    const folder = state.chat?.cwd ? ` in ${state.chat.cwd}` : '';
+    return `${event.tool === 'run_command' ? 'run command ' : ''}${detail}${folder}`;
+  }
   // The capability contract the server declares: what each chat mode offers
   // once every gate has agreed. Nothing is offered that is not declared here.
   function offers(capability) {
@@ -341,12 +369,19 @@
     }
     const ids = new Set(pending.map(event => event.id));
     for (const [id, card] of recovered.cards) if (!ids.has(id)) { card.finish(); recovered.cards.delete(id); }
+    const fresh = [];
     for (const event of pending) {
       if (recovered.cards.has(event.id)) continue;
       const card = event.type === 'question' ? questionCard(event) : approvalCard(event);
-      recovered.cards.set(event.id, card); recovered.view.append(card.card);
+      recovered.cards.set(event.id, card); recovered.view.append(card.card); fresh.push({event, card});
     }
     if (pending.length && !recovered.view.parentNode) $('messages').append(recovered.view);
+    // A reload or a second window rebuilds the card; say so the same way.
+    for (const {event, card} of fresh) {
+      announce(event.type === 'question' ? `Kova asked a question: ${event.args.question}`
+                                         : `Kova needs approval: ${describeApproval(event)}`);
+      if (card === fresh[0].card) focusCard(card.card);
+    }
     follow();
   }
   // Live updates for a chat whose turn runs outside this window's stream.
@@ -552,7 +587,9 @@
     section.append(list); return section;
   }
   function approvalCard(event) {
-    const card = el('section', 'approval-card'); card.setAttribute('aria-label', 'Tool approval');
+    const card = el('section', 'approval-card');
+    card.setAttribute('aria-label', 'Tool approval');
+    card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     const heading = el('div', 'approval-heading');
     heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
     card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
@@ -575,6 +612,7 @@
         try {
           await json(`/chats/${state.chat.id}/approvals/${event.id}`, write('POST', {decision, message: input.value || null}));
           status.textContent = decision === 'deny' ? 'Denied' : 'Allowed';
+          $('prompt').focus({preventScroll: true});
         } catch (error) {
           buttons.forEach(b => { b.disabled = false; });
           input.disabled = false; throw error;
@@ -595,6 +633,7 @@
     const chatId = state.chat.id;
     const card = el('section', 'approval-card');
     card.setAttribute('aria-label', 'Question from Kova');
+    card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     card.append(el('strong', '', event.args.question));
     const actions = el('div', 'approval-actions'), status = el('div', 'approval-status');
     const input = el('input'); input.maxLength = 4000; input.placeholder = 'Your answer';
@@ -605,6 +644,7 @@
       try {
         await json(`/chats/${chatId}/approvals/${event.id}`, write('POST', {decision: 'allow', message: value}));
         status.textContent = `Answered: ${value}`;
+        $('prompt').focus({preventScroll: true});
       } catch (error) { buttons.forEach(b => b.disabled = false); input.disabled = false; throw error; }
     }
     for (const option of event.args.options || []) {
@@ -618,7 +658,7 @@
       actions.append(button); buttons.push(button);
     }
     card.append(actions, status);
-    return {card, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
+    return {card, input, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
       finish() { buttons.forEach(b => b.disabled = true); input.disabled = true; if (!status.textContent) status.textContent = 'No longer pending'; }};
   }
   function turnView(body) {
@@ -673,12 +713,17 @@
           activity.hidden = true;
           const question = questionCard(event); approvals.set(event.id, question);
           body.insertBefore(question.card, activity);
+          announce(`Kova asked a question: ${event.args.question}`);
+          // A question with no options is answered by typing, so focus the field.
+          focusCard(question.card, event.args.options?.length ? null : question.input);
         } else if (kind === 'question_resolved') {
           approvals.get(event.id)?.resolve();
         } else if (kind === 'approval') {
           activity.hidden = true;
           const approval = approvalCard(event); approvals.set(event.id, approval);
           body.insertBefore(approval.card, activity);
+          announce(`Kova needs approval: ${describeApproval(event)}`);
+          focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
         } else if (kind === 'plan') {
@@ -704,13 +749,18 @@
           }
           current = null; activity.hidden = false; activityText.textContent = 'Working…';
         } else if (kind === 'error') {
-          const error = el('div', 'turn-error'); error.setAttribute('role', 'alert'); error.append(icon('triangle-alert'), el('span', '', event.message));
+          // One announcement for a failure: the live region, not a second alert.
+          const error = el('div', 'turn-error'); error.append(icon('triangle-alert'), el('span', '', event.message));
           body.insertBefore(error, activity);
+          announce(`Error: ${event.message}`);
         } else if (kind === 'steer') {
           current = null;
           body.insertBefore(el('div', 'turn-status', `Steering: ${event.text}`), activity);
         } else if (kind === 'stopped') {
           body.insertBefore(el('div', 'turn-status', 'Reply stopped.'), activity);
+          announce('Stopped.');
+        } else if (kind === 'done') {
+          announce('Reply finished.');
         }
         schedule();
       },

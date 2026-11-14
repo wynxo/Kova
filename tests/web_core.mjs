@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
+let focusedElement = null;
 class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.parentNode = null;
@@ -25,7 +26,7 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
-  focus() {}
+  focus() { focusedElement = this; }
   showModal() {}
   close() {}
   get lastElementChild() { return this.children.at(-1); }
@@ -39,7 +40,8 @@ const requests = [];
 let pendingApprovals = [];
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
-    querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element()},
+    querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
+    get activeElement() { return focusedElement; }},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
   performance, URLSearchParams, TextDecoder, console,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
@@ -104,10 +106,16 @@ for (const decision of ['allow', 'allow_session', 'allow_always', 'deny']) {
   const card = byClass(body, 'approval-card')[0];
   assert.ok(card.textContent.includes('<script>literal command</script>'));
   assert.ok(card.textContent.includes('/project'));
+  // The card is one stop, is announced, and jumps focus to its first decision.
+  assert.equal(card.getAttribute('role'), 'group');
+  assert.ok($('announce').textContent.includes('Kova needs approval: run command'), $('announce').textContent);
+  assert.ok($('announce').textContent.includes('/project'));
+  assert.equal(sandbox.document.activeElement, buttons(card)[0], 'focus lands on the first button');
   const input = walk(card).find(n => n.tagName === 'input'); input.value = 'Read instead';
   buttons(card)[['allow', 'allow_session', 'allow_always', 'deny'].indexOf(decision)].onclick();
   await tick(); await tick();
   assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/approval-1', body: {decision, message: 'Read instead'}});
+  assert.equal(sandbox.document.activeElement, $('prompt'), 'focus returns to the composer');
   view.accept({type: 'approval_resolved', id: 'approval-1', decision});
   assert.equal(card.textContent.includes('Denied'), decision === 'deny');
   assert.ok(buttons(card).every(b => b.disabled));
@@ -119,10 +127,14 @@ for (const options of [[], ['A', 'B']]) {
   questionView.accept({type: 'question', id: 'q1', args: {question: 'Which?', options}});
   const card = byClass(questionBody, 'approval-card')[0];
   assert.ok(card.textContent.includes('Which?'));
+  assert.ok($('announce').textContent.includes('Kova asked a question: Which?'));
+  const expected = options.length ? buttons(card)[0] : walk(card).find(n => n.tagName === 'input');
+  assert.equal(sandbox.document.activeElement, expected, 'the answer control takes focus');
   if (!options.length) walk(card).find(n => n.tagName === 'input').value = 'typed answer';
   buttons(card)[options.length ? 1 : 0].onclick();
   await tick(); await tick();
   assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/q1', body: {decision: 'allow', message: options.length ? 'B' : 'typed answer'}});
+  assert.equal(sandbox.document.activeElement, $('prompt'), 'focus returns to the composer');
   questionView.accept({type: 'question_resolved', id: 'q1'});
   assert.ok(buttons(card).every(b => b.disabled));
   questionView.finish();
@@ -171,6 +183,16 @@ const pending = new Element(), stopped = turnView(pending);
 stopped.accept({type: 'approval', id: 'stopped', risk: 'normal', summary: 'echo x'});
 stopped.finish();
 assert.ok(byClass(pending, 'approval-card')[0].textContent.includes('No longer pending'));
+
+// How a turn ended is announced once, in the live region.
+$('announce').replaceChildren();
+const ending = turnView(new Element());
+ending.accept({type: 'done'});
+assert.equal($('announce').textContent, 'Reply finished.');
+ending.accept({type: 'stopped'});
+assert.equal($('announce').textContent, 'Reply finished.Stopped.');
+ending.accept({type: 'error', message: 'model offline'});
+assert.ok($('announce').textContent.endsWith('Error: model offline'), $('announce').textContent);
 
 setChat({id: 'saved', permission: 'auto', cwd: '/saved', plan: [{text: 'Saved plan', status: 'done'}], messages: []});
 assert.equal($('permission').value, 'auto'); assert.equal($('cwd').value, '/saved');
