@@ -127,7 +127,7 @@ def test_body_may_contain_frontmatter_delimiters(tmp_path):
     ids=["frontmatter-at-end-of-file", "frontmatter-after-utf8-bom"],
 )
 def test_frontmatter_variants_are_parsed(tmp_path, text):
-    (tmp_path / "note.md").write_text(text)
+    (tmp_path / "note.md").write_text(text, encoding="utf-8")
     note = Memory(tmp_path).get("note")
     assert note.title == "Secret"
     assert note.tags == ["x"]
@@ -136,14 +136,14 @@ def test_frontmatter_variants_are_parsed(tmp_path, text):
 
 def test_invalid_yaml_frontmatter_is_kept_as_body(tmp_path):
     text = "---\ntitle: [unclosed\n---\nbody\n"
-    (tmp_path / "broken.md").write_text(text)
+    (tmp_path / "broken.md").write_text(text, encoding="utf-8")
     note = Memory(tmp_path).get("broken")
     assert (note.title, note.tags, note.body) == ("broken", [], text)
 
 
 def test_non_mapping_frontmatter_is_kept_as_body(tmp_path):
     text = "---\n- a\n- b\n---\nbody\n"
-    (tmp_path / "list.md").write_text(text)
+    (tmp_path / "list.md").write_text(text, encoding="utf-8")
     note = Memory(tmp_path).get("list")
     assert (note.title, note.tags, note.body) == ("list", [], text)
 
