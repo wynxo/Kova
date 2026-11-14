@@ -7,7 +7,9 @@ single re-entrant lock around every query.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -24,6 +26,9 @@ def _utc_now_iso() -> str:
 
 
 _WORD = re.compile(r"\w+", re.UNICODE)
+# Attachment ids are uuid4().hex. Matching the whole token avoids keeping a
+# file because its id happens to appear inside an unrelated hex string.
+_ATTACHMENT_ID = re.compile(r"\b[0-9a-f]{32}\b")
 
 #: Messages the search index covers. Tool calls and tool output never match.
 SEARCH_ROLES = ("user", "assistant")
@@ -111,6 +116,12 @@ class Store:
     def _create_tables(self) -> None:
         self._conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,
+                mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER,
+                sha256 TEXT NOT NULL, path TEXT NOT NULL, created TEXT,
+                used INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -126,6 +137,13 @@ class Store:
                 tool_calls TEXT,
                 tool_call_id TEXT,
                 created TEXT
+            );
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                message_id INTEGER NOT NULL,
+                attachment_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (message_id, attachment_id)
             );
             CREATE TABLE IF NOT EXISTS chat_compactions (
                 chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL, summary TEXT NOT NULL
@@ -173,10 +191,18 @@ class Store:
                 turns INTEGER NOT NULL,
                 created TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS share_drafts (
+                chat_id TEXT PRIMARY KEY
+            );
             """
         )
         # Older databases predate message timestamps; add and backfill them so
         # ``list_chats`` can show when a chat was last used.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(attachments)")}
+        if "created" not in columns:
+            self._conn.execute("ALTER TABLE attachments ADD COLUMN created TEXT")
+        if "used" not in columns:
+            self._conn.execute("ALTER TABLE attachments ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(messages)")}
         if "created" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN created TEXT")
@@ -302,24 +328,59 @@ class Store:
             if source is None:
                 return None
             cid, created = uuid4().hex[:12], _utc_now_iso()
+            copied_dir = self.path.parent / "attachments" / cid
             try:
+                attachment_ids: dict[str, str] = {}
+                for attachment in self.attachments(chat_id):
+                    ident = uuid4().hex
+                    copied_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    path = copied_dir / (ident + Path(attachment["path"]).suffix)
+                    with open(attachment["path"], "rb") as src:
+                        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        with os.fdopen(fd, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                    attachment_ids[attachment["id"]] = ident
+                    self._conn.execute(
+                        "INSERT INTO attachments (id, chat_id, name, mime, size, pages, sha256, path, created, used) "
+                        "VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path,:created,:used)",
+                        {**attachment, "id": ident, "chat_id": cid, "path": str(path)})
+
+                def remap(value: str | None) -> str | None:
+                    if value is None:
+                        return None
+                    for old, new in attachment_ids.items():
+                        value = value.replace(old, new)
+                    return value
+
                 self._conn.execute(
                     "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
-                     source['web'], source['permission'], source['cwd'], source['plan']))
+                     source['web'], source['permission'], source['cwd'], remap(source['plan'])))
                 rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute("INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created) VALUES (?, ?, ?, ?, ?, ?)",
-                                             (cid, row['role'], row['content'], row['tool_calls'], row['tool_call_id'], row['created']))
+                                             (cid, row['role'], remap(row['content']), remap(row['tool_calls']), row['tool_call_id'], row['created']))
                     ids[row['id']] = cur.lastrowid
+                links = self._conn.execute(
+                    "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
+                    "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
+                    "WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position", (chat_id,)).fetchall()
+                for link in links:
+                    if link['message_id'] in ids:
+                        self._conn.execute(
+                            "INSERT INTO message_attachments (message_id, attachment_id, name, position) VALUES (?, ?, ?, ?)",
+                            (ids[link['message_id']],
+                             attachment_ids.get(link['attachment_id'], link['attachment_id']),
+                             link['name'], link['position']))
                 compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
                 if compact and compact['cutoff'] in ids:
                     self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?)",
-                                       (cid, ids[compact['cutoff']], compact['summary']))
+                                       (cid, ids[compact['cutoff']], remap(compact['summary'])))
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
+                shutil.rmtree(copied_dir, ignore_errors=True)
                 raise
         return self.get_chat(cid)
 
@@ -389,9 +450,132 @@ class Store:
     def set_title(self, chat_id: str, title: str) -> None:
         self.update_chat(chat_id, title=title)
 
+    def add_attachment(self, row: dict) -> None:
+        row = {"created": None, "used": 0, **row}
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO attachments (id, chat_id, name, mime, size, pages, sha256, path, created, used) "
+                "VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path,:created,:used)", row)
+            self._conn.commit()
+
+    def attachment_rows(self) -> list[dict]:
+        """Every stored attachment, across all chats (for quota and cleanup)."""
+        with self._lock:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM attachments")]
+
+    def attachments(self, chat_id: str) -> list[dict]:
+        with self._lock:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM attachments WHERE chat_id = ?", (chat_id,))]
+
+    def mark_attachments_used(self, chat_id: str, ids: list[str]) -> None:
+        """Retain these uploads: a persisted message has taken responsibility for them."""
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE attachments SET used = 1 WHERE chat_id = ? AND id = ?",
+                [(chat_id, ident) for ident in unique])
+            self._conn.commit()
+
+    def add_share_draft(self, chat_id: str) -> None:
+        """Remember a share's draft chat until the share is redeemed or expires.
+
+        Share tokens deliberately live only in memory, so a restart makes every
+        unredeemed draft unreachable. The journal lets the next startup find
+        and remove those chats instead of leaving empty conversations behind.
+        """
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO share_drafts (chat_id) VALUES (?)", (chat_id,))
+            self._conn.commit()
+
+    def drop_share_draft(self, chat_id: str) -> None:
+        """Forget a draft journal entry once the share is handed off."""
+        with self._lock:
+            self._conn.execute("DELETE FROM share_drafts WHERE chat_id = ?", (chat_id,))
+            self._conn.commit()
+
+    def reap_share_drafts(self) -> list[str]:
+        """Clear the journal and return draft chats with no saved messages.
+
+        Called once at startup: every journal entry belongs to a share token
+        that did not survive the restart. A draft that already has a message
+        is a real conversation (a crash can land between redemption and the
+        journal update), so it is kept.
+        """
+        with self._lock:
+            ids = [row["chat_id"] for row in self._conn.execute(
+                "SELECT chat_id FROM share_drafts")]
+            self._conn.execute("DELETE FROM share_drafts")
+            self._conn.commit()
+            return [chat_id for chat_id in ids if not self._conn.execute(
+                "SELECT 1 FROM messages WHERE chat_id = ? LIMIT 1", (chat_id,)).fetchone()]
+
+    def referenced_attachment_ids(self, chat_id: str) -> set[str]:
+        """Every attachment id a saved chat still uses.
+
+        The explicit ``message_attachments`` link is the authoritative record.
+        Older transcripts spell the id out in a message, tool call or summary;
+        that scan stays as a fallback for rows created before ``used`` existed
+        and for chats restored from a backup. Cleanup therefore never expires
+        an upload that a saved message still references, even when a merge or an
+        older database leaves ``used`` at zero.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT content, tool_calls FROM messages WHERE chat_id = ?", (chat_id,)
+            ).fetchall()
+            summary = self._conn.execute(
+                "SELECT summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            # This table arrives with the name-only message link. Keep working
+            # when this branch runs on a database that predates it.
+            links = []
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_attachments'"
+            ).fetchone():
+                links = self._conn.execute(
+                    "SELECT ma.attachment_id FROM message_attachments ma "
+                    "JOIN messages m ON m.id = ma.message_id WHERE m.chat_id = ?",
+                    (chat_id,),
+                ).fetchall()
+        parts = [row[name] for row in rows for name in ("content", "tool_calls")]
+        if summary is not None:
+            parts.append(summary["summary"])
+        found = set(_ATTACHMENT_ID.findall("\n".join(part for part in parts if part)))
+        found.update(link["attachment_id"] for link in links)
+        return found
+
+    def delete_attachment(self, chat_id: str, ident: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT path FROM attachments WHERE chat_id = ? AND id = ?", (chat_id, ident)).fetchone()
+            if row is None:
+                return False
+            path = Path(row['path'])
+            path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+            self._conn.execute("DELETE FROM attachments WHERE id = ?", (ident,))
+            self._conn.commit()
+            return True
+
     def delete_chat(self, chat_id: str) -> bool:
+        for row in self.attachments(chat_id):
+            self.delete_attachment(chat_id, row["id"])
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
+            try:
+                (self.path.parent / 'attachments' / chat_id).rmdir()
+            except OSError:
+                pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
+            self._conn.execute("DELETE FROM share_drafts WHERE chat_id = ?", (chat_id,))
+            self._conn.execute(
+                "DELETE FROM message_attachments WHERE message_id IN "
+                "(SELECT id FROM messages WHERE chat_id = ?)", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM queued_messages WHERE chat_id = ?", (chat_id,))
@@ -401,8 +585,13 @@ class Store:
 
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
+        for chat in self.list_chats():
+            for row in self.attachments(chat["id"]):
+                self.delete_attachment(chat["id"], row["id"])
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
+            self._conn.execute("DELETE FROM share_drafts")
+            self._conn.execute("DELETE FROM message_attachments")
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM checkpoints")
             self._conn.execute("DELETE FROM queued_messages")
@@ -446,7 +635,7 @@ class Store:
                     tool_calls = message.get("tool_calls")
                     if tool_calls is not None and not isinstance(tool_calls, str):
                         tool_calls = json.dumps(tool_calls)
-                    self._conn.execute(
+                    cur = self._conn.execute(
                         "INSERT INTO messages "
                         "(chat_id, role, content, tool_calls, tool_call_id, created) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -459,6 +648,9 @@ class Store:
                             message.get("created") or created,
                         ),
                     )
+                    rows = message.get("attachments")
+                    if isinstance(rows, list):
+                        self._add_message_attachments(cur.lastrowid, rows)
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
@@ -565,15 +757,46 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    def link_message_attachments(self, message_id: int, rows: list[dict]) -> None:
+        """Record which uploaded files a message used, without storing their text."""
+        with self._lock:
+            self._add_message_attachments(message_id, rows)
+            self._conn.commit()
+
+    def _add_message_attachments(self, message_id: int, rows: list[dict]) -> None:
+        for position, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            name, ident = row.get('name'), row.get('id')
+            if not isinstance(name, str) or not name:
+                continue
+            ident = ident if isinstance(ident, str) and ident else f'import-{message_id}-{position}'
+            self._conn.execute(
+                "INSERT OR REPLACE INTO message_attachments "
+                "(message_id, attachment_id, name, position) VALUES (?, ?, ?, ?)",
+                (message_id, ident, name, position),
+            )
+
     def get_messages(self, chat_id: str, include_created: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id, created "
+                "SELECT id, role, content, tool_calls, tool_call_id, created "
                 "FROM messages WHERE chat_id = ? ORDER BY id",
                 (chat_id,),
             ).fetchall()
+            links = self._conn.execute(
+                "SELECT ma.message_id, ma.attachment_id, ma.name "
+                "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
+                "WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
+                (chat_id,),
+            ).fetchall()
+        attached: dict[int, list[dict]] = {}
+        for link in links:
+            attached.setdefault(link["message_id"], []).append(
+                {"id": link["attachment_id"], "name": link["name"]}
+            )
         messages: list[dict] = []
-        for role, content, tool_calls, tool_call_id, created in rows:
+        for message_id, role, content, tool_calls, tool_call_id, created in rows:
             message: dict = {"role": role, "content": content}
             if tool_calls is not None:
                 message["tool_calls"] = json.loads(tool_calls)
@@ -581,6 +804,8 @@ class Store:
                 message["tool_call_id"] = tool_call_id
             if include_created:
                 message["created"] = created
+            if message_id in attached:
+                message["attachments"] = attached[message_id]
             messages.append(message)
         return messages
 
@@ -600,10 +825,19 @@ class Store:
             messages.append((row[0], message))
         return summary, cutoff, messages
 
-    def get_context(self, chat_id: str) -> list[dict]:
+    def get_context_entries(self, chat_id: str) -> list[tuple[int | None, dict]]:
+        """Like :meth:`get_context`, but keep each stored message's row id.
+
+        Callers use the id to attach turn-only content to the message they just
+        wrote without changing what is stored. The compacted summary has no
+        row, so its ``None`` id marks it as not a stored message.
+        """
         summary, _, rows = self.context_snapshot(chat_id)
-        prefix = [{"role": "user", "content": "Conversation summary (earlier context):\n" + summary}] if summary else []
-        return prefix + [message for _, message in rows]
+        prefix = [(None, {"role": "user", "content": "Conversation summary (earlier context):\n" + summary})] if summary else []
+        return prefix + rows
+
+    def get_context(self, chat_id: str) -> list[dict]:
+        return [message for _, message in self.get_context_entries(chat_id)]
 
     def save_compaction(self, chat_id: str, expected_cutoff: int, cutoff: int, summary: str) -> bool:
         with self._lock:

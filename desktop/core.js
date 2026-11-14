@@ -27,4 +27,8 @@ function executable(name) {
 function external(url) {
   try { return ['https:', 'http:', 'mailto:'].includes(new URL(url).protocol); } catch { return false; }
 }
-module.exports = {settings, executable, external};
+// The only permission the local page may request is OS notifications.
+function permissionAllowed(permission) {
+  return permission === 'notifications';
+}
+module.exports = {settings, executable, external, permissionAllowed};

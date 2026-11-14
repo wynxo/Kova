@@ -102,7 +102,8 @@ def test_status_shows_a_compact_card(runner, monkeypatch):
     cli_runner, client, cfg, fake = runner
 
     class StatusClient:
-        def health(self):
+        def health(self, probe=None):
+            assert probe is True
             return {"version": "0.1.0", "model": "local", "model_ok": True}
 
         def models_list(self):
@@ -127,7 +128,7 @@ def test_status_card_when_the_server_is_down(runner, monkeypatch):
     cli_runner, client, cfg, fake = runner
 
     class DownClient:
-        def health(self):
+        def health(self, probe=None):
             raise KovaError(None, "Cannot reach Kova server at http://127.0.0.1:1.")
 
     monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: DownClient())
@@ -141,7 +142,8 @@ def test_status_marks_an_unreachable_model(runner, monkeypatch):
     cli_runner, client, cfg, fake = runner
 
     class OfflineModel:
-        def health(self):
+        def health(self, probe=None):
+            assert probe is True
             return {"version": "0.1.0", "model": "local", "model_ok": False}
 
         def models_list(self):
