@@ -2,19 +2,40 @@
 import hashlib
 import io
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import zipfile
 
 import pytest
+from fastapi.testclient import TestClient
 
 from kova import attachments
-from kova.config import load_config
+from kova.backup import export_archive
+from kova.config import ensure_token, load_config
 from kova.model_adapters import anthropic_request, responses_request
+from kova.server import create_app
+from kova.store import Store
+from tests.fake_model import FakeModel, text
 from tests.test_server import server
 
 
 def upload(client, headers, chat, name='demo.py', data=b'first\nsecond\nthird'):
     return client.post(f'/chats/{chat}/attachments', headers=headers, files={'file': (name, data)})
+
+
+def link_message_attachment(store, message_id, row):
+    """Write the name-only link the transcript branch adds, without that branch."""
+    with store._lock:
+        store._conn.execute(
+            "CREATE TABLE IF NOT EXISTS message_attachments ("
+            "message_id INTEGER NOT NULL, attachment_id TEXT NOT NULL, "
+            "name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (message_id, attachment_id))")
+        store._conn.execute(
+            "INSERT OR REPLACE INTO message_attachments "
+            "(message_id, attachment_id, name, position) VALUES (?, ?, ?, 0)",
+            (message_id, row['id'], row['name']))
+        store._conn.commit()
 
 
 def test_upload_turn_and_delete(server):
@@ -33,11 +54,89 @@ def test_upload_turn_and_delete(server):
     response = client.post(f'/chats/{chat}/messages', headers=headers, json={'text': 'Explain', 'attachments': [row['id']]})
     assert response.status_code == 200
     history = client.get(f'/chats/{chat}', headers=headers).json()['messages']
-    assert 'file: demo.py' in history[0]['content']
-    assert '2: second' in history[0]['content']
+    users = [message for message in history if message['role'] == 'user']
+    assert [message['content'] for message in users] == ['Explain']
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'demo.py'}]
+    sent = fake.requests[0]['messages'][-1]
+    assert sent['role'] == 'user'
+    assert 'file: demo.py' in sent['content']
+    assert '2: second' in sent['content']
     assert client.delete(f'/chats/{chat}/attachments/{row["id"]}', headers=headers).status_code == 200
     assert not paths[0].exists()
     assert client.delete(f'/chats/{chat}/attachments/{row["id"]}', headers=headers).status_code == 404
+
+
+def test_extracted_text_stays_out_of_transcript_search_and_backup(server, tmp_path):
+    """Attachment text is model context only; it never enters persisted chat data."""
+    client, headers, cfg, fake = server
+    sentinel = 'zirconquartz'
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    row = upload(client, headers, chat, 'notes.txt', f'alpha\n{sentinel}\nomega'.encode()).json()
+
+    response = client.post(f'/chats/{chat}/messages', headers=headers,
+                           json={'text': 'Summarize', 'attachments': [row['id']]})
+    assert 'event: done' in response.text
+    request = fake.requests[0]['messages'][-1]
+    assert request['role'] == 'user' and sentinel in request['content']
+    assert row['id'] in request['content']
+
+    body = client.get(f'/chats/{chat}', headers=headers).json()
+    assert body['title'] == 'Summarize'
+    assert body['messages'][0]['attachments'] == [{'id': row['id'], 'name': 'notes.txt'}]
+    assert all(sentinel not in (message.get('content') or '') for message in body['messages'])
+    assert all('attachment_id' not in (message.get('content') or '') for message in body['messages'])
+    assert sentinel not in str(client.app.state.store.get_context(chat))
+    assert client.get('/chats/search', headers=headers, params={'q': sentinel}).json() == []
+
+    target = tmp_path / 'backup.zip'
+    export_archive(cfg, target, store=client.app.state.store)
+    with zipfile.ZipFile(target) as archive:
+        for name in archive.namelist():
+            assert sentinel.encode() not in archive.read(name)
+
+
+def test_attachment_only_turn_titles_with_filename(server):
+    client, headers, cfg, fake = server
+    sentinel = 'zirconquartz'
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    row = upload(client, headers, chat, 'quarterly-notes.txt', f'alpha\n{sentinel}'.encode()).json()
+
+    response = client.post(f'/chats/{chat}/messages', headers=headers,
+                           json={'text': '', 'attachments': [row['id']]})
+    assert 'event: done' in response.text
+    assert sentinel in fake.requests[0]['messages'][-1]['content']
+
+    body = client.get(f'/chats/{chat}', headers=headers).json()
+    assert body['title'] == 'quarterly-notes.txt'
+    assert sentinel not in str(body) and 'attachment_id' not in str(body)
+    users = [m for m in body['messages'] if m['role'] == 'user']
+    assert [m['content'] for m in users] == ['']
+    # The empty bubble keeps a truthful name for reloaded clients, without text.
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'quarterly-notes.txt'}]
+
+
+def test_read_attachment_still_works_from_a_later_turn(server):
+    """The transient index keeps ids usable after the text left the transcript."""
+    from tests.fake_model import tool, text
+    client, headers, cfg, fake = server
+    sentinel = 'zirconquartz'
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    row = upload(client, headers, chat, 'notes.txt', f'alpha\n{sentinel}\nomega'.encode()).json()
+    fake.scripts = [text('Noted.'), tool('read_attachment', {'id': row['id'], 'start': 2, 'end': 2}),
+                    text('Read it.')]
+
+    assert 'event: done' in client.post(f'/chats/{chat}/messages', headers=headers,
+                                        json={'text': 'Keep this', 'attachments': [row['id']]}).text
+    assert 'event: done' in client.post(f'/chats/{chat}/messages', headers=headers,
+                                        json={'text': 'Read line two'}).text
+    prompt = fake.requests[1]['messages'][0]['content']
+    assert row['id'] in prompt and sentinel not in prompt
+    assert any(message.get('role') == 'tool' and sentinel in message['content']
+               for message in fake.requests[2]['messages'])
+    users = [m for m in client.get(f'/chats/{chat}', headers=headers).json()['messages']
+             if m['role'] == 'user']
+    assert [m['content'] for m in users] == ['Keep this', 'Read line two']
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'notes.txt'}]
 
 
 def test_ownership_limits_cleanup(server):
@@ -169,7 +268,15 @@ def test_model_can_reread_attachment(server):
     fake.scripts = [tool('read_attachment', {'id': row['id'], 'start': 2, 'end': 2}), text('Read it')]
     result = client.post(f'/chats/{chat}/messages', headers=headers, json={'text': 'Read line two', 'attachments': [row['id']]})
     assert 'event: done' in result.text
+    # The extracted text follows the turn through its tool round, but the
+    # stored user message is only what the user typed.
+    assert any(message.get('role') == 'user' and '1: first' in (message.get('content') or '')
+               and '3: third' in (message.get('content') or '')
+               for message in fake.requests[1]['messages'])
     assert any(m.get('role') == 'tool' and m['content'] == 'lines 2-2 of 3\n2: second' for m in fake.requests[1]['messages'])
+    users = [m['content'] for m in client.get(f'/chats/{chat}', headers=headers).json()['messages']
+             if m['role'] == 'user']
+    assert users == ['Read line two']
 
 
 @pytest.mark.parametrize('declared', [True, False])
@@ -288,6 +395,7 @@ def test_fork_copies_attachments_independently(server, delete_source):
     chat = store.create_chat()['id']
     row = attachments.save(cfg.home, store, chat, 'demo.txt', b'hello')
     cutoff = store.add_message(chat, 'user', 'attachment_id: ' + row['id'])
+    store.link_message_attachments(cutoff, [row])
     store.add_message(chat, 'assistant', tool_calls=[{'id': 'call', 'type': 'function', 'function': {'name': 'read_attachment', 'arguments': '{"attachment_id": "' + row['id'] + '"}'}}])
     assert store.save_compaction(chat, 0, cutoff, 'attachment_id: ' + row['id'])
     fork = store.fork_chat(chat)
@@ -295,6 +403,7 @@ def test_fork_copies_attachments_independently(server, delete_source):
     assert len(copied) == 1
     assert copied[0]['id'] != row['id']
     assert copied[0]['id'] in fork['messages'][0]['content']
+    assert fork['messages'][0]['attachments'] == [{'id': copied[0]['id'], 'name': 'demo.txt'}]
     assert copied[0]['id'] in fork['messages'][1]['tool_calls'][0]['function']['arguments']
     assert copied[0]['id'] in store.context_snapshot(fork['id'])[0]
     assert Path(copied[0]['path']).read_bytes() == b'hello'
@@ -320,3 +429,189 @@ def test_failed_fork_rolls_back_attachment_copies(server, monkeypatch):
     assert store.list_chats() == before
     assert list((cfg.home / 'attachments').iterdir()) == [cfg.home / 'attachments' / chat]
     assert store.attachments(chat)[0]['id'] == row['id']
+
+
+def test_abandoned_upload_expires_but_sent_and_fresh_uploads_stay(server):
+    """Turn consumed the clock, so expiry is deterministic and never a sleep."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    client.app.state.now = lambda: clock[0]
+    sent = upload(client, headers, chat, 'sent.txt', b'keep me').json()
+    response = client.post(f'/chats/{chat}/messages', headers=headers,
+                           json={'text': 'Read it', 'attachments': [sent['id']]})
+    assert response.status_code == 200 and 'event: done' in response.text
+    abandoned = upload(client, headers, chat, 'gone.txt', b'drop me').json()
+    paths = {row['id']: Path(row['path']) for row in store.attachments(chat)}
+    assert paths[sent['id']].exists() and paths[abandoned['id']].exists()
+
+    clock[0] += attachments.PENDING_TTL + timedelta(minutes=1)
+    fresh = attachments.save(cfg.home, store, chat, 'fresh.txt', b'not sent yet',
+                             now=lambda: clock[0])
+    assert attachments.reap(store, now=lambda: clock[0]) == 1
+
+    assert {row['id'] for row in store.attachments(chat)} == {sent['id'], fresh['id']}
+    assert paths[sent['id']].exists() and not paths[abandoned['id']].exists()
+    assert (cfg.home / 'attachments' / chat).is_dir()
+
+
+def test_reap_keeps_a_legacy_transcript_reference_without_used_flag(server):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = attachments.save(cfg.home, store, chat, 'legacy.txt', b'legacy',
+                           now=lambda: old)
+    store.add_message(chat, 'user', f"attachment_id: {row['id']}")
+    assert attachments.reap(store, now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1)) == 0
+    assert [entry['id'] for entry in store.attachments(chat)] == [row['id']]
+
+
+def test_reap_keeps_a_linked_message_attachment_without_used_flag(server):
+    """A name-only link is usage metadata even when the old flag was never set."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = attachments.save(cfg.home, store, chat, 'linked.txt', b'linked',
+                           now=lambda: old)
+    message_id = store.add_message(chat, 'user', '')
+    link_message_attachment(store, message_id, row)
+    with store._lock:
+        store._conn.execute('UPDATE attachments SET used = 0')
+        store._conn.commit()
+
+    assert attachments.reap(store, now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1)) == 0
+    [stored] = store.attachments(chat)
+    assert stored['id'] == row['id']
+    assert Path(stored['path']).exists()
+
+
+def test_linked_message_attachment_frees_the_pending_quota(server, monkeypatch):
+    """A linked upload is spoken for, so it is not an unsent attachment."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 1)
+    row = attachments.save(cfg.home, store, chat, 'linked.txt', b'linked')
+    message_id = store.add_message(chat, 'user', '')
+    link_message_attachment(store, message_id, row)
+    with store._lock:
+        store._conn.execute('UPDATE attachments SET used = 0')
+        store._conn.commit()
+
+    attachments.ensure_capacity(store, chat, 1)  # no quota error
+
+    attachments.save(cfg.home, store, chat, 'next.txt', b'next')
+    assert {entry['name'] for entry in store.attachments(chat)} == {'linked.txt', 'next.txt'}
+
+
+def test_used_flag_retains_an_upload_even_if_the_transcript_changes(server, monkeypatch):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    client.app.state.now = lambda: clock[0]
+    row = upload(client, headers, chat).json()
+    assert client.post(f'/chats/{chat}/messages', headers=headers,
+                       json={'text': 'Read it', 'attachments': [row['id']]}).status_code == 200
+    # A future transcript format may stop spelling out the id. The explicit
+    # marker, not the text, is what protects the file.
+    monkeypatch.setattr(store, 'referenced_attachment_ids', lambda chat_id: set())
+    clock[0] += attachments.PENDING_TTL + timedelta(days=1)
+    assert attachments.reap(store, now=lambda: clock[0]) == 0
+    assert Path(store.attachments(chat)[0]['path']).exists()
+
+
+def test_pending_upload_quota_is_bounded_and_rejects_cleanly(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 2)
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    assert upload(client, headers, chat, 'one.txt').status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    folder = cfg.home / 'attachments' / chat
+    before = sorted(path.name for path in folder.iterdir())
+    response = upload(client, headers, chat, 'three.txt')
+    assert response.status_code == 409
+    assert '2 unsent attachments' in response.json()['detail']
+    assert sorted(path.name for path in folder.iterdir()) == before
+
+
+def test_sent_attachments_free_the_pending_quota(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 1)
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    first = upload(client, headers, chat, 'one.txt').json()
+    assert client.post(f'/chats/{chat}/messages', headers=headers,
+                       json={'text': 'Read it', 'attachments': [first['id']]}).status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    assert upload(client, headers, chat, 'three.txt').status_code == 409
+
+
+def test_per_chat_count_and_byte_quotas(server, monkeypatch):
+    client, headers, cfg, fake = server
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 10)
+    monkeypatch.setattr(attachments, 'MAX_CHAT_ATTACHMENTS', 2)
+    assert upload(client, headers, chat, 'one.txt').status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    response = upload(client, headers, chat, 'three.txt')
+    assert response.status_code == 409
+    assert '2-attachment limit' in response.json()['detail']
+
+    other = client.post('/chats', headers=headers, json={}).json()['id']
+    monkeypatch.setattr(attachments, 'MAX_CHAT_ATTACHMENT_BYTES', 8)
+    assert upload(client, headers, other, 'a.txt', b'12345').status_code == 200
+    response = upload(client, headers, other, 'b.txt', b'1234')
+    assert response.status_code == 409
+    assert 'attachment storage limit' in response.json()['detail']
+
+
+def test_total_attachment_storage_is_bounded(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_TOTAL_ATTACHMENT_BYTES', 8)
+    first = client.post('/chats', headers=headers, json={}).json()['id']
+    second = client.post('/chats', headers=headers, json={}).json()['id']
+    assert upload(client, headers, first, 'a.txt', b'12345').status_code == 200
+    response = upload(client, headers, second, 'b.txt', b'1234')
+    assert response.status_code == 409
+    assert 'total attachment storage limit' in response.json()['detail']
+
+
+def test_startup_sweeps_an_expired_abandoned_upload(tmp_path, monkeypatch):
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path))
+    cfg = load_config()
+    store = Store(cfg.home / 'kova.db')
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    attachments.save(cfg.home, store, chat, 'old.txt', b'old', now=lambda: old)
+    path = Path(store.attachments(chat)[0]['path'])
+    assert path.exists()
+
+    fake = FakeModel([text('unused')])
+    app = create_app(cfg, transport=fake.transport,
+                     now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1))
+    with TestClient(app):
+        pass
+    assert store.attachments(chat) == []
+    assert not path.exists()
+
+
+def test_attachment_schema_migrates_in_place(tmp_path):
+    import sqlite3
+    db = tmp_path / 'kova.db'
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE attachments (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,"
+        " mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER, sha256 TEXT NOT NULL, path TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO attachments VALUES (?, 'chat', 'old.txt', 'text/plain', 3, NULL, 'sha', '/tmp/old.txt')",
+        ('a' * 32,))
+    conn.commit()
+    conn.close()
+
+    store = Store(db)
+    row = store.attachment_rows()[0]
+    assert row['created'] is None and row['used'] == 0
+    assert store.referenced_attachment_ids('chat') == set()

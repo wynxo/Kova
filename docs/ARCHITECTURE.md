@@ -641,6 +641,15 @@ remains a separately installed prerequisite. See desktop/README.md.
 fallback. `read_attachment` accepts an attachment ID and line range and cannot
 read another chat's uploads. Deleting or purging a chat removes its upload bytes.
 
+An upload is provisional until a saved message references it. The server sweeps
+at startup and hourly: unreferenced uploads older than 24 hours are deleted, while
+`used` attachments, uploads a saved message links to (name-only metadata, with no
+document text), and older rows whose transcript still names their id are kept
+until the chat is deleted or the user removes them. A chat holds at most
+three unsent uploads, 100 attachments and 500 MB; Kova stores at most 2 GB of
+attachment bytes overall. An upload that would exceed a limit fails with 409 and
+a message naming the limit, before any bytes are written.
+
 Turn on Vision for one model in the web app's Model settings (or set
 `vision = true` on that `[[models]]` entry in config.toml) only when the model
 supports images. The adapter must also declare vision; the API and composer both
@@ -650,3 +659,16 @@ bundled). Extracted text, or image data for a declared vision model, is sent to
 the configured model only as part of a requested chat turn; no external
 extraction or file-upload service is used. Raw images are not stored in
 transcript messages and must be attached again for a later visual turn.
+
+Extracted text is request context, not transcript data. A turn stores only the
+user's typed message; the extracted block is re-applied in memory to that
+message for each model call, so search, Markdown/JSON exports, backups and
+generated titles never contain document text. The message gets a small
+metadata link to the uploaded files it used (name, id and order, with no
+extracted text), so clients can show the file names after a reload instead of
+an empty bubble, and a fork copies and remaps those links with its attachment
+copies. The system prompt carries a turn-only index of the chat's attachment
+names and ids, which keeps `read_attachment` usable on later turns. One
+consequence: a title generated for an attachment-only turn uses the file name,
+and an assistant answer that quotes the document is still stored like any
+other reply.

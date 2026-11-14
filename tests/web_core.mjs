@@ -480,6 +480,15 @@ await sandbox.test.send({preventDefault() {}});
 assert.equal(requests.length, beforeCommands, 'busy commands are never queued');
 state.busy = false;
 
+// A reloaded attachment-only turn keeps a truthful file label, not an empty bubble.
+setChat({id: 'saved-files', messages: [
+  {role: 'user', content: '', attachments: [{id: 'a', name: 'quarterly-notes.txt'}]},
+  {role: 'assistant', content: 'Read.'},
+]});
+const savedAttachment = byClass($('messages'), 'user')[0];
+assert.ok(savedAttachment.textContent.includes('quarterly-notes.txt'));
+assert.equal(byClass(savedAttachment, 'message-attachment').length, 1);
+
 // Composer attachment input paths and model declarations.
 state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
 applyCapabilities({offered: {work: []}});
