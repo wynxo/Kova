@@ -495,8 +495,17 @@ def serve():
 @app.command()
 def stop():
     """Stop a background Kova server."""
-    pidfile = load_config().home / "server.pid"
+    cfg = load_config()
+    pidfile = cfg.home / "server.pid"
     if not pidfile.exists():
+        client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
+        try:
+            client.health()
+        except KovaError as exc:
+            if exc.status is not None:
+                raise
+        finally:
+            client.http.close()
         _muted("No running server recorded.")
         return
     try:
