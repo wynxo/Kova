@@ -241,7 +241,6 @@ def test_config_set_tui_key_and_refuses_a_duplicate(home):
         ("active", "missing", "not a configured model"),
         ("bind", "internet", "one of: loopback, lan"),
         ("memory.write_subdir", "../outside", "without separators"),
-        ("files_path", "~definitelynotauser/x", "not a usable path"),
         ("tui.keys.nope", "ctrl-g", "unknown TUI action"),
     ],
 )
@@ -253,6 +252,22 @@ def test_config_set_invalid_values_are_refused_without_saving(home, key, value, 
     result = runner.invoke(cli.app, [*args, value])
     assert result.exit_code == 1, result.output
     assert needle in " ".join(result.output.split())
+    assert (home / "config.toml").read_text() == before
+
+
+def test_config_set_unusable_path_is_a_clean_error(home, monkeypatch):
+    class BadPath:
+        def __init__(self, _text):
+            pass
+
+        def expanduser(self):
+            raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(cli, "Path", BadPath)
+    before = (home / "config.toml").read_text()
+    result = invoke("config", "set", "files_path", "~/files")
+    assert result.exit_code == 1, result.output
+    assert "not a usable path" in " ".join(result.output.split())
     assert (home / "config.toml").read_text() == before
 
 
