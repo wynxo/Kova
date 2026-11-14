@@ -391,7 +391,7 @@ def test_every_run_kova_doctor_message_has_a_doctor_hint():
     messages = [
         match.group(2)
         for path in source.rglob("*.py")
-        for match in pattern.finditer(path.read_text())
+        for match in pattern.finditer(path.read_text(encoding="utf-8"))
     ]
     assert messages
     for message in messages:
