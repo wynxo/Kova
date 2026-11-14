@@ -53,14 +53,14 @@ def test_every_declaration_stays_inside_one_vocabulary():
 
 
 def test_a_provider_declares_its_adapter_plus_its_kind():
-    assert providers.capabilities(provider('anthropic')) == frozenset({'api_key', 'reasoning', 'tools'})
-    assert providers.capabilities(provider('deepseek')) == frozenset({'api_key', 'reasoning', 'tools'})
-    assert providers.capabilities(provider('groq')) == frozenset({'api_key', 'tools'})
-    assert providers.capabilities(provider('chatgpt')) == frozenset({'browser_login', 'reasoning', 'tools'})
-    assert providers.capabilities(provider('codex')) == frozenset({'harness_login', 'reasoning', 'tools'})
-    assert providers.capabilities(provider('local')) == frozenset({'api_key', 'editable_base_url', 'reasoning', 'tools'})
+    assert providers.capabilities(provider('anthropic')) == frozenset({'api_key', 'reasoning', 'tools', 'vision'})
+    assert providers.capabilities(provider('deepseek')) == frozenset({'api_key', 'reasoning', 'tools', 'vision'})
+    assert providers.capabilities(provider('groq')) == frozenset({'api_key', 'tools', 'vision'})
+    assert providers.capabilities(provider('chatgpt')) == frozenset({'browser_login', 'reasoning', 'tools', 'vision'})
+    assert providers.capabilities(provider('codex')) == frozenset({'harness_login', 'reasoning', 'tools', 'vision'})
+    assert providers.capabilities(provider('local')) == frozenset({'api_key', 'editable_base_url', 'reasoning', 'tools', 'vision'})
     assert providers.capabilities(provider('custom')) == frozenset(
-        {'api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools'})
+        {'api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools', 'vision'})
     # Chat completions has no reasoning channel: only providers that send one declare it.
     assert 'reasoning' not in providers.capabilities(provider('openai'))
     assert not providers.supports(provider('openai'), 'reasoning')
@@ -73,12 +73,12 @@ def test_a_model_with_no_provider_hides_nothing():
 
 def test_a_conversation_offers_only_what_every_gate_declares():
     openai, chatgpt = provider('openai'), provider('chatgpt')
-    assert providers.offered(openai, 'work') == frozenset({'api_key', 'approvals', 'tools'})
+    assert providers.offered(openai, 'work') == frozenset({'api_key', 'approvals', 'tools', 'vision'})
     # Chat mode drops tool-backed work and the approvals that gate it.
-    assert providers.offered(openai, 'chat') == frozenset({'api_key'})
-    assert providers.offered(chatgpt, 'work') == frozenset({'approvals', 'browser_login', 'reasoning', 'tools'})
+    assert providers.offered(openai, 'chat') == frozenset({'api_key', 'vision'})
+    assert providers.offered(chatgpt, 'work') == frozenset({'approvals', 'browser_login', 'reasoning', 'tools', 'vision'})
     # Chat mode drops the tool-backed work; the provider's own declarations stay.
-    assert providers.offered(chatgpt, 'chat') == frozenset({'browser_login', 'reasoning'})
+    assert providers.offered(chatgpt, 'chat') == frozenset({'browser_login', 'reasoning', 'vision'})
     # No adapter streams a message into a running turn, so steering is never offered.
     for kind in ('openai', 'anthropic', 'chatgpt', 'codex', 'local', 'custom'):
         assert 'steering' not in providers.offered(provider(kind), 'work')
@@ -98,8 +98,8 @@ def test_the_catalog_and_the_contract_publish_capabilities(tmp_path, monkeypatch
     client, headers, _ = app_for(tmp_path, monkeypatch, install=('deepseek', ['deepseek-reasoner']))
     with client:
         catalog = {s['id']: s for s in client.get('/providers/catalog', headers=headers).json()['providers']}
-        assert catalog['chatgpt']['capabilities'] == ['browser_login', 'reasoning', 'tools']
-        assert catalog['custom']['capabilities'] == ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']
+        assert catalog['chatgpt']['capabilities'] == ['browser_login', 'reasoning', 'tools', 'vision']
+        assert catalog['custom']['capabilities'] == ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools', 'vision']
         assert catalog['custom']['base_url_hint'] == 'https://example.com/v1'
         contract = client.get('/capabilities', headers=headers).json()
         assert contract['provider'] == 'deepseek'
@@ -107,7 +107,7 @@ def test_the_catalog_and_the_contract_publish_capabilities(tmp_path, monkeypatch
         assert contract['offered'] == {'chat': ['api_key', 'reasoning'],
                                        'work': ['api_key', 'approvals', 'reasoning', 'tools']}
         listed = {p['id']: p for p in client.get('/providers', headers=headers).json()}
-        assert listed['deepseek']['capabilities'] == contract['capabilities']
+        assert listed['deepseek']['capabilities'] == sorted([*contract['capabilities'], 'vision'])
 
 
 def test_the_contract_reports_the_active_providers_own_declarations(tmp_path, monkeypatch):

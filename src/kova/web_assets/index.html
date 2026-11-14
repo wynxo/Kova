@@ -64,9 +64,13 @@
       <form id="composer" class="composer" data-mode="work">
         <div id="command-picker" class="command-picker" aria-label="Commands" hidden></div>
         <label class="sr-only" for="prompt">Message Kova</label>
+        <div id="attachment-chips" aria-live="polite"></div>
+        <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
+        <input id="attachment-input" type="file" multiple hidden>
         <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
         <div class="compose-toolbar">
           <button id="commands" type="button" class="chip" aria-label="Show commands">/</button>
+          <button id="attach" class="chip" type="button" aria-label="Attach files">📎</button>
           <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
           <div id="compose-options" class="compose-options">
           <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">

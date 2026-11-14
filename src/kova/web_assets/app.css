@@ -956,3 +956,9 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
 .history-actions summary { cursor: pointer; padding: 6px; }
 .history-actions[open] { top: 4px; transform: none; }
 .history-actions button { width: auto; min-width: 150px; height: 36px; padding: 6px; }
+
+#attachment-chips { padding: 0 .6rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+.attachment-chip { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; padding: .4rem; }
+.attachment-chip button { cursor: pointer; }
+#attachment-note { color: var(--muted); }
+#attach.text-only { opacity: .55; }

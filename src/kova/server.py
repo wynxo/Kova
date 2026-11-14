@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ class TurnBody(BaseModel):
     """A user message that starts one chat turn, optionally on a named model."""
     text: str
     model: str | None = None
+    attachments: list[str] = Field(default_factory=list, max_length=3)
 
 
 class ChatBody(BaseModel):
@@ -392,6 +393,8 @@ def create_app(
     """
     now = now or (lambda: datetime.now().astimezone())
     app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    from kova.attachments import AttachmentBodyLimit
+    app.add_middleware(AttachmentBodyLimit)
     app.state.config = config
     app.state.transport = transport
     app.state.now = now
@@ -505,6 +508,28 @@ def create_app(
         chat = app.state.store.get_chat(chat_id)
         return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
 
+    @api.post("/chats/{chat_id}/attachments")
+    async def upload_attachment(chat_id: str, file: UploadFile = File(...)) -> dict:
+        from kova import attachments
+        async with chat_lock(chat_id):
+            if app.state.store.get_chat(chat_id) is None:
+                raise HTTPException(404, "Chat not found.")
+            try:
+                data = await file.read(attachments.MAX_BYTES + 1)
+                return await asyncio.to_thread(attachments.save, config.home, app.state.store,
+                                               chat_id, file.filename or 'file', data)
+            except attachments.AttachmentError as exc:
+                raise HTTPException(400, str(exc)) from None
+            finally:
+                await file.close()
+
+    @api.delete("/chats/{chat_id}/attachments/{ident}")
+    async def remove_attachment(chat_id: str, ident: str) -> dict:
+        async with chat_lock(chat_id):
+            if not app.state.store.delete_attachment(chat_id, ident):
+                raise HTTPException(404, "Attachment not found.")
+        return {"ok": True}
+
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:
         async with chat_lock(chat_id):
@@ -592,6 +617,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="chat not found")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
+        rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
+        if len(set(body.attachments)) != len(body.attachments) or any(i not in rows for i in body.attachments):
+            raise HTTPException(400, "Choose attachments from this chat only.")
+        config.bind_providers()
+        entry = next((m for m in config.models if m.name == (body.model or config.active)), None)
+        from kova import providers
+        if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
+            if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
+                raise HTTPException(400, "This model cannot read images; attach OCR text or choose a vision-enabled model.")
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
@@ -606,7 +640,7 @@ def create_app(
                     app.state.steering[chat_id] = steering
                     try:
                         async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                  steering=steering):
+                                                                  steering=steering, attachment_ids=body.attachments):
                             app.state.conversation_states.transition(chat_id, event.get("type", ""))
                             queue.put_nowait(event)
                     finally:

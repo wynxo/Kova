@@ -91,6 +91,8 @@ cookie, so a route added to the router is authenticated by construction.
 | --- | --- | --- |
 | `GET /capabilities` | token or session | what the active provider declares, and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
+| `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
+| `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
 | `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd, delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
@@ -591,3 +593,19 @@ Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.
 electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
 remains a separately installed prerequisite. See desktop/README.md.
+
+### Local chat attachments
+
+`attachments.py` stores chat-scoped uploads under `KOVA_HOME/attachments`, with
+0600 files and metadata in SQLite. Extraction is local; install
+`kova-ai[attachments]` for PDF, XLSX and PPTX readers. DOCX uses a bounded ZIP/XML
+fallback. `read_attachment` accepts an attachment ID and line range and cannot
+read another chat's uploads. Deleting or purging a chat removes its upload bytes.
+
+Set `vision = true` explicitly on a `[[models]]` entry in config.toml only when
+that model supports images. The adapter must also declare vision; the API and
+composer both enforce it. Non-vision models require an OCR/text alternative
+(local OCR is not bundled). Extracted text, or image data for a declared vision
+model, is sent to the configured model only as part of a requested chat turn;
+no external extraction or file-upload service is used. Raw images are not stored
+in transcript messages and must be attached again for a later visual turn.

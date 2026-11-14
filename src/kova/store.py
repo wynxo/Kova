@@ -111,6 +111,11 @@ class Store:
     def _create_tables(self) -> None:
         self._conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,
+                mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER,
+                sha256 TEXT NOT NULL, path TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -389,7 +394,38 @@ class Store:
     def set_title(self, chat_id: str, title: str) -> None:
         self.update_chat(chat_id, title=title)
 
+    def add_attachment(self, row: dict) -> None:
+        with self._lock:
+            self._conn.execute("INSERT INTO attachments VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path)", row)
+            self._conn.commit()
+
+    def attachments(self, chat_id: str) -> list[dict]:
+        with self._lock:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM attachments WHERE chat_id = ?", (chat_id,))]
+
+    def delete_attachment(self, chat_id: str, ident: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT path FROM attachments WHERE chat_id = ? AND id = ?", (chat_id, ident)).fetchone()
+            if row is None:
+                return False
+            path = Path(row['path'])
+            path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+            self._conn.execute("DELETE FROM attachments WHERE id = ?", (ident,))
+            self._conn.commit()
+            return True
+
     def delete_chat(self, chat_id: str) -> bool:
+        for row in self.attachments(chat_id):
+            self.delete_attachment(chat_id, row["id"])
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
+            try:
+                (self.path.parent / 'attachments' / chat_id).rmdir()
+            except OSError:
+                pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
@@ -401,6 +437,9 @@ class Store:
 
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
+        for chat in self.list_chats():
+            for row in self.attachments(chat["id"]):
+                self.delete_attachment(chat["id"], row["id"])
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")

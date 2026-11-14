@@ -43,7 +43,7 @@ const sandbox = {
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
     get activeElement() { return focusedElement; }},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
-  performance, URLSearchParams, TextDecoder, console,
+  performance, URLSearchParams, TextDecoder, console, FormData,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options = {}) => {
@@ -75,7 +75,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged, attachFiles, pendingAttachments, renderAttachments};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -462,3 +462,23 @@ $('prompt').value = '/compact';
 await sandbox.test.send({preventDefault() {}});
 assert.equal(requests.length, beforeCommands, 'busy commands are never queued');
 state.busy = false;
+
+// Composer attachment input paths and model declarations.
+state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
+applyCapabilities({offered: {work: []}});
+$('mode').value = 'work'; controls();
+assert.equal($('attach').classList.contains('text-only'), true);
+assert.equal(typeof $('composer').listeners.drop, 'function');
+assert.equal(typeof $('prompt').listeners.paste, 'function');
+sandbox.test.pendingAttachments.push({id: 'a', chat_id: 'attachment-chat', name: 'demo.txt', size: 1024, pages: 2});
+sandbox.test.renderAttachments();
+assert.match($('attachment-chips').textContent, /demo.txt.*1.0 KB.*2 pages.*ready/);
+assert.equal($('attachment-note').hidden, false);
+state.chat = {id: 'other-chat'}; sandbox.test.renderAttachments();
+assert.equal($('attachment-chips').textContent, '');
+console.log('Attachment chips, input handlers and model gating passed');
+
+// Native selected-text drops must remain available to the textarea.
+let textDropPrevented = false;
+$('composer').listeners.drop({dataTransfer: {files: []}, preventDefault() { textDropPrevented = true; }});
+assert.equal(textDropPrevented, false);
