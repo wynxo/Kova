@@ -210,6 +210,10 @@ class KovaClient:
     def replace_permission_rules(self, rules: list[dict]) -> dict:
         return self._request("PUT", "/permission-rules", json=rules).json()
 
+    def pending_approvals(self, chat_id: str) -> list[dict]:
+        """The ``approval``/``question`` events of ``chat_id`` still waiting for an answer."""
+        return self._request("GET", f"/chats/{chat_id}/approvals", timeout=10).json()
+
     def answer_approval(self, chat_id: str, approval_id: str, decision: str,
                         message: str | None = None) -> dict:
         """Answer an ``approval`` event: ``allow``, ``allow_session`` or ``deny``."""
