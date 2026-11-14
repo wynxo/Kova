@@ -313,6 +313,12 @@ Content-Type: application/json
 
 `decision` is `allow`, `allow_session`, or `deny`. The optional `message` gives guidance on a denied action. Unknown, already answered, expired, stopped, or other-chat approval IDs return 404; malformed decisions return 422. All existing bearer/session and browser same-origin checks apply.
 
+Approvals and `ask_user` questions still waiting in a chat can be listed at any time, so a reloaded page or a second window can rebuild the card and answer it. Each item is the exact event the stream sent:
+
+```http
+GET /chats/{chat_id}/approvals
+```
+
 An additive `approval_resolved` event carries `id`, `decision`, and `message` so clients can retire cards on answers or timeout. Stop ends the stream with the existing `stopped` event.
 
 While a turn runs, two endpoints decide where a new message goes:

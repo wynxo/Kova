@@ -438,6 +438,17 @@ def create_app(
             raise
         return {"ok": True}
 
+    @api.get("/chats/{chat_id}/approvals")
+    async def pending_approvals(chat_id: str) -> list[dict]:
+        """Approvals and questions still waiting for an answer in this chat.
+
+        The card exists only in the turn's SSE stream; a reloaded page or a
+        second window rebuilds it from here and answers through the POST below.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return app.state.agent.approvals.pending_for(chat_id)
+
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
         chat = app.state.store.get_chat(chat_id)
