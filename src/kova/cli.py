@@ -39,6 +39,7 @@ from kova.config import (
 )
 from kova.modes import MODES
 from kova.persona import TONES, Persona
+from kova.privacy import status_text as privacy_status_text
 from kova.tools.reminders import format_relative, format_when
 from kova.tui import brand
 from kova.tui.keymap import DEFAULT_KEYS, Keymap
@@ -422,6 +423,9 @@ def ask(
                 if not as_json:
                     sys.stdout.write(event["text"])
                     sys.stdout.flush()
+            elif kind == "privacy":
+                if not as_json:
+                    _stderr.print(privacy_status_text(event), style=theme.MUTED, markup=False)
             elif kind == "tool_call":
                 tools.append(event["name"])
             elif kind in {"approval", "question"}:
@@ -1457,6 +1461,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("persona.name", "persona_name", "persona"),
         _ConfigField("persona.tone", "persona_tone", "choice", tuple(TONES)),
         _ConfigField("port", "port", "int", minimum=1, maximum=65535),
+        _ConfigField("privacy.secrets", "privacy_secrets", "choice", ("off", "redact", "block")),
         _ConfigField("tui.theme", "tui_theme", "choice", ("dark", "light")),
     )
 }
@@ -1647,6 +1652,7 @@ def _config_snapshot(cfg) -> dict:
         "compact_threshold": cfg.compact_threshold,
         "files_path": str(cfg.files_path),
         "bind": cfg.bind,
+        "privacy": {"secrets": cfg.privacy_secrets},
         "oauth_host_id": cfg.oauth_host_id,
         "memory": {
             "path": str(cfg.memory_path),
@@ -1708,6 +1714,7 @@ def _config_rows(snapshot: dict) -> list[tuple[str, str]]:
         ("compact_threshold", str(snapshot["compact_threshold"])),
         ("files_path", snapshot["files_path"]),
         ("bind", snapshot["bind"]),
+        ("privacy.secrets", snapshot["privacy"]["secrets"]),
         ("oauth_host_id", snapshot["oauth_host_id"]),
         ("memory.path", memory["path"]),
         ("memory.write_subdir", memory["write_subdir"] or "(unset)"),

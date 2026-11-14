@@ -16,6 +16,7 @@ from typing import Any
 import tomlkit
 
 from kova.memory import DEFAULT_MEMORY_BUDGET
+from kova.privacy import normalize_mode
 
 DEFAULT_MODEL = {"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "", "context": 32768}
 
@@ -25,7 +26,7 @@ CONFIG_SCHEMA = 2
 #: user (and for a newer Kova) but never interpreted here.
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
-    'files_path', 'memory', 'tui', 'persona', 'providers', 'models', 'bind',
+    'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -35,6 +36,7 @@ CONFIG_SECTION_KEYS = {
     }),
     'tui': frozenset({'theme', 'keys'}),
     'persona': frozenset({'name', 'tone', 'configured'}),
+    'privacy': frozenset({'secrets'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
@@ -160,6 +162,8 @@ class Config:
     persona_tone: str = "warm"
     persona_configured: bool = False
     bind: str = "loopback"  # "lan" also serves paired phones on the private LAN address
+    #: Outbound secret handling: "off" (compatible default), "redact" or "block".
+    privacy_secrets: str = "off"
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -231,6 +235,9 @@ def load_config(home: Path | None = None) -> Config:
     mem = data.get('memory', {})
     # An empty path means "unset", never the process working directory (#90).
     mem_path = str(mem.get('path') or '').strip() or str(home / 'memory')
+    privacy = data.get('privacy')
+    privacy_secrets = normalize_mode(
+        privacy.get('secrets') if isinstance(privacy, Mapping) else privacy)
     cfg = Config(home=home, models=models, providers=providers,
                  active=data.get('active', models[0].name if models else ''),
                  memory_path=Path(mem_path).expanduser(),
@@ -252,7 +259,8 @@ def load_config(home: Path | None = None) -> Config:
                  persona_name=data.get('persona', {}).get('name', 'Kova'),
                  persona_tone=data.get('persona', {}).get('tone', 'warm'),
                  persona_configured=data.get('persona', {}).get('configured', False),
-                 bind='lan' if data.get('bind') == 'lan' else 'loopback')
+                 bind='lan' if data.get('bind') == 'lan' else 'loopback',
+                 privacy_secrets=privacy_secrets)
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
     cfg._extra = {k: v for k, v in data.items() if k not in TOP_LEVEL_CONFIG_KEYS}
@@ -391,6 +399,7 @@ def _model_values(model: ModelEntry) -> dict[str, Any]:
 
 
 def save_config(cfg: Config) -> None:
+    cfg.privacy_secrets = normalize_mode(cfg.privacy_secrets)
     # Legacy callers may still assign a model's key before saving.
     for m in cfg.models:
         if m._provider is not None and m.api_key != m._bound_api_key:
@@ -414,6 +423,7 @@ def save_config(cfg: Config) -> None:
     _put(memory, 'consolidate_min_confidence', cfg.memory_consolidate_min_confidence)
     _put(memory, 'consolidate_max_loss', cfg.memory_consolidate_max_loss)
     _put(memory, 'write_subdir', cfg.memory_write_subdir or _UNSET)
+    _put(_section(doc, 'privacy'), 'secrets', normalize_mode(cfg.privacy_secrets))
     tui = _section(doc, 'tui')
     _put(tui, 'theme', cfg.tui_theme)
     _merge_map(_section(tui, 'keys'), cfg.tui_keys)
