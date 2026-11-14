@@ -299,7 +299,9 @@ authenticated `/chats/{id}/attachments` API and shows ordinary attachment chips.
 If the worker is not in control, `/app/share` saves the same native attachments
 on the server before redirecting to a one-use composer. Text and link shares
 stay editable drafts. Shared images obey the selected model's vision setting;
-nothing invents a base64-in-text attachment format.
+nothing invents a base64-in-text attachment format. A draft chat that is never
+redeemed is deleted with its files on the next browser request after its five
+minutes expire; the page also drops expired worker-staged file bytes.
 
 ## One turn
 
