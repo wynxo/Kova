@@ -131,6 +131,26 @@ def test_memory_location_keeps_the_configured_budget(server, tmp_path):
     assert client.app.state.memory.budget == cfg.memory_budget
 
 
+def test_memory_location_is_normalised(server, tmp_path, monkeypatch):
+    """The live memory folder must match what a restart would read (#90)."""
+    client, headers, cfg, fake = server
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    for bad in ('', '   ', 'relative/dir', 'bad\0path'):
+        assert client.post('/memory/location', json={'path': bad}, headers=headers).status_code == 422
+    response = client.post('/memory/location', json={'path': '~/notes'}, headers=headers)
+    assert response.status_code == 200
+    root = (home / 'notes').resolve()
+    assert client.app.state.memory.root == root
+    assert client.app.state.agent.memory.root == root
+    assert cfg.memory_path == root
+    assert load_config(cfg.home).memory_path == root
+    assert client.post('/memory', json={'title': 'Groceries', 'body': 'milk'},
+                       headers=headers).status_code == 200
+    assert (root / 'groceries.md').is_file()
+
+
 def test_memory_settings_roundtrip_and_guards(server):
     client, headers, cfg, fake = server
     settings = client.get("/memory/settings", headers=headers).json()

@@ -126,9 +126,11 @@ def load_config(home: Path | None = None) -> Config:
     if not models and 'providers' not in data:
         models = [ModelEntry(**DEFAULT_MODEL)]
     mem = data.get('memory', {})
+    # An empty path means "unset", never the process working directory (#90).
+    mem_path = str(mem.get('path') or '').strip() or str(home / 'memory')
     cfg = Config(home=home, models=models, providers=providers,
                  active=data.get('active', models[0].name if models else ''),
-                 memory_path=Path(mem.get('path', str(home / 'memory'))).expanduser(),
+                 memory_path=Path(mem_path).expanduser(),
                  memory_write_subdir=mem.get('write_subdir') or None,
                  memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),
                  memory_index_lines=int(mem.get('index_lines', 200)),
