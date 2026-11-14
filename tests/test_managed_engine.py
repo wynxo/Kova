@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import tarfile
 
 import httpx
@@ -103,7 +104,9 @@ async def test_engine_is_verified_before_extraction_and_keeps_runtime_libraries(
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=data))) as client:
         await collect(install_engine(client, artifact(data, 'engine.tar.gz'), tmp_path))
     binaries = list(tmp_path.rglob('llama-server'))
-    assert len(binaries) == 1 and binaries[0].stat().st_mode & 0o100
+    assert len(binaries) == 1
+    if os.name != 'nt':  # Windows has no executable permission bit.
+        assert binaries[0].stat().st_mode & 0o100
     assert (binaries[0].parent / 'libggml.so').read_bytes() == b'library'
 
 
