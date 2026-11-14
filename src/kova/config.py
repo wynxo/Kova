@@ -69,6 +69,7 @@ class Config:
     persona_name: str = "Kova"
     persona_tone: str = "warm"
     persona_configured: bool = False
+    bind: str = "loopback"  # "lan" also serves paired phones on the private LAN address
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -146,7 +147,8 @@ def load_config(home: Path | None = None) -> Config:
                  tui_keys=data.get('tui', {}).get('keys', {}),
                  persona_name=data.get('persona', {}).get('name', 'Kova'),
                  persona_tone=data.get('persona', {}).get('tone', 'warm'),
-                 persona_configured=data.get('persona', {}).get('configured', False))
+                 persona_configured=data.get('persona', {}).get('configured', False),
+                 bind='lan' if data.get('bind') == 'lan' else 'loopback')
     cfg.bind_providers()
     # Tighten legacy credential files too, not only new writes.
     path.chmod(0o600)
@@ -194,6 +196,8 @@ def save_config(cfg: Config) -> None:
                                            'configured': cfg.persona_configured}, 'providers': providers,
             'models': [{'name': m.name, 'provider': m.provider, 'base_url': m.base_url,
                         'model': m.model, 'context': m.context} for m in cfg.models]}
+    if cfg.bind == 'lan':
+        data['bind'] = 'lan'
     private_write(cfg.home / 'config.toml', tomli_w.dumps(data))
 
 

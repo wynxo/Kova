@@ -219,6 +219,34 @@ class KovaClient:
         return self._request("POST", f"/chats/{chat_id}/approvals/{approval_id}",
                              json=body, timeout=10).json()
 
+    # -- phone access and pairing (local only) ---------------------------
+    def phone_status(self) -> dict:
+        """Whether phone access is on and listening, its LAN address and paired devices."""
+        return self._request("GET", "/phone", timeout=10).json()
+
+    def set_phone(self, enabled: bool) -> dict:
+        """Turn phone access on (serve the LAN address too) or off."""
+        return self._request("POST", "/phone", json={"enabled": enabled}, timeout=15).json()
+
+    def pair_start(self) -> dict:
+        """A one-use, two-minute pairing code: ``id``, ``url`` (for the QR) and ``expires_in``."""
+        return self._request("POST", "/phone/pair", timeout=10).json()
+
+    def pair_status(self, code_id: str) -> dict:
+        """``waiting``, ``paired`` (with the new ``device``) or ``expired``."""
+        return self._request("GET", f"/phone/pair/{code_id}", timeout=10).json()
+
+    def pair_cancel(self, code_id: str) -> None:
+        self._request("DELETE", f"/phone/pair/{code_id}", timeout=10)
+
+    def devices_list(self) -> list[dict]:
+        return self._request("GET", "/devices", timeout=10).json()
+
+    def device_revoke(self, device_id: str | None = None) -> int:
+        """Unpair one device, or every device when ``device_id`` is None; returns how many."""
+        path = "/devices" if device_id is None else f"/devices/{device_id}"
+        return self._request("DELETE", path, timeout=10).json()["removed"]
+
     def events(self) -> Iterator[dict]:
         """Stream background events (currently reminders) from the server."""
         yield from self._stream("GET", "/events")

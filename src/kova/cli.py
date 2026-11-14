@@ -1365,6 +1365,109 @@ def provider_login(name: str):
     _ok(f'Connected {name}.')
 
 
+PHONE_EXPLAINER = (
+    "Phone access lets a phone on the same Wi-Fi use Kova after you pair it with a QR code. "
+    "Kova then also listens on this computer's local network address (never the internet), "
+    "and only paired phones get in. Unpair any time with: kova devices revoke"
+)
+
+
+@app.command()
+def pair(
+    off: bool = typer.Option(False, "--off", help="Turn phone access off. Paired phones stay paired but cannot connect."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Turn phone access on without asking."),
+):
+    """Show a QR code to use Kova from your phone on the same Wi-Fi."""
+    from kova.pairing import qr_terminal
+    client = get_client()
+    if off:
+        client.set_phone(False)
+        _ok("Phone access is off. Kova listens only on this computer again.")
+        return
+    status = client.phone_status()
+    if not status["enabled"]:
+        console.print(Text(PHONE_EXPLAINER, style=theme.MUTED))
+        if not yes and onboarding._ask("Turn on phone access? [Y/n]:").lower() not in ("", "y", "yes"):
+            _muted("Nothing changed.")
+            return
+        status = client.set_phone(True)
+    if not status["listening"]:
+        _fail(status.get("error") or "Phone access is on but not listening.",
+              "Check that this computer is on your Wi-Fi or network, then run kova pair again.")
+    code = client.pair_start()
+    console.print()
+    console.print(Text(qr_terminal(code["url"])), no_wrap=True, crop=False, overflow="ignore")
+    console.print(Text.assemble(("Scan this with your phone's camera", "bold"),
+                                (" (same Wi-Fi as this computer).", "")))
+    console.print(Text(f"  Or open {code['url']}", style=theme.MUTED), no_wrap=True, crop=False, overflow="ignore")
+    console.print(Text(f"  The code works once and expires in {code['expires_in'] // 60} minutes. Ctrl+C cancels.",
+                       style=theme.MUTED))
+    try:
+        while True:
+            result = client.pair_status(code["id"])
+            if result["status"] == "paired":
+                name = (result.get("device") or {}).get("name", "your phone")
+                _ok(f"Paired {name}. Add Kova to its home screen for one-tap access.")
+                _muted("See or unpair devices with: kova devices")
+                return
+            if result["status"] == "expired":
+                _fail("The pairing code expired.", "Run kova pair again for a fresh code.")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        client.pair_cancel(code["id"])
+        _muted("Cancelled. The code no longer works.")
+        raise typer.Exit(130)
+
+
+_devices = typer.Typer(no_args_is_help=False, help="See and unpair phones paired with kova pair.")
+app.add_typer(_devices, name="devices")
+
+
+@_devices.callback(invoke_without_command=True)
+def devices_root(ctx: typer.Context):
+    """List paired devices."""
+    if ctx.invoked_subcommand is None:
+        devices_list()
+
+
+@_devices.command("list")
+def devices_list():
+    """List paired devices."""
+    status = get_client().phone_status()
+    devices = status["devices"]
+    state = "on" if status["listening"] else ("on, not listening" if status["enabled"] else "off")
+    if not devices:
+        _empty(f"No paired devices. Phone access is {state}.", "Pair a phone with: kova pair")
+        return
+    table = _table(caption=f"{len(devices)} paired · phone access {state}"
+                   + (f" at {status['address']}" if status.get("address") else ""))
+    table.add_column("ID", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Device")
+    table.add_column("Paired", style=theme.MUTED, no_wrap=True)
+    table.add_column("Last seen", style=theme.MUTED, no_wrap=True)
+    for device in devices:
+        table.add_row(device["id"], device["name"], device["created"][:16].replace("T", " "),
+                      device["last_seen"][:16].replace("T", " "))
+    console.print(table)
+
+
+@_devices.command("revoke")
+def devices_revoke(
+    device_id: str | None = typer.Argument(None, help="The device ID from: kova devices"),
+    all_devices: bool = typer.Option(False, "--all", help="Unpair every device."),
+):
+    """Unpair a device; it has to scan a new code to come back."""
+    if bool(device_id) == all_devices:
+        _fail("Give a device ID or --all.", "See the IDs with: kova devices")
+    try:
+        removed = get_client().device_revoke(None if all_devices else device_id)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f"No paired device {device_id}.", "See the IDs with: kova devices")
+        raise
+    _ok(f"Unpaired {removed} device{'s' if removed != 1 else ''}.")
+
+
 @app.command()
 def doctor() -> None:
     """Check local configuration and provider access without sending a chat."""
