@@ -286,6 +286,9 @@ app.add_typer(_reminders, name="reminders")
 _jobs = typer.Typer(no_args_is_help=True, help="Manage scheduled recurring jobs.")
 app.add_typer(_jobs, name="jobs")
 
+_plugins = typer.Typer(no_args_is_help=True, help="Install plugin bundles of skills, commands and MCP servers.")
+app.add_typer(_plugins, name="plugin")
+
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
@@ -1196,6 +1199,167 @@ def jobs_rm(jid: int):
         _ok(f"Removed job #{jid}.")
     else:
         _fail(f"No job #{jid}.")
+
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+
+def _plugin_section(title: str, lines: list[str]) -> None:
+    console.print(Text(f"{title}:", style=f"bold {theme.MUTED}"))
+    if not lines:
+        console.print(Text("  (none)", style=theme.FAINT))
+        return
+    for line in lines:
+        console.print(Text("  " + line, style=theme.MUTED))
+
+
+def _plugin_summary(plugin) -> None:
+    """The install-time confirmation: exactly what this plugin adds."""
+    from kova import plugins
+
+    info = plugins.describe(plugin)
+    console.print()
+    console.print(Text(f"{info['name']} {info['version']}", style=f"bold {theme.ACCENT}"))
+    if info["description"]:
+        console.print(Text(info["description"], style=theme.MUTED))
+    meta = [part for part in (f"by {info['author']}" if info["author"] else "",
+                              info["homepage"]) if part]
+    if meta:
+        console.print(Text("  ".join(meta), style=theme.FAINT))
+    if info["min_kova"]:
+        console.print(Text(f"  requires Kova >= {info['min_kova']}", style=theme.FAINT))
+
+    mcp_lines = []
+    for server in info["mcp"]:
+        target = server["command"]
+        if target and server["args"]:
+            target += " " + " ".join(server["args"])
+        elif server["url"]:
+            target = server["url"]
+        note = "network access" if server["url"] else ""
+        if server["env_keys"]:
+            note = (note + "; " if note else "") + "env: " + ", ".join(server["env_keys"])
+        line = f"{server['name']}  →  {target}"
+        if note:
+            line += f"  ({note})"
+        mcp_lines.append(line)
+
+    command_lines = [f"/{cmd['name']} — {cmd['description']}".rstrip(" —")
+                     for cmd in info["commands"]]
+    permission_lines = [f"{rule['action']} {rule['tool']} {rule['pattern']}"
+                        for rule in info["permissions"]]
+
+    console.print()
+    _plugin_section("MCP servers (tools)", mcp_lines)
+    _plugin_section("Skills", [f"{s['name']} — {s['description']}".rstrip(" —")
+                               for s in info["skills"]])
+    _plugin_section("Slash commands", command_lines)
+    _plugin_section("Permission rules", permission_lines)
+    console.print()
+
+
+@_plugins.command("install")
+def plugin_install(
+    source: str = typer.Argument(..., help="A local path, a git URL, or a catalog name."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Install without asking; still shows what it adds."),
+):
+    """Install a plugin bundle, showing exactly what it adds before asking."""
+    from kova import plugins
+
+    def confirm(plugin):
+        _plugin_summary(plugin)
+        return yes or typer.confirm("Install this plugin?", default=False)
+
+    try:
+        plugin = plugins.install(source, confirm=confirm)
+    except plugins.PluginError as exc:
+        _fail(str(exc))
+    if plugin is None:
+        _muted("Cancelled.")
+        return
+    _ok(f"Installed {plugin.name} {plugin.version}.")
+    if plugin.mcp:
+        _muted("  MCP servers connect once the MCP client lands (issue #135).")
+
+
+@_plugins.command("list")
+def plugin_list():
+    """List installed plugins and their enabled state."""
+    from kova import plugins
+
+    items = plugins.installed()
+    if not items:
+        _empty("No plugins installed.", "Add one with: kova plugin install <path|git url>")
+        return
+    table = _table(caption=f"{len(items)} installed")
+    table.add_column("Plugin", no_wrap=True)
+    table.add_column("Version", no_wrap=True)
+    table.add_column("State", no_wrap=True)
+    table.add_column("About", overflow="fold")
+    for plugin in items:
+        state = Text("enabled", style=theme.SUCCESS) if plugin.enabled else Text("disabled", style=theme.MUTED)
+        table.add_row(Text(plugin.name, style="bold"), plugin.version, state,
+                      _clip(plugin.description))
+    console.print(table)
+
+
+@_plugins.command("enable")
+def plugin_enable(name: str):
+    """Re-enable a disabled plugin, restoring its skills, commands and rules."""
+    from kova import plugins
+
+    try:
+        plugins.enable(name)
+    except plugins.PluginError as exc:
+        _fail(str(exc))
+    _ok(f"Enabled {name}.")
+
+
+@_plugins.command("disable")
+def plugin_disable(name: str):
+    """Disable a plugin, removing its skills, commands, MCP servers and rules."""
+    from kova import plugins
+
+    try:
+        plugins.disable(name)
+    except plugins.PluginError as exc:
+        _fail(str(exc))
+    _ok(f"Disabled {name}.")
+
+
+@_plugins.command("remove")
+def plugin_remove(name: str):
+    """Uninstall a plugin and everything it added."""
+    from kova import plugins
+
+    try:
+        plugins.remove(name)
+    except plugins.PluginError as exc:
+        _fail(str(exc))
+    _ok(f"Removed {name}.")
+
+
+@_plugins.command("update")
+def plugin_update(
+    name: str = typer.Argument(..., help="The plugin to update from its recorded source."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Update without asking."),
+):
+    """Re-install a plugin from its original source, showing what it adds."""
+    from kova import plugins
+
+    def confirm(plugin):
+        _plugin_summary(plugin)
+        return yes or typer.confirm("Update to this version?", default=False)
+
+    try:
+        plugin = plugins.update(name, confirm=confirm)
+    except plugins.PluginError as exc:
+        _fail(str(exc))
+    if plugin is None:
+        _muted("Cancelled.")
+        return
+    _ok(f"Updated {plugin.name} {plugin.version}.")
 
 
 # ---------------------------------------------------------------------------

@@ -247,8 +247,8 @@ restarts. See [remote-access.md](remote-access.md).
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
 `status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
-and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
-and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`,
+`plugin` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -518,6 +518,36 @@ zips: `manifest.json`, chat JSON plus Markdown, memory notes, reminders, and
 `config.toml` with API keys stripped. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
+
+## Plugins
+
+A plugin is one folder described by `kova-plugin.toml`, installed into
+`KOVA_HOME/plugins/<name>/`. `src/kova/plugins.py` parses and validates the
+manifest (`name`, `version`, `description`, `author`, `homepage`, `min_kova`,
+`mcp`, `skills`, `commands`, `permissions`) and manages the
+`kova plugin install|list|enable|disable|remove|update` lifecycle.
+
+Nothing a plugin declares is trusted or run without the user confirming. The
+CLI shows exactly what a plugin adds — MCP server command lines and URLs, skill
+names, slash commands and permission rules — and asks before installing or
+updating; MCP `env` values may hold secrets, so only their keys are shown.
+
+What a plugin contributes, and how it is wired in:
+
+- **Skills** are read-only SKILL.md-style Markdown loaded through the existing
+  `kova.skills` loader (`plugin_skill_roots` feeds them in as extra roots), so
+  they appear in the prompt and `skill_load` finds them, but `skill_write` and
+  `skill_remove` never touch them — only Kova's own `skills/Kova/` writes.
+- **Slash commands** are canned prompts sent as the user's turn; the terminal
+  chat (both the simple loop and the full-screen app) lists and dispatches them
+  like built-in commands. A plugin command runs nothing by itself.
+- **MCP servers** are declared with the `{name, command, args, env, url,
+  enabled}` shape and exposed by `plugin_mcp_servers()` for the MCP client to
+  consume once that lands. Kova does not start them yet.
+- **Default permission rules** are merged into `permission-rules.json`, tagged
+  with `source = "plugin:<name>"`, and go through the exact same permission
+  policy and sandbox as built-in tools. Disabling or removing a plugin deletes
+  its rules; removing also deletes its folder, skills and commands.
 
 ## Tests
 

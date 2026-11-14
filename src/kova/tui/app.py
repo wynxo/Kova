@@ -1055,10 +1055,19 @@ class ChatApp:
                    + (self.p.dim(f" · {fit(message, 60)}") if message else ""))
 
     # ================================================================ commands
+    def _plugin_commands(self) -> dict:
+        """Enabled plugins' slash commands, keyed by command name."""
+        from kova import plugins
+
+        return plugins.plugin_commands()
+
     def _commands(self) -> dict:
         """The commands this chat may use: the contract hides what it cannot offer."""
-        return {name: entry for name, entry in COMMANDS.items()
-                if name not in _COMMAND_CAPABILITIES or self.offers(_COMMAND_CAPABILITIES[name])}
+        commands = {name: entry for name, entry in COMMANDS.items()
+                    if name not in _COMMAND_CAPABILITIES or self.offers(_COMMAND_CAPABILITIES[name])}
+        commands.update({name: (f"/{name}", cmd.description or cmd.prompt)
+                         for name, cmd in self._plugin_commands().items()})
+        return commands
 
     def _unavailable(self, name: str) -> str:
         """Why the contract withholds one command, in one line."""
@@ -1073,6 +1082,10 @@ class ChatApp:
     def command(self, line: str) -> None:
         name, _, rest = line[1:].partition(" ")
         name, rest = name.lower(), rest.strip()
+        plugin_commands = self._plugin_commands()
+        if name in plugin_commands:
+            self.submit(plugin_commands[name].prompt)
+            return
         handler = getattr(self, f"_cmd_{name}", None)
         if handler is None or name not in COMMANDS:
             close = rank(sorted(COMMANDS), name)
@@ -1267,7 +1280,7 @@ class ChatApp:
     def _cmd_help(self, _rest: str) -> None:
         p, r = self.p, self.renderer
         commands = self._commands()
-        width = max(len(usage) for usage, _ in COMMANDS.values()) + 3
+        width = max(len(usage) for usage, _ in commands.values()) + 3
         room = max(10, r.width - width - 4)
         r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Commands"))
         for name, (usage, text) in commands.items():

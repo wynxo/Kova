@@ -68,6 +68,41 @@ def _md_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
+def _collect(paths: list[Path]) -> list[Path]:
+    """Expand a list of files and directories into sorted, de-duplicated .md paths."""
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        if path is None:
+            continue
+        if path.is_file() and path.suffix == ".md":
+            candidates = [path]
+        elif path.is_dir():
+            candidates = _md_files(path)
+        else:
+            candidates = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.add(candidate)
+                files.append(candidate)
+    return sorted(files)
+
+
+def load_skills(paths: list[Path]) -> list[Skill]:
+    """Parse skills from an explicit list of files and directories, read-only.
+
+    The plugin loader uses this to read a plugin's declared skills through the
+    same parser as Kova's own, without ever writing to them.
+    """
+    skills = []
+    for path in _collect(paths):
+        try:
+            skills.append(_parse(path))
+        except (OSError, UnicodeDecodeError):
+            continue  # one broken file must not break the whole list
+    return skills
+
+
 def _clean_line(line: str) -> str:
     """One readable line: whitespace collapsed and a Markdown heading/bullet removed."""
     return " ".join(line.split()).lstrip("#-* ").strip()
@@ -139,28 +174,24 @@ def _atomic_write(path: Path, text: str) -> None:
 class Skills:
     """Markdown skills under ``root``; Kova writes only inside ``write_subdir``."""
 
-    def __init__(self, root: Path, write_subdir: str | None = WRITE_SUBDIR) -> None:
+    def __init__(self, root: Path, write_subdir: str | None = WRITE_SUBDIR,
+                 extra_roots: list[Path] | None = None) -> None:
         self.root = Path(root)
         self.write_subdir = write_subdir
+        self.extra_roots = list(extra_roots or [])
 
     @classmethod
-    def for_home(cls, home: Path) -> Skills:
+    def for_home(cls, home: Path, extra_roots: list[Path] | None = None) -> Skills:
         """The skills folder of a Kova home, with Kova's own writes in a subfolder."""
-        return cls(Path(home) / "skills", WRITE_SUBDIR)
+        return cls(Path(home) / "skills", WRITE_SUBDIR, extra_roots)
 
     @property
     def write_dir(self) -> Path:
         return self.root / self.write_subdir if self.write_subdir else self.root
 
     def list(self) -> list[Skill]:
-        """Every skill under root, recursive, hidden dirs skipped."""
-        skills = []
-        for path in _md_files(self.root):
-            try:
-                skills.append(_parse(path))
-            except (OSError, UnicodeDecodeError):
-                continue  # one broken file must not break every prompt
-        return skills
+        """Every skill under root (plus any extra read-only roots), hidden dirs skipped."""
+        return load_skills([self.root, *self.extra_roots])
 
     def get(self, name: str) -> Skill | None:
         """Find a skill by slug or name: the write dir first, then the rest of root."""
@@ -171,7 +202,7 @@ class Skills:
         if direct.is_file():
             return _parse(direct)
         wanted = name.strip().casefold()
-        for path in _md_files(self.root):
+        for path in _collect([self.root, *self.extra_roots]):
             if path.stem == slug:
                 return _parse(path)
             try:
