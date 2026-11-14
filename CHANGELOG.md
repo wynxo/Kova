@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-turn change review with diffs and local, Git-independent restore points (`/changes`, `/diff`, `/restore`).
 - Layered `KOVA.md` / `AGENTS.md` guidance from the Kova home, project root and working folder, with a 16 KiB budget and clear precedence.
 - Linux Landlock sandbox for `run_command`: safe commands run without a prompt but cannot write outside the working folder.
+- `kova doctor` now checks the command sandbox, port ownership, Node/npm for `kova-app`, token permissions, free disk and config schema, prints a verdict with a next step, and supports `--json`; the README documents every line.
 
 ### Changed
 
