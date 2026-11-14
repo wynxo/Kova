@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Placeholder account names that are clearly not a real person's.
 SAFE_USERS = {"you", "user", "username", "me", "demo", "runner", "example",
-              "your-name", "yourname", "name", "<user>", "<you>", "$user", "${user}"}
+              "your-name", "yourname", "name", "<user>", "<you>", "<name>", "$user", "${user}"}
 
 HOME = re.compile(r"(?:(?<![\w$}./])/home/|(?<![\w$}./])/Users/|\b[A-Za-z]:\\\\?Users\\\\?)([A-Za-z0-9_.$<>{}-]+)")
 PROMPT = re.compile(r"\b([a-z_][a-z0-9_-]{1,31})@([a-z0-9][a-z0-9-]{1,62}):[~/]")
@@ -38,7 +38,8 @@ IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 SAFE_HOSTS = {"demo", "host", "example", "localhost", "machine", "laptop", "pc"}
 
 SKIP_SUFFIXES = {".lock", ".woff", ".woff2", ".ttf", ".ico", ".svg", ".gif", ".jpg", ".jpeg"}
-SKIP_FILES = {"scripts/privacy_check.py", "tests/test_privacy_check.py"}
+# The checker, its tests and the policy that lists the forbidden shapes.
+SKIP_FILES = {"scripts/privacy_check.py", "tests/test_privacy_check.py", "AGENTS.md"}
 
 
 def allowed_ips() -> set[str]:
