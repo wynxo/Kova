@@ -475,3 +475,25 @@ def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):
         server.should_exit = True
         thread.join(5)
         listener.close()
+
+
+def test_autostart_settings(server, monkeypatch):
+    from kova import autostart
+    client, headers, *_ = server
+    calls = []
+    monkeypatch.setattr(autostart, 'enable', lambda: calls.append('on'))
+    monkeypatch.setattr(autostart, 'disable', lambda: calls.append('off'))
+    monkeypatch.setattr(autostart, 'status', lambda: autostart.Status('linux', 'desktop', True, enabled=True, stale=True))
+    for method, path in [('get', '/autostart'), ('post', '/autostart/on'), ('post', '/autostart/off')]:
+        assert getattr(client, method)(path).status_code == 401
+        response = getattr(client, method)(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {'available': True, 'enabled': True, 'stale': True}
+    assert calls == ['on', 'off']
+    assert client.post('/autostart/invalid', headers=headers).status_code == 400
+    def fail():
+        raise autostart.AutostartError('private diagnostic')
+    monkeypatch.setattr(autostart, 'status', fail)
+    response = client.get('/autostart', headers=headers)
+    assert response.status_code == 503
+    assert 'private diagnostic' not in response.text

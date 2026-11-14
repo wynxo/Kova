@@ -146,6 +146,12 @@
       <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
     </form>
   </dialog>
+  <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
+    <summary>Settings</summary>
+    <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+    <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
+    <button id="autostart-refresh" type="button">Refresh</button>
+  </details>
   <noscript>Kova needs JavaScript enabled. Open kova-web to connect.</noscript>
 </body>
 </html>
