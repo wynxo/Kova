@@ -1153,7 +1153,9 @@ def _resolve_chat(client: KovaClient, ref: str) -> dict:
         number = int(ref)
         if 1 <= number <= len(chats):
             return chats[number - 1]
-        _fail(f"No chat {ref}.")
+        # Chat ids are random hex, so an id can be all digits: try it as an id.
+        if len(ref) < 12:
+            _fail(f"No chat {ref}.")
     try:
         chat = client.get_chat(ref)
     except KovaError as exc:
