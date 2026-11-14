@@ -13,11 +13,17 @@ from kova import sandbox
 OUTPUT_LIMIT = 32 * 1024
 
 
+# PowerShell -Command reports only 0/1. Keep a native program's real exit code,
+# still fail (1) on a failed cmdlet, and start on a new line so a trailing
+# comment in the command cannot swallow it.
+_PWSH_EXIT = "\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 } }"
+
+
 def shell_command(command: str) -> list[str]:
     if os.name == "nt":
         shell = shutil.which("pwsh") or shutil.which("powershell")
         if shell:
-            return [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+            return [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command + _PWSH_EXIT]
         return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command]
     return [shutil.which("bash") or "/bin/sh", "-c", command]
 
