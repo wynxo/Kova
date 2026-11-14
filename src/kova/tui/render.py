@@ -7,7 +7,7 @@ running tool, input box) below it. In live mode the spinner is not drawn here;
 ``live_lines`` supplies it for the live region instead.
 
 Ported and adapted from Kaine's ``kaine/cli_render.py`` for Kova's event
-protocol (``text``, ``reasoning``, ``tool_call``, ``tool_result``, ``error``,
+protocol (``text``, ``reasoning``, ``tool_call``, ``tool_result``, ``privacy``, ``error``,
 ``done``, ``plan``, ``approval``, ``review``, ``stopped``). The look: the user's turn is a
 ``\u276f`` line on a faint teal tint; Kova's starts with a gradient
 ``\u25c6 Kova``; tools are small coloured chips (``\u2713 Search  query \u00b7 5
@@ -23,6 +23,7 @@ import sys
 import time
 
 from kova import theme
+from kova.privacy import status_text as privacy_status_text
 
 from .markdown import (
     ACCENT,
@@ -399,6 +400,11 @@ class Renderer:
         summary = str(event.get("summary") or "")
         self.tool_history.append((name, args, ok, str(event.get("output", summary))))
         self.tool_row(name, args, ok, summary)
+
+    def _on_privacy(self, event) -> None:
+        """A safe count of what the outbound guard changed, never the values."""
+        self.end_text()
+        self.line("  " + self.p.dim(privacy_status_text(event)))
 
     def _on_error(self, event) -> None:
         self.end_text()

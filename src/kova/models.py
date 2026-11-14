@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import httpx
 
 from kova.config import ModelEntry
+from kova.privacy import is_loopback_url, protect_messages
 
 
 class ModelError(Exception):
@@ -21,6 +22,7 @@ class ModelEvent:
     type: str
     text: str = ""
     tool_call: dict | None = None
+    privacy: dict | None = None
 
 
 class ThinkSplitter:
@@ -62,10 +64,12 @@ class ThinkSplitter:
 class ModelClient:
     """Send messages and stream model events."""
 
-    def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 300):
+    def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
+                 timeout: float = 300, privacy: str = "off"):
         self.entry = entry
         self.transport = transport
         self.timeout = timeout
+        self.privacy = privacy
 
     def _url(self, path: str) -> str:
         return f"{self.entry.base_url.rstrip('/')}/{path}"
@@ -80,10 +84,22 @@ class ModelClient:
         from kova.providers import ProviderError
         if not self.entry.model.strip():
             raise ModelError("No model is configured. Run: kova setup")
+        # Scan before even resolving provider credentials: block mode must not
+        # make any request when it refuses the turn. The stored messages and
+        # tool arguments are not modified; only this request uses the copy.
+        protection = None
+        request_messages = messages
+        if self.privacy != "off" and not is_loopback_url(self.entry.base_url):
+            protection = protect_messages(messages, self.privacy)
+            if protection.blocked:
+                raise ModelError(protection.block_message())
+            request_messages = protection.messages
         try:
             headers = await asyncio.to_thread(self._headers)
         except ProviderError as exc:
             raise ModelError(str(exc)) from None
+        if protection is not None and (protection.count or protection.incomplete):
+            yield ModelEvent("privacy", privacy=protection.status())
         adapter = self.entry._provider.adapter if self.entry._provider else 'openai'
         if adapter != 'openai':
             from kova.model_adapters import (
@@ -92,7 +108,7 @@ class ModelClient:
                 stream_native,
             )
             build = anthropic_request if adapter == 'anthropic' else responses_request
-            path, payload = build(self.entry.model, messages, tools)
+            path, payload = build(self.entry.model, request_messages, tools)
             try:
                 async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
                     async for event in stream_native(client, self._url(path), payload, adapter):
@@ -100,7 +116,7 @@ class ModelClient:
             except httpx.RequestError:
                 raise ModelError('Could not connect to the provider. Check your connection.') from None
             return
-        payload = {"model": self.entry.model, "messages": messages, "stream": True}
+        payload = {"model": self.entry.model, "messages": request_messages, "stream": True}
         if tools is not None:
             payload["tools"] = tools
         splitter = ThinkSplitter()

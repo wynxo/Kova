@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add opt-in outbound secret protection: `privacy.secrets = "off" | "redact" | "block"` (default `off`) scans every OpenAI-compatible, Anthropic and Responses request at `ModelClient`, redacts known credential shapes on a deep copy or blocks before any request, reports safe counts in the CLI and web UI, and bypasses only parsed loopback hosts (#78).
 - Keep extracted attachment text out of stored messages, search, exports, backups and generated titles; it stays turn-only model context, and `read_attachment` still rereads files by id on later turns. Messages keep a name-only attachment link, so attachment-only turns show the file name after a reload and forked chats keep that link.
 - Reap abandoned chat uploads after 24 hours and cap unsent uploads, per-chat attachments and total attachment storage; attachments referenced by saved messages are always retained (#151).
 - Fix chat forks copying attachment references without independent files; failed copies roll back the fork.

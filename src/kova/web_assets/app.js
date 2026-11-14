@@ -775,6 +775,14 @@
           focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
+        } else if (kind === 'privacy') {
+          current = null;
+          const count = Number(event.count) || 0;
+          const kinds = Array.isArray(event.kinds) && event.kinds.length ? ` (${event.kinds.join(', ')})` : '';
+          const parts = [];
+          if (count) parts.push(`redacted ${count} likely secret${count === 1 ? '' : 's'}${kinds}`);
+          if (event.incomplete) parts.push('removed the unscanned rest');
+          body.insertBefore(el('div', 'turn-status', `Privacy: ${parts.join('; ') || 'guard on'} before sending.`), activity);
         } else if (kind === 'plan') {
           const next = planView(event.items);
           if (plan) plan.replaceWith(next);
