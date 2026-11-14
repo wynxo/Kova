@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import tomllib
 import zipfile
 from datetime import datetime, timezone
@@ -171,7 +172,10 @@ def export_archive(
         "Restore with: kova import this-file.zip\n"
     )
 
-    tmp = target.with_name(target.name + ".tmp")
+    # Unique, owner-only staging avoids exposing chats or following a planted symlink.
+    fd, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    os.close(fd)
+    tmp = Path(name)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("README.txt", readme)

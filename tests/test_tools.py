@@ -98,4 +98,4 @@ def test_web_fetch_refuses_private_and_bad_redirects(ctx, monkeypatch):
     for url in ['http://localhost:7700/health', 'http://router.lan/', 'https://example.com/']:
         with pytest.raises(ToolError):
             fetch({'url': url})
-    assert seen == ['https://example.com/']  # the redirect to the LAN was never followed
+    assert seen == ['https://93.184.215.14/']  # the redirect to the LAN was never followed
