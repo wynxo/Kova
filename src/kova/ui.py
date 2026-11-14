@@ -33,6 +33,7 @@ from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
 from kova.modes import MODES
+from kova.privacy import status_text as privacy_status_text
 from kova.tui.app import COMMANDS, PERMISSIONS
 
 _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
@@ -145,6 +146,8 @@ class _Turn:
             block.chunks = [_short(event["summary"])]
         elif kind == "error":
             self.blocks.append(_Block("error", [_short(event["message"])]))
+        elif kind == "privacy":
+            self.blocks.append(_Block("privacy", [privacy_status_text(event)]))
         elif kind == "plan":
             self.blocks.append(_Block("plan", items=[item for item in event.get("items") or []
                                                      if isinstance(item, dict)]))
@@ -199,6 +202,8 @@ class _Turn:
             elif block.kind == "error":
                 # Plain "red" for the same committed-test reason as above.
                 items.append(Text(f"  Error: {text}", style="red"))
+            elif block.kind == "privacy":
+                items.append(Text(f"  {text}", style=theme.MUTED))
             elif block.kind == "plan":
                 items.append(Text.assemble(("  ● ", theme.ACCENT), ("Update Todos", "bold")))
                 for item in block.items:

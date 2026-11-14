@@ -676,7 +676,9 @@ def create_app(
                                     detail="No model is set up yet. Run: kova setup") from exc
             if not entry.model:
                 raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
-            event = await compact(app.state.store, chat_id, ModelClient(entry, transport=app.state.agent.transport),
+            event = await compact(app.state.store, chat_id,
+                                  ModelClient(entry, transport=app.state.agent.transport,
+                                              privacy=config.privacy_secrets),
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
@@ -956,7 +958,8 @@ def create_app(
                                 detail="No model is set up yet. Run: kova setup") from exc
         if not entry.model:
             raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
-        client = ModelClient(entry, transport=app.state.agent.transport)
+        client = ModelClient(entry, transport=app.state.agent.transport,
+                             privacy=config.privacy_secrets)
         memory, store = app.state.memory, app.state.store
         try:
             operations = await plan_consolidation(memory, client)

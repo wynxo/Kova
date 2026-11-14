@@ -194,10 +194,10 @@ turn, and `GET /events` for what happens while no turn is running. `_sse`
 (`src/kova/server.py`) writes the JSON `type` as the SSE event name and the
 whole object as its `data`, so a client can switch on either.
 
-Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `tool_call_delta`,
-`tool_call`, `tool_result`, `approval`, `approval_resolved`, `question`,
-`question_resolved`, `plan`, `notice`, `steer`, `review`, `stopped`, `done` and
-`error`. The stream stays open across tool calls and approvals; `done` closes a
+Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `privacy`,
+`tool_call_delta`, `tool_call`, `tool_result`, `approval`, `approval_resolved`,
+`question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `stopped`,
+`done` and `error`. The stream stays open across tool calls and approvals; `done` closes a
 successful turn with the stored message id and model name, `stopped` closes a
 turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
@@ -339,7 +339,11 @@ forwards its events to the client as SSE.
 7. `ModelClient.stream` (`src/kova/models.py`) sends an OpenAI-compatible
    `chat/completions` request with `stream: true` and yields text, reasoning
    and accumulated tool calls. Inline `<think>` tags are split out by
-   `ThinkSplitter`.
+   `ThinkSplitter`. When `privacy.secrets` is enabled and the provider is not
+   loopback, `privacy.protect_messages` scans a deep copy of the outgoing
+   messages first: `redact` sends placeholders and a safe count, while `block`
+   raises before any request. The stored transcript and tool arguments are not
+   changed.
 8. If there are no tool calls, the assistant message is saved, a title is
    derived from the first user message if needed, and a `done` event carries
    the message id and model name.
@@ -351,7 +355,7 @@ forwards its events to the client as SSE.
 10. The last of the eleven calls is made without tool schemas, so the model has
     to answer in text instead of looping forever.
 
-Event types on the turn stream: `text`, `reasoning`, `tool_call`,
+Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `tool_result`, `done`, `error`, `stopped`.
 
 ## Store
@@ -584,6 +588,8 @@ with `KOVA_LIVE=1`.
 | `src/kova/server.py` | routes, auth, lifespan, turn plumbing |
 | `src/kova/agent.py` | prompt, tools per mode, turn loop, trimming |
 | `src/kova/models.py` | OpenAI-compatible streaming client |
+| `src/kova/privacy.py` | opt-in outbound scan, redact or block, loopback bypass |
+| `src/kova/secrets.py` | bounded credential detectors and placeholders |
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
@@ -622,6 +628,14 @@ terminal event before tools execute or a turn succeeds. OpenAI-compatible stream
 must receive `[DONE]` or a nonempty `finish_reason`; an early connection close
 is reported as an error and accumulated tool calls are not executed. The agent
 sees only normalized events and keeps its existing tool loop.
+
+`privacy.py` is the only outbound text guard. It applies the detectors in
+`secrets.py` to a deep copy of each request when `[privacy] secrets` is
+`redact` or `block`, for every adapter. A provider is bypassed only when its
+parsed URL hostname is a literal loopback address or the exact name
+`localhost`; LAN names and DNS results never count as local. Scan limits are
+bounded, and an unscanned tail is removed or blocks the request rather than
+being sent untouched.
 
 `provider_auth.py` implements the documented public ChatGPT-plan OAuth flow:
 a loopback listener is bound before opening the browser, PKCE/S256, random state

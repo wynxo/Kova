@@ -68,7 +68,7 @@ Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --
 
 ## Features
 
-Kova runs on your computer. Your chat history and memory stay on your machine; messages and tool results are sent to the model provider you choose. Local models can keep inference on your own hardware. Hosted providers have their own pricing, privacy policies and usage limits. It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
+Kova runs on your computer. Your chat history and memory stay on your machine; messages and tool results are sent to the model provider you choose. Local models can keep inference on your own hardware. Hosted providers have their own pricing, privacy policies and usage limits. An opt-in outbound guard can redact known credential shapes or block a turn before anything leaves the machine; set `privacy.secrets` to `redact` or `block` in `config.toml` (see [docs/CONFIG.md](docs/CONFIG.md)). It can search the web, work with files, set reminders that fire even when the CLI is closed, and remember what it learns about you across chats. Chat in the terminal or the desktop app, both connected to the same local server.
 
 - Two modes per chat: **work** (default) with every tool, and **chat** for plain conversation with nothing but web search
 - Live Markdown replies with syntax-highlighted code, compact tool status, and collapsible reasoning

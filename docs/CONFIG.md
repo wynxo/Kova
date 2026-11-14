@@ -70,6 +70,7 @@ compare. Defaults are what a fresh install writes.
 | `compact_threshold` | `compact_threshold` | `0.75` | 0.1–0.99 | Fraction of the model's context that triggers automatic conversation compaction. `/compact` in the terminal does the same thing on demand. |
 | `files_path` | `files_path` | `~/Kova Files` | non-empty path | Root for the file tools. Relative paths are resolved when set; every resolved path must stay inside this folder. |
 | `bind` | `bind` | `loopback` | `loopback` or `lan` | `loopback` listens only on `127.0.0.1`. `lan` also starts the private-network listener used by paired phones; it never opens the public internet. `kova pair` toggles this too. |
+| `[privacy] secrets` | `privacy_secrets` | `off` | `off`, `redact` or `block` | Opt-in outbound secret guard at the model boundary. `off` keeps previous behaviour; `redact` replaces known credential shapes before a non-loopback request; `block` refuses the turn before any request. |
 | `[memory] path` | `memory_path` | `~/.kova/memory` | non-empty path | Root folder for Markdown memory notes. An empty value falls back to the default rather than the working directory. `kova memory use PATH` changes it live when the server is up. |
 | `[memory] write_subdir` | `memory_write_subdir` | unset | one folder name, or empty to clear | In Obsidian mode, reads cover the whole vault but writes and deletes stay in this subfolder (normally `Kova`). Separators and `..` are refused. |
 | `[memory] budget` | `memory_budget` | `8000` | integer ≥ 0 | Character budget for titles, tags and bodies across all notes. `0` disables the cap; over-budget writes are refused rather than truncated. |
@@ -89,6 +90,45 @@ compare. Defaults are what a fresh install writes.
 Booleans accept `on`/`off`, `true`/`false`, `yes`/`no`, `1`/`0`, `enabled` and
 `disabled` on the command line. Path values are expanded (`~`) and resolved
 before they are saved.
+
+## Outbound secret protection
+
+`privacy.secrets` is an opt-in guard around text Kova sends to a model. It is
+off by default so existing installs behave exactly as before.
+
+```sh
+kova config set privacy.secrets redact   # replace likely credentials
+kova config set privacy.secrets block    # refuse the turn
+kova config set privacy.secrets off      # the default
+```
+
+The guard runs in `ModelClient`, the shared boundary for OpenAI-compatible,
+Anthropic and Responses traffic, on every model round. It scans system, user,
+assistant and tool-result text on a deep copy of the request. Persisted chats,
+tool-call arguments and authentication headers are never rewritten.
+
+- `redact` replaces known shapes with deterministic placeholders such as
+  `[REDACTED:openai_key:3f9a]`. The UI reports how many likely secrets were
+  replaced and their kinds, never the values. A follow-up request is scanned
+  again, and a placeholder is never turned back into a secret.
+- `block` refuses the turn with a clear error before any request is made and
+  keeps the user's stored message unchanged.
+- There is deliberately no `warn` mode: sending a likely secret without an
+  explicit decision would defeat the guard. Hand-edited unknown values are
+  treated as `block`; `kova config set` rejects them.
+
+Only a literal loopback provider bypasses the guard: `127.0.0.0/8`, `::1` and
+the exact name `localhost` in the parsed hostname. A LAN name, a public hostname
+or an address that merely contains `127.0.0.1` is remote, and no DNS lookup is
+performed. When a scan hits its size or finding cap, the unscanned remainder is
+removed in `redact` mode and `block` mode refuses the request, so an incomplete
+scan is never treated as clean.
+
+This is a safety net, not a guarantee. Detection covers the known shapes in
+`src/kova/secrets.py` (provider tokens, private-key blocks, JWTs and bearer
+tokens, credential URLs and secret-like `.env` assignments); an unusual or
+rotated credential shape can still be missed. Do not rely on it as the only
+control for a hosted provider, and review what a tool read before sending it.
 
 ## Structured and internal fields
 
@@ -243,6 +283,9 @@ consolidate = false
 consolidate_hour = 3
 consolidate_min_confidence = 0.8
 consolidate_max_loss = 0.25
+
+[privacy]
+secrets = "off"
 
 [tui]
 theme = "dark"
