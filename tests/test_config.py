@@ -100,3 +100,184 @@ def test_empty_memory_path_falls_back_to_the_default(tmp_path):
     (tmp_path / "config.toml").write_text('[memory]\npath = ""\n')
     cfg = load_config(tmp_path)
     assert cfg.memory_path == tmp_path / "memory"
+
+
+def test_hand_written_comments_unknown_keys_and_typos_survive_save(tmp_path, capsys):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "# my settings\n"
+        "port = 7700  # keep this\n"
+        "compact_treshold = 0.9      # typo\n"
+        "\n[tui]\n"
+        'theme = "light"\n'
+        "unknown_thing = 1\n"
+    )
+    cfg = load_config(tmp_path)
+    cfg.port = 7788
+    save_config(cfg)
+
+    text = path.read_text()
+    assert "# my settings" in text
+    assert "port = 7788  # keep this" in text
+    assert "compact_treshold = 0.9      # typo" in text
+    assert "unknown_thing = 1" in text
+    # The real key is written next to the preserved typo, as before.
+    assert "compact_threshold = 0.75" in text
+    assert cfg._extra == {"compact_treshold": 0.9}
+
+    first = capsys.readouterr().err
+    assert first.count("unknown key 'compact_treshold'") == 1
+    assert "did you mean 'compact_threshold'" in first
+
+    # A later load in the same process says nothing new.
+    load_config(tmp_path)
+    assert "compact_treshold" not in capsys.readouterr().err
+
+
+def test_unknown_key_diagnostics_never_print_values(tmp_path, capsys):
+    path = tmp_path / "config.toml"
+    path.write_text('portt = "placeholder-secret"\n')
+    load_config(tmp_path)
+    err = capsys.readouterr().err
+    assert "portt" in err and "did you mean 'port'" in err
+    assert "placeholder-secret" not in err
+
+
+def test_nested_known_and_unknown_settings_round_trip(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[memory]\n"
+        "budget = 8000\n"
+        "# keep this note\n"
+        'mystery_setting = "keep"\n'
+        "\n[tui]\n"
+        'theme = "light"\n'
+        'my_theme_name = "custom"\n'
+        "\n[tui.keys]\n"
+        'submit = "enter"  # keep this binding\n'
+        "\n[persona]\n"
+        'name = "Nova"\n'
+        'nickname = "N"\n'
+    )
+    cfg = load_config(tmp_path)
+    cfg.memory_budget = 4321
+    cfg.tui_theme = "dark"
+    cfg.persona_name = "Kova"
+    save_config(cfg)
+
+    text = path.read_text()
+    assert "# keep this note" in text
+    assert 'mystery_setting = "keep"' in text
+    assert "budget = 4321" in text
+    assert 'my_theme_name = "custom"' in text
+    assert 'theme = "dark"' in text
+    assert 'submit = "enter"  # keep this binding' in text
+    assert 'nickname = "N"' in text
+
+    again = load_config(tmp_path)
+    assert again.memory_budget == 4321
+    assert again.tui_theme == "dark"
+    assert again.tui_keys["submit"] == "enter"
+    assert again.persona_name == "Kova"
+
+
+def test_provider_and_model_saves_keep_unknown_entry_keys_and_comments(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[[providers]]\n"
+        'id = "lab"\n'
+        'name = "Lab"\n'
+        'base_url = "http://127.0.0.1:8080/v1"\n'
+        "# local provider metadata\n"
+        'owner = "you"  # keep owner\n'
+        "\n[[models]]\n"
+        'name = "lab/model-a"\n'
+        'provider = "lab"\n'
+        'base_url = "http://127.0.0.1:8080/v1"\n'
+        'model = "model-a"\n'
+        "# local alias metadata\n"
+        'display_name = "Model A"  # keep alias\n'
+    )
+    cfg = load_config(tmp_path)
+    cfg.providers[0].name = "Lab Updated"
+    cfg.providers[0].api_key = "placeholder-key"
+    cfg.models[0].context = 65536
+    save_config(cfg)
+
+    text = path.read_text()
+    assert 'name = "Lab Updated"' in text
+    assert 'api_key = "placeholder-key"' in text
+    assert "context = 65536" in text
+    assert "# local provider metadata" in text
+    assert 'owner = "you"  # keep owner' in text
+    assert "# local alias metadata" in text
+    assert 'display_name = "Model A"  # keep alias' in text
+
+    again = load_config(tmp_path)
+    assert again.providers[0].name == "Lab Updated"
+    assert again.providers[0].api_key == "placeholder-key"
+    assert again.models[0].context == 65536
+
+
+def test_installing_a_provider_preserves_other_unknown_keys(tmp_path):
+    from kova.config import ProviderEntry
+    from kova.providers import install_provider
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "# keep the top of the file\n"
+        'custom_accent = "kept"\n'
+        "\n[[providers]]\n"
+        'id = "lab"\n'
+        'name = "Lab"\n'
+        'base_url = "http://127.0.0.1:8080/v1"\n'
+        'custom_provider_key = "kept"\n'
+        "\n[[models]]\n"
+        'name = "lab/model-a"\n'
+        'provider = "lab"\n'
+        'base_url = "http://127.0.0.1:8080/v1"\n'
+        'model = "model-a"\n'
+        'custom_model_key = "kept"\n'
+    )
+    cfg = load_config(tmp_path)
+    install_provider(cfg, ProviderEntry("second", "Second", "http://127.0.0.1:8090/v1"),
+                     ["model-b"])
+
+    text = path.read_text()
+    assert "# keep the top of the file" in text
+    assert 'custom_accent = "kept"' in text
+    assert 'custom_provider_key = "kept"' in text
+    assert 'custom_model_key = "kept"' in text
+    assert 'id = "second"' in text
+    assert load_config(tmp_path).providers[-1].id == "second"
+
+
+def test_optional_keys_are_removed_when_unset(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('bind = "lan"\n\n[memory]\nwrite_subdir = "Kova"\n')
+    cfg = load_config(tmp_path)
+    assert cfg.bind == "lan" and cfg.memory_write_subdir == "Kova"
+    cfg.bind = "loopback"
+    cfg.memory_write_subdir = None
+    save_config(cfg)
+    text = path.read_text()
+    assert "bind" not in text
+    assert "write_subdir" not in text
+
+
+def test_unknown_key_helper_reports_paths_and_suggestions_only():
+    from kova.config import config_key_warnings, unknown_config_keys
+
+    data = {
+        "compact_treshold": "placeholder-secret",
+        "memory": {"budgett": "placeholder-secret"},
+        "models": [{"contex": "placeholder-secret"}],
+    }
+    assert unknown_config_keys(data) == [
+        ("compact_treshold", "compact_threshold"),
+        ("memory.budgett", "memory.budget"),
+        ("models[0].contex", "models[0].context"),
+    ]
+    warnings = config_key_warnings(data)
+    assert len(warnings) == 3
+    assert all("placeholder-secret" not in line for line in warnings)
