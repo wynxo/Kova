@@ -50,6 +50,8 @@ def plain(text: str) -> str:
 # ------------------------------------------------------------------ keys
 @pytest.fixture
 def keys():
+    if os.name == "nt":
+        pytest.skip("POSIX pipe key reader; Windows uses its console input path")
     read, write = os.pipe()
     reader = KeyReader(read)
 
@@ -134,7 +136,8 @@ def test_history_file_round_trips(tmp_path):
     path = tmp_path / "state" / "history.jsonl"
     save_history(path, ["one", "two\nlines"])
     assert load_history(path) == ["one", "two\nlines"]
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    if os.name != "nt":
+        assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
 # ------------------------------------------------------------------ suggestions
@@ -173,7 +176,7 @@ def test_file_mentions_and_plain_text():
 
 
 def test_mentions_attach_files_in_the_folder_only(tmp_path):
-    (tmp_path / "notes.md").write_text("alpha\nbeta\n")
+    (tmp_path / "notes.md").write_bytes(b"alpha\nbeta\n")
     (tmp_path / "blob.bin").write_bytes(b"\0\1\2")
     outside = tmp_path.parent / "secret.txt"
     outside.write_text("nope")
@@ -402,7 +405,9 @@ def renderer(**kwargs):
     return Renderer(io.StringIO(), color=False, **kwargs)
 
 
-def test_a_reply_has_one_kova_line_and_tool_rows_in_kova_style():
+def test_a_reply_has_one_kova_line_and_tool_rows_in_kova_style(monkeypatch):
+    ticks = iter(range(1, 100))
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
     r = renderer()
     r.begin_turn()
     for event in ({"type": "reasoning", "text": "hmm"},
@@ -836,12 +841,12 @@ def test_shell_output_and_memory_notes_go_where_they_belong(tmp_path):
 def test_run_shell_reports_exit_codes_and_can_be_cancelled(tmp_path):
     import threading
 
-    assert run_shell("echo hi; exit 3", str(tmp_path), threading.Event()) == \
+    assert run_shell("echo hi& exit 3" if os.name == "nt" else "echo hi; exit 3", str(tmp_path), threading.Event()) == \
         {"ok": False, "output": "hi\n", "code": 3}
     cancel = threading.Event()
     cancel.set()
     started = time.monotonic()
-    result = run_shell("sleep 10", str(tmp_path), cancel)
+    result = run_shell("ping -n 11 127.0.0.1 > nul" if os.name == "nt" else "sleep 10", str(tmp_path), cancel)
     assert not result["ok"] and "stopped" in result["output"]
     assert time.monotonic() - started < 5
 

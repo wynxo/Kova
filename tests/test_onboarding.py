@@ -90,10 +90,25 @@ def test_setup_filters_long_catalog(home, monkeypatch):
 
 
 def test_cli_setup_flags_and_error(home, monkeypatch):
-    monkeypatch.setattr(onboarding, 'list_models', lambda *a, **kw: ['alpha'])
+    # Exercise both address probing and model listing without a real homelab.
+    # Mocking list_models alone left server_finder.connect on the live network.
+    import socket
+    requests = []
+    def offline_catalog(request):
+        requests.append(request)
+        return catalog(request)
+    run_setup = onboarding.run_setup
+    def offline_setup(*args, **kwargs):
+        return run_setup(*args, **kwargs, transport=httpx.MockTransport(offline_catalog))
+    def no_dns(*args, **kwargs):
+        pytest.fail('CLI setup test attempted live DNS')
+    monkeypatch.setattr(socket, 'getaddrinfo', no_dns)
+    monkeypatch.setattr(onboarding, 'run_setup', offline_setup)
     result = CliRunner().invoke(cli.app, ['setup', '--url', 'http://homelab:8080', '--model', 'alpha', '--name', 'home'])
     assert result.exit_code == 0, result.output
     assert load_config().active == 'home'
+    assert requests and all(r.method == 'GET' for r in requests)
+    assert all(r.url.host == 'homelab' for r in requests)
     def fail(*a, **kw):
         raise onboarding.SetupError('Provider unavailable.')
     monkeypatch.setattr(onboarding, 'run_setup', fail)
