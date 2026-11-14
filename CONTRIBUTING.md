@@ -306,3 +306,7 @@ gh pr create --base main
 Small, tested pull requests are easiest to merge. If you are unsure whether an
 idea fits, open an issue with the behaviour you want and the part of
 `docs/ARCHITECTURE.md` it touches.
+
+## Privacy
+
+This repository is public. Never commit or post real home folders, usernames, shell prompts, hostnames, home-network addresses or machine details, in code, docs, screenshots, issues or PRs. Use placeholders such as `~/`, `you@demo` and `192.0.2.10`. `python scripts/privacy_check.py` checks the repository and CI runs it. AI agents: see [AGENTS.md](AGENTS.md).

@@ -54,3 +54,25 @@ jobs:
       - name: Run tests
         run: node --test
         working-directory: desktop
+
+  privacy:
+    name: Privacy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: No real paths, prompts or home-network addresses in the repository
+        run: python scripts/privacy_check.py
+
+      - name: No real paths, prompts or addresses in the PR title and description
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/pr.txt"
+          python scripts/privacy_check.py --text "$RUNNER_TEMP/pr.txt" --redact
