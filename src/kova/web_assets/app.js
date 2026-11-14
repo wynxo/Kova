@@ -388,6 +388,15 @@
     }
     await refreshChats();
   }
+  // A cached health answer is still useful, so say when it was measured.
+  function checkedAgo(value) {
+    if (!value) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
+    if (!Number.isFinite(seconds)) return '';
+    if (seconds < 45) return 'just now';
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+    return `${Math.round(seconds / 3600)} h ago`;
+  }
   async function health() {
     try {
       const status = await json('/health');
@@ -397,9 +406,11 @@
       retry.hidden = true;
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
       const ready = status.model_ok && configured;
+      const checked = checkedAgo(status.model_checked_at);
       $('connection').className = `connection${ready ? ' online' : ''}`;
-      $('connection').lastElementChild.textContent = ready ? 'Model connected' : configured ? 'Model offline' : 'Model not set up';
-      banner(ready ? '' : configured ? 'Your space is ready. Model offline: start your model server, or run kova setup, then try again.' : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
+      $('connection').lastElementChild.textContent = ready ? 'Model connected'
+        : configured ? (checked ? `Model offline (checked ${checked})` : 'Model offline') : 'Model not set up';
+      banner(ready ? '' : configured ? `Your space is ready. Model offline${checked ? ` (checked ${checked})` : ''}: start your model server, or run kova setup, then try again.` : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
     } catch (_) {
       if (!state.connected) return;
       retry.hidden = false;
@@ -1484,10 +1495,24 @@
   window.addEventListener('online', () => safe(start));
   function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname + location.search); }
   window.addEventListener('beforeunload', () => state.events?.close());
-  setInterval(() => { if (state.connected) health(); }, 30000);
+  // A visible tab polls every 30 s. A hidden tray window skips the poll and backs
+  // off to 2–5 minutes, so it neither blocks a model check nor hammers /health.
+  let healthTimer = null;
+  function scheduleHealth(delay) {
+    clearTimeout(healthTimer);
+    const wait = delay ?? (document.hidden ? 120000 + Math.random() * 180000 : 30000);
+    healthTimer = setTimeout(async () => {
+      if (state.connected && !document.hidden) await health();
+      scheduleHealth();
+    }, wait);
+  }
+  scheduleHealth();
   setInterval(checkStream, 15000);
-  // A phone tab that wakes up checks its stream at once instead of 15 s later.
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkStream(); });
+  // A phone tab that wakes up checks its stream (and model) at once instead of later.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { checkStream(); if (state.connected) health(); }
+    scheduleHealth();
+  });
   window.addEventListener('hashchange', () => { if (/(ticket|pair)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
   controls(); start();
 })();
