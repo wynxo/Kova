@@ -90,12 +90,17 @@ same commit as the route.
 | `GET /health` | public | version, active model name, whether the model answers |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
+| `GET /app/manifest.webmanifest` | public | persona-named install manifest |
+| `GET /app/sw.js` | public | app-shell-only service worker |
+| `POST /app/share` | browser session | bounded multipart share draft |
+| `POST /app/share/{token}` | browser session | consume an owner-bound draft once |
 
 **Browser login and phone pairing** (`src/kova/web.py`). The launcher holds the
 bearer token; the browser never sees it.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
+
 | `POST /app/session` | bearer token | mint a single-use login ticket |
 | `POST /app/login` | ticket | exchange the ticket for a 12-hour session cookie |
 | `POST /app/logout` | browser session | revoke the cookie |
