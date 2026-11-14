@@ -372,6 +372,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                           run_prompt=run_job_prompt, is_idle=is_idle)
     app.state.scheduler = scheduler
     reminders = asyncio.create_task(ReminderLoop(store, bus, now, scheduler=scheduler).run())
+    from kova import attachments
+    # A sweep before the first request makes expiry deterministic after a
+    # restart; the loop then bounds abandoned uploads in a long-lived server.
+    with suppress(Exception):
+        attachments.reap(store, now=now)
+
+    async def sweep_attachments() -> None:
+        while True:
+            await asyncio.sleep(attachments.SWEEP_INTERVAL.total_seconds())
+            try:
+                await asyncio.to_thread(attachments.reap, store, now=now)
+            except Exception:
+                pass  # cleanup must never stop the server
+
+    cleanup = asyncio.create_task(sweep_attachments())
     if config.bind == "lan":
         await pairing.start_lan(app)
     try:
@@ -380,9 +395,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         bus.publish(None)  # end every open /events stream
         await pairing.stop_lan(app)
         reminders.cancel()
+        cleanup.cancel()
         for turn in list(app.state.turns):
             turn.cancel()
-        for task in [reminders, *app.state.turns]:
+        for task in [reminders, cleanup, *app.state.turns]:
             with suppress(asyncio.CancelledError):
                 await task
         await app.state.model_health.close()
@@ -547,8 +563,13 @@ def create_app(
                 raise HTTPException(404, "Chat not found.")
             try:
                 data = await file.read(attachments.MAX_BYTES + 1)
+                await asyncio.to_thread(attachments.reap, app.state.store,
+                                        now=app.state.now, chat_id=chat_id)
                 return await asyncio.to_thread(attachments.save, config.home, app.state.store,
-                                               chat_id, file.filename or 'file', data)
+                                               chat_id, file.filename or 'file', data,
+                                               now=app.state.now)
+            except attachments.AttachmentQuotaError as exc:
+                raise HTTPException(409, str(exc)) from None
             except attachments.AttachmentError as exc:
                 raise HTTPException(400, str(exc)) from None
             finally:

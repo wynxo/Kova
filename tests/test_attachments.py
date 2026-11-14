@@ -2,14 +2,19 @@
 import hashlib
 import io
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import zipfile
 
 import pytest
+from fastapi.testclient import TestClient
 
 from kova import attachments
-from kova.config import load_config
+from kova.config import ensure_token, load_config
 from kova.model_adapters import anthropic_request, responses_request
+from kova.server import create_app
+from kova.store import Store
+from tests.fake_model import FakeModel, text
 from tests.test_server import server
 
 
@@ -320,3 +325,150 @@ def test_failed_fork_rolls_back_attachment_copies(server, monkeypatch):
     assert store.list_chats() == before
     assert list((cfg.home / 'attachments').iterdir()) == [cfg.home / 'attachments' / chat]
     assert store.attachments(chat)[0]['id'] == row['id']
+
+
+def test_abandoned_upload_expires_but_sent_and_fresh_uploads_stay(server):
+    """Turn consumed the clock, so expiry is deterministic and never a sleep."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    client.app.state.now = lambda: clock[0]
+    sent = upload(client, headers, chat, 'sent.txt', b'keep me').json()
+    response = client.post(f'/chats/{chat}/messages', headers=headers,
+                           json={'text': 'Read it', 'attachments': [sent['id']]})
+    assert response.status_code == 200 and 'event: done' in response.text
+    abandoned = upload(client, headers, chat, 'gone.txt', b'drop me').json()
+    paths = {row['id']: Path(row['path']) for row in store.attachments(chat)}
+    assert paths[sent['id']].exists() and paths[abandoned['id']].exists()
+
+    clock[0] += attachments.PENDING_TTL + timedelta(minutes=1)
+    fresh = attachments.save(cfg.home, store, chat, 'fresh.txt', b'not sent yet',
+                             now=lambda: clock[0])
+    assert attachments.reap(store, now=lambda: clock[0]) == 1
+
+    assert {row['id'] for row in store.attachments(chat)} == {sent['id'], fresh['id']}
+    assert paths[sent['id']].exists() and not paths[abandoned['id']].exists()
+    assert (cfg.home / 'attachments' / chat).is_dir()
+
+
+def test_reap_keeps_a_legacy_transcript_reference_without_used_flag(server):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = attachments.save(cfg.home, store, chat, 'legacy.txt', b'legacy',
+                           now=lambda: old)
+    store.add_message(chat, 'user', f"attachment_id: {row['id']}")
+    assert attachments.reap(store, now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1)) == 0
+    assert [entry['id'] for entry in store.attachments(chat)] == [row['id']]
+
+
+def test_used_flag_retains_an_upload_even_if_the_transcript_changes(server, monkeypatch):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    client.app.state.now = lambda: clock[0]
+    row = upload(client, headers, chat).json()
+    assert client.post(f'/chats/{chat}/messages', headers=headers,
+                       json={'text': 'Read it', 'attachments': [row['id']]}).status_code == 200
+    # A future transcript format may stop spelling out the id. The explicit
+    # marker, not the text, is what protects the file.
+    monkeypatch.setattr(store, 'referenced_attachment_ids', lambda chat_id: set())
+    clock[0] += attachments.PENDING_TTL + timedelta(days=1)
+    assert attachments.reap(store, now=lambda: clock[0]) == 0
+    assert Path(store.attachments(chat)[0]['path']).exists()
+
+
+def test_pending_upload_quota_is_bounded_and_rejects_cleanly(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 2)
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    assert upload(client, headers, chat, 'one.txt').status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    folder = cfg.home / 'attachments' / chat
+    before = sorted(path.name for path in folder.iterdir())
+    response = upload(client, headers, chat, 'three.txt')
+    assert response.status_code == 409
+    assert '2 unsent attachments' in response.json()['detail']
+    assert sorted(path.name for path in folder.iterdir()) == before
+
+
+def test_sent_attachments_free_the_pending_quota(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 1)
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    first = upload(client, headers, chat, 'one.txt').json()
+    assert client.post(f'/chats/{chat}/messages', headers=headers,
+                       json={'text': 'Read it', 'attachments': [first['id']]}).status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    assert upload(client, headers, chat, 'three.txt').status_code == 409
+
+
+def test_per_chat_count_and_byte_quotas(server, monkeypatch):
+    client, headers, cfg, fake = server
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 10)
+    monkeypatch.setattr(attachments, 'MAX_CHAT_ATTACHMENTS', 2)
+    assert upload(client, headers, chat, 'one.txt').status_code == 200
+    assert upload(client, headers, chat, 'two.txt').status_code == 200
+    response = upload(client, headers, chat, 'three.txt')
+    assert response.status_code == 409
+    assert '2-attachment limit' in response.json()['detail']
+
+    other = client.post('/chats', headers=headers, json={}).json()['id']
+    monkeypatch.setattr(attachments, 'MAX_CHAT_ATTACHMENT_BYTES', 8)
+    assert upload(client, headers, other, 'a.txt', b'12345').status_code == 200
+    response = upload(client, headers, other, 'b.txt', b'1234')
+    assert response.status_code == 409
+    assert 'attachment storage limit' in response.json()['detail']
+
+
+def test_total_attachment_storage_is_bounded(server, monkeypatch):
+    client, headers, cfg, fake = server
+    monkeypatch.setattr(attachments, 'MAX_TOTAL_ATTACHMENT_BYTES', 8)
+    first = client.post('/chats', headers=headers, json={}).json()['id']
+    second = client.post('/chats', headers=headers, json={}).json()['id']
+    assert upload(client, headers, first, 'a.txt', b'12345').status_code == 200
+    response = upload(client, headers, second, 'b.txt', b'1234')
+    assert response.status_code == 409
+    assert 'total attachment storage limit' in response.json()['detail']
+
+
+def test_startup_sweeps_an_expired_abandoned_upload(tmp_path, monkeypatch):
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path))
+    cfg = load_config()
+    store = Store(cfg.home / 'kova.db')
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    attachments.save(cfg.home, store, chat, 'old.txt', b'old', now=lambda: old)
+    path = Path(store.attachments(chat)[0]['path'])
+    assert path.exists()
+
+    fake = FakeModel([text('unused')])
+    app = create_app(cfg, transport=fake.transport,
+                     now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1))
+    with TestClient(app):
+        pass
+    assert store.attachments(chat) == []
+    assert not path.exists()
+
+
+def test_attachment_schema_migrates_in_place(tmp_path):
+    import sqlite3
+    db = tmp_path / 'kova.db'
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE attachments (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,"
+        " mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER, sha256 TEXT NOT NULL, path TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO attachments VALUES (?, 'chat', 'old.txt', 'text/plain', 3, NULL, 'sha', '/tmp/old.txt')",
+        ('a' * 32,))
+    conn.commit()
+    conn.close()
+
+    store = Store(db)
+    row = store.attachment_rows()[0]
+    assert row['created'] is None and row['used'] == 0
+    assert store.referenced_attachment_ids('chat') == set()

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reap abandoned chat uploads after 24 hours and cap unsent uploads, per-chat attachments and total attachment storage; attachments referenced by saved messages are always retained (#151).
+
 - Fix chat forks copying attachment references without independent files; failed copies roll back the fork.
 
 - Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.

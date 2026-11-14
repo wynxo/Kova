@@ -284,6 +284,8 @@ class Agent:
         if attached:
             text += '\n\n' + '\n\n'.join(attachments.block(r) for r in attached)
         self.store.add_message(chat_id, 'user', text)
+        if attached:
+            self.store.mark_attachments_used(chat_id, [row['id'] for row in attached])
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE

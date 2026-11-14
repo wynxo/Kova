@@ -5,6 +5,8 @@ import hashlib
 import mimetypes
 import os
 import re
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 import uuid
@@ -17,6 +19,14 @@ MAX_BYTES = 25 * 1024 * 1024
 # Three 25 MiB files plus 1 MiB of multipart/form overhead. Enforced before parsing.
 MAX_REQUEST_BYTES = 3 * MAX_BYTES + 1024 * 1024
 MAX_CHARS = 32_000
+# An upload becomes permanent only when a saved message references it. Until
+# then it is an abandoned-upload candidate and counts against the pending cap.
+PENDING_TTL = timedelta(hours=24)
+MAX_PENDING_UPLOADS = 3
+MAX_CHAT_ATTACHMENTS = 100
+MAX_CHAT_ATTACHMENT_BYTES = 500 * 1024 * 1024
+MAX_TOTAL_ATTACHMENT_BYTES = 2 * 1024 * 1024 * 1024
+SWEEP_INTERVAL = timedelta(hours=1)
 TEXT = set('.txt .md .markdown .json .csv .tsv .py .js .mjs .ts .tsx .jsx .html .css .xml .yaml .yml .toml .ini .cfg .sh .bash .c .h .cpp .hpp .rs .go .java .sql .log .rb .swift .kt .lua .r'.split())
 IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif'}
 
@@ -25,8 +35,94 @@ class AttachmentError(ValueError):
     """A safe, single-sentence error for the client."""
 
 
+class AttachmentQuotaError(AttachmentError):
+    """An upload would exceed one of the documented attachment quotas."""
+
+
 class RequestTooLarge(MultiPartException):
     pass
+
+
+def _clock(now: Callable[[], datetime] | datetime | None) -> datetime:
+    value = now() if callable(now) else (now or datetime.now(timezone.utc))
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _created_at(row: dict) -> datetime | None:
+    value = row.get('created')
+    if value:
+        try:
+            created = datetime.fromisoformat(value)
+        except ValueError:
+            created = None
+        if created is not None:
+            return created if created.tzinfo is not None else created.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromtimestamp(Path(row['path']).stat().st_mtime, timezone.utc)
+    except OSError:
+        return None
+
+
+def ensure_capacity(store, chat_id: str, size: int) -> None:
+    """Reject an upload that would exceed the unsent, per-chat or total quota."""
+    if store is None:
+        return
+    rows = store.attachments(chat_id)
+    unused = [row for row in rows if not row.get('used')]
+    references = store.referenced_attachment_ids(chat_id) if unused else set()
+    pending = [row for row in unused if row['id'] not in references]
+    if len(pending) >= MAX_PENDING_UPLOADS:
+        raise AttachmentQuotaError(
+            f'This chat already has {MAX_PENDING_UPLOADS} unsent attachments. '
+            'Send or remove them before attaching more.')
+    if len(rows) >= MAX_CHAT_ATTACHMENTS:
+        raise AttachmentQuotaError(
+            f'This chat has reached its {MAX_CHAT_ATTACHMENTS}-attachment limit. '
+            'Remove one or start a new chat.')
+    if sum(row['size'] for row in rows) + size > MAX_CHAT_ATTACHMENT_BYTES:
+        raise AttachmentQuotaError(
+            'This chat has reached its attachment storage limit. '
+            'Remove an attachment or start a new chat.')
+    if sum(row['size'] for row in store.attachment_rows()) + size > MAX_TOTAL_ATTACHMENT_BYTES:
+        raise AttachmentQuotaError(
+            'Kova has reached its total attachment storage limit. '
+            'Remove attachments or delete old chats.')
+
+
+def reap(store, *, now: Callable[[], datetime] | datetime | None = None,
+         ttl: timedelta = PENDING_TTL, chat_id: str | None = None) -> int:
+    """Delete unsent uploads older than ``ttl`` and return how many were removed.
+
+    An upload referenced by a saved message is never reaped, even when the
+    message no longer spells out its id; ``used`` is the authoritative marker
+    and the transcript scan covers rows written before it existed. Rows that
+    have neither a timestamp nor a file (left by an interrupted write) go too.
+    """
+    if store is None:
+        return 0
+    current = _clock(now)
+    rows = store.attachment_rows()
+    if chat_id is not None:
+        rows = [row for row in rows if row['chat_id'] == chat_id]
+    references: dict[str, set[str]] = {}
+    removed = 0
+    for row in rows:
+        if row.get('used'):
+            continue
+        created = _created_at(row)
+        if created is not None and current - created < ttl:
+            continue
+        cid = row['chat_id']
+        if cid not in references:
+            references[cid] = store.referenced_attachment_ids(cid)
+        if row['id'] in references[cid]:
+            continue
+        try:
+            if store.delete_attachment(cid, row['id']):
+                removed += 1
+        except OSError:
+            continue  # a file held open by another program is retried next sweep
+    return removed
 
 
 class AttachmentBodyLimit:
@@ -164,7 +260,8 @@ def read_text(path: Path, start: int = 1, end: int | None = None, *, row: dict |
     return (f'lines {start}-{end} of {len(lines)}\n' + result)[:MAX_CHARS]
 
 
-def save(home: Path, store, chat_id: str, name: str, data: bytes) -> dict:
+def save(home: Path, store, chat_id: str, name: str, data: bytes, *,
+         now: Callable[[], datetime] | datetime | None = None) -> dict:
     if len(data) > MAX_BYTES:
         raise AttachmentError('Each attachment must be 25 MB or smaller.')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
@@ -173,6 +270,7 @@ def save(home: Path, store, chat_id: str, name: str, data: bytes) -> dict:
         raise AttachmentError('Invalid attachment filename or extension.')
     name = Path(name.replace('\\', '/')).name
     ext = Path(name).suffix.lower()
+    ensure_capacity(store, chat_id, len(data))
     ident = uuid.uuid4().hex
     folder = home / 'attachments' / chat_id
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -181,9 +279,10 @@ def save(home: Path, store, chat_id: str, name: str, data: bytes) -> dict:
         with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'wb') as stream:
             stream.write(data)
         _, pages = extract(path)
-        row = dict(id=ident, chat_id=chat_id, name=name, mime=IMAGES.get(ext, mimetypes.guess_type(name)[0] or 'text/plain'), size=len(data), pages=pages, sha256=hashlib.sha256(data).hexdigest(), path=str(path))
+        created = _clock(now).astimezone(timezone.utc).isoformat()
+        row = dict(id=ident, chat_id=chat_id, name=name, mime=IMAGES.get(ext, mimetypes.guess_type(name)[0] or 'text/plain'), size=len(data), pages=pages, sha256=hashlib.sha256(data).hexdigest(), path=str(path), created=created, used=0)
         store.add_attachment(row)
-        return {k: v for k, v in row.items() if k != 'path'}
+        return {k: v for k, v in row.items() if k not in {'path', 'created', 'used'}}
     except (OSError, ValueError) as exc:
         path.unlink(missing_ok=True)
         if isinstance(exc, AttachmentError):
