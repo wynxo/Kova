@@ -77,6 +77,23 @@ def working_folder(value: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def memory_folder(value: str) -> Path:
+    """Validate and normalise a memory root so a restart reads the same folder (#90)."""
+    if not value.strip() or "\0" in value:
+        raise HTTPException(status_code=422, detail="memory folder must be a non-empty path")
+    try:
+        path = Path(value.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError("memory folder must be absolute")
+        path = path.resolve(strict=False)
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise ValueError("memory folder is not a directory")
+        return path
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class NoteBody(BaseModel):
     """A memory note to save."""
     title: str
@@ -625,7 +642,7 @@ def create_app(
 
     @api.post("/memory/location")
     async def memory_use(body: MemoryLocationBody) -> dict:
-        memory = Memory(Path(body.path), "Kova" if body.obsidian else None, config.memory_budget)
+        memory = Memory(memory_folder(body.path), "Kova" if body.obsidian else None, config.memory_budget)
         config.memory_path = memory.root
         config.memory_write_subdir = memory.write_subdir
         save_config(config)
