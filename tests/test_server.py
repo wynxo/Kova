@@ -379,3 +379,36 @@ def test_persona_api_rejects_invalid_identity_and_persists(server):
     assert client.post('/persona', headers=headers, json={'name': 'Nova', 'tone': 'concise'}).status_code == 200
     assert client.get('/persona', headers=headers).json() == {'name': 'Nova', 'tone': 'concise', 'configured': True}
     assert load_config(cfg.home).persona_name == 'Nova'
+
+
+def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):
+    """/events pings at once and on every quiet keepalive interval (#93)."""
+    import socket
+    import threading
+    import uvicorn
+    cfg = load_config(tmp_path / "home")
+    app = create_app(cfg)
+    app.state.events_keepalive = 0.05
+    listener = socket.socket(); listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(.01)
+    try:
+        headers = {"Authorization": f"Bearer {ensure_token(cfg.home)}"}
+        seen = []
+        with httpx.stream("GET", f"http://127.0.0.1:{port}/events", headers=headers, timeout=5) as response:
+            assert response.status_code == 200
+            for line in response.iter_lines():
+                if line.startswith("event: "):
+                    seen.append(line[len("event: "):])
+                if len(seen) == 3:
+                    break
+        assert seen == ["ping", "ping", "ping"]
+    finally:
+        server.should_exit = True
+        thread.join(5)
+        listener.close()

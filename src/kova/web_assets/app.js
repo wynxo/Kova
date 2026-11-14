@@ -392,6 +392,8 @@
     try {
       const status = await json('/health');
       if (!state.connected) return;
+      // /health is public, so it says nothing about this window's live stream.
+      if (live.lost) return reconnecting();
       retry.hidden = true;
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
       const ready = status.model_ok && configured;
@@ -894,6 +896,63 @@
     pageTitle();
   }
 
+  // The /events stream carries reminders and chat states. A non-200 reply (a 401
+  // after the server restarted) closes an EventSource for good, and a sleeping
+  // phone can hold a stream that silently died, so watch it, say so honestly,
+  // and reconnect with backoff. The server pings every 15 s.
+  const STALE_MS = 45000;
+  const live = {retry: 0, timer: null, seen: 0, pinged: false, lost: false};
+  function reconnecting() {
+    $('connection').className = 'connection';
+    $('connection').lastElementChild.textContent = 'Reconnecting…';
+    banner('Lost the live connection to Kova. Reconnecting… Reminders and chat updates resume when it is back.');
+  }
+  function connectEvents() {
+    clearTimeout(live.timer); state.events?.close();
+    const source = new EventSource('/events'); state.events = source;
+    const alive = () => { if (state.events === source) live.seen = Date.now(); };
+    source.addEventListener('open', () => {
+      if (state.events !== source) return;
+      alive(); live.retry = 0;
+      if (live.lost) { live.lost = false; safe(resync); }
+    });
+    source.addEventListener('ping', () => { live.pinged = true; alive(); });
+    source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
+    source.onerror = () => {
+      if (state.events !== source || !state.connected) return;
+      // CONNECTING means the browser is already retrying a dropped stream itself.
+      streamLost(source.readyState === EventSource.CLOSED);
+    };
+  }
+  function streamLost(closed) {
+    live.lost = true; reconnecting();
+    if (!closed) return;
+    state.events?.close(); clearTimeout(live.timer);
+    const delay = Math.min(30000, 1000 * 2 ** live.retry++);
+    live.timer = setTimeout(() => safe(reconnectEvents), delay);
+  }
+  async function reconnectEvents() {
+    if (!state.connected) return;
+    let response = null;
+    try { response = await fetch('/chats', {credentials: 'same-origin'}); } catch (_) {}
+    if (!state.connected) return;
+    // Browser sessions live in server memory, so a restarted server forgot this window.
+    if (response?.status === 401) return disconnected('Kova restarted, so this window was signed out. Open kova-web on this computer to reconnect.');
+    if (!response?.ok) return streamLost(true);
+    connectEvents();
+  }
+  // Anything missed while the stream was down: chat states, the open chat, model status.
+  async function resync() {
+    await refreshChats();
+    if (state.chat?.id && !state.busy) await openChat(state.chat.id);
+    await health();
+  }
+  function checkStream() {
+    if (!state.connected || !state.events) return;
+    const stale = live.pinged && Date.now() - live.seen > STALE_MS;
+    if (state.events.readyState === EventSource.CLOSED || stale) streamLost(true);
+  }
   async function start() {
     if (state.starting) return;
     state.starting = true; state.events?.close();
@@ -913,10 +972,7 @@
       $('model').value = status.model; selectedModel = status.model;
       applyCapabilities(contract);
       await refreshChats(); controls(); await health();
-      state.events = new EventSource('/events');
-      state.events.addEventListener('conversation_state', event => { try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-      state.events.addEventListener('reminder', event => { try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
-      state.events.onerror = () => { if (state.connected) health(); };
+      live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       $('prompt').focus();
     } catch (error) { disconnected(error.message); }
     finally { state.starting = false; }
@@ -1429,6 +1485,9 @@
   function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname + location.search); }
   window.addEventListener('beforeunload', () => state.events?.close());
   setInterval(() => { if (state.connected) health(); }, 30000);
+  setInterval(checkStream, 15000);
+  // A phone tab that wakes up checks its stream at once instead of 15 s later.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkStream(); });
   window.addEventListener('hashchange', () => { if (/(ticket|pair)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
   controls(); start();
 })();
