@@ -959,6 +959,8 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
 
 #attachment-chips { padding: 0 .6rem; display: flex; flex-wrap: wrap; gap: .5rem; }
 .attachment-chip { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; padding: .4rem; }
+.message-attachments { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.message-attachment { padding: .25rem .5rem; font-size: .85em; }
 .attachment-chip button { cursor: pointer; }
 #attachment-note { color: var(--muted); }
 #attach.text-only { opacity: .55; }

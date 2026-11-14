@@ -266,6 +266,23 @@ class Agent:
                           for path, entry in sorted(files.items())],
                 'skipped': skipped}
 
+    def _turn_context(self, chat_id: str, user_message_id: int, model_text: str,
+                      attached: list[dict]) -> list[dict]:
+        """Stored history with this turn's extracted attachment text applied.
+
+        The stored user message stays exactly what the user wrote. For the
+        model request only, the message this turn just wrote carries the
+        extracted text, so tool rounds, retries and compaction still see it
+        without the transcript ever containing it.
+        """
+        entries = self.store.get_context_entries(chat_id)
+        if attached:
+            for ident, message in entries:
+                if ident == user_message_id:
+                    message['content'] = model_text
+                    break
+        return [message for _, message in entries]
+
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
@@ -281,9 +298,18 @@ class Agent:
         if len(attached) != len(attachment_ids or []):
             yield {'type': 'error', 'message': 'An attachment was removed; attach it again.'}
             return
+        # Persist only what the user wrote. Extracted text is request context
+        # for this turn: it must not reach the search index, exports, backups
+        # or a generated title (see _turn_context below).
+        model_text = text
         if attached:
-            text += '\n\n' + '\n\n'.join(attachments.block(r) for r in attached)
-        self.store.add_message(chat_id, 'user', text)
+            block = '\n\n'.join(attachments.block(r) for r in attached)
+            model_text = f'{text}\n\n{block}' if text else block
+        user_message_id = self.store.add_message(chat_id, 'user', text)
+        if attached:
+            # Keep the file names attached to this message for reloaded chats.
+            # The link carries no extracted text and is not part of model history.
+            self.store.link_message_attachments(user_message_id, attached)
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE
@@ -319,14 +345,16 @@ class Agent:
             tools.update({tool.name: tool for tool in replacements if tool.name in tools})
         tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
-        title_source = text
+        # A title comes from the user's words, or, for an attachment-only
+        # turn, from the file names. Never from extracted document text.
+        title_source = text.strip() or ', '.join(row['name'] for row in attached)
         if chat is not None:
             for message in chat['messages']:
-                if message.get('role') == 'user' and message.get('content'):
+                if message.get('role') == 'user' and message.get('content', '').strip():
                     title_source = message['content']
                     break
         try:
-            memories = await asyncio.to_thread(self.memory.search, text, 5, mode="hybrid")
+            memories = await asyncio.to_thread(self.memory.search, model_text, 5, mode="hybrid")
         except Exception:  # memory trouble must never block a chat
             memories = []
         try:
@@ -363,6 +391,11 @@ class Agent:
                 prompt += f"\n\n{skills}"
             if (chat or {}).get('plan'):
                 prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
+        if rows:
+            # Turn-only index: ids make read_attachment work on later turns
+            # without placing attachment text or ids in the transcript.
+            prompt += ("\n\nAttachments in this chat (read one with read_attachment, "
+                       "using its id):\n" + attachments.index(rows.values()))
         self.config.bind_providers()
         if model is not None:
             entry = next((m for m in self.config.models if m.name == model), None)
@@ -393,7 +426,7 @@ class Agent:
                         # between an assistant tool call and its tool reply.
                         self.store.add_message(chat_id, 'user', message)
                         yield {'type': 'steer', 'text': message}
-                history = self.store.get_context(chat_id)
+                history = self._turn_context(chat_id, user_message_id, model_text, attached)
                 threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))
                 size = len(prompt) + sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
                 if not attempted_compaction and size > entry.context * 4 * threshold:
@@ -402,19 +435,20 @@ class Agent:
                                           reserved_chars=len(prompt), threshold=threshold)
                     if event:
                         yield event
-                        history = self.store.get_context(chat_id)
+                        history = self._turn_context(chat_id, user_message_id, model_text, attached)
                 history = trim_history(repair_tool_pairs(history), entry.context, len(prompt))
                 messages = [{'role': 'system', 'content': prompt}, *history]
                 if entry.vision and providers.supports(entry._provider, 'vision'):
-                    for message in messages:
-                        if message.get('role') == 'user' and message.get('content') == text:
-                            parts = [{'type': 'text', 'text': text}]
+                    for message in reversed(messages):
+                        if message.get('role') == 'user' and message.get('content') == model_text:
+                            parts = [{'type': 'text', 'text': model_text}]
                             for row in attached:
                                 if row['mime'].startswith('image/'):
                                     data = base64.b64encode(Path(row['path']).read_bytes()).decode('ascii')
                                     parts.append({'type': 'image_url', 'image_url': {'url': f"data:{row['mime']};base64,{data}"}})
                             if len(parts) > 1:
                                 message['content'] = parts
+                            break
 
                 content: list[str] = []
                 calls: list[dict] = []

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep extracted attachment text out of stored messages, search, exports, backups and generated titles; it stays turn-only model context, and `read_attachment` still rereads files by id on later turns. Messages keep a name-only attachment link, so attachment-only turns show the file name after a reload and forked chats keep that link.
 - Fix chat forks copying attachment references without independent files; failed copies roll back the fork.
 
 - Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.
