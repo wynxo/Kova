@@ -41,6 +41,19 @@ _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS
 DIFF_LINES = 200
 RESTORE_PREVIEW = 10
 
+
+def _plugin_commands() -> dict[str, str]:
+    """Enabled plugins' slash commands, as ``/name`` -> description."""
+    from kova import plugins
+
+    return {"/" + name: command.description or command.prompt
+            for name, command in plugins.plugin_commands().items()}
+
+
+def _all_commands() -> dict[str, str]:
+    """Built-in slash commands plus every enabled plugin's."""
+    return {**_COMMANDS, **_plugin_commands()}
+
 # Arguments the commands offer for Tab completion, if any.
 _COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off"), "/permissions": tuple(PERMISSIONS)}
 _PLAN_MARKS = {"done": "☑", "in_progress": "◐", "pending": "☐"}
@@ -61,7 +74,7 @@ class _CommandCompleter(Completer):
     """Complete slash commands, and the argument of /mode and /web."""
 
     def __init__(self) -> None:
-        self._commands = WordCompleter(list(_COMMANDS), sentence=True)
+        self._commands = WordCompleter(list(_all_commands()), sentence=True)
         self._arguments = {name: WordCompleter(list(words), sentence=True)
                            for name, words in _COMMAND_ARGUMENTS.items()}
 
@@ -360,7 +373,7 @@ def _help(console: Console) -> None:
     table = Table(title="Chat commands", box=None, show_header=False, padding=(0, 2, 0, 0))
     table.add_column(style=theme.ACCENT, no_wrap=True)
     table.add_column()
-    for command, description in _COMMANDS.items():
+    for command, description in _all_commands().items():
         table.add_row(command, description)
     console.print(table)
     console.print("↑ history · Tab complete · Ctrl+C stop reply / clear input · Ctrl+D leave",
@@ -718,6 +731,12 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     mark = "›" if chat["id"] == chat_id else " "
                     console.print(Text(f"{mark}{index:>3}  {chat.get('title') or 'Untitled'}"))
                 console.print("/resume <n> opens one.", style=theme.MUTED)
+        elif command in _plugin_commands():
+            from kova import plugins
+
+            prompt = plugins.plugin_commands().get(command[1:]).prompt
+            _render_turn(client, ensure_chat(), prompt, no_think, console,
+                         show_thinking=show_thinking)
         elif stripped.startswith("/"):
             console.print("Unknown command. Type /help to see commands.", style=theme.ERROR)
         else:

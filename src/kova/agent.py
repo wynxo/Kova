@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from kova import providers, sandbox
+from kova import plugins, providers, sandbox
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
@@ -229,7 +229,7 @@ class Agent:
         self.config = config
         self.store = store
         self.memory = memory
-        self.skills = Skills.for_home(config.home)
+        self.skills = Skills.for_home(config.home, extra_roots=plugins.plugin_skill_roots(config.home))
         self.tools = tools
         self.transport = transport
         self.now = now
