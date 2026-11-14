@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
@@ -118,6 +119,7 @@ async def test_real_exit_125_is_not_setup_failure(tmp_path):
     assert result["error"] == "Command exited with status 125"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Landlock launcher is Linux-only; Windows never reports the sandbox available")
 async def test_launcher_setup_failure_does_not_run_command(tmp_path, monkeypatch):
     # Parent sees availability, but the launcher genuinely cannot apply Landlock.
     monkeypatch.setattr(sandbox, "available", lambda: True)
