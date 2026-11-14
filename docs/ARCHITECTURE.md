@@ -78,28 +78,95 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
+The app exposes 72 endpoints: 71 route handlers plus the static asset mount.
+`tests/test_architecture_docs.py` walks the live app and fails when this table
+and the code drift apart in either direction, so add or delete a row in the
+same commit as the route.
+
+**Public** — no credential. Neither of these contains chat data or secrets.
+
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | public | version, active model name, whether the model answers |
 | `GET /app` | public | the packaged web app shell |
-| `GET /app/assets/*` | public | CSS, JS, icon and vendored libraries |
+| `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
+
+**Browser login and phone pairing** (`src/kova/web.py`). The launcher holds the
+bearer token; the browser never sees it.
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
 | `POST /app/session` | bearer token | mint a single-use login ticket |
-| `POST /app/login` | ticket | exchange it for a session cookie |
+| `POST /app/login` | ticket | exchange the ticket for a 12-hour session cookie |
 | `POST /app/logout` | browser session | revoke the cookie |
+| `POST /app/pair` | pairing claim | claim a pairing code from the phone page |
+
+**API router** (`src/kova/server.py`, `src/kova/provider_routes.py`). Every
+route here sits behind `_require_token`, which accepts either
+`Authorization: Bearer <token>` (the CLI) or a same-origin browser session
+cookie, so a route added to the router is authenticated by construction.
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
-| `GET /chats/search?q=…` | token or session | full-text chat search |
-| `GET/PATCH/DELETE /chats/{id}` | token or session | read, rename/mode/web, delete |
-| `POST /chats/{id}/messages` | token or session | run one turn, stream SSE events |
-| `POST /chats/{id}/stop` | token or session | cancel that chat's server-side turn |
+| `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
+| `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
+| `GET /chats/search` | token or session | full-text chat search (`?q=`) |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd, delete |
+| `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
+| `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
+| `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
+| `GET /chats/{chat_id}/checkpoints/{checkpoint_id}` | token or session | one change set's files |
+| `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/diff` | token or session | one changed file's diff and both sides |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/restore` | token or session | put the working folder back to this checkpoint |
+| `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
+| `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
+| `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events |
+| `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
+| `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn |
+| `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
+| `POST /chats/{chat_id}/steer` | token or session | put a message into the turn running now |
+| `POST /chats/{chat_id}/stop` | token or session | cancel that chat's server-side turns |
+| `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
+| `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
+| `DELETE /jobs/{jid}` | token or session | delete a job |
 | `GET/POST /memory` | token or session | list/search / save notes |
-| `DELETE /memory/{slug}` | token or session | delete one note |
+| `POST /memory/consolidate` | token or session | plan one consolidation run, and apply it unless asked to dry-run |
+| `GET /memory/diary` | token or session | what the background memory passes did, oldest first |
 | `POST /memory/location` | token or session | switch memory folder at runtime |
-| `GET/POST /reminders` | token or session | list / add reminders |
-| `DELETE /reminders/{id}` | token or session | delete a reminder |
+| `GET /memory/revisions` | token or session | recent background memory writes with their undo state |
+| `GET/PATCH /memory/settings` | token or session | read / change the background passes' switches and gates |
+| `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
+| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it |
 | `GET/POST /models` | token or session | list / add model servers |
+| `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
-| `GET /capabilities` | token or session | what the active provider declares, and what each mode offers |
-| `GET /events` | token or session | SSE stream of background events (reminders) |
+| `GET/PUT /permission-rules` | token or session | read / replace the rules that pre-approve tools |
+| `GET/POST /persona` | token or session | read / set the assistant's name and tone |
+| `GET/POST /providers` | token or session | list connected providers / connect one |
+| `GET /providers/catalog` | token or session | the providers and models offered for selection |
+| `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
+| `DELETE /providers/{identifier}` | token or session | remove a provider connection |
+| `POST /providers/{identifier}/login` | token or session | sign in to a connected provider again |
+| `POST /providers/{identifier}/logout` | token or session | sign out of a provider connection |
+| `POST /providers/auth/start` | token or session | start a browser/harness sign-in flow |
+| `GET/DELETE /providers/auth/{key}` | token or session | poll / cancel that sign-in |
+| `GET/POST /reminders` | token or session | list / add reminders |
+| `DELETE /reminders/{rid}` | token or session | delete a reminder |
+
+**Phone routes** (`src/kova/pairing.py`). These also carry `require_local`, so
+they are refused on the LAN listener: a paired phone can chat, but never manage
+devices or pairing.
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /devices` | token or session, local only | phones paired with this server |
+| `DELETE /devices` | token or session, local only | unpair every phone |
+| `DELETE /devices/{device_id}` | token or session, local only | unpair one phone |
+| `GET/POST /phone` | token or session, local only | read / turn the phone listener on or off |
+| `POST /phone/pair` | token or session, local only | start a pairing code |
+| `GET/DELETE /phone/pair/{code_id}` | token or session, local only | poll / cancel a pairing code |
 
 `/health` and the app shell are deliberately public; neither contains chat
 data or secrets. Every route in the API router goes through `_require_token`,
@@ -107,6 +174,31 @@ which accepts either `Authorization: Bearer <token>` (the CLI) or a browser
 session cookie (the desktop app); the `/app` login and logout endpoints check
 their own ticket or cookie. `_require_bearer` compares with
 `hmac.compare_digest` against `app.state.token`, read from `~/.kova/token`.
+
+### Streaming events
+
+Two routes answer `text/event-stream`: `POST /chats/{chat_id}/messages` for one
+turn, and `GET /events` for what happens while no turn is running. `_sse`
+(`src/kova/server.py`) writes the JSON `type` as the SSE event name and the
+whole object as its `data`, so a client can switch on either.
+
+Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `tool_call_delta`,
+`tool_call`, `tool_result`, `approval`, `approval_resolved`, `question`,
+`question_resolved`, `plan`, `notice`, `steer`, `review`, `stopped`, `done` and
+`error`. The stream stays open across tool calls and approvals; `done` closes a
+successful turn with the stored message id and model name, `stopped` closes a
+turn that was cancelled, `error` closes a turn that failed. A turn keeps running
+to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
+cancels it server-side.
+
+`GET /events`: `ping` at once and then every keepalive interval, so a browser can
+tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`
+after a scheduled job ran; `conversation_state` when a chat moves between
+`idle`, `working` and `blocked-on-approval`. Reminders and jobs also try a
+desktop notification.
+
+Payload shapes, and the HTTP round-trip that answers an approval, are in the
+[README's client protocol section](../README.md#client-protocol).
 
 ### Browser login
 
@@ -143,9 +235,10 @@ restarts. See [remote-access.md](remote-access.md).
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands are `ask`, `setup`, `serve`, `stop`, `status`,
-`update`, `uninstall`, `export` and `import`; the groups `model`, `memory`,
-`reminders`, `chats` and `autostart` hold the rest. `./cli` is a small wrapper that runs
+A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
+`status`, `update`, `uninstall`, `export`, `import`, `pair`, `devices` and
+`doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
+and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`.
@@ -318,8 +411,9 @@ local times such as `in 10 min`, `tomorrow 5pm`, `monday 9am`, `tonight`,
 `morgen 9 Uhr`, `übermorgen`. It returns a timezone-aware datetime in the
 future. `ReminderLoop` (`src/kova/reminders.py`) wakes every 15 seconds, asks
 the store for due reminders, publishes `{"type": "reminder", ...}` on the
-`EventBus`, shows a desktop toast via `notify-send` when available, and marks
-the reminder done. `GET /events` fans those events out to the terminal chat
+`EventBus`, shows an OS notification with the platform's notifier
+(`notify-send`/`gdbus`, `osascript`, or PowerShell/`msg.exe`), and marks the
+reminder done. `GET /events` fans those events out to the terminal chat
 thread and the desktop `EventSource`.
 
 ## Modes
@@ -483,15 +577,17 @@ alone, everything else the provider alone. `providers.offered(provider, mode)`
 combines them, and `providers.capabilities(provider)` is the provider's own
 declaration, which the setup form and `kova providers list` show.
 
-`GET /capabilities` publishes the active provider's declarations and the
-`offered` set for each mode — the one thing the CLI, the terminal chat and the
-web app read. The web provider form shows only the fields a kind declares, chat
-mode disables the permission and folder pickers, and `/think` is refused where
-no reasoning stream exists. The server enforces the same declarations, so a
-client that forces a field a kind does not take (an API key for ChatGPT, custom
-headers for OpenAI, an approval in a mode that never asks) is refused rather
-than silently obeyed. A model with no provider entry — a legacy single-model
-config — declares everything, so nothing is hidden from it.
+`GET /capabilities` publishes a model's declarations and the `offered` set for
+each mode — the one thing the CLI, the terminal chat and the web app read. It
+describes the active model by default, or the model named by `?model=`
+(404 when unknown), so the composer can gate the model it actually sends. The
+web provider form shows only the fields a kind declares, chat mode disables the
+permission and folder pickers, and `/think` is refused where no reasoning stream
+exists. The server enforces the same declarations, so a client that forces a
+field a kind does not take (an API key for ChatGPT, custom headers for OpenAI,
+an approval in a mode that never asks) is refused rather than silently obeyed.
+A model with no provider entry — a legacy single-model config — declares
+everything, so nothing is hidden from it.
 
 ### Authentication research
 
@@ -519,3 +615,21 @@ Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.
 electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
 remains a separately installed prerequisite. See desktop/README.md.
+
+### Local chat attachments
+
+`attachments.py` stores chat-scoped uploads under `KOVA_HOME/attachments`, with
+0600 files and metadata in SQLite. Extraction is local; install
+`kova-ai[attachments]` for PDF, XLSX and PPTX readers. DOCX uses a bounded ZIP/XML
+fallback. `read_attachment` accepts an attachment ID and line range and cannot
+read another chat's uploads. Deleting or purging a chat removes its upload bytes.
+
+Turn on Vision for one model in the web app's Model settings (or set
+`vision = true` on that `[[models]]` entry in config.toml) only when the model
+supports images. The adapter must also declare vision; the API and composer both
+enforce it, and `GET /capabilities?model=…` reports the selected model's
+contract. Non-vision models require an OCR/text alternative (local OCR is not
+bundled). Extracted text, or image data for a declared vision model, is sent to
+the configured model only as part of a requested chat turn; no external
+extraction or file-upload service is used. Raw images are not stored in
+transcript messages and must be attached again for a later visual turn.

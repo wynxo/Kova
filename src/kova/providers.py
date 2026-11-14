@@ -37,6 +37,7 @@ class ProviderError(RuntimeError):
 #   editable_base_url   the user chooses the address
 #   custom_headers      extra HTTP headers are accepted
 CAPABILITY_GATES = {
+    'vision': ('provider',),
     'tools': ('provider', 'mode'),
     'approvals': ('mode',),
     'reasoning': ('provider',),
@@ -48,7 +49,7 @@ CAPABILITY_GATES = {
     'custom_headers': ('provider',),
 }
 CAPABILITIES = tuple(CAPABILITY_GATES)
-CONVERSATION_CAPABILITIES = ('tools', 'approvals', 'reasoning', 'steering')
+CONVERSATION_CAPABILITIES = ('tools', 'approvals', 'reasoning', 'steering', 'vision')
 CONNECTION_CAPABILITIES = ('api_key', 'browser_login', 'harness_login',
                            'editable_base_url', 'custom_headers')
 

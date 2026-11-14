@@ -267,12 +267,22 @@ class Agent:
                 'skipped': skipped}
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
-                       steering: Steering | None = None) -> AsyncIterator[dict]:
+                       steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` names a configured model for this turn only; the active one otherwise.
         ``steering`` carries messages that arrive while the turn runs.
         """
+        from kova import attachments
+        from kova.tools import Tool
+        import base64
+        rows = {r['id']: r for r in self.store.attachments(chat_id)}
+        attached = [rows[i] for i in (attachment_ids or []) if i in rows]
+        if len(attached) != len(attachment_ids or []):
+            yield {'type': 'error', 'message': 'An attachment was removed; attach it again.'}
+            return
+        if attached:
+            text += '\n\n' + '\n\n'.join(attachments.block(r) for r in attached)
         self.store.add_message(chat_id, 'user', text)
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
@@ -285,6 +295,17 @@ class Agent:
         # supports one, and asks when it does not.
         confined = permission != 'full' and sandbox.available()
         tools = select_tools(mode, web, self.tools)
+        if rows:
+            def read_attachment(args):
+                row = rows.get(args.get('id'))
+                if row is None:
+                    return 'Attachment not found in this chat.'
+                try:
+                    return attachments.read_text(Path(row['path']), int(args.get('start', 1)), args.get('end'), row=row)
+                except (attachments.AttachmentError, OSError, ValueError):
+                    return 'This attachment could not be read.'
+            tools['read_attachment'] = Tool('read_attachment', 'Read local attachment text by ID and optional line range.',
+                {'type': 'object', 'properties': {'id': {'type': 'string'}, 'start': {'type': 'integer', 'minimum': 1}, 'end': {'type': 'integer', 'minimum': 1}}, 'required': ['id']}, read_attachment)
         files = None
         if mode != 'chat':
             if cwd == self.config.files_path.resolve():
@@ -384,6 +405,17 @@ class Agent:
                         history = self.store.get_context(chat_id)
                 history = trim_history(repair_tool_pairs(history), entry.context, len(prompt))
                 messages = [{'role': 'system', 'content': prompt}, *history]
+                if entry.vision and providers.supports(entry._provider, 'vision'):
+                    for message in messages:
+                        if message.get('role') == 'user' and message.get('content') == text:
+                            parts = [{'type': 'text', 'text': text}]
+                            for row in attached:
+                                if row['mime'].startswith('image/'):
+                                    data = base64.b64encode(Path(row['path']).read_bytes()).decode('ascii')
+                                    parts.append({'type': 'image_url', 'image_url': {'url': f"data:{row['mime']};base64,{data}"}})
+                            if len(parts) > 1:
+                                message['content'] = parts
+
                 content: list[str] = []
                 calls: list[dict] = []
                 async for event in client.stream(messages, schemas if step < 10 else None):
