@@ -33,7 +33,7 @@ Research snapshot 2026-11-13. VERIFIED means documented by the linked primary so
 
 ## Ranked Kova opportunities
 
-The following are proposals/inferences, not claims that Kova lacks these features. Paths are candidate files verified to exist in /home/ox1/Kova; inspect code before implementing.
+The following are proposals/inferences, not claims that Kova lacks these features. Paths are candidate files verified to exist in ~/Kova; inspect code before implementing.
 
 1. VERIFIED inspiration / PROPOSAL — **Visible blocked/working/done state per conversation**: reduces polling and finds approvals quickly. Touch `src/kova/events.py`, `src/kova/store.py`, `src/kova/web_assets/app.js`, `src/kova/tui/app.py`. Source: Herdr agents documentation above.
 2. VERIFIED inspiration / PROPOSAL — **Action-specific approval cards**: show operation, exact scope, allow/deny, provider-supported session choices; trust and clarity. Touch `src/kova/permissions.py`, `src/kova/agent.py`, web and TUI renderers. Source: T3 permission modes and Cursor security above.

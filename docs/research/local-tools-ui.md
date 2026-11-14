@@ -15,14 +15,14 @@ markdown.py, render.py, terminal.py, prompts.py, brand.py).
 
 | Tool | Path | Type | Version |
 |---|---|---|---|
-| claude | `/home/ox1/.local/bin/claude` → `versions/2.1.323` | Rust ELF binary | Claude Code 2.1.323 |
-| codex | `/home/ox1/.local/bin/codex` → `packages/standalone` | Rust ELF binary | standalone (Rust) |
-| omp | `/home/ox1/.local/bin/omp` | Rust ELF binary | omp 18.20.0 |
-| pi | `/home/ox1/.local/bin/pi` → node bundle | Node JS | pi 1.4.0 |
-| opencode | `/home/ox1/.opencode/bin/opencode` | Rust ELF binary | (opencode.ai) |
-| hermes | `/home/ox1/.local/bin/hermes` | POSIX shell → `hermes-agent` | (Rust+Electron) |
-| openclaw | `/home/ox1/.openclaw/tools/node/bin/openclaw` | Node JS | OpenClaw 2026.10.9 |
-| herdr | `/home/ox1/.local/bin/herdr` | Rust ELF binary | terminal workspace manager |
+| claude | `~/.local/bin/claude` → `versions/2.1.323` | Rust ELF binary | Claude Code 2.1.323 |
+| codex | `~/.local/bin/codex` → `packages/standalone` | Rust ELF binary | standalone (Rust) |
+| omp | `~/.local/bin/omp` | Rust ELF binary | omp 18.20.0 |
+| pi | `~/.local/bin/pi` → node bundle | Node JS | pi 1.4.0 |
+| opencode | `~/.opencode/bin/opencode` | Rust ELF binary | (opencode.ai) |
+| hermes | `~/.local/bin/hermes` | POSIX shell → `hermes-agent` | (Rust+Electron) |
+| openclaw | `~/.openclaw/tools/node/bin/openclaw` | Node JS | OpenClaw 2026.10.9 |
+| herdr | `~/.local/bin/herdr` | Rust ELF binary | terminal workspace manager |
 
 All 8 exist. Additional related binaries in `~/.local/bin`: `goose`, `hc`,
 `herdr-app`, `herdr-core`, `hermes-acp`, `hermes-agent`, `kaine*`, `locus*`,
@@ -197,7 +197,7 @@ reserved `system` name. Terminal-colour adaptation with a 100 ms wait + fallback
 `--completions`, `--log-level`.
 
 **Config** (VERIFIED files): `~/.config/opencode/opencode.json` — provider
-`homelab` with **local models** (Cyber Tiel 131k ctx, Holo-3.1 65k ctx),
+a local server with **local models** (long-context, 65k–131k),
 context/output limits; `~/.config/opencode/tui.jsonc` — **TUI plugins**:
 `./herdr-tui-session.js` and `orca-opencode-status-tui/tui.js` (a **status TUI
 plugin**). `~/.config/opencode/cli.json`, `service.json`.

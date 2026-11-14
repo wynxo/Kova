@@ -145,7 +145,7 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 | **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
 | **ChatGPT subscription** | Continue with ChatGPT in your browser using OAuth with PKCE. Kova verifies the account token, obtains your explicit ChatGPT-plan permission, and uses the public Responses endpoint. Availability and limits depend on your account and the sign-in preview. This is separate from an OpenAI API key. |
 | **Installed Codex login** | With your consent, read this machine's `~/.codex/auth.json` on each request. Kova never copies, changes, refreshes or revokes that login. If it expires, sign in again in the installed CLI. Only ChatGPT-token logins are supported, not API-key-only logins. |
-| **Local server** | Type an address such as `homelab:8080`, `192.168.178.29:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
+| **Local server** | Type an address such as `homelab:8080`, `192.168.1.20:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
 | **Custom provider** | Give any OpenAI-compatible base URL (including its API path), a connection name, optional key and optional JSON headers. Nonstandard paths are preserved. |
 
 The desktop sidebar has **Add provider** with key/custom/local setup, browser
@@ -170,7 +170,7 @@ URL/key pairs share one provider. The old command still works:
 ```sh
 kova model add home homelab:8080 MODEL_ID
 kova model use home
-kova setup --url http://192.168.178.29:11434 --model MODEL_ID --name home
+kova setup --url http://192.168.1.20:11434 --model MODEL_ID --name home
 ```
 
 Keys, custom headers and owned OAuth tokens are stored only in

@@ -6,3 +6,16 @@ __pycache__/
 
 desktop/node_modules/
 desktop/dist/
+
+# Never commit local state or secrets
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.coverage
+Kova Files/
+.agents/
+.codex/
+.aws/

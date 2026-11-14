@@ -85,7 +85,7 @@ def test_memory_tools(ctx):
 def test_web_fetch_refuses_private_and_bad_redirects(ctx, monkeypatch):
     from kova.tools import ToolError
 
-    addresses = {'example.com': ['93.184.215.14'], 'router.lan': ['192.168.178.1'], 'localhost': ['127.0.0.1']}
+    addresses = {'example.com': ['93.184.215.14'], 'router.lan': ['192.168.1.1'], 'localhost': ['127.0.0.1']}
     monkeypatch.setattr(web, '_resolve', lambda host: addresses[host])
     seen = []
 
