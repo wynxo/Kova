@@ -1,6 +1,7 @@
 """Local extraction, lifecycle, ownership and vision wire contract."""
 import hashlib
 import io
+import os
 from pathlib import Path
 import zipfile
 
@@ -24,7 +25,9 @@ def test_upload_turn_and_delete(server):
     assert row['sha256'] == hashlib.sha256(b'first\nsecond\nthird').hexdigest()
     assert row['pages'] is None and 'path' not in row
     paths = list((cfg.home / 'attachments' / chat).iterdir())
-    assert len(paths) == 1 and paths[0].stat().st_mode & 0o777 == 0o600
+    assert len(paths) == 1
+    if os.name != 'nt':  # Windows has no POSIX mode bits; the 0700 directory is what protects it there
+        assert paths[0].stat().st_mode & 0o777 == 0o600
     assert attachments.read_text(paths[0], 2, 2) == 'lines 2-2 of 3\n2: second'
     response = client.post(f'/chats/{chat}/messages', headers=headers, json={'text': 'Explain', 'attachments': [row['id']]})
     assert response.status_code == 200
