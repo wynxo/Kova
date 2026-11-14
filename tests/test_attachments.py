@@ -48,7 +48,7 @@ def test_ownership_limits_cleanup(server):
     assert upload(client, headers, chats[0], data=b'x' * (attachments.MAX_BYTES + 1)).status_code == 400
     assert client.post(f'/chats/{chats[0]}/attachments', files={'file': ('x.txt', b'x')}).status_code == 401
     assert client.delete(f'/chats/{chats[0]}', headers=headers).status_code == 200
-    assert not list((cfg.home / 'attachments' / chats[0]).iterdir())
+    assert not (cfg.home / 'attachments' / chats[0]).exists()
 
 
 def test_docx_and_bounded_text(tmp_path):
@@ -130,3 +130,112 @@ def test_model_can_reread_attachment(server):
     result = client.post(f'/chats/{chat}/messages', headers=headers, json={'text': 'Read line two', 'attachments': [row['id']]})
     assert 'event: done' in result.text
     assert any(m.get('role') == 'tool' and m['content'] == 'lines 2-2 of 3\n2: second' for m in fake.requests[1]['messages'])
+
+
+@pytest.mark.parametrize('declared', [True, False])
+def test_request_limit_before_spooling(server, monkeypatch, declared):
+    client, headers, cfg, _ = server
+    monkeypatch.setattr(attachments, 'MAX_REQUEST_BYTES', 128)
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    h = dict(headers)
+    if declared:
+        h['Content-Length'] = '1000'
+        response = client.post(f'/chats/{chat}/attachments', headers=h, content=b'x')
+    else:
+        h['Content-Type'] = 'multipart/form-data; boundary=demo'
+        def chunks():
+            yield b'--demo\r\nContent-Disposition: form-data; name="file"; filename="demo.txt"\r\n\r\n'
+            yield b'x' * 256
+            yield b'\r\n--demo--\r\n'
+        response = client.post(f'/chats/{chat}/attachments', headers=h, content=chunks())
+    assert response.status_code == 413
+    assert not list((cfg.home / 'attachments').rglob('*'))
+
+
+@pytest.mark.parametrize('declaration', ['<!DOCTYPE x [<!ENTITY a "boom">]>', '<!ENTITY a "boom">'])
+def test_docx_rejects_entities(tmp_path, declaration):
+    path = tmp_path / 'entity.docx'
+    with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr('word/document.xml', declaration + '<document/>')
+    with pytest.raises(attachments.AttachmentError, match='declarations'):
+        attachments.extract(path)
+
+
+@pytest.mark.parametrize('suffix', ['pdf', 'pptx'])
+def test_extraction_stops_consuming_pages(tmp_path, monkeypatch, suffix):
+    import sys
+    from types import SimpleNamespace as NS
+    calls = []
+    def text():
+        calls.append(1)
+        assert len(calls) == 1
+        return 'x' * 100_000
+    path = tmp_path / ('demo.' + suffix)
+    if suffix == 'pdf':
+        monkeypatch.setitem(sys.modules, 'pypdf', NS(PdfReader=lambda _: NS(is_encrypted=False, pages=[NS(extract_text=text)] * 500)))
+    else:
+        with zipfile.ZipFile(path, 'w'):
+            pass
+        class Shape:
+            has_text_frame = True
+            @property
+            def text(self):
+                return text()
+        monkeypatch.setitem(sys.modules, 'pptx', NS(Presentation=lambda _: NS(slides=[NS(shapes=[Shape()])] * 500)))
+    result, _ = attachments.extract(path)
+    assert len(result) == attachments.MAX_CHARS
+    assert len(calls) == 1
+
+
+def test_repeated_turn_and_tool_reads_use_cache(server, monkeypatch):
+    client, headers, cfg, _ = server
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    row = upload(client, headers, chat).json()
+    row = client.app.state.store.attachments(chat)[0]
+    attachments.cached_text.cache_clear()
+    original = attachments.extract
+    calls = []
+    def counted(path):
+        calls.append(path)
+        return original(path)
+    monkeypatch.setattr(attachments, 'extract', counted)
+    for _ in range(3):
+        attachments.block(row)
+        attachments.read_text(Path(row['path']), 2, 2, row=row)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('chat', ['../escape', '/escape', 'x' * 65, 'a/b'])
+def test_invalid_chat_directory(tmp_path, chat):
+    with pytest.raises(attachments.AttachmentError, match='chat ID'):
+        attachments.save(tmp_path, None, chat, 'demo.txt', b'x')
+    assert not list(tmp_path.iterdir())
+
+
+def test_atomic_private_creation(server, monkeypatch):
+    import os
+    client, headers, cfg, _ = server
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    original = os.open
+    calls = []
+    def checked(path, flags, mode=0o777, **kwargs):
+        calls.append((flags, mode))
+        return original(path, flags, mode, **kwargs)
+    monkeypatch.setattr(attachments.os, 'open', checked)
+    assert upload(client, headers, chat).status_code == 200
+    assert any(flags & os.O_EXCL and mode == 0o600 for flags, mode in calls)
+
+
+@pytest.mark.parametrize('name', ['bad\x00.txt', 'demo.' + 'x' * 300])
+def test_invalid_filenames_are_client_errors(tmp_path, name):
+    with pytest.raises(attachments.AttachmentError):
+        attachments.save(tmp_path, None, 'demo', name, b'x')
+
+
+def test_delete_chat_removes_preexisting_empty_directory(server):
+    client, headers, cfg, _ = server
+    chat = client.post('/chats', headers=headers, json={}).json()['id']
+    folder = cfg.home / 'attachments' / chat
+    folder.mkdir(parents=True)
+    assert client.delete(f'/chats/{chat}', headers=headers).status_code == 200
+    assert not folder.exists()

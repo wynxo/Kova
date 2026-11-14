@@ -898,7 +898,7 @@
   $('attach').onclick = () => $('attachment-input').click();
   $('attachment-input').onchange = event => { attachFiles([...event.target.files]); event.target.value = ''; };
   $('composer').addEventListener('dragover', event => { event.preventDefault(); });
-  $('composer').addEventListener('drop', event => { event.preventDefault(); attachFiles([...event.dataTransfer.files]); });
+  $('composer').addEventListener('drop', event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); attachFiles([...event.dataTransfer.files]); });
   $('prompt').addEventListener('paste', event => {
     const files = [...(event.clipboardData?.files || [])];
     if (files.length) { event.preventDefault(); attachFiles(files); }

@@ -91,6 +91,8 @@ cookie, so a route added to the router is authenticated by construction.
 | --- | --- | --- |
 | `GET /capabilities` | token or session | what the active provider declares, and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
+| `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
+| `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
 | `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd, delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |

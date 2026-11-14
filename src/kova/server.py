@@ -393,6 +393,8 @@ def create_app(
     """
     now = now or (lambda: datetime.now().astimezone())
     app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    from kova.attachments import AttachmentBodyLimit
+    app.add_middleware(AttachmentBodyLimit)
     app.state.config = config
     app.state.transport = transport
     app.state.now = now

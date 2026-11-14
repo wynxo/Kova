@@ -408,7 +408,12 @@ class Store:
             row = self._conn.execute("SELECT path FROM attachments WHERE chat_id = ? AND id = ?", (chat_id, ident)).fetchone()
             if row is None:
                 return False
-            Path(row['path']).unlink(missing_ok=True)
+            path = Path(row['path'])
+            path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
             self._conn.execute("DELETE FROM attachments WHERE id = ?", (ident,))
             self._conn.commit()
             return True
@@ -416,6 +421,11 @@ class Store:
     def delete_chat(self, chat_id: str) -> bool:
         for row in self.attachments(chat_id):
             self.delete_attachment(chat_id, row["id"])
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
+            try:
+                (self.path.parent / 'attachments' / chat_id).rmdir()
+            except OSError:
+                pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))

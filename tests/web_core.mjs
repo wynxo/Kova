@@ -455,3 +455,8 @@ assert.equal($('attachment-note').hidden, false);
 state.chat = {id: 'other-chat'}; sandbox.test.renderAttachments();
 assert.equal($('attachment-chips').textContent, '');
 console.log('Attachment chips, input handlers and model gating passed');
+
+// Native selected-text drops must remain available to the textarea.
+let textDropPrevented = false;
+$('composer').listeners.drop({dataTransfer: {files: []}, preventDefault() { textDropPrevented = true; }});
+assert.equal(textDropPrevented, false);

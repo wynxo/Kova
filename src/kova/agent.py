@@ -301,7 +301,7 @@ class Agent:
                 if row is None:
                     return 'Attachment not found in this chat.'
                 try:
-                    return attachments.read_text(Path(row['path']), int(args.get('start', 1)), args.get('end'))
+                    return attachments.read_text(Path(row['path']), int(args.get('start', 1)), args.get('end'), row=row)
                 except (attachments.AttachmentError, OSError, ValueError):
                     return 'This attachment could not be read.'
             tools['read_attachment'] = Tool('read_attachment', 'Read local attachment text by ID and optional line range.',
