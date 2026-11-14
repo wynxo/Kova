@@ -298,3 +298,64 @@ def test_a_review_event_renders_one_summary_line():
     ])
     assert "1 file changed" in rendered and "+3 −1" in rendered
     assert "/changes to review" in rendered
+
+
+class _ChatClient:
+    """Just enough of KovaClient for the plain (KOVA_SIMPLE) chat loop."""
+
+    def __init__(self):
+        self.created, self.sent = [], []
+
+    def list_chats(self):
+        return []
+
+    def create_chat(self, **_fields):
+        chat = {"id": "c1", "title": "", "mode": _fields.get("mode") or "work",
+                "web": True if _fields.get("web") is None else _fields["web"],
+                "messages": []}
+        self.created.append(chat)
+        return dict(chat)
+
+    def get_chat(self, _chat_id):
+        return {"mode": "work", "web": True, "messages": []}
+
+    def update_chat(self, _chat_id, **fields):
+        return {"mode": "work", "web": True, **fields}
+
+    def health(self):
+        return {"model": "local", "model_ok": True}
+
+    def memory_list(self):
+        return []
+
+    def stream_message(self, _chat_id, text):
+        self.sent.append(text)
+        yield {"type": "text", "text": "Hello"}
+        yield {"type": "done"}
+
+
+def test_plain_chat_creates_its_conversation_only_on_the_first_message(tmp_path, monkeypatch):
+    """Opening the plain chat and leaving must not leave an empty row (#100)."""
+    from kova import ui as _ui
+
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+
+    def drive(client, lines):
+        pending = iter(lines)
+
+        def fake_input(*_args, **_kwargs):
+            try:
+                return next(pending)
+            except StopIteration:
+                raise EOFError from None
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        _ui._run_chat(client, console=Console(file=io.StringIO(), width=80))
+
+    client = _ChatClient()
+    drive(client, ["/new", "/new", "/new"])
+    assert client.created == [] and client.sent == []
+
+    drive(client, ["hello"])
+    assert [chat["id"] for chat in client.created] == ["c1"]
+    assert client.sent == ["hello"]

@@ -241,11 +241,51 @@
     for (const checkpoint of checkpoints) section.append(reviewCard(checkpoint));
     $('messages').append(section); follow();
   }
+  // An approval card only lives in the stream of the turn that asked. After a
+  // reload, or in a second window, rebuild it from the server so the blocked
+  // turn can still be answered instead of waiting out its 10-minute timeout.
+  let recovered = {chatId: null, view: null, cards: new Map()}, background = null;
+  async function loadPending(chatId) {
+    const version = state.navigationVersion;
+    const pending = await json(`/chats/${chatId}/approvals`);
+    // A turn this window is streaming already shows its own cards.
+    if (version !== state.navigationVersion || state.chat?.id !== chatId || state.busy) return;
+    if (recovered.chatId !== chatId || !recovered.view?.parentNode) {
+      const view = el('section', 'pending-view'); view.setAttribute('aria-label', 'Waiting for you');
+      view.append(el('strong', '', 'Waiting for you'));
+      recovered = {chatId, view, cards: new Map()};
+    }
+    const ids = new Set(pending.map(event => event.id));
+    for (const [id, card] of recovered.cards) if (!ids.has(id)) { card.finish(); recovered.cards.delete(id); }
+    for (const event of pending) {
+      if (recovered.cards.has(event.id)) continue;
+      const card = event.type === 'question' ? questionCard(event) : approvalCard(event);
+      recovered.cards.set(event.id, card); recovered.view.append(card.card);
+    }
+    if (pending.length && !recovered.view.parentNode) $('messages').append(recovered.view);
+    follow();
+  }
+  // Live updates for a chat whose turn runs outside this window's stream.
+  function chatStateChanged(chatId, next, previous) {
+    if (state.busy || state.chat?.id !== chatId) return;
+    if (next === 'blocked-on-approval' || recovered.cards.size) safe(() => loadPending(chatId));
+    if (next !== 'done') background = chatId;
+    // Show the finished reply, but only for a turn this window did not stream itself.
+    else if (background === chatId && previous !== 'done') { background = null; safe(() => openChat(chatId)); }
+  }
   async function openChat(id) {
     if (state.busy) return;
     const version = ++state.navigationVersion;
     const chat = await json(`/chats/${id}`);
-    if (version === state.navigationVersion && !state.busy) setChat(chat);
+    if (version === state.navigationVersion && !state.busy) {
+      setChat(chat); background = null;
+      if (chat.state && chat.state !== 'done') {
+        background = id;
+        $('messages').append(el('div', 'turn-status background-turn', chat.state === 'blocked-on-approval'
+          ? 'This reply is paused until you answer below.' : 'Kova is still working on this reply. It appears here when it finishes.'));
+        safe(() => loadPending(id));
+      }
+    }
   }
   async function newChat() { if (!state.busy) { ++state.navigationVersion; setChat(null); $('prompt').focus(); } }
   async function editChat(chat, remove) {
@@ -749,7 +789,7 @@
       applyCapabilities(contract);
       await refreshChats(); controls(); await health();
       state.events = new EventSource('/events');
-      state.events.addEventListener('conversation_state', event => { try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) state.chat.state = update.state; } catch (_) {} });
+      state.events.addEventListener('conversation_state', event => { try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
       state.events.addEventListener('reminder', event => { try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
       state.events.onerror = () => { if (state.connected) health(); };
       $('prompt').focus();
