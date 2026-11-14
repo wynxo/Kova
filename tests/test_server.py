@@ -137,6 +137,7 @@ def test_memory_location_is_normalised(server, tmp_path, monkeypatch):
     home = tmp_path / 'home'
     home.mkdir()
     monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('USERPROFILE', str(home))  # Windows expands ~ from this
     for bad in ('', '   ', 'relative/dir', 'bad\0path'):
         assert client.post('/memory/location', json={'path': bad}, headers=headers).status_code == 422
     response = client.post('/memory/location', json={'path': '~/notes'}, headers=headers)
