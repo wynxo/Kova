@@ -928,7 +928,8 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("auto permissions")
         term.type(b"run it\r")
         term.screen("Do you want to proceed?")                         # the approval dialog
-        assert "git status" in term.vt.text() and "exact action" in term.vt.text()
+        term.screen("git status")                                      # drawn after the title
+        term.screen("exact action")
         term.type(b"1")
         term.screen("The tree is clean.")
         assert "✓ Report what changed" in term.vt.text()
