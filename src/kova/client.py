@@ -76,19 +76,28 @@ class KovaClient:
         self.token = token
         self.http = http if http is not None else httpx.Client(base_url=base_url, timeout=30, trust_env=False)
 
+    def _check(self, response: httpx.Response) -> None:
+        if response.status_code == 401:
+            raise KovaError(401,
+                f"Kova at {self.base_url} rejected this home's token. "
+                "Another KOVA_HOME may own this port, or the token changed while the server was running. "
+                "Stop the original server using its KOVA_HOME, then retry; "
+                "or choose another port in this KOVA_HOME's config.toml.")
+        _check_response(response)
+
     def _request(self, method: str, path: str, *, missing_ok: bool = False, **kwargs) -> httpx.Response:
         try:
             response = self.http.request(method, path, headers=_auth(self.token), **kwargs)
         except httpx.RequestError as exc:
             raise KovaError(None, f"Cannot reach Kova server at {self.base_url}.") from exc
         if not (missing_ok and response.status_code == 404):
-            _check_response(response)
+            self._check(response)
         return response
 
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:
-                _check_response(response)
+                self._check(response)
                 yield from _iter_events(response)
         except httpx.RequestError as exc:
             raise KovaError(None, f"Cannot reach Kova server at {self.base_url}.") from exc
@@ -102,6 +111,9 @@ class KovaClient:
             data = self._request("GET", "/health", timeout=4).json()
             if not isinstance(data, dict) or 'version' not in data or 'model_ok' not in data:
                 raise ValueError()
+            # /health is public: it proves Kova is listening, not that this
+            # home's token belongs to it. Probe before returning an owned client.
+            self._request("GET", "/models", timeout=4)
             return data
         except ValueError:
             raise KovaError(502, 'This port is not serving Kova. Choose another port in config.toml, then retry.') from None
