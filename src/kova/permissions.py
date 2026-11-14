@@ -5,7 +5,7 @@ The classifier is a heuristic, not a shell sandbox. Manual is the default.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from fnmatch import fnmatchcase
 import copy
 import hashlib
@@ -96,6 +96,9 @@ def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Pat
         return False
     command = shell_command_arg(name, args)
     if command is not None:
+        # Scheduled scripts run later, unconfined, not in this turn's sandbox.
+        if name == "job_add":
+            return True
         if sandboxed is None:
             if command_risk(command) == "destructive":
                 return True
@@ -194,6 +197,7 @@ class PendingApproval:
     args: dict
     cwd: Path | None
     key: str
+    event: dict = field(default_factory=dict)
 
 
 class Approvals:
@@ -217,6 +221,10 @@ class Approvals:
     def policy(self, chat_id, name, args, cwd=None):
         rules = [r for r in self.rules if r.scope == "always" or r.chat_id == chat_id]
         action = evaluate_rules(rules, name, args, cwd)
+        # Old persisted grants must not bypass individual destructive approval.
+        command = shell_command_arg(name, args)
+        if action == "allow" and command is not None and command_risk(command) == "destructive":
+            action = None
         message = next((r.message for r in rules if r.action == "deny" and evaluate_rules([r], name, args, cwd) == "deny"), None)
         return action, message
 
@@ -226,7 +234,6 @@ class Approvals:
         command = shell_command_arg(name, args)
         risk = command_risk(command) if command is not None else "normal"
         future = asyncio.get_running_loop().create_future()
-        self.pending[identifier] = PendingApproval(chat_id, risk, future, name, args, cwd, action_key(name, args, cwd))
         if command is None:
             summary = f"{name}: {args.get('path', '')}"
         elif name == "run_command":
@@ -239,16 +246,26 @@ class Approvals:
             new = str(args.get("new_string", ""))
             changes = f"Replace {len(old.splitlines())} lines ({len(old)} chars) with {len(new.splitlines())} lines ({len(new)} chars)"
             summary += "\n" + changes
-        return {"type": "approval", "id": identifier, "tool": name, "args": copy.deepcopy(args), "change_summary": changes,
-                "risk": risk, "summary": summary, "binding": action_key(name, args, cwd)}
+        # One serializer for the live stream event and the recoverable listing,
+        # so a card rebuilt after a reload looks exactly like the original.
+        event = {"type": "question" if name == "ask_user" else "approval", "id": identifier, "tool": name,
+                 "args": copy.deepcopy(args), "change_summary": changes,
+                 "risk": risk, "summary": summary, "binding": action_key(name, args, cwd)}
+        self.pending[identifier] = PendingApproval(chat_id, risk, future, name, args, cwd,
+                                                   action_key(name, args, cwd), copy.deepcopy(event))
+        return event
+
+    def pending_for(self, chat_id: str) -> list[dict]:
+        """The still-unanswered approval and question events of one chat, oldest first."""
+        return [copy.deepcopy(p.event) for p in self.pending.values()
+                if p.chat_id == chat_id and not p.future.done()]
 
     async def wait(self, identifier: str) -> dict:
         pending = self.pending[identifier]
         try:
             decision = await asyncio.wait_for(pending.future, timeout=self.timeout)
-            if decision["decision"] in {"allow_session", "allow_always"}:
-                if pending.risk != "destructive":
-                    self.sessions.add(pending.chat_id)
+            if decision["decision"] in {"allow_session", "allow_always"} and pending.risk != "destructive":
+                self.sessions.add(pending.chat_id)
                 self.rules.append(Rule("allow", pending.tool, scope="always" if decision["decision"] == "allow_always" else "session",
                                        chat_id=pending.chat_id, exact=pending.key,
                                        pattern=str(pending.args.get("command", pending.args.get("path", "")))))

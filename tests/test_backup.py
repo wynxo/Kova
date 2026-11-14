@@ -156,3 +156,36 @@ def test_import_rejects_a_non_kova_zip(tmp_path):
         archive.writestr("hello.txt", "not a backup")
     with pytest.raises(BackupError):
         import_archive(load_config(tmp_path / "home"), path)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="Unix file modes")
+def test_export_is_private_and_does_not_follow_predictable_temp_symlink(tmp_path):
+    import os
+    import stat
+
+    cfg = _home(tmp_path)
+    _seed(cfg)
+    target = tmp_path / "private.zip"
+    victim = tmp_path / "unrelated.txt"
+    victim.write_text("keep me")
+    target.with_name(target.name + ".tmp").symlink_to(victim)
+    previous = os.umask(0o022)
+    try:
+        export_archive(cfg, target)
+    finally:
+        os.umask(previous)
+    assert victim.read_text() == "keep me"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_failed_export_keeps_previous_backup_and_removes_temp(tmp_path, monkeypatch):
+    cfg = _home(tmp_path)
+    target = tmp_path / "backup.zip"
+    target.write_bytes(b"previous backup")
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(zipfile.ZipFile, "writestr", fail)
+    with pytest.raises(OSError, match="disk full"):
+        export_archive(cfg, target)
+    assert target.read_bytes() == b"previous backup"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["backup.zip", "home"]
