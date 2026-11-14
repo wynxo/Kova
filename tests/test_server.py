@@ -57,6 +57,7 @@ def test_auth_required(server):
         ("delete", "/reminders/1", None),
         ("get", "/models", None),
         ("post", "/models", {"name": "m", "base_url": "http://localhost/v1", "model": "x"}),
+        ("patch", "/models", {"name": "m", "vision": True}),
         ("post", "/models/active", {"name": "m"}),
         ("get", "/events", None),
     ]

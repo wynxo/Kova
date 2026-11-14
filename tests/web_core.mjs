@@ -54,6 +54,10 @@ const sandbox = {
       // The capability contract the server declares, and the catalog with it.
       '/capabilities': {provider: 'openai', capabilities: ['api_key', 'tools'],
                         offered: {chat: ['reasoning'], work: ['api_key', 'approvals', 'tools']}},
+      '/capabilities?model=vision-model': {provider: 'local', capabilities: ['api_key', 'reasoning', 'tools', 'vision'],
+                        offered: {chat: ['api_key', 'reasoning', 'vision'], work: ['api_key', 'approvals', 'reasoning', 'tools', 'vision']}},
+      '/capabilities?model=text-model': {provider: 'local', capabilities: ['api_key', 'reasoning', 'tools'],
+                        offered: {chat: ['api_key', 'reasoning'], work: ['api_key', 'approvals', 'reasoning', 'tools']}},
       '/providers/catalog': {harness_available: true, providers: [
         {id: 'openai', name: 'OpenAI', key_url: 'https://platform.openai.com/api-keys',
          capabilities: ['api_key', 'tools']},
@@ -71,11 +75,12 @@ const sandbox = {
     if (path === '/chats/blocked/approvals') return {ok: true, json: async () => pendingApprovals};
     if (path.endsWith('/queue') && (options.method || 'GET') === 'GET') return {ok: true, json: async () => [{id: 9, text: 'later'}]};
     if (path.endsWith('/queue') && options.method === 'POST') return {ok: true, json: async () => ({id: 10, text: body.text})};
+    if (path === '/models' && options.method === 'PATCH') return {ok: true, json: async () => ({name: body.name, vision: body.vision})};
     return {ok: true, json: async () => (path in payloads ? payloads[path] : {ok: true})};
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged, attachFiles, pendingAttachments, renderAttachments};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -476,7 +481,40 @@ assert.match($('attachment-chips').textContent, /demo.txt.*1.0 KB.*2 pages.*read
 assert.equal($('attachment-note').hidden, false);
 state.chat = {id: 'other-chat'}; sandbox.test.renderAttachments();
 assert.equal($('attachment-chips').textContent, '');
-console.log('Attachment chips, input handlers and model gating passed');
+// The composer asks for the selected model's contract, not only the active one.
+state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
+state.models = [
+  {name: 'vision-model', model: 'vision', provider_name: 'Local', context: 32768, vision: true, base_url: 'http://127.0.0.1:8080/v1'},
+  {name: 'text-model', model: 'text', provider_name: 'Local', context: 32768, vision: false, base_url: 'http://127.0.0.1:8080/v1'},
+];
+$('model').value = 'vision-model'; $('model').onchange();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/capabilities?model=vision-model'));
+assert.equal($('attach').classList.contains('text-only'), false);
+$('model').value = 'text-model'; $('model').onchange();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/capabilities?model=text-model'));
+assert.equal($('attach').classList.contains('text-only'), true);
+const beforeDrop = requests.length, beforeToasts = $('toasts').children.length;
+await sandbox.test.attachFiles([{type: 'image/png', name: 'shot.png', size: 16}]);
+await tick();
+assert.equal(requests.length, beforeDrop, 'a non-vision model refuses the image before uploading');
+assert.equal($('toasts').children.length, beforeToasts + 1);
+assert.match($('toasts').textContent, /Turn on Vision for it in Model settings/);
+// Model settings exposes the same flag and saves it through the API.
+$('model').value = 'vision-model';
+await sandbox.test.openModelSettings();
+const settings = sandbox.document.body.children.at(-1);
+assert.ok(settings.textContent.includes('Model settings'));
+assert.ok(settings.textContent.includes('Vision: this model can read images'));
+const vision = walk(settings).find(node => node.tagName === 'input');
+assert.equal(vision.checked, true);
+vision.checked = false;
+buttons(settings).find(button => button.textContent === 'Save').onclick();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/models' && r.body?.name === 'vision-model' && r.body?.vision === false));
+settings.remove();
+console.log('Attachment chips, input handlers, selected-model gating and Model settings passed');
 
 // Native selected-text drops must remain available to the textarea.
 let textDropPrevented = false;
