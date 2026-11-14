@@ -130,6 +130,7 @@ class Rule:
     chat_id: str | None = None
     message: str | None = None
     exact: str | None = None
+    source: str | None = None
 
     def __post_init__(self):
         if not all(isinstance(v, str) for v in (self.action, self.tool, self.pattern, self.scope)):

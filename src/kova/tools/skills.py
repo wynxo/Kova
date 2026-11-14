@@ -15,8 +15,16 @@ from . import Tool, ToolContext, ToolError
 
 
 def _store(ctx: ToolContext) -> Skills:
-    """The skills folder of this context's home; one folder per Kova home."""
-    return Skills.for_home(ctx.config.home)
+    """The skills folder of this context's home; one folder per Kova home.
+
+    Enabled plugins contribute their read-only skills too, so ``skill_load``
+    can read them; ``skill_write``/``skill_remove`` still only touch Kova's own
+    ``write_dir``, never a plugin's.
+    """
+    from kova import plugins
+
+    return Skills.for_home(ctx.config.home,
+                           extra_roots=plugins.plugin_skill_roots(ctx.config.home))
 
 
 def _summary(skill) -> dict:
