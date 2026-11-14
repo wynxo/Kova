@@ -150,7 +150,7 @@ def test_phone_access_is_off_by_default_and_nothing_listens_on_the_lan(tmp_path,
         with pytest.raises(Exception) as refused:
             client.pair_start()
         assert getattr(refused.value, "status", None) == 409
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises((httpx.ConnectError, httpx.ConnectTimeout)):  # Windows times out instead of refusing
             httpx.get(f"http://{LAN}:{port}/app", timeout=2)
 
 
@@ -241,7 +241,7 @@ def test_revoke_logout_and_turning_access_off(tmp_path, monkeypatch):
         assert client.device_revoke() == 1
         status = client.set_phone(False)
         assert not status["listening"] and load_config(cfg.home).bind == "loopback"
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises((httpx.ConnectError, httpx.ConnectTimeout)):  # Windows times out instead of refusing
             httpx.get(f"http://{LAN}:{port}/app", timeout=2)
 
 
