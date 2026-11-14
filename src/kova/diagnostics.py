@@ -13,17 +13,13 @@ from pathlib import Path
 import httpx
 
 from kova import sandbox
-from kova.config import load_config
+from kova.config import CONFIG_SCHEMA, TOP_LEVEL_CONFIG_KEYS, load_config, unknown_config_keys
 from kova.providers import ProviderError, list_models, supports
 from kova.reminders import notification_plan
 
 #: The config written by :func:`kova.config.save_config`; anything else is a
 #: typo or a key from a newer version this install does not understand.
-KNOWN_CONFIG_KEYS = frozenset({
-    'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
-    'files_path', 'memory', 'tui', 'persona', 'providers', 'models', 'bind',
-})
-CONFIG_SCHEMA = 2
+KNOWN_CONFIG_KEYS = TOP_LEVEL_CONFIG_KEYS
 MIN_NODE_MAJOR = 22
 MIN_FREE_BYTES = 100 * 1024 * 1024
 
@@ -248,11 +244,14 @@ def _schema_check(cfg) -> Check:
             f'Config schema version {version!r} is newer than this Kova understands ({CONFIG_SCHEMA}).',
             'Update Kova',
         )
-    unknown = sorted(set(data) - KNOWN_CONFIG_KEYS)
+    unknown = unknown_config_keys(data)
     if unknown:
+        names = []
+        for key, suggestion in unknown:
+            names.append(f'{key} (did you mean {suggestion}?)' if suggestion else key)
         return Check(
             'schema', False,
-            f'Config has unknown keys: {", ".join(unknown)}. They are ignored until fixed.',
+            f'Config has unknown keys: {", ".join(names)}. They are preserved but ignored until fixed.',
             'Fix config.toml',
         )
     if version < CONFIG_SCHEMA:
