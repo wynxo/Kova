@@ -107,3 +107,23 @@ def test_the_legacy_heuristic_is_unchanged(tmp_path):
                           tmp_path, files) is False
     assert needs_approval("run_command", {"command": "rm x"}, "auto",
                           tmp_path, files) is True
+
+
+async def test_real_exit_125_is_not_setup_failure(tmp_path):
+    if not sandbox.available():
+        pytest.skip("Landlock unavailable")
+    result = await run_command("echo ran; exit 125", tmp_path, sandboxed=True)
+    assert result["exit_code"] == 125
+    assert result["output"].strip() == "ran"
+    assert result["error"] == "Command exited with status 125"
+
+
+async def test_launcher_setup_failure_does_not_run_command(tmp_path, monkeypatch):
+    # Parent sees availability, but the launcher genuinely cannot apply Landlock.
+    monkeypatch.setattr(sandbox, "available", lambda: True)
+    monkeypatch.setenv("KOVA_SANDBOX", "off")
+    marker = tmp_path / "must-not-exist"
+    result = await run_command(f"touch {marker}", tmp_path, sandboxed=True)
+    assert result["exit_code"] == 125
+    assert "could not be established" in result["error"]
+    assert not marker.exists()
