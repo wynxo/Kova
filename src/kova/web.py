@@ -8,6 +8,7 @@ The page exchanges it for an HttpOnly cookie, then removes the fragment.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import secrets
 import time
@@ -68,6 +69,10 @@ def require_browser_session(request: Request) -> None:
         return
     sessions = request.app.state.web_sessions
     _prune(sessions)
+    # A draft chat belongs to one unexpired share. Any authenticated browser
+    # call is a good moment to drop the ones whose five minutes are up, rather
+    # than waiting for the next share.
+    _prune_shares(request.app)
     if request.cookies.get(COOKIE, "") not in sessions:
         raise HTTPException(401, "Open kova-web to connect this window.")
     require_same_origin(request)
@@ -147,6 +152,12 @@ def install_web(app, require_bearer) -> None:
         uploads: list[UploadFile] = []
         rows: list[dict] = []
         chat = None
+        # Attachment storage records its own timestamps once the quota work
+        # lands; use the app clock when it does, so shares expire and clean up
+        # under the same clock as every other upload. Before that the parameter
+        # does not exist, and this path keeps working unchanged.
+        save_kwargs = ({'now': app.state.now}
+                       if 'now' in inspect.signature(attachments.save).parameters else {})
         try:
             async with request.form(max_files=SHARE_MAX_FILES, max_fields=3) as form:
                 parts = [str(form.get(key, "")).strip() for key in ("title", "text", "url")]
@@ -161,7 +172,7 @@ def install_web(app, require_bearer) -> None:
                             cwd=str(app.state.config.files_path.resolve()))
                     rows.append(await asyncio.to_thread(
                         attachments.save, app.state.config.home, app.state.store,
-                        chat["id"], file.filename, content))
+                        chat["id"], file.filename, content, **save_kwargs))
         except MultiPartException as exc:
             if chat is not None:
                 app.state.store.delete_chat(chat["id"])

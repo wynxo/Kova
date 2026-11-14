@@ -82,6 +82,48 @@ def test_expired_file_share_removes_its_draft_chat(tmp_path):
         assert app.state.store.get_chat(chat_id) is None
 
 
+def test_expired_file_share_is_pruned_by_browser_activity(tmp_path):
+    """A draft is not kept until the next share; ordinary use expires it."""
+    config = load_config(tmp_path)
+    app = create_app(config)
+    with TestClient(app, base_url="http://localhost") as client:
+        login(app, client)
+        response = client.post("/app/share", data={"text": "hello"},
+                               files={"files": ("note.txt", b"content", "text/plain")},
+                               follow_redirects=False)
+        token = response.headers["location"].split("#share=")[1]
+        chat_id = app.state.web_shares[token]["chat"]["id"]
+        app.state.web_shares[token]["expires"] = time.monotonic() - 1
+
+        assert client.get("/chats").status_code == 200
+
+        assert token not in app.state.web_shares
+        assert app.state.store.get_chat(chat_id) is None
+        assert not list((tmp_path / "attachments" / chat_id).glob("*"))
+
+
+def test_share_uses_the_server_clock_when_attachment_storage_offers_it(tmp_path, monkeypatch):
+    """After the quota work lands, shares age on the same clock as uploads."""
+    from kova import attachments
+    config = load_config(tmp_path)
+    frozen = lambda: 0
+    seen = []
+
+    def spy(home, store, chat_id, name, data, *, now=None):
+        seen.append(now)
+        return {"id": "uploaded", "chat_id": chat_id, "name": name,
+                "mime": "text/plain", "size": len(data), "pages": None}
+
+    monkeypatch.setattr(attachments, "save", spy)
+    app = create_app(config, now=frozen)
+    with TestClient(app, base_url="http://localhost") as client:
+        login(app, client)
+        assert client.post("/app/share", data={"text": "hello"},
+                           files={"files": ("note.txt", b"content", "text/plain")},
+                           follow_redirects=False).status_code == 303
+    assert seen == [frozen]
+
+
 def test_share_rejections(tmp_path):
     config = load_config(tmp_path)
     app = create_app(config)

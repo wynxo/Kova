@@ -957,7 +957,11 @@
       if (!manifest) return null;
       await cache.delete(`${root}/manifest`);
       const data = await manifest.json();
-      if (!data || !Number.isFinite(data.created) || Date.now() - data.created > SHARE_TTL) return null;
+      if (!data || !Number.isFinite(data.created) || Date.now() - data.created > SHARE_TTL) {
+        // An expired draft must not leave its file bytes in the cache.
+        for (const entry of data?.files || []) await cache.delete(entry.key);
+        return null;
+      }
       const files = [];
       for (const entry of data.files || []) {
         const stored = await cache.match(entry.key);

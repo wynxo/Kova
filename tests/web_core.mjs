@@ -591,6 +591,17 @@ assert.equal(fromWorker.text, 'From phone');
 assert.equal(fromWorker.files[0].name, 'photo.png');
 assert.ok(fromWorker.files[0] instanceof File);
 assert.equal(await sandbox.test.readWorkerShare('abc'), null, 'a worker share is consumed once');
+
+// An expired worker share drops its staged file bytes too, not only the manifest.
+const expiredFiles = new Map();
+expiredFiles.set('http://localhost/app/share/old/manifest', new Response(JSON.stringify({
+  created: Date.now() - 10 * 60 * 1000, text: 'stale',
+  files: [{name: 'old.txt', type: 'text/plain', key: 'http://localhost/app/share/old/file/0'}]})));
+expiredFiles.set('http://localhost/app/share/old/file/0', new Response('stale bytes'));
+sandbox.caches = {open: async () => ({
+  match: async key => expiredFiles.get(key), delete: async key => expiredFiles.delete(key)})};
+assert.equal(await sandbox.test.readWorkerShare('old'), null, 'an expired worker share is refused');
+assert.equal(expiredFiles.size, 0, 'expired worker share bytes are removed from the cache');
 console.log('Native file shares, vision rejection and worker handoff passed');
 
 // Native selected-text drops must remain available to the textarea.
