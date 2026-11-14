@@ -272,6 +272,26 @@ Server:
 - `kova serve` — run the server in the foreground
 - `kova stop` — stop it
 - `kova status` — is it up, which model is active, is the model reachable
+- `kova autostart on` — start the server at login; no administrator rights needed
+- `kova autostart off` — remove Kova's login entry and stop its login unit
+- `kova autostart status` — report installed, enabled and running, or a stale entry
+
+### Always on
+
+Reminders, scheduled jobs and phone access only work while Kova's server is running.
+`kova autostart on` writes one per-user login entry, chosen for your platform: a
+systemd user unit at `~/.config/systemd/user/kova.service` on Linux (an autostart
+`.desktop` file at `~/.config/autostart/kova.desktop` when `systemctl --user` does
+not answer), a LaunchAgent at `~/Library/LaunchAgents/ai.kova.server.plist` on
+macOS, or the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on
+Windows. None of these need administrator rights or a root shell.
+
+The toggle is idempotent, records your current `KOVA_HOME`, and removes only
+Kova's own file or Run value. `kova autostart status` compares the entry with the
+current install without rewriting it, so an entry left by an older Python or
+checkout is reported as stale; run `kova autostart on` to refresh it. Kova uses a
+little memory while idle, and a local model is only loaded when you chat.
+`kova uninstall` removes the entry too.
 
 Missing notes, reminders, or models and server connection failures print a red, one-line error and exit with code 1, without a traceback.
 
