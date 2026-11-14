@@ -22,6 +22,21 @@ def upload(client, headers, chat, name='demo.py', data=b'first\nsecond\nthird'):
     return client.post(f'/chats/{chat}/attachments', headers=headers, files={'file': (name, data)})
 
 
+def link_message_attachment(store, message_id, row):
+    """Write the name-only link the transcript branch adds, without that branch."""
+    with store._lock:
+        store._conn.execute(
+            "CREATE TABLE IF NOT EXISTS message_attachments ("
+            "message_id INTEGER NOT NULL, attachment_id TEXT NOT NULL, "
+            "name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (message_id, attachment_id))")
+        store._conn.execute(
+            "INSERT OR REPLACE INTO message_attachments "
+            "(message_id, attachment_id, name, position) VALUES (?, ?, ?, 0)",
+            (message_id, row['id'], row['name']))
+        store._conn.commit()
+
+
 def test_upload_turn_and_delete(server):
     client, headers, cfg, fake = server
     chat = client.post('/chats', headers=headers, json={}).json()['id']
@@ -362,6 +377,45 @@ def test_reap_keeps_a_legacy_transcript_reference_without_used_flag(server):
     store.add_message(chat, 'user', f"attachment_id: {row['id']}")
     assert attachments.reap(store, now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1)) == 0
     assert [entry['id'] for entry in store.attachments(chat)] == [row['id']]
+
+
+def test_reap_keeps_a_linked_message_attachment_without_used_flag(server):
+    """A name-only link is usage metadata even when the old flag was never set."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = attachments.save(cfg.home, store, chat, 'linked.txt', b'linked',
+                           now=lambda: old)
+    message_id = store.add_message(chat, 'user', '')
+    link_message_attachment(store, message_id, row)
+    with store._lock:
+        store._conn.execute('UPDATE attachments SET used = 0')
+        store._conn.commit()
+
+    assert attachments.reap(store, now=lambda: old + attachments.PENDING_TTL + timedelta(seconds=1)) == 0
+    [stored] = store.attachments(chat)
+    assert stored['id'] == row['id']
+    assert Path(stored['path']).exists()
+
+
+def test_linked_message_attachment_frees_the_pending_quota(server, monkeypatch):
+    """A linked upload is spoken for, so it is not an unsent attachment."""
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    monkeypatch.setattr(attachments, 'MAX_PENDING_UPLOADS', 1)
+    row = attachments.save(cfg.home, store, chat, 'linked.txt', b'linked')
+    message_id = store.add_message(chat, 'user', '')
+    link_message_attachment(store, message_id, row)
+    with store._lock:
+        store._conn.execute('UPDATE attachments SET used = 0')
+        store._conn.commit()
+
+    attachments.ensure_capacity(store, chat, 1)  # no quota error
+
+    attachments.save(cfg.home, store, chat, 'next.txt', b'next')
+    assert {entry['name'] for entry in store.attachments(chat)} == {'linked.txt', 'next.txt'}
 
 
 def test_used_flag_retains_an_upload_even_if_the_transcript_changes(server, monkeypatch):

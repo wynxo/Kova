@@ -458,11 +458,14 @@ class Store:
             self._conn.commit()
 
     def referenced_attachment_ids(self, chat_id: str) -> set[str]:
-        """Attachment ids spelled out in a chat's messages, tool calls or summary.
+        """Every attachment id a saved chat still uses.
 
-        Used as a fallback for rows created before ``used`` existed and for
-        transcripts restored from a backup, so cleanup never expires an upload
-        that a saved message still references.
+        The explicit ``message_attachments`` link is the authoritative record.
+        Older transcripts spell the id out in a message, tool call or summary;
+        that scan stays as a fallback for rows created before ``used`` existed
+        and for chats restored from a backup. Cleanup therefore never expires
+        an upload that a saved message still references, even when a merge or an
+        older database leaves ``used`` at zero.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -471,10 +474,23 @@ class Store:
             summary = self._conn.execute(
                 "SELECT summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)
             ).fetchone()
+            # This table arrives with the name-only message link. Keep working
+            # when this branch runs on a database that predates it.
+            links = []
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_attachments'"
+            ).fetchone():
+                links = self._conn.execute(
+                    "SELECT ma.attachment_id FROM message_attachments ma "
+                    "JOIN messages m ON m.id = ma.message_id WHERE m.chat_id = ?",
+                    (chat_id,),
+                ).fetchall()
         parts = [row[name] for row in rows for name in ("content", "tool_calls")]
         if summary is not None:
             parts.append(summary["summary"])
-        return set(_ATTACHMENT_ID.findall("\n".join(part for part in parts if part)))
+        found = set(_ATTACHMENT_ID.findall("\n".join(part for part in parts if part)))
+        found.update(link["attachment_id"] for link in links)
+        return found
 
     def delete_attachment(self, chat_id: str, ident: str) -> bool:
         with self._lock:
