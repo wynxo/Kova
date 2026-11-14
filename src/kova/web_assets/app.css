@@ -945,3 +945,20 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
 .rules-dialog textarea { box-sizing:border-box; width:100%; min-height:260px; padding:12px; background:var(--code-bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-md); font:12px/1.5 var(--mono); }
 .approval-heading { flex-wrap:wrap; }
 .approval-card { min-width:0; }
+
+.command-picker { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.command-picker[hidden] { display: none; }
+.chat-menu { position: relative; }
+.chat-menu summary { cursor: pointer; padding: 8px; }
+.chat-menu button { position: absolute; right: 0; z-index: 5; min-width: 150px; background: var(--surface); }
+
+.history-actions { display: block; opacity: 1; pointer-events: auto; padding: 0; background: var(--surface); z-index: 4; }
+.history-actions summary { cursor: pointer; padding: 6px; }
+.history-actions[open] { top: 4px; transform: none; }
+.history-actions button { width: auto; min-width: 150px; height: 36px; padding: 6px; }
+
+#attachment-chips { padding: 0 .6rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+.attachment-chip { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; padding: .4rem; }
+.attachment-chip button { cursor: pointer; }
+#attachment-note { color: var(--muted); }
+#attach.text-only { opacity: .55; }

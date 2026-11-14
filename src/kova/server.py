@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,7 @@ class TurnBody(BaseModel):
     """A user message that starts one chat turn, optionally on a named model."""
     text: str
     model: str | None = None
+    attachments: list[str] = Field(default_factory=list, max_length=3)
 
 
 class ChatBody(BaseModel):
@@ -158,6 +160,13 @@ class ModelBody(BaseModel):
     model: str
     api_key: str | None = None
     context: int = 131072
+    vision: bool = False
+
+
+class ModelPatch(BaseModel):
+    """Per-model settings to change; omitted fields stay as they are."""
+    name: str
+    vision: bool | None = None
 
 
 class ActiveBody(BaseModel):
@@ -192,10 +201,104 @@ def _model_dict(entry: ModelEntry) -> dict:
     """The JSON shape of a model entry."""
     return {"name": entry.name, "base_url": entry.base_url, "model": entry.model,
             "api_key": "***" if entry.api_key else None, "context": entry.context,
+            "vision": entry.vision,
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
 EVENTS_KEEPALIVE = 15.0  # seconds between /events pings; the web UI reconnects after 3 missed
+HEALTH_TTL = 15.0  # seconds a cached model reachability result stays fresh
+
+
+class _ModelHealth:
+    """Cached reachability of the active model, refreshed off the request path.
+
+    A warm value answers immediately. A stale one is returned as-is while one
+    background task probes, so any number of windows share a single provider
+    request per TTL. The first request for a new active model waits for that
+    one probe so a freshly opened window starts from a known value, while
+    ``probe=0`` never waits (server startup only needs to know the process is
+    up) and ``probe=1`` forces a live check for ``kova status``/``doctor``/setup.
+    """
+
+    def __init__(self, config: Config, transport: httpx.AsyncBaseTransport | None,
+                 now: Callable[[], datetime]) -> None:
+        self._config = config
+        self._transport = transport
+        self._now = now
+        self._key: tuple | None = None
+        self._ok = False
+        self._checked: float | None = None
+        self._checked_at: datetime | None = None
+        self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    def _entry(self) -> ModelEntry | None:
+        try:
+            return self._config.active_model()
+        except KeyError:
+            return None
+
+    @staticmethod
+    def _signature(entry: ModelEntry) -> tuple:
+        kind = entry._provider.kind if entry._provider else ""
+        return (entry.name, entry.base_url, entry.model, kind)
+
+    def _fresh(self, entry: ModelEntry) -> bool:
+        return (self._signature(entry) == self._key and self._checked is not None
+                and time.monotonic() - self._checked < HEALTH_TTL)
+
+    def snapshot(self) -> dict:
+        """The last known value, without touching the provider."""
+        entry = self._entry()
+        if entry is None or self._signature(entry) != self._key:
+            return {"model_ok": False, "model_checked_at": None}
+        return {"model_ok": self._ok,
+                "model_checked_at": self._checked_at.isoformat() if self._checked_at else None}
+
+    async def get(self, *, force: bool = False, wait: bool = True) -> dict:
+        """Return the cached value; only a cold cache (or ``force``) waits."""
+        entry = self._entry()
+        if entry is None:
+            return self.snapshot()
+        key = self._signature(entry)
+        if force:
+            await self._refresh(entry, key, force=True)
+        elif key != self._key:
+            if wait:
+                await self._refresh(entry, key, force=False)
+            else:
+                self._start(entry, key)
+        elif not self._fresh(entry):
+            self._start(entry, key)
+        return self.snapshot()
+
+    def _start(self, entry: ModelEntry, key: tuple) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._background(entry, key))
+
+    async def _background(self, entry: ModelEntry, key: tuple) -> None:
+        await self._refresh(entry, key, force=False)
+
+    async def _refresh(self, entry: ModelEntry, key: tuple, *, force: bool) -> None:
+        async with self._lock:
+            # Waiters queued behind a probe reuse its result instead of repeating it.
+            if not force and self._fresh(entry):
+                return
+            try:
+                ok = await ModelClient(entry, transport=self._transport).ping()
+            except Exception:  # a broken probe must never kill the health route
+                ok = False
+            self._key, self._ok = key, ok
+            self._checked = time.monotonic()
+            self._checked_at = self._now()
+
+    async def close(self) -> None:
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 def _sse(event: dict) -> str:
@@ -282,6 +385,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in [reminders, *app.state.turns]:
             with suppress(asyncio.CancelledError):
                 await task
+        await app.state.model_health.close()
 
 
 def create_app(
@@ -297,9 +401,12 @@ def create_app(
     """
     now = now or (lambda: datetime.now().astimezone())
     app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    from kova.attachments import AttachmentBodyLimit
+    app.add_middleware(AttachmentBodyLimit)
     app.state.config = config
     app.state.transport = transport
     app.state.now = now
+    app.state.model_health = _ModelHealth(config, transport, now)
     app.state.token = ensure_token(config.home)
     app.state.turns = set()
     app.state.chat_locks = {}
@@ -317,13 +424,9 @@ def create_app(
         return app.state.chat_locks.setdefault(chat_id, asyncio.Lock())
 
     @app.get("/health")
-    async def health() -> dict:
-        try:
-            entry = config.active_model()
-        except KeyError:
-            return {"version": __version__, "model": config.active, "model_ok": False}
-        reachable = await ModelClient(entry, transport=transport).ping()
-        return {"version": __version__, "model": config.active, "model_ok": reachable}
+    async def health(probe: bool | None = Query(None)) -> dict:
+        status = await app.state.model_health.get(force=probe is True, wait=probe is not False)
+        return {"version": __version__, "model": config.active, **status}
 
     api = APIRouter(dependencies=[Depends(_require_token)])
 
@@ -436,6 +539,28 @@ def create_app(
         chat = app.state.store.get_chat(chat_id)
         return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
 
+    @api.post("/chats/{chat_id}/attachments")
+    async def upload_attachment(chat_id: str, file: UploadFile = File(...)) -> dict:
+        from kova import attachments
+        async with chat_lock(chat_id):
+            if app.state.store.get_chat(chat_id) is None:
+                raise HTTPException(404, "Chat not found.")
+            try:
+                data = await file.read(attachments.MAX_BYTES + 1)
+                return await asyncio.to_thread(attachments.save, config.home, app.state.store,
+                                               chat_id, file.filename or 'file', data)
+            except attachments.AttachmentError as exc:
+                raise HTTPException(400, str(exc)) from None
+            finally:
+                await file.close()
+
+    @api.delete("/chats/{chat_id}/attachments/{ident}")
+    async def remove_attachment(chat_id: str, ident: str) -> dict:
+        async with chat_lock(chat_id):
+            if not app.state.store.delete_attachment(chat_id, ident):
+                raise HTTPException(404, "Attachment not found.")
+        return {"ok": True}
+
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:
         async with chat_lock(chat_id):
@@ -523,6 +648,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="chat not found")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
+        rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
+        if len(set(body.attachments)) != len(body.attachments) or any(i not in rows for i in body.attachments):
+            raise HTTPException(400, "Choose attachments from this chat only.")
+        config.bind_providers()
+        entry = next((m for m in config.models if m.name == (body.model or config.active)), None)
+        from kova import providers
+        if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
+            if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
+                raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
@@ -537,7 +671,7 @@ def create_app(
                     app.state.steering[chat_id] = steering
                     try:
                         async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                  steering=steering):
+                                                                  steering=steering, attachment_ids=body.attachments):
                             app.state.conversation_states.transition(chat_id, event.get("type", ""))
                             queue.put_nowait(event)
                     finally:
@@ -859,9 +993,21 @@ def create_app(
     @api.post("/models")
     async def model_add(body: ModelBody) -> dict:
         entry = ModelEntry(name=body.name, base_url=body.base_url, model=body.model,
-                           api_key=body.api_key, context=body.context)
+                           api_key=body.api_key, context=body.context, vision=body.vision)
         config.models[:] = [m for m in config.models if m.name != entry.name]
         config.models.append(entry)
+        save_config(config)
+        return _model_dict(entry)
+
+    @api.patch("/models")
+    async def model_update(body: ModelPatch) -> dict:
+        """Change one model's per-model settings, such as image support."""
+        entry = next((m for m in config.models if m.name == body.name), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"unknown model '{body.name}'")
+        if body.vision is None:
+            raise HTTPException(status_code=422, detail="nothing to update")
+        entry.vision = body.vision
         save_config(config)
         return _model_dict(entry)
 

@@ -14,6 +14,13 @@ import kova.cli as cli
 import kova.lifecycle as lifecycle
 
 
+@pytest.fixture(autouse=True)
+def portable_platform_fakes(monkeypatch):
+    # Exercise each writer independently of the host running this test.
+    monkeypatch.setattr(autostart, "_python", lambda python=None: "/opt/python")
+    monkeypatch.setattr(os, "getuid", lambda: 1000, raising=False)
+
+
 class Runner:
     """Record user-level helper calls and answer with one exit code."""
 
@@ -47,9 +54,9 @@ def test_linux_prefers_a_systemd_user_unit(tmp_path):
         "ExecStart=/opt/python -m kova serve\n"
         "Restart=on-failure\n"
         "RestartSec=5\n"
-        f"Environment=KOVA_HOME={khome}\n"
-        f"StandardOutput=append:{khome}/server.log\n"
-        f"StandardError=append:{khome}/server.log\n"
+        f"Environment={autostart._systemd_arg('KOVA_HOME=' + str(khome))}\n"
+        f"StandardOutput=append:{str(khome / 'server.log')}\n"
+        f"StandardError=append:{str(khome / 'server.log')}\n"
         "\n"
         "[Install]\n"
         "WantedBy=default.target\n"
@@ -301,11 +308,12 @@ def test_cli_on_off_and_status(monkeypatch, tmp_path):
                                                           enabled=True, running=True,
                                                           path=str(path)))
     runner = CliRunner()
+    monkeypatch.setenv("COLUMNS", "1000")
 
     on = runner.invoke(cli.app, ["autostart", "on"])
     assert on.exit_code == 0, on.output
     assert "Start at login is on (systemd user unit)." in on.output
-    assert str(path) in on.output
+    assert str(path) in on.output.replace("\n", "")
     assert "Kova uses a little memory while idle" in on.output
 
     off = runner.invoke(cli.app, ["autostart", "off"])
@@ -341,6 +349,7 @@ def test_uninstall_removes_the_login_entry(monkeypatch, tmp_path):
     monkeypatch.setattr(lifecycle.subprocess, "run",
                         Mock(return_value=subprocess.CompletedProcess([], 0)))
     monkeypatch.setattr(autostart, "_systemctl_answers", lambda *_: False)
+    monkeypatch.setattr(autostart, "_platform_name", lambda platform=None: "linux")
     unit = tmp_path / ".config/systemd/user/kova.service"
     unit.parent.mkdir(parents=True)
     unit.write_text("old unit\n")

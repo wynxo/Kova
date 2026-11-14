@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
+let focusedElement = null;
 class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.parentNode = null;
@@ -25,7 +26,7 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
-  focus() {}
+  focus() { focusedElement = this; }
   showModal() {}
   close() {}
   get lastElementChild() { return this.children.at(-1); }
@@ -39,9 +40,10 @@ const requests = [];
 let pendingApprovals = [];
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
-    querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element()},
+    querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
+    get activeElement() { return focusedElement; }},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
-  performance, URLSearchParams, TextDecoder, console,
+  performance, URLSearchParams, TextDecoder, console, FormData,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options = {}) => {
@@ -52,6 +54,10 @@ const sandbox = {
       // The capability contract the server declares, and the catalog with it.
       '/capabilities': {provider: 'openai', capabilities: ['api_key', 'tools'],
                         offered: {chat: ['reasoning'], work: ['api_key', 'approvals', 'tools']}},
+      '/capabilities?model=vision-model': {provider: 'local', capabilities: ['api_key', 'reasoning', 'tools', 'vision'],
+                        offered: {chat: ['api_key', 'reasoning', 'vision'], work: ['api_key', 'approvals', 'reasoning', 'tools', 'vision']}},
+      '/capabilities?model=text-model': {provider: 'local', capabilities: ['api_key', 'reasoning', 'tools'],
+                        offered: {chat: ['api_key', 'reasoning'], work: ['api_key', 'approvals', 'reasoning', 'tools']}},
       '/providers/catalog': {harness_available: true, providers: [
         {id: 'openai', name: 'OpenAI', key_url: 'https://platform.openai.com/api-keys',
          capabilities: ['api_key', 'tools']},
@@ -61,17 +67,20 @@ const sandbox = {
          capabilities: ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']},
       ]},
     };
+    if (path.endsWith('/compact')) return {ok: true, json: async () => ({type: 'compact_skipped', message: 'Nothing to compact'})};
+    if (path.endsWith('/fork')) return {ok: true, json: async () => ({id: 'blocked'})};
     if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
     // A chat whose turn is blocked on an approval that was asked before a reload.
     if (path === '/chats/blocked') return {ok: true, json: async () => ({id: 'blocked', cwd: '/project', state: 'blocked-on-approval', messages: [{role: 'user', content: 'clean up'}]})};
     if (path === '/chats/blocked/approvals') return {ok: true, json: async () => pendingApprovals};
     if (path.endsWith('/queue') && (options.method || 'GET') === 'GET') return {ok: true, json: async () => [{id: 9, text: 'later'}]};
     if (path.endsWith('/queue') && options.method === 'POST') return {ok: true, json: async () => ({id: 10, text: body.text})};
+    if (path === '/models' && options.method === 'PATCH') return {ok: true, json: async () => ({name: body.name, vision: body.vision})};
     return {ok: true, json: async () => (path in payloads ? payloads[path] : {ok: true})};
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -102,10 +111,16 @@ for (const decision of ['allow', 'allow_session', 'allow_always', 'deny']) {
   const card = byClass(body, 'approval-card')[0];
   assert.ok(card.textContent.includes('<script>literal command</script>'));
   assert.ok(card.textContent.includes('/project'));
+  // The card is one stop, is announced, and jumps focus to its first decision.
+  assert.equal(card.getAttribute('role'), 'group');
+  assert.ok($('announce').textContent.includes('Kova needs approval: run command'), $('announce').textContent);
+  assert.ok($('announce').textContent.includes('/project'));
+  assert.equal(sandbox.document.activeElement, buttons(card)[0], 'focus lands on the first button');
   const input = walk(card).find(n => n.tagName === 'input'); input.value = 'Read instead';
   buttons(card)[['allow', 'allow_session', 'allow_always', 'deny'].indexOf(decision)].onclick();
   await tick(); await tick();
   assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/approval-1', body: {decision, message: 'Read instead'}});
+  assert.equal(sandbox.document.activeElement, $('prompt'), 'focus returns to the composer');
   view.accept({type: 'approval_resolved', id: 'approval-1', decision});
   assert.equal(card.textContent.includes('Denied'), decision === 'deny');
   assert.ok(buttons(card).every(b => b.disabled));
@@ -117,10 +132,14 @@ for (const options of [[], ['A', 'B']]) {
   questionView.accept({type: 'question', id: 'q1', args: {question: 'Which?', options}});
   const card = byClass(questionBody, 'approval-card')[0];
   assert.ok(card.textContent.includes('Which?'));
+  assert.ok($('announce').textContent.includes('Kova asked a question: Which?'));
+  const expected = options.length ? buttons(card)[0] : walk(card).find(n => n.tagName === 'input');
+  assert.equal(sandbox.document.activeElement, expected, 'the answer control takes focus');
   if (!options.length) walk(card).find(n => n.tagName === 'input').value = 'typed answer';
   buttons(card)[options.length ? 1 : 0].onclick();
   await tick(); await tick();
   assert.deepEqual(requests.at(-1), {path: '/chats/chat-1/approvals/q1', body: {decision: 'allow', message: options.length ? 'B' : 'typed answer'}});
+  assert.equal(sandbox.document.activeElement, $('prompt'), 'focus returns to the composer');
   questionView.accept({type: 'question_resolved', id: 'q1'});
   assert.ok(buttons(card).every(b => b.disabled));
   questionView.finish();
@@ -169,6 +188,16 @@ const pending = new Element(), stopped = turnView(pending);
 stopped.accept({type: 'approval', id: 'stopped', risk: 'normal', summary: 'echo x'});
 stopped.finish();
 assert.ok(byClass(pending, 'approval-card')[0].textContent.includes('No longer pending'));
+
+// How a turn ended is announced once, in the live region.
+$('announce').replaceChildren();
+const ending = turnView(new Element());
+ending.accept({type: 'done'});
+assert.equal($('announce').textContent, 'Reply finished.');
+ending.accept({type: 'stopped'});
+assert.equal($('announce').textContent, 'Reply finished.Stopped.');
+ending.accept({type: 'error', message: 'model offline'});
+assert.ok($('announce').textContent.endsWith('Error: model offline'), $('announce').textContent);
 
 setChat({id: 'saved', permission: 'auto', cwd: '/saved', plan: [{text: 'Saved plan', status: 'done'}], messages: []});
 assert.equal($('permission').value, 'auto'); assert.equal($('cwd').value, '/saved');
@@ -404,3 +433,90 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+
+// Known commands are intercepted, including invalid arguments; paths and multiline text are not.
+for (const name of Object.keys(sandbox.test.commands)) {
+  assert.equal(sandbox.test.parseCommand(`/${name}`).name, name);
+  assert.equal(sandbox.test.parseCommand(`/${name} bad argument`).name, name);
+}
+for (const text of ['/unknown', '/home/you/project', '/compact\nhello', '/fork\rhello']) {
+  assert.equal(sandbox.test.parseCommand(text), null);
+}
+state.connected = true; state.busy = false;
+for (const name of ['help', 'diff', 'restore', 'changes', 'cd', 'steer']) {
+  const before = requests.length;
+  await sandbox.test.dispatchCommand({name, args: ''});
+  assert.equal(requests.length, before, `${name} never calls the model`);
+}
+await assert.rejects(sandbox.test.dispatchCommand({name: 'fork', args: 'bad'}), /Use \/fork/);
+await assert.rejects(sandbox.test.dispatchCommand({name: 'mode', args: 'bad'}), /Usage/);
+$('prompt').value = '/com'; sandbox.test.commandPicker();
+assert.equal($('command-picker').children.length, 1);
+assert.equal($('command-picker').children[0].textContent, '/compact');
+console.log('Slash command catalog, dispatch guards and picker passed');
+
+state.chat = {id: 'blocked'};
+await sandbox.test.dispatchCommand({name: 'compact', args: ''});
+assert.equal(requests.at(-1).path, '/chats/blocked/compact');
+assert.ok($('toasts').textContent.includes('Nothing to compact'));
+await sandbox.test.dispatchCommand({name: 'fork', args: ''});
+assert.ok(requests.some(r => r.path === '/chats/blocked/fork'));
+state.busy = true;
+const beforeCommands = requests.length;
+$('prompt').value = '/compact';
+await sandbox.test.send({preventDefault() {}});
+assert.equal(requests.length, beforeCommands, 'busy commands are never queued');
+state.busy = false;
+
+// Composer attachment input paths and model declarations.
+state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
+applyCapabilities({offered: {work: []}});
+$('mode').value = 'work'; controls();
+assert.equal($('attach').classList.contains('text-only'), true);
+assert.equal(typeof $('composer').listeners.drop, 'function');
+assert.equal(typeof $('prompt').listeners.paste, 'function');
+sandbox.test.pendingAttachments.push({id: 'a', chat_id: 'attachment-chat', name: 'demo.txt', size: 1024, pages: 2});
+sandbox.test.renderAttachments();
+assert.match($('attachment-chips').textContent, /demo.txt.*1.0 KB.*2 pages.*ready/);
+assert.equal($('attachment-note').hidden, false);
+state.chat = {id: 'other-chat'}; sandbox.test.renderAttachments();
+assert.equal($('attachment-chips').textContent, '');
+// The composer asks for the selected model's contract, not only the active one.
+state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
+state.models = [
+  {name: 'vision-model', model: 'vision', provider_name: 'Local', context: 32768, vision: true, base_url: 'http://127.0.0.1:8080/v1'},
+  {name: 'text-model', model: 'text', provider_name: 'Local', context: 32768, vision: false, base_url: 'http://127.0.0.1:8080/v1'},
+];
+$('model').value = 'vision-model'; $('model').onchange();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/capabilities?model=vision-model'));
+assert.equal($('attach').classList.contains('text-only'), false);
+$('model').value = 'text-model'; $('model').onchange();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/capabilities?model=text-model'));
+assert.equal($('attach').classList.contains('text-only'), true);
+const beforeDrop = requests.length, beforeToasts = $('toasts').children.length;
+await sandbox.test.attachFiles([{type: 'image/png', name: 'shot.png', size: 16}]);
+await tick();
+assert.equal(requests.length, beforeDrop, 'a non-vision model refuses the image before uploading');
+assert.equal($('toasts').children.length, beforeToasts + 1);
+assert.match($('toasts').textContent, /Turn on Vision for it in Model settings/);
+// Model settings exposes the same flag and saves it through the API.
+$('model').value = 'vision-model';
+await sandbox.test.openModelSettings();
+const settings = sandbox.document.body.children.at(-1);
+assert.ok(settings.textContent.includes('Model settings'));
+assert.ok(settings.textContent.includes('Vision: this model can read images'));
+const vision = walk(settings).find(node => node.tagName === 'input');
+assert.equal(vision.checked, true);
+vision.checked = false;
+buttons(settings).find(button => button.textContent === 'Save').onclick();
+await tick(); await tick(); await tick();
+assert.ok(requests.some(r => r.path === '/models' && r.body?.name === 'vision-model' && r.body?.vision === false));
+settings.remove();
+console.log('Attachment chips, input handlers, selected-model gating and Model settings passed');
+
+// Native selected-text drops must remain available to the textarea.
+let textDropPrevented = false;
+$('composer').listeners.drop({dataTransfer: {files: []}, preventDefault() { textDropPrevented = true; }});
+assert.equal(textDropPrevented, false);
