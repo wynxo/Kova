@@ -69,7 +69,8 @@ def test_turn_edits_are_reviewable(server):
     diff = client.checkpoint_diff(chat["id"], review["checkpoint_id"], "notes.txt")
     assert diff["status"] == "modified"
     assert "-one" in diff["diff"] and "+ONE" in diff["diff"]
-    assert diff["before"] == "one\ntwo\n" and diff["after"] == "ONE\ntwo\n"
+    assert diff["before"].replace("\r\n", "\n") == "one\ntwo\n"
+    assert diff["after"].replace("\r\n", "\n") == "ONE\ntwo\n"
 
 
 def test_restore_puts_files_back_and_never_touches_git(server):

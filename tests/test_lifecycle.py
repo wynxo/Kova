@@ -33,6 +33,7 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.delenv("KOVA_REF", raising=False)
     monkeypatch.delenv("KOVA_SOURCE", raising=False)
     monkeypatch.setattr(lifecycle, "find_uv", lambda: "/test/uv")
+    monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(platform="linux", stdin=sys.stdin))
     return lifecycle
 
 
@@ -133,7 +134,7 @@ def test_uninstall_data_choices(lifecycle, monkeypatch, tmp_path, args, answer, 
         return subprocess.CompletedProcess(cmd, 0)
     monkeypatch.setattr(lifecycle.subprocess, "run", run)
     monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(
-        platform=sys.platform, stdin=SimpleNamespace(isatty=lambda: answer is not None),
+        platform="linux", stdin=SimpleNamespace(isatty=lambda: answer is not None),
     ))
     result = CliRunner().invoke(app, ["uninstall", *args], input=answer)
     assert result.exit_code == 0, result.output
@@ -187,3 +188,16 @@ def test_uninstall_refuses_dangerous_purge(lifecycle, monkeypatch, tmp_path, tar
     assert result.exit_code == 1
     assert "Refusing" in result.output
     assert tmp_path.is_dir()
+
+
+@pytest.mark.parametrize('purge', [False, True])
+def test_windows_uninstall_schedules_helper_without_running_uv(lifecycle, monkeypatch, tmp_path, purge):
+    home = tmp_path / '.kova'
+    home.mkdir()
+    monkeypatch.setattr(lifecycle, 'sys', SimpleNamespace(platform='win32', stdin=SimpleNamespace(isatty=lambda: False)))
+    scheduled = Mock()
+    monkeypatch.setattr(lifecycle, '_windows_uninstall', scheduled)
+    monkeypatch.setattr(lifecycle.subprocess, 'run', Mock(side_effect=AssertionError('must defer uv until exit')))
+    lifecycle.uninstall(purge=purge, keep_data=not purge, confirm=lambda _: False, emit=lambda _: None)
+    scheduled.assert_called_once_with('/test/uv', home.absolute(), purge)
+    assert home.exists()

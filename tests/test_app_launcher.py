@@ -103,7 +103,7 @@ def test_desktop_runs_electron_without_reinstalling(monkeypatch, tmp_path, runs)
     with pytest.raises(SystemExit) as exc:
         launcher.main([])
     assert exc.value.code == 0
-    assert [command for command, _ in runs] == [['/usr/bin/npm', 'start']]
+    assert [command for command, _ in runs] == [launcher.npm_command('/usr/bin/npm', 'start')]
     assert runs[0][1]['cwd'] == project
     assert 'ELECTRON_RUN_AS_NODE' not in runs[0][1]['env']
 
@@ -117,7 +117,7 @@ def test_desktop_installs_missing_electron_dependencies(monkeypatch, tmp_path, r
         launcher.main([])
     assert exc.value.code == 0
     assert [(command, kwargs['cwd']) for command, kwargs in runs] == [
-        (['/usr/bin/npm', 'ci'], project), (['/usr/bin/npm', 'start'], project),
+        (launcher.npm_command('/usr/bin/npm', 'ci'), project), (launcher.npm_command('/usr/bin/npm', 'start'), project),
     ]
     assert str(project) in capsys.readouterr().out
 

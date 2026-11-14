@@ -98,7 +98,7 @@ def test_export_and_import_commands(tmp_path, monkeypatch):
 
     exported = CliRunner().invoke(cli.app, ["export", str(target)])
     assert exported.exit_code == 0, exported.output
-    assert str(target) in exported.output
+    assert str(target) in exported.output.replace("\n", "")
     assert "API keys were left out" in exported.output
     with zipfile.ZipFile(target) as archive:
         names = set(archive.namelist())
