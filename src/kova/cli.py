@@ -7,11 +7,15 @@ server on demand; the commands render chat replies with Rich.
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from difflib import get_close_matches
 from pathlib import Path
 
 import typer
@@ -24,10 +28,19 @@ from typer.core import TyperGroup
 
 from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme
 from kova.client import KovaClient, KovaError, ensure_server
-from kova.config import ensure_token, load_config, save_config
+from kova.config import (
+    CONFIG_SCHEMA,
+    ensure_token,
+    kova_home,
+    load_config,
+    save_config,
+    unknown_config_keys,
+)
 from kova.modes import MODES
+from kova.persona import TONES, Persona
 from kova.tools.reminders import format_relative, format_when
 from kova.tui import brand
+from kova.tui.keymap import DEFAULT_KEYS, Keymap
 from kova.ui import _run_chat
 
 
@@ -169,7 +182,8 @@ class _KovaGroup(TyperGroup):
 app = typer.Typer(
     help="Kova: your own private AI that lives on your computer.",
     epilog=f"[{theme.MUTED}]Start a chat with [bold]kova[/bold]. "
-           "Add [bold]--help[/bold] to any command for its flags.[/]",
+           "Add [bold]--help[/bold] to any command for its flags.\n"
+           "Configuration keys: [bold]docs/CONFIG.md[/bold][/]",
     no_args_is_help=False,
     cls=_KovaGroup,
 )
@@ -1369,6 +1383,381 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
         _ok(f'Deleted chat "{title}".')
     else:
         _fail(f'No chat "{ref}".')
+
+
+# ---------------------------------------------------------------------------
+# config: read and change ~/.kova/config.toml without a text editor.
+
+REDACTED = "<redacted>"
+_SECRET_NAME = re.compile(
+    r"(api[_-]?key|token|secret|password|passwd|authorization|bearer|credential|oauth|auth)",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class _ConfigField:
+    """One validated scalar setting exposed by ``kova config set``."""
+
+    key: str
+    attr: str
+    kind: str
+    choices: tuple[str, ...] = ()
+    minimum: float | None = None
+    maximum: float | None = None
+
+
+_CONFIG_FIELDS: dict[str, _ConfigField] = {
+    field.key: field
+    for field in (
+        _ConfigField("active", "active", "active"),
+        _ConfigField("bind", "bind", "choice", ("loopback", "lan")),
+        _ConfigField("compact_threshold", "compact_threshold", "float", minimum=0.1, maximum=0.99),
+        _ConfigField("files_path", "files_path", "path"),
+        _ConfigField("memory.budget", "memory_budget", "int", minimum=0),
+        _ConfigField("memory.consolidate", "memory_consolidate", "bool"),
+        _ConfigField("memory.consolidate_hour", "memory_consolidate_hour", "int",
+                     minimum=0, maximum=23),
+        _ConfigField("memory.consolidate_max_loss", "memory_consolidate_max_loss", "float",
+                     minimum=0, maximum=1),
+        _ConfigField("memory.consolidate_min_confidence",
+                     "memory_consolidate_min_confidence", "float", minimum=0, maximum=1),
+        _ConfigField("memory.index_lines", "memory_index_lines", "int", minimum=0),
+        _ConfigField("memory.path", "memory_path", "path"),
+        _ConfigField("memory.review", "memory_review", "bool"),
+        _ConfigField("memory.review_every", "memory_review_every", "int", minimum=1),
+        _ConfigField("memory.write_subdir", "memory_write_subdir", "component"),
+        _ConfigField("persona.configured", "persona_configured", "bool"),
+        _ConfigField("persona.name", "persona_name", "persona"),
+        _ConfigField("persona.tone", "persona_tone", "choice", tuple(TONES)),
+        _ConfigField("port", "port", "int", minimum=1, maximum=65535),
+        _ConfigField("tui.theme", "tui_theme", "choice", ("dark", "light")),
+    )
+}
+
+_TRUE = {"1", "true", "yes", "on", "enabled"}
+_FALSE = {"0", "false", "no", "off", "disabled"}
+
+
+class _ConfigValueError(ValueError):
+    """A ``config set`` value that fails the field's schema."""
+
+
+def _config_range(field: _ConfigField) -> str:
+    if field.minimum is not None and field.maximum is not None:
+        return f"between {field.minimum} and {field.maximum}"
+    if field.minimum is not None:
+        return f"at least {field.minimum}"
+    if field.maximum is not None:
+        return f"at most {field.maximum}"
+    return ""
+
+
+def _config_path_value(key: str, raw: str) -> Path:
+    text = raw.strip()
+    if not text or "\0" in text:
+        raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be a non-empty path.')
+    try:
+        return Path(text).expanduser().resolve()
+    except OSError as exc:
+        raise _ConfigValueError(f'Invalid value for {key}: "{raw}" is not a usable path ({exc}).')
+
+
+def _parse_config_value(field: _ConfigField, raw: str, cfg) -> object:
+    """Parse and validate one scalar value against its declared schema."""
+    text = raw.strip()
+    key = field.key
+    if field.kind == "bool":
+        lowered = text.casefold()
+        if lowered in _TRUE:
+            return True
+        if lowered in _FALSE:
+            return False
+        raise _ConfigValueError(
+            f'Invalid value for {key}: "{raw}" must be on or off (true/false).')
+    if field.kind in ("int", "float"):
+        try:
+            parsed = int(text) if field.kind == "int" else float(text)
+        except ValueError:
+            noun = "a whole number" if field.kind == "int" else "a number"
+            raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be {noun}.')
+        if field.kind == "float":
+            if not math.isfinite(parsed):
+                raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be a finite number.')
+        if field.minimum is not None and parsed < field.minimum:
+            raise _ConfigValueError(
+                f'Invalid value for {key}: "{raw}" must be {_config_range(field)}.')
+        if field.maximum is not None and parsed > field.maximum:
+            raise _ConfigValueError(
+                f'Invalid value for {key}: "{raw}" must be {_config_range(field)}.')
+        return parsed
+    if field.kind == "choice":
+        if text not in field.choices:
+            raise _ConfigValueError(
+                f'Invalid value for {key}: "{raw}" must be one of: {", ".join(field.choices)}.')
+        return text
+    if field.kind == "path":
+        return _config_path_value(key, raw)
+    if field.kind == "component":
+        if not text:
+            return None
+        if text in (".", "..") or "/" in text or "\\" in text or "\0" in text:
+            raise _ConfigValueError(
+                f'Invalid value for {key}: "{raw}" must be one folder name without separators.')
+        return text
+    if field.kind == "persona":
+        try:
+            return Persona(text).name
+        except ValueError as exc:
+            raise _ConfigValueError(f'Invalid value for {key}: {exc}')
+    if field.kind == "active":
+        names = {model.name for model in cfg.models}
+        if text not in names:
+            raise _ConfigValueError(
+                f'Invalid value for {key}: "{raw}" is not a configured model. '
+                "Run: kova model list")
+        return text
+    raise _ConfigValueError(f'{key} is not a settable config key.')  # pragma: no cover
+
+
+def _set_config_value(cfg, key: str, raw: str) -> object:
+    """Apply one setting to ``cfg`` (without saving); return the stored value."""
+    if key.startswith("tui.keys."):
+        action = key[len("tui.keys."):]
+        if not action or action not in DEFAULT_KEYS:
+            suggestion = get_close_matches(action, DEFAULT_KEYS, n=1, cutoff=0.6)
+            hint = f' Did you mean "tui.keys.{suggestion[0]}"?' if suggestion else ""
+            raise _ConfigValueError(
+                f'Invalid value for {key}: unknown TUI action "{action}".{hint}')
+        value = raw.strip()
+        if not value:
+            raise _ConfigValueError(f'Invalid value for {key}: a key name cannot be empty.')
+        bindings = {**cfg.tui_keys, action: value}
+        if value == DEFAULT_KEYS[action]:
+            bindings.pop(action, None)
+        try:
+            Keymap(bindings)
+        except ValueError as exc:
+            raise _ConfigValueError(f'Invalid value for {key}: {exc}')
+        cfg.tui_keys = bindings
+        return value
+    field = _CONFIG_FIELDS.get(key)
+    if field is None:
+        raise KeyError(key)
+    value = _parse_config_value(field, raw, cfg)
+    setattr(cfg, field.attr, value)
+    return value
+
+
+def _config_display_value(value: object) -> str:
+    if value is None:
+        return "(unset)"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def _suggest_config_key(key: str) -> str | None:
+    """Closest known path, using the schema constants in ``kova.config``."""
+    if "." in key:
+        section, leaf = key.split(".", 1)
+        data = {section: {leaf: None}}
+    else:
+        data = {key: None}
+    found = unknown_config_keys(data)
+    return found[0][1] if found else None
+
+
+def _redact_tree(value: object) -> object:
+    """Keep the shape of OAuth/auth data but never its values."""
+    if isinstance(value, dict):
+        return {str(key): _redact_tree(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_tree(item) for item in value]
+    if value is None or value == "":
+        return value
+    return REDACTED
+
+
+def _redact_extra(value: object) -> object:
+    """Redact unknown keys whose names look like credentials."""
+    if isinstance(value, dict):
+        return {
+            str(key): REDACTED if _SECRET_NAME.search(str(key)) else _redact_extra(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_extra(item) for item in value]
+    return value
+
+
+def _config_snapshot(cfg) -> dict:
+    """A complete, credential-safe view of every Config field."""
+    return {
+        "path": str(cfg.home / "config.toml"),
+        "schema_version": CONFIG_SCHEMA,
+        "home": str(cfg.home),
+        "active": cfg.active,
+        "port": cfg.port,
+        "compact_threshold": cfg.compact_threshold,
+        "files_path": str(cfg.files_path),
+        "bind": cfg.bind,
+        "oauth_host_id": cfg.oauth_host_id,
+        "memory": {
+            "path": str(cfg.memory_path),
+            "write_subdir": cfg.memory_write_subdir,
+            "budget": cfg.memory_budget,
+            "index_lines": cfg.memory_index_lines,
+            "review": cfg.memory_review,
+            "review_every": cfg.memory_review_every,
+            "consolidate": cfg.memory_consolidate,
+            "consolidate_hour": cfg.memory_consolidate_hour,
+            "consolidate_min_confidence": cfg.memory_consolidate_min_confidence,
+            "consolidate_max_loss": cfg.memory_consolidate_max_loss,
+        },
+        "tui": {"theme": cfg.tui_theme, "keys": dict(cfg.tui_keys)},
+        "persona": {
+            "name": cfg.persona_name,
+            "tone": cfg.persona_tone,
+            "configured": cfg.persona_configured,
+        },
+        "providers": [
+            {
+                "id": provider.id,
+                "name": provider.name,
+                "base_url": provider.base_url,
+                "kind": provider.kind,
+                "adapter": provider.adapter,
+                "api_key": REDACTED if provider.api_key else None,
+                "headers": {name: REDACTED for name in provider.headers},
+                "auth": _redact_tree(provider.auth),
+            }
+            for provider in cfg.providers
+        ],
+        "models": [
+            {
+                "name": model.name,
+                "provider": model.provider,
+                "base_url": model.base_url,
+                "model": model.model,
+                "context": model.context,
+                "vision": model.vision,
+                "api_key": REDACTED if model.api_key else None,
+            }
+            for model in cfg.models
+        ],
+        "extra": _redact_extra(cfg._extra),
+    }
+
+
+def _config_rows(snapshot: dict) -> list[tuple[str, str]]:
+    """Flatten the snapshot into readable table rows, still redacted."""
+    memory = snapshot["memory"]
+    tui = snapshot["tui"]
+    persona = snapshot["persona"]
+    rows = [
+        ("schema_version", str(snapshot["schema_version"])),
+        ("home", snapshot["home"]),
+        ("active", snapshot["active"]),
+        ("port", str(snapshot["port"])),
+        ("compact_threshold", str(snapshot["compact_threshold"])),
+        ("files_path", snapshot["files_path"]),
+        ("bind", snapshot["bind"]),
+        ("oauth_host_id", snapshot["oauth_host_id"]),
+        ("memory.path", memory["path"]),
+        ("memory.write_subdir", memory["write_subdir"] or "(unset)"),
+        ("memory.budget", str(memory["budget"])),
+        ("memory.index_lines", str(memory["index_lines"])),
+        ("memory.review", "on" if memory["review"] else "off"),
+        ("memory.review_every", str(memory["review_every"])),
+        ("memory.consolidate", "on" if memory["consolidate"] else "off"),
+        ("memory.consolidate_hour", str(memory["consolidate_hour"])),
+        ("memory.consolidate_min_confidence", str(memory["consolidate_min_confidence"])),
+        ("memory.consolidate_max_loss", str(memory["consolidate_max_loss"])),
+        ("tui.theme", tui["theme"]),
+        ("tui.keys", json.dumps(tui["keys"], sort_keys=True) if tui["keys"] else "(defaults)"),
+        ("persona.name", persona["name"]),
+        ("persona.tone", persona["tone"]),
+        ("persona.configured", "yes" if persona["configured"] else "no"),
+    ]
+    if snapshot["models"]:
+        for index, model in enumerate(snapshot["models"]):
+            rows.append((
+                f"models.{index}",
+                f'{model["name"]} · {model["provider"] or "(legacy)"} · {model["base_url"]}'
+                f' · {model["model"] or "(no model)"} · context {model["context"]}'
+                f' · vision {"on" if model["vision"] else "off"}'
+                f' · key {"set" if model["api_key"] else "not set"}',
+            ))
+    else:
+        rows.append(("models", "(none)"))
+    if snapshot["providers"]:
+        for index, provider in enumerate(snapshot["providers"]):
+            access = "key set" if provider["api_key"] else "no key"
+            if provider["headers"]:
+                access += f' · {len(provider["headers"])} header(s)'
+            if provider["auth"]:
+                access += " · OAuth set"
+            rows.append((
+                f"providers.{index}",
+                f'{provider["id"]} · {provider["name"]} · {provider["kind"]}'
+                f' · {provider["adapter"]} · {provider["base_url"]} · {access}',
+            ))
+    else:
+        rows.append(("providers", "(none)"))
+    if snapshot["extra"]:
+        rows.append(("extra", json.dumps(snapshot["extra"], sort_keys=True, default=str)))
+    return rows
+
+
+_config = typer.Typer(no_args_is_help=True,
+                      help="Read and change config.toml. See docs/CONFIG.md for every key.")
+app.add_typer(_config, name="config")
+
+
+@_config.command("path")
+def config_path():
+    """Print the config.toml path for this KOVA_HOME."""
+    console.print(Text(str(kova_home() / "config.toml")))
+
+
+@_config.command("show")
+def config_show(
+    as_json: bool = typer.Option(False, "--json", help="Print one machine-readable JSON object."),
+):
+    """Show every setting; API keys and other secrets are always redacted."""
+    snapshot = _config_snapshot(load_config())
+    if as_json:
+        sys.stdout.write(json.dumps(snapshot, indent=2, ensure_ascii=False, default=str) + "\n")
+        return
+    table = _table(caption=f'{snapshot["path"]} · secrets redacted')
+    table.add_column("Key", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    for key, value in _config_rows(snapshot):
+        table.add_row(key, Text(value))
+    console.print(table)
+
+
+@_config.command("set")
+def config_set(key: str, value: str):
+    """Validate and save one setting. Use a dotted key, such as memory.budget."""
+    cfg = load_config()
+    try:
+        stored = _set_config_value(cfg, key, value)
+    except KeyError:
+        suggestion = _suggest_config_key(key)
+        if key in ("models", "providers") or key.startswith(("models.", "providers.")):
+            hint = "Use: kova model ... or kova providers ..."
+        elif suggestion:
+            hint = f'Did you mean "{suggestion}"?'
+        else:
+            hint = "Run: kova config show  (docs/CONFIG.md lists every key)"
+        _fail(f'Unknown config key "{key}".', hint=hint)
+    except _ConfigValueError as exc:
+        _fail(str(exc))
+    save_config(cfg)
+    _ok(f"Saved {key} = {_config_display_value(stored)}.")
+    _muted("A running server picks this up on its next start: kova stop")
 
 
 _providers = typer.Typer(help="Manage provider connections.", invoke_without_command=True)
