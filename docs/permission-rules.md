@@ -11,7 +11,8 @@ folder is data loss even when it is contained), and Full access runs without the
 sandbox. When the sandbox is unavailable, every command asks instead of running
 unconfined. Rules are checked first either way.
 
-Open **Permission rules** in the web composer, or `/permissions rules` in the
+Open the permission menu in the web composer and choose **Edit permission
+rules…**, or `/permissions rules` in the
 TUI, to edit the JSON array. `/permissions manual|auto|full` remains available.
 Example:
 
