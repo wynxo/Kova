@@ -72,7 +72,7 @@ class Config:
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
-        """Migrate unbound entries, deduplicating only identical credentials."""
+        """Bind entries, preserving a named custom provider when re-added."""
         for provider in self.providers:
             provider._home = self.home
         for m in self.models:
@@ -80,8 +80,15 @@ class Config:
             if m.provider and p is None:
                 raise ValueError(f"Model {m.name!r} references an unknown provider")
             if p is None:
-                p = next((p for p in self.providers if p.base_url == m.base_url and p.api_key == m.api_key
-                          and p.kind == 'custom'), None)
+                # Re-adding a named model is an update, not a new provider.
+                # Never carry credentials across endpoint changes or kinds.
+                p = next((p for p in self.providers if p.name == m.name
+                          and p.base_url == m.base_url and p.kind == 'custom'), None)
+                if p is not None and m.api_key is not None:
+                    p.api_key = m.api_key
+                if p is None:
+                    p = next((p for p in self.providers if p.base_url == m.base_url and p.api_key == m.api_key
+                              and p.kind == 'custom'), None)
                 if p is None:
                     identifier = m.name or 'provider'
                     while any(p.id == identifier for p in self.providers):
