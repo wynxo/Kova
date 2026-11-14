@@ -180,7 +180,11 @@ def install_web(app, require_bearer) -> None:
         except attachments.AttachmentError as exc:
             if chat is not None:
                 app.state.store.delete_chat(chat["id"])
-            raise HTTPException(400, str(exc)) from None
+            # Quota work keeps its own 409 contract; older attachment storage
+            # has no such class and every rejection is a 400.
+            quota = getattr(attachments, "AttachmentQuotaError", None)
+            status = 409 if quota is not None and isinstance(exc, quota) else 400
+            raise HTTPException(status, str(exc)) from None
         except Exception:
             if chat is not None:
                 app.state.store.delete_chat(chat["id"])
