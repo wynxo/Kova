@@ -243,12 +243,16 @@ restarts. See [remote-access.md](remote-access.md).
 ### CLI (`src/kova/cli.py`)
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
-`status`, `update`, `uninstall`, `export`, `import`, `pair`, `devices` and
-`doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
+`status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
+and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
 and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
-become `KovaError` and are rendered as one red line by `_fail`.
+become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
+the exception: it reads and writes `config.toml` directly, validates every value
+against a small schema, and never starts the server. `config show` redacts
+provider keys, custom headers and OAuth data; [CONFIG.md](CONFIG.md) documents
+every field.
 
 `kova ask` streams a turn without the interactive UI, prints the answer to
 stdout, and can emit `--json`. Its chats are titled with the

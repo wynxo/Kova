@@ -177,6 +177,10 @@ kova setup --url http://192.168.1.20:11434 --model MODEL_ID --name home
 
 Keys, custom headers and owned OAuth tokens are stored only in
 `~/.kova/config.toml`, written atomically with **0600** permissions on Unix. Set `compact_threshold = 0.75` to change the fraction of model context that triggers automatic conversation compaction. Use `/compact` in the TUI to summarize older turns manually; the original transcript remains available.
+Every key, its default and its allowed range are documented in
+[docs/CONFIG.md](docs/CONFIG.md); `kova config show` prints the same values with
+credentials redacted, and `kova config set KEY VALUE` validates a change before
+saving it.
 There is no extra keyring dependency. Avoid putting keys directly in shell
 history; interactive setup hides input. Owned tokens refresh near expiry under
 a cross-process lock. Logging out attempts to revoke the owned renewable session;
@@ -203,6 +207,7 @@ The CLI starts the server for you in the background, so normally you don't have 
   - `--think` shows the reasoning on stderr, so stdout stays clean.
   - Exit code 0 on success, 1 on a model or server error (message on stderr).
 - `kova setup` — connect a provider and select models, without a test chat or scan.
+- `kova config path|show [--json]|set KEY VALUE` — read or change `config.toml`; secrets are always redacted. Every key is documented in [docs/CONFIG.md](docs/CONFIG.md).
 - `kova chats search <words>` — search inside your chats; results show the chat number, title, when, and a snippet with the match highlighted.
 - `kova chats export <#|id> [--md|--json]` — print one chat to stdout, as Markdown (default) or JSON.
 - `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
