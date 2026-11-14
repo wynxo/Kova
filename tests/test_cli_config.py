@@ -48,7 +48,8 @@ def test_config_path_is_never_wrapped_for_scripts(home, monkeypatch):
     monkeypatch.setattr(cli.console, "width", 20)
     result = invoke("config", "path")
     assert result.exit_code == 0, result.output
-    assert result.stdout == str(home / "config.toml") + "\n"
+    # One line, exactly the path: no Rich wrapping, whatever the OS newline is.
+    assert result.stdout.splitlines() == [str(home / "config.toml")]
 
 
 def test_config_show_json_is_complete_and_redacts_credentials(home):
