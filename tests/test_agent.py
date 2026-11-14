@@ -237,6 +237,21 @@ async def test_fresh_install_asks_for_setup_instead_of_calling_a_model(tmp_path)
     assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]
 
 
+async def test_removing_the_last_model_still_asks_for_setup(tmp_path):
+    from kova.agent import Agent
+    from kova.config import load_config
+    from kova.memory import Memory
+    from kova.store import Store
+
+    cfg = load_config(tmp_path)
+    cfg.models.clear()
+    cfg.active = ''
+    agent = Agent(cfg, Store(tmp_path / "kova.db"), Memory(tmp_path / "memory"), {})
+    chat = agent.store.create_chat()
+    events = [e async for e in agent.run_turn(chat["id"], "hi")]
+    assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]
+
+
 async def test_tool_wire_metadata_survives_store_and_next_round(setup):
     script = tool('memory_search', {'query':'hello'})
     script[0]['tool_calls'][0]['extra_content'] = {'google': {'thought_signature': 'opaque-signature'}}

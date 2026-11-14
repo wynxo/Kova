@@ -309,6 +309,24 @@ def test_manual_compaction_endpoint(server):
     assert 'Hello there!' in str(store.get_context(chat_id))
 
 
+def test_no_model_after_removing_the_last_provider(server):
+    """An empty model list is a setup state, not a raw KeyError (#92)."""
+    client, headers, cfg, fake = server
+    chat_id = client.post('/chats', headers=headers).json()['id']
+    cfg.models.clear()
+    cfg.active = ''
+    response = client.post(f'/chats/{chat_id}/messages', json={'text': 'hi'}, headers=headers)
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    assert events[-1] == {'type': 'error', 'message': 'No model is set up yet. Run: kova setup'}
+    compact = client.post(f'/chats/{chat_id}/compact', headers=headers)
+    assert compact.status_code == 422
+    assert compact.json()['detail'] == 'No model is set up yet. Run: kova setup'
+    consolidate = client.post('/memory/consolidate', json={'dry_run': True}, headers=headers)
+    assert consolidate.status_code == 422
+    assert consolidate.json()['detail'] == 'No model is set up yet. Run: kova setup'
+
+
 def test_permission_rules_authenticated_validated_and_persisted(server):
     client, headers, cfg, fake = server
     assert client.get('/permission-rules').status_code == 401
