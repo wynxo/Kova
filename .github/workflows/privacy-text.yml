@@ -1,0 +1,58 @@
+name: Privacy (issues and comments)
+
+# Issues and comments cannot fail a check, so warn on them instead. The warning
+# never repeats the leaked value: it only says what kind of detail was found.
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    if: github.event.sender.type != 'Bot'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan the text
+        id: scan
+        env:
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.comment.body || github.event.issue.body }}
+        run: |
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/text.txt"
+          if python scripts/privacy_check.py --text "$RUNNER_TEMP/text.txt" --redact > "$RUNNER_TEMP/report.txt" 2>&1; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warn
+        if: steps.scan.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          WHERE: ${{ github.event.comment.html_url || github.event.issue.html_url }}
+        run: |
+          {
+            echo "⚠️ **Privacy check:** this text looks like it contains a real home folder, shell prompt or home-network address."
+            echo "This repository is public. Please replace them with placeholders (\`~/\`, \`you@demo\`, \`192.0.2.x\`), then delete the old version from the \"edited\" history."
+            echo
+            echo "Where: $WHERE"
+            echo '```'
+            grep -v '^$' "$RUNNER_TEMP/report.txt" | grep -v 'privacy problem(s)'
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"

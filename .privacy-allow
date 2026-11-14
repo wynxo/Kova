@@ -1,0 +1,13 @@
+# Private network addresses that are made-up examples in docs and tests.
+# The privacy check (scripts/privacy_check.py) rejects any other private IPv4,
+# so a real home-network address cannot slip in. Prefer 192.0.2.x for new examples.
+10.0.0.5
+10.254.254.254
+10.9.9.0
+10.9.9.2
+172.16.3.4
+192.168.0.2
+192.168.1.1
+192.168.1.20
+192.168.1.50
+192.168.4.2
