@@ -148,6 +148,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
 | `GET/PUT /permission-rules` | token or session | read / replace the rules that pre-approve tools |
+| `GET /autostart` | token or session | inspect start-at-login availability and state |
+| `POST /autostart/{action}` | token or session | enable or disable start at login (`on` or `off`) |
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
