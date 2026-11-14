@@ -178,6 +178,9 @@ def _model_dict(entry: ModelEntry) -> dict:
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
+EVENTS_KEEPALIVE = 15.0  # seconds between /events pings; the web UI reconnects after 3 missed
+
+
 def _sse(event: dict) -> str:
     """One SSE frame for an event."""
     return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
@@ -280,6 +283,7 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     app.state.steering = {}
+    app.state.events_keepalive = EVENTS_KEEPALIVE
     install_web(app, _require_bearer)
     from kova.provider_routes import install_provider_routes
     config.bind_providers()
@@ -804,11 +808,20 @@ def create_app(
     @api.get("/events")
     async def events() -> StreamingResponse:
         queue = app.state.bus.subscribe()
+        keepalive = app.state.events_keepalive
 
         async def stream() -> AsyncIterator[str]:
             try:
+                # A ping right away and then every ``keepalive`` seconds lets a
+                # browser tell a quiet stream from a dead one (a sleeping phone,
+                # a changed Wi-Fi, a server that vanished without closing).
+                yield _sse({"type": "ping"})
                 while True:
-                    event = await queue.get()
+                    try:
+                        event = await asyncio.wait_for(queue.get(), keepalive)
+                    except TimeoutError:
+                        yield _sse({"type": "ping"})
+                        continue
                     if event is None:  # server shutting down
                         return
                     yield _sse(event)
