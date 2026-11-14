@@ -96,6 +96,9 @@ def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Pat
         return False
     command = shell_command_arg(name, args)
     if command is not None:
+        # Scheduled scripts run later, unconfined, not in this turn's sandbox.
+        if name == "job_add":
+            return True
         if sandboxed is None:
             if command_risk(command) == "destructive":
                 return True

@@ -259,3 +259,23 @@ async def test_tool_argument_snapshots_arrive_before_execution_with_full_result(
     result = next(e for e in events if e['type'] == 'tool_result')
     assert result['output'] == 'x' * 1000 and len(result['summary']) == 200
     assert events[0] == {'type': 'reasoning', 'text': 'thinking now'}
+
+
+@pytest.mark.parametrize('permission', ['manual', 'auto'])
+async def test_scheduled_script_asks_even_with_chat_sandbox(setup, monkeypatch, permission):
+    from kova import sandbox
+
+    cfg, store, memory, tools, chat_id = setup
+    monkeypatch.setattr(sandbox, 'available', lambda: True)
+    store.update_chat(chat_id, permission=permission)
+    fake = FakeModel([tool('job_add', {'text': 'Repeat', 'schedule': 'every 1h',
+                                      'command': 'echo hi'}), text('Denied')])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    approvals = []
+    async for event in agent.run_turn(chat_id, 'Schedule it'):
+        if event['type'] == 'approval':
+            approvals.append(event)
+            agent.approvals.answer(chat_id, event['id'], 'deny')
+    assert len(approvals) == 1
+    assert approvals[0]['tool'] == 'job_add'
+    assert store.list_jobs() == []
