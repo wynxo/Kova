@@ -26,6 +26,9 @@ def _utc_now_iso() -> str:
 
 
 _WORD = re.compile(r"\w+", re.UNICODE)
+# Attachment ids are uuid4().hex. Matching the whole token avoids keeping a
+# file because its id happens to appear inside an unrelated hex string.
+_ATTACHMENT_ID = re.compile(r"\b[0-9a-f]{32}\b")
 
 #: Messages the search index covers. Tool calls and tool output never match.
 SEARCH_ROLES = ("user", "assistant")
@@ -116,7 +119,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS attachments (
                 id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,
                 mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER,
-                sha256 TEXT NOT NULL, path TEXT NOT NULL
+                sha256 TEXT NOT NULL, path TEXT NOT NULL, created TEXT,
+                used INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -191,6 +195,11 @@ class Store:
         )
         # Older databases predate message timestamps; add and backfill them so
         # ``list_chats`` can show when a chat was last used.
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(attachments)")}
+        if "created" not in columns:
+            self._conn.execute("ALTER TABLE attachments ADD COLUMN created TEXT")
+        if "used" not in columns:
+            self._conn.execute("ALTER TABLE attachments ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(messages)")}
         if "created" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN created TEXT")
@@ -328,8 +337,10 @@ class Store:
                         with os.fdopen(fd, "wb") as dst:
                             shutil.copyfileobj(src, dst)
                     attachment_ids[attachment["id"]] = ident
-                    self._conn.execute("INSERT INTO attachments VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path)",
-                                       {**attachment, "id": ident, "chat_id": cid, "path": str(path)})
+                    self._conn.execute(
+                        "INSERT INTO attachments (id, chat_id, name, mime, size, pages, sha256, path, created, used) "
+                        "VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path,:created,:used)",
+                        {**attachment, "id": ident, "chat_id": cid, "path": str(path)})
 
                 def remap(value: str | None) -> str | None:
                     if value is None:
@@ -437,13 +448,67 @@ class Store:
         self.update_chat(chat_id, title=title)
 
     def add_attachment(self, row: dict) -> None:
+        row = {"created": None, "used": 0, **row}
         with self._lock:
-            self._conn.execute("INSERT INTO attachments VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path)", row)
+            self._conn.execute(
+                "INSERT INTO attachments (id, chat_id, name, mime, size, pages, sha256, path, created, used) "
+                "VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path,:created,:used)", row)
             self._conn.commit()
+
+    def attachment_rows(self) -> list[dict]:
+        """Every stored attachment, across all chats (for quota and cleanup)."""
+        with self._lock:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM attachments")]
 
     def attachments(self, chat_id: str) -> list[dict]:
         with self._lock:
             return [dict(row) for row in self._conn.execute("SELECT * FROM attachments WHERE chat_id = ?", (chat_id,))]
+
+    def mark_attachments_used(self, chat_id: str, ids: list[str]) -> None:
+        """Retain these uploads: a persisted message has taken responsibility for them."""
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE attachments SET used = 1 WHERE chat_id = ? AND id = ?",
+                [(chat_id, ident) for ident in unique])
+            self._conn.commit()
+
+    def referenced_attachment_ids(self, chat_id: str) -> set[str]:
+        """Every attachment id a saved chat still uses.
+
+        The explicit ``message_attachments`` link is the authoritative record.
+        Older transcripts spell the id out in a message, tool call or summary;
+        that scan stays as a fallback for rows created before ``used`` existed
+        and for chats restored from a backup. Cleanup therefore never expires
+        an upload that a saved message still references, even when a merge or an
+        older database leaves ``used`` at zero.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT content, tool_calls FROM messages WHERE chat_id = ?", (chat_id,)
+            ).fetchall()
+            summary = self._conn.execute(
+                "SELECT summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            # This table arrives with the name-only message link. Keep working
+            # when this branch runs on a database that predates it.
+            links = []
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_attachments'"
+            ).fetchone():
+                links = self._conn.execute(
+                    "SELECT ma.attachment_id FROM message_attachments ma "
+                    "JOIN messages m ON m.id = ma.message_id WHERE m.chat_id = ?",
+                    (chat_id,),
+                ).fetchall()
+        parts = [row[name] for row in rows for name in ("content", "tool_calls")]
+        if summary is not None:
+            parts.append(summary["summary"])
+        found = set(_ATTACHMENT_ID.findall("\n".join(part for part in parts if part)))
+        found.update(link["attachment_id"] for link in links)
+        return found
 
     def delete_attachment(self, chat_id: str, ident: str) -> bool:
         with self._lock:

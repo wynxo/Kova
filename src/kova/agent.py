@@ -307,6 +307,9 @@ class Agent:
             model_text = f'{text}\n\n{block}' if text else block
         user_message_id = self.store.add_message(chat_id, 'user', text)
         if attached:
+            # A saved message takes responsibility for its uploads: retain the
+            # files even when the clean transcript no longer spells out an id.
+            self.store.mark_attachments_used(chat_id, [row['id'] for row in attached])
             # Keep the file names attached to this message for reloaded chats.
             # The link carries no extracted text and is not part of model history.
             self.store.link_message_attachments(user_message_id, attached)
