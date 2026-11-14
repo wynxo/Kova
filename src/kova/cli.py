@@ -500,7 +500,7 @@ def stop():
     if not pidfile.exists():
         client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
         try:
-            client.health()
+            client.health(probe=False)
         except KovaError as exc:
             if exc.status is not None:
                 raise
@@ -562,7 +562,7 @@ def status():
     cfg = load_config()
     client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
     try:
-        info = client.health()
+        info = client.health(probe=True)
     except KovaError as exc:
         if exc.status is not None:
             raise
@@ -674,7 +674,7 @@ def import_archive(
 
 
 def _list_models(client: KovaClient) -> None:
-    active = client.health()["model"]
+    active = client.health(probe=False)["model"]
     models = client.models_list()
     if not models:
         _empty("No models configured.", "Run: kova setup to find a model server.")

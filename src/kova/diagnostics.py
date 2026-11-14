@@ -17,7 +17,7 @@ def diagnose() -> list[tuple[bool, str]]:
     checks = [(True, 'Configuration loaded.')]
     try:
         with httpx.Client(timeout=4, trust_env=False) as client:
-            response = client.get(f'http://127.0.0.1:{cfg.port}/health')
+            response = client.get(f'http://127.0.0.1:{cfg.port}/health?probe=1')
             data = response.json()
             valid = response.status_code == 200 and isinstance(data, dict) and 'version' in data and 'model_ok' in data
             checks.append((valid, 'Kova server is running.' if valid else 'Port is occupied by another service. Choose a free port in config.toml.'))

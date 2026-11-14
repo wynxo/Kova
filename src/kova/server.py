@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
@@ -196,6 +197,99 @@ def _model_dict(entry: ModelEntry) -> dict:
 
 
 EVENTS_KEEPALIVE = 15.0  # seconds between /events pings; the web UI reconnects after 3 missed
+HEALTH_TTL = 15.0  # seconds a cached model reachability result stays fresh
+
+
+class _ModelHealth:
+    """Cached reachability of the active model, refreshed off the request path.
+
+    A warm value answers immediately. A stale one is returned as-is while one
+    background task probes, so any number of windows share a single provider
+    request per TTL. The first request for a new active model waits for that
+    one probe so a freshly opened window starts from a known value, while
+    ``probe=0`` never waits (server startup only needs to know the process is
+    up) and ``probe=1`` forces a live check for ``kova status``/``doctor``/setup.
+    """
+
+    def __init__(self, config: Config, transport: httpx.AsyncBaseTransport | None,
+                 now: Callable[[], datetime]) -> None:
+        self._config = config
+        self._transport = transport
+        self._now = now
+        self._key: tuple | None = None
+        self._ok = False
+        self._checked: float | None = None
+        self._checked_at: datetime | None = None
+        self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    def _entry(self) -> ModelEntry | None:
+        try:
+            return self._config.active_model()
+        except KeyError:
+            return None
+
+    @staticmethod
+    def _signature(entry: ModelEntry) -> tuple:
+        kind = entry._provider.kind if entry._provider else ""
+        return (entry.name, entry.base_url, entry.model, kind)
+
+    def _fresh(self, entry: ModelEntry) -> bool:
+        return (self._signature(entry) == self._key and self._checked is not None
+                and time.monotonic() - self._checked < HEALTH_TTL)
+
+    def snapshot(self) -> dict:
+        """The last known value, without touching the provider."""
+        entry = self._entry()
+        if entry is None or self._signature(entry) != self._key:
+            return {"model_ok": False, "model_checked_at": None}
+        return {"model_ok": self._ok,
+                "model_checked_at": self._checked_at.isoformat() if self._checked_at else None}
+
+    async def get(self, *, force: bool = False, wait: bool = True) -> dict:
+        """Return the cached value; only a cold cache (or ``force``) waits."""
+        entry = self._entry()
+        if entry is None:
+            return self.snapshot()
+        key = self._signature(entry)
+        if force:
+            await self._refresh(entry, key, force=True)
+        elif key != self._key:
+            if wait:
+                await self._refresh(entry, key, force=False)
+            else:
+                self._start(entry, key)
+        elif not self._fresh(entry):
+            self._start(entry, key)
+        return self.snapshot()
+
+    def _start(self, entry: ModelEntry, key: tuple) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._background(entry, key))
+
+    async def _background(self, entry: ModelEntry, key: tuple) -> None:
+        await self._refresh(entry, key, force=False)
+
+    async def _refresh(self, entry: ModelEntry, key: tuple, *, force: bool) -> None:
+        async with self._lock:
+            # Waiters queued behind a probe reuse its result instead of repeating it.
+            if not force and self._fresh(entry):
+                return
+            try:
+                ok = await ModelClient(entry, transport=self._transport).ping()
+            except Exception:  # a broken probe must never kill the health route
+                ok = False
+            self._key, self._ok = key, ok
+            self._checked = time.monotonic()
+            self._checked_at = self._now()
+
+    async def close(self) -> None:
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 def _sse(event: dict) -> str:
@@ -282,6 +376,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in [reminders, *app.state.turns]:
             with suppress(asyncio.CancelledError):
                 await task
+        await app.state.model_health.close()
 
 
 def create_app(
@@ -300,6 +395,7 @@ def create_app(
     app.state.config = config
     app.state.transport = transport
     app.state.now = now
+    app.state.model_health = _ModelHealth(config, transport, now)
     app.state.token = ensure_token(config.home)
     app.state.turns = set()
     app.state.chat_locks = {}
@@ -317,13 +413,9 @@ def create_app(
         return app.state.chat_locks.setdefault(chat_id, asyncio.Lock())
 
     @app.get("/health")
-    async def health() -> dict:
-        try:
-            entry = config.active_model()
-        except KeyError:
-            return {"version": __version__, "model": config.active, "model_ok": False}
-        reachable = await ModelClient(entry, transport=transport).ping()
-        return {"version": __version__, "model": config.active, "model_ok": reachable}
+    async def health(probe: bool | None = Query(None)) -> dict:
+        status = await app.state.model_health.get(force=probe is True, wait=probe is not False)
+        return {"version": __version__, "model": config.active, **status}
 
     api = APIRouter(dependencies=[Depends(_require_token)])
 
