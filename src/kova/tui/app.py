@@ -172,8 +172,14 @@ def _kill(process: subprocess.Popen) -> None:
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGTERM)
         else:
-            process.terminate()
-    except OSError:
+            # terminate() only stops the shell; its children (e.g. a long
+            # `ping`) keep the output pipe open and communicate() would wait
+            # for them. Kill the whole tree instead.
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=5, check=False)
+            process.kill()
+    except (OSError, subprocess.SubprocessError):
         pass
 
 
