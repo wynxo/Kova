@@ -445,9 +445,13 @@ def create_app(
         async with chat_lock(chat_id):
             if app.state.store.get_chat(chat_id) is None:
                 raise HTTPException(status_code=404, detail="chat not found")
-            entry = config.active_model()
+            try:
+                entry = config.active_model()
+            except KeyError as exc:
+                raise HTTPException(status_code=422,
+                                    detail="No model is set up yet. Run: kova setup") from exc
             if not entry.model:
-                raise HTTPException(status_code=422, detail="No model is configured")
+                raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
             event = await compact(app.state.store, chat_id, ModelClient(entry, transport=app.state.agent.transport),
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
@@ -712,9 +716,13 @@ def create_app(
     async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
         """Plan one consolidation run and, unless asked to dry-run, apply it."""
         from kova.review import gate_operations, plan_consolidation, apply_operations
-        entry = config.active_model()
+        try:
+            entry = config.active_model()
+        except KeyError as exc:
+            raise HTTPException(status_code=422,
+                                detail="No model is set up yet. Run: kova setup") from exc
         if not entry.model:
-            raise HTTPException(status_code=422, detail="No model is configured")
+            raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
         client = ModelClient(entry, transport=app.state.agent.transport)
         memory, store = app.state.memory, app.state.store
         operations = await plan_consolidation(memory, client)
