@@ -170,6 +170,7 @@ def test_summarize_never_raises(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("broken")
 
+    monkeypatch.setattr(si.sys, "platform", "linux")  # isolate all Linux probes
     monkeypatch.setattr(si, "_read_text", boom)
     monkeypatch.setattr(si, "_run", boom)
     monkeypatch.setattr(si.os, "cpu_count", boom)

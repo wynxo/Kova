@@ -1,3 +1,4 @@
+import os
 import pytest
 
 from kova.config import ModelEntry, ensure_token, kova_home, load_config, save_config
@@ -41,12 +42,14 @@ def test_kova_home_env(monkeypatch, tmp_path):
 def test_token_stable_and_private(tmp_path):
     t = ensure_token(tmp_path)
     assert ensure_token(tmp_path) == t and len(t) >= 32
-    assert (tmp_path / "token").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert (tmp_path / "token").stat().st_mode & 0o777 == 0o600
 
 
 def test_config_file_private(tmp_path):
     load_config(tmp_path)
-    assert (tmp_path / "config.toml").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert (tmp_path / "config.toml").stat().st_mode & 0o777 == 0o600
 
 
 def test_provider_key_is_authoritative_over_hydrated_model_keys(tmp_path):
