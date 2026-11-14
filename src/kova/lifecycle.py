@@ -18,7 +18,7 @@ from urllib.parse import quote
 import httpx
 import psutil
 
-from kova import __version__
+from kova import __version__, autostart
 from kova.config import kova_home
 
 REPOSITORY = "https://github.com/wynxo/Kova"
@@ -215,6 +215,11 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
         validate_purge(home)
     emit("→ Stopping the Kova server (if running) ...")
     stop_server(home)
+    emit("→ Removing Kova's start-at-login entry ...")
+    try:
+        autostart.disable()
+    except (autostart.AutostartError, OSError) as exc:
+        emit(f"! Could not remove the start-at-login entry: {exc}")
     uv = find_uv()
     emit("→ Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai")
     try:

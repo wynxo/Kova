@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <meta id="theme-color" name="theme-color" content="#0d0d10">
+  <link rel="manifest" href="/app/manifest.webmanifest">
   <title>Kova</title>
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/app/assets/icon-32.png" type="image/png" sizes="32x32">
@@ -32,6 +33,7 @@
         <button id="open-memory" type="button" class="nav-row"><span class="icon i-brain" aria-hidden="true"></span>Memory</button>
         <button id="open-reminders" type="button" class="nav-row"><span class="icon i-bell" aria-hidden="true"></span>Reminders</button>
         <button id="add-provider" type="button" class="nav-row"><span class="icon i-plus" aria-hidden="true"></span>Add provider</button>
+        <button id="install-settings" type="button" class="nav-row">Install &amp; notifications</button>
         <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
       </nav>
       <div class="footer-bar">
@@ -46,6 +48,7 @@
     <header class="topbar">
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New conversation</strong>
+      <details class="chat-menu"><summary aria-label="Conversation actions">•••</summary><button id="compact-now" type="button" class="btn">Compact now</button></details>
       <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
     </header>
     <div id="banner" class="banner" role="status" hidden></div>
@@ -61,9 +64,15 @@
       <button id="jump" type="button" class="jump" hidden title="Jump to the latest message" aria-label="Jump to the latest message"><span class="icon i-arrow-down" aria-hidden="true"></span></button>
       <div id="queue-strip" class="queue-strip" aria-label="Queued messages" hidden></div>
       <form id="composer" class="composer" data-mode="work">
+        <div id="command-picker" class="command-picker" aria-label="Commands" hidden></div>
         <label class="sr-only" for="prompt">Message Kova</label>
+        <div id="attachment-chips" aria-live="polite"></div>
+        <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
+        <input id="attachment-input" type="file" multiple hidden>
         <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
         <div class="compose-toolbar">
+          <button id="commands" type="button" class="chip" aria-label="Show commands">/</button>
+          <button id="attach" class="chip" type="button" aria-label="Attach files">📎</button>
           <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
           <div id="compose-options" class="compose-options">
           <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
@@ -97,6 +106,7 @@
     </div>
   </main>
   <div id="toasts" role="status" aria-live="polite"></div>
+  <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <div class="dialog-head"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button id="shortcuts-close" type="button" class="icon-button" aria-label="Close keyboard shortcuts"><span class="icon i-x" aria-hidden="true"></span></button></div>
@@ -136,6 +146,12 @@
       <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
     </form>
   </dialog>
+  <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
+    <summary>Settings</summary>
+    <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+    <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
+    <button id="autostart-refresh" type="button">Refresh</button>
+  </details>
   <noscript>Kova needs JavaScript enabled. Open kova-web to connect.</noscript>
 </body>
 </html>

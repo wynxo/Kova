@@ -97,9 +97,11 @@ The installer keeps a copy of the desktop app in `~/.kova/desktop` (or your
 
 The Electron shell starts the server when it is down, reads the local token, and
 exchanges it for a one-use ticket; its caches and remembered window bounds live
-under `KOVA_HOME`. Closing the window hides it to the tray. Packaged builds
-(AppImage/deb, NSIS, DMG) are configured in [desktop/README.md](desktop/README.md);
-they are built per platform and need the Kova Python CLI installed separately.
+under `KOVA_HOME`. The page may request the **Notification** permission for OS
+notifications; every other permission request is denied. Closing the window hides
+it to the tray. Packaged builds (AppImage/deb, NSIS, DMG) are configured in
+[desktop/README.md](desktop/README.md); they are built per platform and need the
+Kova Python CLI installed separately.
 
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
 live tool status, approval cards, plan checklists, working-folder and permission
@@ -175,6 +177,10 @@ kova setup --url http://192.168.1.20:11434 --model MODEL_ID --name home
 
 Keys, custom headers and owned OAuth tokens are stored only in
 `~/.kova/config.toml`, written atomically with **0600** permissions on Unix. Set `compact_threshold = 0.75` to change the fraction of model context that triggers automatic conversation compaction. Use `/compact` in the TUI to summarize older turns manually; the original transcript remains available.
+Every key, its default and its allowed range are documented in
+[docs/CONFIG.md](docs/CONFIG.md); `kova config show` prints the same values with
+credentials redacted, and `kova config set KEY VALUE` validates a change before
+saving it.
 There is no extra keyring dependency. Avoid putting keys directly in shell
 history; interactive setup hides input. Owned tokens refresh near expiry under
 a cross-process lock. Logging out attempts to revoke the owned renewable session;
@@ -201,6 +207,7 @@ The CLI starts the server for you in the background, so normally you don't have 
   - `--think` shows the reasoning on stderr, so stdout stays clean.
   - Exit code 0 on success, 1 on a model or server error (message on stderr).
 - `kova setup` — connect a provider and select models, without a test chat or scan.
+- `kova config path|show [--json]|set KEY VALUE` — read or change `config.toml`; secrets are always redacted. Every key is documented in [docs/CONFIG.md](docs/CONFIG.md).
 - `kova chats search <words>` — search inside your chats; results show the chat number, title, when, and a snippet with the match highlighted.
 - `kova chats export <#|id> [--md|--json]` — print one chat to stdout, as Markdown (default) or JSON.
 - `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
@@ -263,13 +270,105 @@ Reminders:
 - `kova reminders add "<when>" "<text>"` — add one; `when` can be natural local time (`in 10 min`, `tomorrow 5pm`, `monday 9am`, `morgen 9 Uhr`) or ISO 8601
 - `kova reminders rm ID` — delete one
 
+Reminders are fired by the background server, so they still arrive after you close a chat. Kova uses the first OS notifier it finds: `notify-send` on Linux, falling back to `gdbus`; `osascript` on macOS; a PowerShell toast on Windows, falling back to `msg.exe`. If none is installed the reminder still appears in an open terminal chat or desktop window. On Linux install `notify-send` with `sudo apt install libnotify-bin` (Debian/Ubuntu), `sudo dnf install libnotify` (Fedora) or `sudo pacman -S libnotify` (Arch); macOS and Windows include their notifier. `kova doctor` prints which notifier will be used.
+
 Server:
 
 - `kova serve` — run the server in the foreground
 - `kova stop` — stop it
 - `kova status` — is it up, which model is active, is the model reachable
+- `kova autostart on` — start the server at login; no administrator rights needed
+- `kova autostart off` — remove Kova's login entry and stop its login unit
+- `kova autostart status` — report installed, enabled and running, or a stale entry
+
+### Always on
+
+Reminders, scheduled jobs and phone access only work while Kova's server is running.
+`kova autostart on` writes one per-user login entry, chosen for your platform: a
+systemd user unit at `~/.config/systemd/user/kova.service` on Linux (an autostart
+`.desktop` file at `~/.config/autostart/kova.desktop` when `systemctl --user` does
+not answer), a LaunchAgent at `~/Library/LaunchAgents/ai.kova.server.plist` on
+macOS, or the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on
+Windows. None of these need administrator rights or a root shell.
+
+The toggle is idempotent, records your current `KOVA_HOME`, and removes only
+Kova's own file or Run value. `kova autostart status` compares the entry with the
+current install without rewriting it, so an entry left by an older Python or
+checkout is reported as stale; run `kova autostart on` to refresh it. Kova uses a
+little memory while idle, and a local model is only loaded when you chat.
+`kova uninstall` removes the entry too.
 
 Missing notes, reminders, or models and server connection failures print a red, one-line error and exit with code 1, without a traceback.
+
+### Troubleshoot an install
+
+`kova doctor` is the first stop when a fresh install does not behave: it checks
+the parts a first run needs without starting a server or sending a chat. It
+prints one line per check and ends with a verdict, so exit code 0 has a clear
+meaning: everything below it passed.
+
+```console
+$ kova doctor
+✓ Configuration loaded.
+✓ Kova server is running.
+✓ Provider reachable; active model is listed.
+✓ Memory directory is writable (or can be created).
+✓ Port is owned by this KOVA_HOME.
+✓ landlock abi 6
+✓ Node.js 22.11.0 and npm found for kova-app.
+✓ Token file permissions are 0600.
+✓ 32.0 GB free in KOVA_HOME.
+✓ Config schema version 2; no unknown keys.
+✓ openai adapter supports tool calling.
+✓ Desktop notifications use notify-send.
+→ All checks passed.    (12 ok)
+```
+
+What each line means:
+
+- **Configuration** — `config.toml` parses and its provider references resolve.
+- **Server** — something answers `/health` on the configured port. "Stopped" is
+  fine: `kova` starts it automatically.
+- **Provider/model** — the active provider lists the active model. This is the
+  usual "why won't it answer?" check.
+- **Memory** — the memory folder is writable, or its parent can create it.
+- **Port owner** — the server on the port uses this `KOVA_HOME`'s token. A
+  different Kova on the same port would reject this home's requests.
+- **Sandbox** — Linux Landlock is available, shown as its ABI version. Without
+  it, every `run_command` asks for approval, even in Auto mode.
+- **Node** — Node.js 22+ and npm are present for `kova-app`. If they are
+  missing, `kova-app` opens the web UI instead, which is not a failure.
+- **Token** — the local API token is readable only by you (mode 0600).
+- **Disk** — `KOVA_HOME` has at least 100 MB free for chats, notes and logs.
+- **Schema** — the config schema is current and has no keys this version
+  ignores.
+- **Tools** — the active adapter carries tool calls, so work mode can act.
+- **Notifications** — the OS notifier reminders will use, with its fallback:
+  `notify-send` then `gdbus` on Linux, `osascript` on macOS, or a PowerShell
+  toast then `msg.exe` on Windows. Without one, reminders still appear in an
+  open terminal chat or desktop window.
+
+When a line fails, the verdict names the next step and the command exits 1:
+
+```console
+$ kova doctor
+✗ Port is held by a different Kova (its token does not match this KOVA_HOME).
+→ Next: Stop the other server or choose another port    (11 ok, 1 needs attention)
+$ echo $?
+1
+```
+
+For scripts, `--json` prints one stable array of `{"ok", "check", "detail"}`
+objects with no colors or summary line:
+
+```console
+$ kova doctor --json
+[{"ok": true, "check": "config", "detail": "Configuration loaded."}, {"ok": true, "check": "sandbox", "detail": "landlock abi 6"}]
+```
+
+The `check` names are `config`, `server`, `model`, `memory`, `port-owner`,
+`sandbox`, `node`, `token`, `disk`, `schema`, `tools` and `notifier`. Diagnostic
+output never includes API keys, the bearer token or your token's value.
 
 ## Chat modes
 

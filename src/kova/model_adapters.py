@@ -13,9 +13,9 @@ import json
 # Kova only when a provider sends its own ``reasoning_content``/``reasoning``
 # extension, which the provider kind declares.
 ADAPTER_CAPABILITIES = {
-    'openai': frozenset({'tools'}),
-    'anthropic': frozenset({'tools', 'reasoning'}),
-    'responses': frozenset({'tools', 'reasoning'}),
+    'openai': frozenset({'tools', 'vision'}),
+    'anthropic': frozenset({'tools', 'reasoning', 'vision'}),
+    'responses': frozenset({'tools', 'reasoning', 'vision'}),
 }
 
 
@@ -52,7 +52,15 @@ def anthropic_request(model, messages, tools):
         else:
             blocks = []
             if message.get('content'):
-                blocks.append({'type': 'text', 'text': message['content']})
+                if isinstance(message['content'], list):
+                    for part in message['content']:
+                        if part['type'] == 'text':
+                            blocks.append(part)
+                        else:
+                            header, data = part['image_url']['url'].split(',', 1)
+                            blocks.append({'type': 'image', 'source': {'type': 'base64', 'media_type': header[5:].split(';')[0], 'data': data}})
+                else:
+                    blocks.append({'type': 'text', 'text': message['content']})
             for call in message.get('tool_calls') or []:
                 function = call['function']
                 blocks.append({'type': 'tool_use', 'id': call['id'], 'name': function['name'],
@@ -80,7 +88,10 @@ def responses_request(model, messages, tools):
             items.append({'type': 'function_call_output', 'call_id': message['tool_call_id'], 'output': message.get('content') or ''})
         else:
             if message.get('content'):
-                items.append({'role': role, 'content': message['content']})
+                content = message['content']
+                if isinstance(content, list):
+                    content = [({'type': 'input_text', 'text': p['text']} if p['type'] == 'text' else {'type': 'input_image', 'image_url': p['image_url']['url']}) for p in content]
+                items.append({'role': role, 'content': content})
             for call in message.get('tool_calls') or []:
                 items.append({'type': 'function_call', 'call_id': call['id'], 'name': call['function']['name'],
                               'arguments': call['function']['arguments']})

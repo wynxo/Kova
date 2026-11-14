@@ -106,9 +106,11 @@ class KovaClient:
         """Mint a one-use browser login ticket without exposing the server token."""
         return self._request("POST", "/app/session").json()["ticket"]
 
-    def health(self) -> dict:
+    def health(self, probe: bool | None = None) -> dict:
+        """Server health; ``probe=True`` forces a live model check, ``False`` never waits."""
+        params = None if probe is None else {"probe": "1" if probe else "0"}
         try:
-            data = self._request("GET", "/health", timeout=4).json()
+            data = self._request("GET", "/health", timeout=4, params=params).json()
             if not isinstance(data, dict) or 'version' not in data or 'model_ok' not in data:
                 raise ValueError()
             # /health is public: it proves Kova is listening, not that this
@@ -399,7 +401,7 @@ def ensure_server(cfg: Config, timeout: float = 10) -> KovaClient:
     log = cfg.home / "server.log"
     client = KovaClient(base, ensure_token(cfg.home))
     try:
-        client.health()
+        client.health(probe=False)
         return client
     except KovaError as exc:
         if exc.status is not None:
@@ -413,7 +415,7 @@ def ensure_server(cfg: Config, timeout: float = 10) -> KovaClient:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            client.health()
+            client.health(probe=False)
             return client
         except KovaError as exc:
             if exc.status is not None:

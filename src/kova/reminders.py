@@ -10,6 +10,7 @@ import asyncio
 import logging
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from datetime import datetime
 
@@ -19,16 +20,106 @@ from kova.store import Store
 
 log = logging.getLogger(__name__)
 
+APP_NAME = "Kova"
+
+# Windows toasts need an AppUserModelID the system already knows. PowerShell's
+# own id is registered on every Windows install, so scripts may toast with it.
+_WINDOWS_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+
+_APPLESCRIPT_ESCAPES = str.maketrans({"\\": "\\\\", '"': '\\"'})
+
+
+def _ps_quote(value: str) -> str:
+    """Quote one PowerShell single-quoted string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _windows_toast(text: str) -> list[str]:
+    """PowerShell toast through ``Windows.UI.Notifications``."""
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,"
+        "ContentType=WindowsRuntime]|Out-Null;"
+        "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+        "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+        f"$t.GetElementsByTagName('text')[0].AppendChild($t.CreateTextNode({_ps_quote(APP_NAME)}))|Out-Null;"
+        f"$t.GetElementsByTagName('text')[1].AppendChild($t.CreateTextNode({_ps_quote(text)}))|Out-Null;"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+        f"{_ps_quote(_WINDOWS_APP_ID)}).Show([Windows.UI.Notifications.ToastNotification]::new($t));"
+    )
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def notification_plan(
+    text: str,
+    platform: str | None = None,
+    which: Callable[[str], str | None] | None = None,
+) -> list[tuple[str, list[str]]]:
+    """Return the notifier name and command to try, best first, for ``platform``.
+
+    An empty list means this system has no notifier Kova knows how to call.
+    ``platform``, ``which`` and the result are plain data so tests can pin a
+    platform without a matching machine.
+    """
+    platform = platform or sys.platform
+    which = which or shutil.which
+    plan: list[tuple[str, list[str]]] = []
+    if platform.startswith("linux") or "bsd" in platform:
+        if which("notify-send"):
+            plan.append(("notify-send", ["notify-send", APP_NAME, text]))
+        if which("gdbus"):
+            plan.append(
+                (
+                    "gdbus",
+                    [
+                        "gdbus",
+                        "call",
+                        "--session",
+                        "--dest",
+                        "org.freedesktop.Notifications",
+                        "--object-path",
+                        "/org/freedesktop/Notifications",
+                        "--method",
+                        "org.freedesktop.Notifications.Notify",
+                        APP_NAME,
+                        "0",
+                        "",
+                        APP_NAME,
+                        text,
+                        "[]",
+                        "{}",
+                        "5000",
+                    ],
+                )
+            )
+    elif platform == "darwin":
+        if which("osascript"):
+            body = text.replace("\r", " ").replace("\n", " ").translate(_APPLESCRIPT_ESCAPES)
+            script = f'display notification "{body}" with title "{APP_NAME}"'
+            plan.append(("osascript", ["osascript", "-e", script]))
+    elif platform.startswith("win"):
+        for shell in ("powershell", "pwsh"):
+            if which(shell):
+                plan.append((shell, _windows_toast(text)))
+                break
+        if which("msg.exe") or which("msg"):
+            plan.append(("msg.exe", ["msg", "*", f"{APP_NAME}: {text}"]))
+    return plan
+
 
 def desktop_notify(text: str) -> None:
-    """Show a desktop notification via ``notify-send`` if it exists.
+    """Show a desktop notification with this platform's notifier.
 
-    Never raises: a missing binary or a failed launch is silently ignored.
+    Tries each notifier in :func:`notification_plan` in turn. Never raises: a
+    missing binary, a failed launch or an unsupported platform is ignored, so
+    the reminder loop keeps running and client windows still show the reminder.
     """
-    if shutil.which("notify-send") is None:
-        return
     try:
-        subprocess.Popen(["notify-send", "Kova", text])
+        for name, command in notification_plan(text):
+            try:
+                subprocess.Popen(command)
+                return
+            except Exception:
+                log.debug("desktop notifier %s failed", name, exc_info=True)
     except Exception:  # pragma: no cover - defensive, never raises
         log.exception("desktop notification failed")
 

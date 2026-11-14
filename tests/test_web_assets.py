@@ -59,6 +59,8 @@ def local_path(reference: str) -> Path | None:
     if reference.startswith(("http://", "https://", "//")):
         raise AssertionError(f"external URL in index.html: {reference}")
     route = reference.split("?", 1)[0].split("#", 1)[0]
+    if route == "/app/manifest.webmanifest":
+        return ASSETS / "manifest.webmanifest"
     if route in {"", "/app", "/app/"}:
         return INDEX
     if route.startswith("/app/assets/"):

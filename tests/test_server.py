@@ -57,6 +57,7 @@ def test_auth_required(server):
         ("delete", "/reminders/1", None),
         ("get", "/models", None),
         ("post", "/models", {"name": "m", "base_url": "http://localhost/v1", "model": "x"}),
+        ("patch", "/models", {"name": "m", "vision": True}),
         ("post", "/models/active", {"name": "m"}),
         ("get", "/events", None),
     ]
@@ -76,8 +77,70 @@ def test_health_ok_when_model_down(tmp_path, monkeypatch):
     app = create_app(cfg, transport=httpx.MockTransport(down))
     with TestClient(app) as client:
         response = client.get("/health")
+    body = response.json()
     assert response.status_code == 200
-    assert response.json() == {"version": __version__, "model": "local", "model_ok": False}
+    assert (body["version"], body["model"], body["model_ok"]) == (__version__, "local", False)
+    assert body["model_checked_at"]
+
+
+def test_health_cached_path_does_not_await_ping(tmp_path, monkeypatch):
+    """A warm /health must not touch the provider, even if a probe would hang (#98)."""
+    from kova.models import ModelClient
+
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    app = create_app(cfg, transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    with TestClient(app) as client:
+        assert client.get("/health").json()["model_ok"] is True
+
+        async def hang(self):
+            raise AssertionError("/health awaited ping() on the cached path")
+
+        monkeypatch.setattr(ModelClient, "ping", hang)
+        assert client.get("/health").json()["model_ok"] is True
+        assert client.get("/health?probe=0").json()["model_ok"] is True
+
+
+def test_health_probe_forces_a_live_check(tmp_path, monkeypatch):
+    """``?probe=1`` refreshes the cached value instead of returning it (#98)."""
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    provider = {"up": True, "probes": 0}
+
+    def respond(request):
+        if request.url.path.endswith("/models"):
+            provider["probes"] += 1
+            return httpx.Response(200 if provider["up"] else 503, json={"data": []})
+        return httpx.Response(404)
+
+    app = create_app(cfg, transport=httpx.MockTransport(respond))
+    with TestClient(app) as client:
+        assert client.get("/health").json()["model_ok"] is True
+        provider["up"] = False
+        assert client.get("/health").json()["model_ok"] is True  # still within the TTL
+        forced = client.get("/health?probe=1").json()
+    assert forced["model_ok"] is False
+    assert provider["probes"] == 2
+
+
+def test_health_probes_once_per_ttl_across_windows(tmp_path, monkeypatch):
+    """Many windows asking in the same TTL share one provider request (#98)."""
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    probes = {"count": 0}
+
+    def respond(request):
+        if request.url.path.endswith("/models"):
+            probes["count"] += 1
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404)
+
+    app = create_app(cfg, transport=httpx.MockTransport(respond))
+    with TestClient(app) as client:
+        for _ in range(5):
+            assert client.get("/health").json()["model_ok"] is True
+            assert client.get("/health?probe=0").json()["model_ok"] is True
+    assert probes["count"] == 1
 
 
 def test_chat_stream_events(server):
@@ -412,3 +475,25 @@ def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):
         server.should_exit = True
         thread.join(5)
         listener.close()
+
+
+def test_autostart_settings(server, monkeypatch):
+    from kova import autostart
+    client, headers, *_ = server
+    calls = []
+    monkeypatch.setattr(autostart, 'enable', lambda: calls.append('on'))
+    monkeypatch.setattr(autostart, 'disable', lambda: calls.append('off'))
+    monkeypatch.setattr(autostart, 'status', lambda: autostart.Status('linux', 'desktop', True, enabled=True, stale=True))
+    for method, path in [('get', '/autostart'), ('post', '/autostart/on'), ('post', '/autostart/off')]:
+        assert getattr(client, method)(path).status_code == 401
+        response = getattr(client, method)(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {'available': True, 'enabled': True, 'stale': True}
+    assert calls == ['on', 'off']
+    assert client.post('/autostart/invalid', headers=headers).status_code == 400
+    def fail():
+        raise autostart.AutostartError('private diagnostic')
+    monkeypatch.setattr(autostart, 'status', fail)
+    response = client.get('/autostart', headers=headers)
+    assert response.status_code == 503
+    assert 'private diagnostic' not in response.text

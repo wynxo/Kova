@@ -156,7 +156,8 @@ def test_stale_pid_does_not_block_startup(tmp_path, monkeypatch):
     (tmp_path / 'server.pid').write_text('99999999')
     class FakeClient:
         calls = 0
-        def health(self):
+        def health(self, probe=None):
+            assert probe is False
             self.calls += 1
             if self.calls == 1:
                 raise client.KovaError(None, 'offline')

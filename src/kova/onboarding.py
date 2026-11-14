@@ -92,6 +92,10 @@ def _save_provider(cfg, provider, selected, active=None, *, legacy_name=None):
     if client:
         try:
             client.provider_add(provider, selected, active, legacy_name=legacy_name)
+            try:
+                client.health(probe=True)  # warm the new active model's cached status
+            except KovaError:
+                pass
         finally:
             client.http.close()
     else:

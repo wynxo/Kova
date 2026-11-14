@@ -40,12 +40,13 @@ class FakeEventSource {
 }
 const sources = [], timers = [], intervals = [], requests = [];
 let clock = 1_000_000, chatsStatus = 200, unreachable = false;
+let healthPayload = {model: 'local', model_ok: true};
 class FakeDate extends Date { static now() { return clock; } }
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag),
     createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; },
-    body: new Element(), documentElement: new Element(), visibilityState: 'visible', title: ''},
+    body: new Element(), documentElement: new Element(), visibilityState: 'visible', hidden: false, title: ''},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }, history: {replaceState() {}}},
   location: {hash: '', pathname: '/app', search: ''},
   EventSource: FakeEventSource, Date: FakeDate,
@@ -60,7 +61,7 @@ const sandbox = {
     if (path === '/chats' && chatsStatus !== 200) return {ok: false, status: chatsStatus, json: async () => ({detail: 'Open kova-web to connect this window.'})};
     const payloads = {
       '/chats': [], '/persona': {name: 'Kova', configured: true},
-      '/models': [{name: 'local', model: 'qwen'}], '/health': {model: 'local', model_ok: true},
+      '/models': [{name: 'local', model: 'qwen'}], '/health': healthPayload,
       '/capabilities': {offered: {work: ['approvals', 'tools']}},
     };
     return {ok: true, status: 200, json: async () => payloads[path] ?? {ok: true}};
@@ -78,6 +79,7 @@ assert.equal(sources.length, 1, 'start() opens the live stream');
 assert.equal(sources[0].url, '/events');
 assert.equal(pill(), 'Model connected');
 sources[0].emit('open'); sources[0].emit('ping');
+timers.length = 0;  // the startup health timer is checked on its own below
 
 // A reminder arrives as a toast.
 sources[0].emit('reminder', {text: 'Stretch'});
@@ -88,8 +90,8 @@ sources[0].fail(FakeEventSource.CONNECTING);
 assert.equal(pill(), 'Reconnecting…');
 assert.ok($('banner').textContent.includes('Reconnecting'));
 assert.equal(reconnectTimers().length, 0, 'no second connection while the browser retries');
-// The 30 s health poll must not paint "Model connected" over a dead stream.
-for (const fn of intervals) fn(); await tick();
+// The health poll must not paint "Model connected" over a dead stream.
+sandbox.document.listeners.visibilitychange(); await tick();
 assert.equal(pill(), 'Reconnecting…');
 const before = requests.length;
 sources[0].emit('open'); await tick();
@@ -125,6 +127,30 @@ assert.equal(sources.length, 3);
 sources[2].emit('open'); sources[2].emit('ping'); await tick();
 timers.length = 0;
 
+// 3b. A known-offline cached check says how old it is instead of blocking.
+healthPayload = {model: 'local', model_ok: false,
+                 model_checked_at: new Date(clock - 120_000).toISOString()};
+sandbox.document.listeners.visibilitychange(); await tick();
+assert.equal(pill(), 'Model offline (checked 2 min ago)');
+assert.ok($('banner').textContent.includes('checked 2 min ago'));
+healthPayload = {model: 'local', model_ok: true};
+sandbox.document.listeners.visibilitychange(); await tick();
+assert.equal(pill(), 'Model connected');
+
+// 3c. A hidden window skips /health and backs the poll off to 2–5 minutes.
+timers.length = 0;
+sandbox.document.visibilityState = 'hidden'; sandbox.document.hidden = true;
+sandbox.document.listeners.visibilitychange(); await tick();
+assert.equal(timers.length, 1);
+assert.ok(timers[0].delay >= 120000 && timers[0].delay <= 300000, String(timers[0].delay));
+const beforeHidden = requests.length;
+await runTimers();
+assert.equal(requests.length, beforeHidden, 'no /health request while the window is hidden');
+sandbox.document.visibilityState = 'visible'; sandbox.document.hidden = false;
+sandbox.document.listeners.visibilitychange(); await tick();
+timers.length = 0;
+assert.equal(pill(), 'Model connected');
+
 // 4. Server restarted: the stream gets a 401 and closes, and the session is gone.
 chatsStatus = 401;
 sources[2].fail(FakeEventSource.CLOSED);
@@ -135,3 +161,23 @@ assert.equal(sources.length, 3, 'a signed-out window does not keep reconnecting'
 await runTimers();
 assert.equal(sources.length, 3);
 console.log('Live event stream reconnect, backoff, staleness and restart passed');
+
+// Share fragments coexist with login fragments and are stripped before consumption.
+chatsStatus = 200;
+let registration;
+sandbox.navigator = {serviceWorker: {register: async (...args) => {registration = args;}}};
+const normalFetch = sandbox.fetch;
+sandbox.fetch = async (path, options) => path === '/app/share/demo-share'
+  ? {ok: true, status: 200, json: async () => ({text: 'Shared title\nShared link'})}
+  : normalFetch(path, options);
+let stripped = false;
+sandbox.window.history.replaceState = () => { stripped = true; };
+sandbox.location.hash = '#ticket=demo-ticket&share=demo-share';
+sandbox.window.listeners.hashchange(); await tick();
+assert.ok(stripped, 'share and login secrets removed from history');
+assert.ok(requests.includes('/app/login'), 'ticket exchange is preserved');
+assert.equal($('prompt').value, 'Shared title\nShared link');
+console.log('Combined ticket/share fragment prefill passed');
+
+assert.equal(registration[0], '/app/sw.js');
+assert.equal(registration[1].scope, '/app');

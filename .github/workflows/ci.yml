@@ -32,8 +32,27 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Run the Windows installer tests
+        if: runner.os == 'Windows'
+        run: uv run pytest -q -rs tests/test_installers.py
+
       - name: Run tests
         run: uv run pytest -q
+
+  smoke:
+    name: Smoke (packaged web UI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: .python-version
+          enable-cache: true
+
+      - name: Run the packaged web UI smoke test
+        run: bash scripts/smoke.sh
 
   desktop:
     name: Desktop (node)

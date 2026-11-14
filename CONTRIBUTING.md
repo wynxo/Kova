@@ -19,6 +19,7 @@ cd Kova
 
 ./cli            # terminal chat (starts the background server)
 ./cli status     # is the server up, which model is active
+./cli doctor     # check a first run: config, sandbox, port, token, Node, disk
 ./desktop-app    # the desktop app (Electron); --browser opens the web UI
 ```
 
