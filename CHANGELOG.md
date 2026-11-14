@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix chat forks copying attachment references without independent files; failed copies roll back the fork.
+
 - Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.
 - Attach up to three local documents or images per chat turn, with bounded local extraction, file chips, rereading and explicit model vision support (#74).
 
