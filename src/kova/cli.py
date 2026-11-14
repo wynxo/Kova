@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, backup, lifecycle, onboarding, providers, theme
+from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import ensure_token, load_config, save_config
 from kova.modes import MODES
@@ -590,6 +590,63 @@ def status():
                              tone=theme.ACCENT if info.get("model_ok") else theme.WARNING))
     if not info.get("model_ok"):
         _muted("The model server isn't answering; run: kova setup")
+
+
+_autostart = typer.Typer(no_args_is_help=False, help="Start Kova's server at login.")
+app.add_typer(_autostart, name="autostart")
+
+
+@_autostart.callback(invoke_without_command=True)
+def autostart_root(ctx: typer.Context):
+    """Show whether Kova starts at login."""
+    if ctx.invoked_subcommand is None:
+        autostart_status()
+
+
+@_autostart.command("on")
+def autostart_on():
+    """Start Kova's server at login; no administrator rights needed."""
+    try:
+        state = autostart.enable()
+    except (autostart.AutostartError, OSError) as exc:
+        _fail(str(exc))
+    _ok(f"Start at login is on ({state.label}).")
+    if state.path:
+        _muted(f"  {state.path}")
+    else:
+        _muted("  Kova's per-user HKCU Run entry was added.")
+    _muted("  It starts with your next login. Kova uses a little memory while idle; "
+           "models load only when you chat.")
+
+
+@_autostart.command("off")
+def autostart_off():
+    """Stop starting Kova at login; removes only Kova's own entry."""
+    try:
+        autostart.disable()
+    except (autostart.AutostartError, OSError) as exc:
+        _fail(str(exc))
+    _ok("Start at login is off. Kova's own entry was removed.")
+
+
+@_autostart.command("status")
+def autostart_status():
+    """Report whether the per-platform login entry is installed and current."""
+    try:
+        state = autostart.status()
+    except (autostart.AutostartError, OSError) as exc:
+        _fail(str(exc))
+    line = autostart.describe(state)
+    if state.stale:
+        console.print(Text.assemble(("! ", f"bold {theme.WARNING}"), (line, theme.WARNING)))
+    elif state.installed:
+        _ok(line)
+    else:
+        _muted(line)
+    if state.path:
+        _muted(f"  {state.path}")
+    if state.stale:
+        _muted("  Run: kova autostart on to update it. Nothing was changed.")
 
 
 def _restart_server(cfg) -> bool:

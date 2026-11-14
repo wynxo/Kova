@@ -42,6 +42,25 @@ writes the pid to `~/.kova/server.pid`, sends its output to
 keeps running in the background, which is why reminders can fire after you
 close the chat. `kova stop` sends it `SIGTERM`.
 
+### Starting at login (`src/kova/autostart.py`)
+
+`kova autostart on` keeps the server alive across logins, for reminders,
+scheduled jobs and phone access. It writes exactly one per-user entry, with no
+elevation: a systemd user unit at `~/.config/systemd/user/kova.service`
+(`ExecStart=<python> -m kova serve`, `Environment=KOVA_HOME=…`,
+`Restart=on-failure`) when `systemctl --user` answers, otherwise an autostart
+`.desktop` file at `~/.config/autostart/kova.desktop`; a LaunchAgent
+`~/Library/LaunchAgents/ai.kova.server.plist` with `RunAtLoad` on macOS; or the
+`Kova` value in the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` key,
+written through the standard-library `winreg`, on Windows.
+
+Each writer replaces only Kova's own file or value. `status` compares it with
+what the current Python and `KOVA_HOME` would write and reports a stale entry
+without changing it. `off` removes the entry (`systemctl --user disable --now`
+or `launchctl bootout` where available). `kova uninstall` calls the same removal.
+When the platform has no usable mechanism the command exits non-zero with one
+plain sentence instead of a traceback.
+
 The `_lifespan` handler creates the process-wide singletons:
 
 - `Store` for `~/.kova/kova.db`
@@ -126,7 +145,7 @@ restarts. See [remote-access.md](remote-access.md).
 
 A Typer app. Top-level commands are `ask`, `setup`, `serve`, `stop`, `status`,
 `update`, `uninstall`, `export` and `import`; the groups `model`, `memory`,
-`reminders` and `chats` hold the rest. `./cli` is a small wrapper that runs
+`reminders`, `chats` and `autostart` hold the rest. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`.
@@ -395,6 +414,7 @@ with `KOVA_LIVE=1`.
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
 | `src/kova/cli.py` | Typer commands and rendering |
+| `src/kova/autostart.py` | per-user start-at-login entries |
 | `src/kova/ui.py` | terminal chat and slash commands |
 | `src/kova/web.py` | browser sessions and static assets |
 | `src/kova/web_assets/` | desktop/web client |
