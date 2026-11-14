@@ -633,8 +633,9 @@ read another chat's uploads. Deleting or purging a chat removes its upload bytes
 
 An upload is provisional until a saved message references it. The server sweeps
 at startup and hourly: unreferenced uploads older than 24 hours are deleted, while
-`used` attachments (and older rows whose transcript still names their id) are
-kept until the chat is deleted or the user removes them. A chat holds at most
+`used` attachments, uploads a saved message links to (name-only metadata, with no
+document text), and older rows whose transcript still names their id are kept
+until the chat is deleted or the user removes them. A chat holds at most
 three unsent uploads, 100 attachments and 500 MB; Kova stores at most 2 GB of
 attachment bytes overall. An upload that would exceed a limit fails with 409 and
 a message naming the limit, before any bytes are written.
