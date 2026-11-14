@@ -66,9 +66,12 @@ def _install(monkeypatch, tmp_path, *, make_response, active_model="", available
     os.chmod(token, 0o600)
 
     def respond(url, **kwargs):
-        if url.endswith("/health"):
+        path, _, query = url.partition("?")
+        if path.endswith("/health"):
+            # kova doctor asks for the live answer, not the cached one (#98).
+            assert query == "probe=1", url
             return make_response()
-        if url.endswith("/models"):
+        if path.endswith("/models"):
             return _Resp(owner_status, {})
         raise AssertionError(url)
 
