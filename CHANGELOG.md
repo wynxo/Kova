@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix chat forks copying attachment references without independent files; failed copies roll back the fork.
+
+- Add web/desktop slash commands, a mobile command picker, conversation forking and compaction controls.
+- Attach up to three local documents or images per chat turn, with bounded local extraction, file chips, rereading and explicit model vision support (#74).
+- Vision is per model: select a vision model to attach images without a reload, turn it on or off in Model settings (persisted to config.toml), and `GET /capabilities?model=…` reports that model's contract with a 404 for an unknown name (#151).
+
 ### Added
 
 - Add an installable app shell, one-use phone share drafts, and opt-in device reminders while the app is alive; closed-app push is not supported.
@@ -25,11 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-turn change review with diffs and local, Git-independent restore points (`/changes`, `/diff`, `/restore`).
 - Layered `KOVA.md` / `AGENTS.md` guidance from the Kova home, project root and working folder, with a 16 KiB budget and clear precedence.
 - Linux Landlock sandbox for `run_command`: safe commands run without a prompt but cannot write outside the working folder.
+- `kova doctor` now checks the command sandbox, port ownership, Node/npm for `kova-app`, token permissions, free disk and config schema, prints a verdict with a next step, and supports `--json`; the README documents every line.
+- `install.ps1`, `uninstall.ps1` and their `.bat` wrappers are exercised on Windows CI with a disposable home, and `scripts/smoke.sh` now runs as its own CI job on every push.
 
 ### Changed
 
+- `/health` answers from a 15-second cached model status refreshed in the background (`?probe=1` forces a live check), and the web poll pauses while hidden and backs off to 2–5 minutes, so CLI commands and open windows no longer wait on a down model.
+- Approvals and `ask_user` questions are announced to screen readers and move keyboard focus to their first decision button (the transcript itself stays `aria-live="off"`); the web UI announces how a turn ended and returns focus to the composer after an answer.
 - `kova-app` now launches the desktop app (native window; `--browser` for your browser).
+- `docs/ARCHITECTURE.md` now documents all 72 endpoints with their auth, plus the SSE event vocabulary; `uv run pytest -k architecture` fails when the table and the code drift apart.
 - Redesigned desktop and web UI, with a new app icon.
+- Reminder notifications now work on macOS and Windows and fall back from `notify-send` to `gdbus` on Linux; `kova doctor` reports the notifier in use, and the desktop app allows the Notification permission.
 
 ## History
 

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external} = require('./core');
+const {settings, external, permissionAllowed} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -18,4 +18,10 @@ test('external links cannot launch arbitrary protocols', () => {
   assert.ok(external('https://example.com'));
   for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'bad', 'shell:foo'])
     assert.equal(external(url), false);
+});
+test('the renderer may request notifications and nothing else', () => {
+  assert.equal(permissionAllowed('notifications'), true);
+  for (const permission of ['geolocation', 'media', 'camera', 'microphone',
+    'clipboard-read', 'clipboard-write', 'openExternal', 'unknown'])
+    assert.equal(permissionAllowed(permission), false);
 });

@@ -67,6 +67,8 @@ def _hint_for(message: str) -> str | None:
         return "Usage: kova chats search <words>"
     if "cannot reach kova server" in text:
         return "It starts by itself when you chat; run: kova status to check."
+    if "run kova doctor" in text or "could not establish the command sandbox" in text:
+        return "Run: kova doctor  (README: Troubleshoot an install)"
     if "couldn't reach a model server" in text:
         return "Check the address and that the model server is running, then: kova setup"
     if "--key" in text:
@@ -500,7 +502,7 @@ def stop():
     if not pidfile.exists():
         client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
         try:
-            client.health()
+            client.health(probe=False)
         except KovaError as exc:
             if exc.status is not None:
                 raise
@@ -562,7 +564,7 @@ def status():
     cfg = load_config()
     client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
     try:
-        info = client.health()
+        info = client.health(probe=True)
     except KovaError as exc:
         if exc.status is not None:
             raise
@@ -674,7 +676,7 @@ def import_archive(
 
 
 def _list_models(client: KovaClient) -> None:
-    active = client.health()["model"]
+    active = client.health(probe=False)["model"]
     models = client.models_list()
     if not models:
         _empty("No models configured.", "Run: kova setup to find a model server.")
@@ -1488,11 +1490,33 @@ def devices_revoke(
 
 
 @app.command()
-def doctor() -> None:
-    """Check local configuration and provider access without sending a chat."""
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+) -> None:
+    """Check this install: config, sandbox, port, token, Node, disk and model."""
     from kova.diagnostics import diagnose
-    issues = diagnose()
-    for ok, message in issues:
-        console.print(Text(('✓ ' if ok else '✗ ') + message))
-    if any(not ok for ok, _ in issues):
+    checks = diagnose()
+    if as_json:
+        print(json.dumps([{"ok": check.ok, "check": check.name, "detail": check.detail}
+                          for check in checks], ensure_ascii=False))
+    else:
+        for check in checks:
+            console.print(Text((f'{SYMBOL_OK} ' if check.ok else f'{SYMBOL_ERROR} ') + check.detail))
+        failed = [check for check in checks if not check.ok]
+        if failed:
+            next_step = next((check.next_step for check in failed if check.next_step),
+                             "Run kova doctor again.")
+            console.print(Text.assemble(
+                (f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT),
+                (f"Next: {next_step}", theme.MUTED),
+                (f"    ({len(checks) - len(failed)} ok, {len(failed)} "
+                 f"need{'s' if len(failed) == 1 else ''} attention)", theme.MUTED),
+            ))
+        else:
+            console.print(Text.assemble(
+                (f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT),
+                ("All checks passed.", theme.SUCCESS),
+                (f"    ({len(checks)} ok)", theme.MUTED),
+            ))
+    if any(not check.ok for check in checks):
         raise typer.Exit(1)

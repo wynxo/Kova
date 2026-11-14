@@ -3,6 +3,8 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null};
+  const pendingAttachments = [];
+  let readingAttachments = false;
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
@@ -37,6 +39,34 @@
     if (title !== 'Reminder') setTimeout(() => node.remove(), 9000);
   }
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
+  // Screen readers get one short sentence for what needs an answer and for how a
+  // turn ended. The transcript stays aria-live="off", so streamed text is never
+  // read out token by token. A new node each time re-announces repeated words.
+  function announce(message) {
+    const region = $('announce');
+    region.append(el('span', '', message));
+    while (region.children.length > 3) region.children[0].remove();
+  }
+  function firstOf(node, tags) {
+    for (const child of node.children || []) {
+      if (tags.test(child.tagName || '')) return child;
+      const nested = firstOf(child, tags);
+      if (nested) return nested;
+    }
+    return null;
+  }
+  // A card that needs an answer takes focus, unless the user is typing somewhere:
+  // its first button (or, for a free-text question, the field to type in).
+  function focusCard(card, preferred = null) {
+    if (typingIn(document.activeElement)) return;
+    const target = preferred || firstOf(card, /^button$/i) || firstOf(card, /^(input|select|textarea)$/i) || card;
+    target.focus?.({preventScroll: true});
+  }
+  function describeApproval(event) {
+    const detail = event.args?.command || event.args?.path || event.summary || event.tool;
+    const folder = state.chat?.cwd ? ` in ${state.chat.cwd}` : '';
+    return `${event.tool === 'run_command' ? 'run command ' : ''}${detail}${folder}`;
+  }
   // The capability contract the server declares: what each chat mode offers
   // once every gate has agreed. Nothing is offered that is not declared here.
   function offers(capability) {
@@ -47,12 +77,13 @@
     state.offered = contract.offered || {};
     controls();
   }
-  async function refreshCapabilities() {
-    try { applyCapabilities(await json('/capabilities')); }
+  async function refreshCapabilities(model = '') {
+    try { applyCapabilities(await json(model ? `/capabilities?model=${encodeURIComponent(model)}` : '/capabilities')); }
     catch (_) { state.offered = null; controls(); }  // an older server declares nothing
   }
   function controls() {
     const busy = state.busy;
+    const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     $('permission').disabled ||= !offers('approvals');
     $('cwd').disabled ||= !offers('tools');
@@ -64,7 +95,10 @@
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
     $('options-label').textContent = $('mode').value === 'chat' ? 'Chat' : 'Work';
-    $('send').disabled = !state.connected || !$('prompt').value.trim();
+    $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
+    $('attach').disabled = state.busy || readingAttachments || !state.connected;
+    $('attach').classList.toggle('text-only', !offers('vision'));
+    $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need Vision turned on in Model settings';
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
     $('stop').disabled = state.stopRequested;
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
@@ -83,7 +117,7 @@
   async function api(path, options = {}) {
     let response;
     try { response = await fetch(path, {credentials: 'same-origin', ...options,
-      headers: {'Content-Type': 'application/json', ...options.headers}}); }
+      headers: {...(typeof FormData !== 'undefined' && options.body instanceof FormData ? {} : {'Content-Type': 'application/json'}), ...options.headers}}); }
     catch (_) { throw new Error('Cannot reach Kova. Check the server, then retry.'); }
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
@@ -200,9 +234,10 @@
       const date = new Date(chat.last_message || chat.created);
       button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
       button.onclick = () => safe(() => openChat(chat.id));
-      const actions = el('div', 'history-actions');
-      for (const [symbol, name, fn] of [['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
-        const action = iconButton(symbol, name, ''); action.setAttribute('aria-label', `${name} ${title}`);
+      const actions = el('details', 'history-actions');
+      actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
+      for (const [symbol, name, fn] of [['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
+        const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
         action.onclick = () => safe(fn); actions.append(action);
       }
       row.append(button, actions); $('chat-list').append(row);
@@ -263,6 +298,8 @@
   }
   async function queueMessage(text) {
     if (!text || !state.chat) return;
+    const command = parseCommand(text);
+    if (command) return dispatchCommand(command);
     const row = await json(`/chats/${state.chat.id}/queue`, write('POST', {text}));
     state.queued.push(row); renderQueue();
     $('prompt').value = ''; resize(); controls();
@@ -270,6 +307,8 @@
   async function steerMessage() {
     const text = $('prompt').value.trim();
     if (!text || !state.chat) return;
+    const command = parseCommand(text);
+    if (command) return dispatchCommand(command);
     await json(`/chats/${state.chat.id}/steer`, write('POST', {text}));
     $('prompt').value = ''; resize(); controls();
     toast('Sent into the running reply.', 'Steering');
@@ -283,6 +322,7 @@
   }
   function setChat(chat) {
     state.chat = chat;
+    renderAttachments();
     pageTitle();
     $('mode').value = chat?.mode || 'work';
     $('permission').value = chat?.permission || 'manual';
@@ -336,12 +376,19 @@
     }
     const ids = new Set(pending.map(event => event.id));
     for (const [id, card] of recovered.cards) if (!ids.has(id)) { card.finish(); recovered.cards.delete(id); }
+    const fresh = [];
     for (const event of pending) {
       if (recovered.cards.has(event.id)) continue;
       const card = event.type === 'question' ? questionCard(event) : approvalCard(event);
-      recovered.cards.set(event.id, card); recovered.view.append(card.card);
+      recovered.cards.set(event.id, card); recovered.view.append(card.card); fresh.push({event, card});
     }
     if (pending.length && !recovered.view.parentNode) $('messages').append(recovered.view);
+    // A reload or a second window rebuilds the card; say so the same way.
+    for (const {event, card} of fresh) {
+      announce(event.type === 'question' ? `Kova asked a question: ${event.args.question}`
+                                         : `Kova needs approval: ${describeApproval(event)}`);
+      if (card === fresh[0].card) focusCard(card.card);
+    }
     follow();
   }
   // Live updates for a chat whose turn runs outside this window's stream.
@@ -388,6 +435,15 @@
     }
     await refreshChats();
   }
+  // A cached health answer is still useful, so say when it was measured.
+  function checkedAgo(value) {
+    if (!value) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
+    if (!Number.isFinite(seconds)) return '';
+    if (seconds < 45) return 'just now';
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+    return `${Math.round(seconds / 3600)} h ago`;
+  }
   async function health() {
     try {
       const status = await json('/health');
@@ -397,9 +453,11 @@
       retry.hidden = true;
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
       const ready = status.model_ok && configured;
+      const checked = checkedAgo(status.model_checked_at);
       $('connection').className = `connection${ready ? ' online' : ''}`;
-      $('connection').lastElementChild.textContent = ready ? 'Model connected' : configured ? 'Model offline' : 'Model not set up';
-      banner(ready ? '' : configured ? 'Your space is ready. Model offline: start your model server, or run kova setup, then try again.' : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
+      $('connection').lastElementChild.textContent = ready ? 'Model connected'
+        : configured ? (checked ? `Model offline (checked ${checked})` : 'Model offline') : 'Model not set up';
+      banner(ready ? '' : configured ? `Your space is ready. Model offline${checked ? ` (checked ${checked})` : ''}: start your model server, or run kova setup, then try again.` : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
     } catch (_) {
       if (!state.connected) return;
       retry.hidden = false;
@@ -536,7 +594,9 @@
     section.append(list); return section;
   }
   function approvalCard(event) {
-    const card = el('section', 'approval-card'); card.setAttribute('aria-label', 'Tool approval');
+    const card = el('section', 'approval-card');
+    card.setAttribute('aria-label', 'Tool approval');
+    card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     const heading = el('div', 'approval-heading');
     heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
     card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
@@ -559,6 +619,7 @@
         try {
           await json(`/chats/${state.chat.id}/approvals/${event.id}`, write('POST', {decision, message: input.value || null}));
           status.textContent = decision === 'deny' ? 'Denied' : 'Allowed';
+          $('prompt').focus({preventScroll: true});
         } catch (error) {
           buttons.forEach(b => { b.disabled = false; });
           input.disabled = false; throw error;
@@ -579,6 +640,7 @@
     const chatId = state.chat.id;
     const card = el('section', 'approval-card');
     card.setAttribute('aria-label', 'Question from Kova');
+    card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     card.append(el('strong', '', event.args.question));
     const actions = el('div', 'approval-actions'), status = el('div', 'approval-status');
     const input = el('input'); input.maxLength = 4000; input.placeholder = 'Your answer';
@@ -589,6 +651,7 @@
       try {
         await json(`/chats/${chatId}/approvals/${event.id}`, write('POST', {decision: 'allow', message: value}));
         status.textContent = `Answered: ${value}`;
+        $('prompt').focus({preventScroll: true});
       } catch (error) { buttons.forEach(b => b.disabled = false); input.disabled = false; throw error; }
     }
     for (const option of event.args.options || []) {
@@ -602,7 +665,7 @@
       actions.append(button); buttons.push(button);
     }
     card.append(actions, status);
-    return {card, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
+    return {card, input, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
       finish() { buttons.forEach(b => b.disabled = true); input.disabled = true; if (!status.textContent) status.textContent = 'No longer pending'; }};
   }
   function turnView(body) {
@@ -640,6 +703,8 @@
             body.insertBefore(current.node, activity); blocks.push(current);
           }
           current.text += event.text; current.dirty = true;
+        } else if (kind === 'compact_skipped') {
+          toast(event.message);
         } else if (kind === 'compacted') {
           current = null;
           const details = el('details', 'turn-status');
@@ -655,12 +720,17 @@
           activity.hidden = true;
           const question = questionCard(event); approvals.set(event.id, question);
           body.insertBefore(question.card, activity);
+          announce(`Kova asked a question: ${event.args.question}`);
+          // A question with no options is answered by typing, so focus the field.
+          focusCard(question.card, event.args.options?.length ? null : question.input);
         } else if (kind === 'question_resolved') {
           approvals.get(event.id)?.resolve();
         } else if (kind === 'approval') {
           activity.hidden = true;
           const approval = approvalCard(event); approvals.set(event.id, approval);
           body.insertBefore(approval.card, activity);
+          announce(`Kova needs approval: ${describeApproval(event)}`);
+          focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
         } else if (kind === 'plan') {
@@ -686,13 +756,18 @@
           }
           current = null; activity.hidden = false; activityText.textContent = 'Working…';
         } else if (kind === 'error') {
-          const error = el('div', 'turn-error'); error.setAttribute('role', 'alert'); error.append(icon('triangle-alert'), el('span', '', event.message));
+          // One announcement for a failure: the live region, not a second alert.
+          const error = el('div', 'turn-error'); error.append(icon('triangle-alert'), el('span', '', event.message));
           body.insertBefore(error, activity);
+          announce(`Error: ${event.message}`);
         } else if (kind === 'steer') {
           current = null;
           body.insertBefore(el('div', 'turn-status', `Steering: ${event.text}`), activity);
         } else if (kind === 'stopped') {
           body.insertBefore(el('div', 'turn-status', 'Reply stopped.'), activity);
+          announce('Stopped.');
+        } else if (kind === 'done') {
+          announce('Reply finished.');
         }
         schedule();
       },
@@ -707,11 +782,90 @@
       }
     };
   }
+  // One catalog drives discovery, help and dispatch. Unknown paths remain messages.
+  const commands = {
+    new: '/new', fork: '/fork [n]', compact: '/compact', mode: '/mode chat|work',
+    web: '/web on|off', model: '/model <name>', memory: '/memory [list]', help: '/help',
+    resume: '/resume [n]', permissions: '/permissions [mode|rules]', think: '/think',
+    diff: '/diff [n]', restore: '/restore <n>', changes: '/changes', cd: '/cd <folder>',
+    steer: '/steer <text>', clear: '/clear', exit: '/exit', quit: '/quit'
+  };
+  const terminalCommands = new Set(['resume', 'permissions', 'think', 'diff', 'restore', 'changes', 'cd', 'steer', 'clear', 'exit', 'quit']);
+  function parseCommand(text) {
+    if (/[\r\n]/.test(text)) return null;
+    const match = /^\/(\S+)(?:\s+(.*))?$/.exec(text.trim());
+    return match && Object.hasOwn(commands, match[1]) ? {name: match[1], args: match[2] || ''} : null;
+  }
+  async function forkChat(id = state.chat?.id) {
+    if (!id) throw new Error('Open a conversation to fork first.');
+    if (state.busy) throw new Error('Wait for the current reply before forking.');
+    const chat = await json(`/chats/${id}/fork`, {method: 'POST'});
+    await openChat(chat.id); await refreshChats();
+  }
+  async function compactChat() {
+    if (!state.chat) throw new Error('Open a conversation to compact first.');
+    if (state.busy) throw new Error('Wait for the current reply before compacting.');
+    const id = state.chat.id;
+    state.busy = true; controls();
+    try {
+      const result = await json(`/chats/${id}/compact`, {method: 'POST'});
+      toast(result.type === 'compact_skipped' ? result.message : `Compacted ${result.count} messages`);
+    } finally { state.busy = false; controls(); }
+  }
+  async function dispatchCommand({name, args}) {
+    if (terminalCommands.has(name)) { toast(`/${name} lives in the terminal chat (kova).`); return; }
+    if (state.busy) throw new Error('Wait for the current reply before running a command.');
+    if (name === 'help') {
+      empty(false);
+      const card = message('assistant', '', 'Kova commands');
+      card.append(el('pre', '', Object.values(commands).join('\n') + '\nTerminal-only commands open in kova.'));
+    } else if (name === 'new' && !args) await newChat();
+    else if (name === 'fork') {
+      const chats = args ? await json('/chats') : null;
+      const n = Number(args);
+      if (args && (!/^\d+$/.test(args) || n < 1 || !chats[n - 1])) throw new Error('Use /fork [n], with a conversation number from history (newest first).');
+      await forkChat(args ? chats[n - 1].id : state.chat?.id);
+    } else if (name === 'compact' && !args) await compactChat();
+    else if (name === 'mode' && ['chat', 'work'].includes(args)) {
+      await chatSetting({mode: args}); $('mode').value = args; controls();
+    } else if (name === 'web' && ['on', 'off'].includes(args)) {
+      await chatSetting({web: args === 'on'}); $('web').setAttribute('aria-pressed', String(args === 'on')); $('web').lastElementChild.textContent = `Web ${args}`; controls();
+    } else if (name === 'model' && args) {
+      if (!state.models.some(model => model.name === args)) throw new Error('Unknown model. Choose a configured model.');
+      await json('/models/active', write('POST', {name: args}));
+      $('model').value = args; selectedModel = args; await health(); await refreshCapabilities(selectedModel);
+    } else if (name === 'model' && !args) { options(true); $('model-slot').querySelector('button')?.click(); }
+    else if (name === 'memory' && (!args || args === 'list')) $('open-memory').onclick();
+    else throw new Error(`Usage: ${commands[name]}`);
+  }
+  function commandPicker() {
+    const text = $('prompt').value.trim(), picker = $('command-picker');
+    picker.replaceChildren();
+    picker.hidden = !text.startsWith('/') || /\s/.test(text);
+    if (picker.hidden) return;
+    for (const [name, usage] of Object.entries(commands)) {
+      if (!name.startsWith(text.slice(1))) continue;
+      const button = el('button', 'btn', usage + (terminalCommands.has(name) ? ' · terminal' : ''));
+      button.type = 'button';
+      button.onclick = () => { $('prompt').value = `/${name} `; picker.hidden = true; resize(); $('prompt').focus(); };
+      picker.append(button);
+    }
+    picker.hidden = !picker.children.length;
+  }
+  $('commands').onclick = () => { $('prompt').value = '/'; commandPicker(); $('prompt').focus(); };
+  $('compact-now').onclick = () => safe(compactChat);
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
-    if (!text || !state.connected) return;
+    if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
+    const command = text ? parseCommand(text) : null;
+    if (command) {
+      try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
+      catch (error) { toast(error.message); }
+      return;
+    }
+    if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
-    await sendText(text);
+    await sendText(text || 'Please read the attached files.');
   }
   async function sendText(text) {
     if (!text || state.busy || !state.connected) return;
@@ -722,7 +876,8 @@
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
       empty(false); message('user', text); $('prompt').value = ''; resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
+      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: pendingAttachments.filter(a => a.chat_id === state.chat.id).map(a => a.id)}));
+      for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments();
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
       await readEvents(response, data => {
@@ -761,8 +916,45 @@
   }
   function safe(fn) { Promise.resolve().then(fn).catch(error => { toast(error.message); controls(); }); }
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
+  function renderAttachments() {
+    $('attachment-chips').replaceChildren();
+    for (const item of pendingAttachments.filter(a => a.chat_id === state.chat?.id)) {
+      const chip = el('span', 'attachment-chip', `${item.name} · ${(item.size / 1024).toFixed(1)} KB${item.pages ? ` · ${item.pages} pages` : ''} · ready `);
+      const remove = el('button', '', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${item.name}`);
+      remove.onclick = () => safe(async () => {
+        await json(`/chats/${item.chat_id}/attachments/${item.id}`, {method: 'DELETE'});
+        pendingAttachments.splice(pendingAttachments.indexOf(item), 1); renderAttachments(); controls();
+      });
+      chip.append(remove); $('attachment-chips').append(chip);
+    }
+    $('attachment-note').hidden = !pendingAttachments.some(a => a.chat_id === state.chat?.id);
+  }
+  async function attachFiles(files) {
+    if (readingAttachments || state.busy || !state.connected) return;
+    if (pendingAttachments.length + files.length > 3) return toast('Attach at most three files per turn.');
+    readingAttachments = true; $('attachment-chips').append(el('span', '', 'reading…')); controls();
+    try {
+      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value}));
+      const chatId = state.chat.id;
+      for (const file of files) {
+        if (file.type.startsWith('image/') && !offers('vision')) { toast('This model cannot read images. Turn on Vision for it in Model settings.'); continue; }
+        if (file.size > 25 * 1024 * 1024) { toast('Each attachment must be 25 MB or smaller.'); continue; }
+        const form = new FormData(); form.append('file', file);
+        pendingAttachments.push(await json(`/chats/${chatId}/attachments`, {method: 'POST', body: form}));
+      }
+    } catch (error) { toast(error.message); }
+    finally { readingAttachments = false; renderAttachments(); controls(); }
+  }
+  $('attach').onclick = () => $('attachment-input').click();
+  $('attachment-input').onchange = event => { attachFiles([...event.target.files]); event.target.value = ''; };
+  $('composer').addEventListener('dragover', event => { event.preventDefault(); });
+  $('composer').addEventListener('drop', event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); attachFiles([...event.dataTransfer.files]); });
+  $('prompt').addEventListener('paste', event => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (files.length) { event.preventDefault(); attachFiles(files); }
+  });
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', resize);
+  $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
   $('prompt').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
     // Like a shell: Up in an empty box brings back what you last said.
@@ -849,9 +1041,44 @@
   });
   let selectedModel = '';
   $('model').onchange = () => safe(async () => {
-    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(); }
+    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(selectedModel); }
     catch (error) { $('model').value = selectedModel; throw error; }
   });
+  async function openModelSettings() {
+    const name = $('model').value;
+    const model = state.models.find(entry => entry.name === name);
+    if (!model) return toast('Choose a model first.');
+    const dialog = el('dialog', 'model-dialog');
+    dialog.setAttribute('aria-label', 'Model settings');
+    const form = el('form'); form.method = 'dialog';
+    const head = el('div', 'dialog-head'), title = el('h2', '', 'Model settings');
+    const close = iconButton('x', 'Close model settings'); close.type = 'button'; close.onclick = () => dialog.close();
+    head.append(title, close);
+    const intro = el('p', 'provider-intro', `${model.provider_name || 'Custom'} · ${model.model || model.name}`);
+    const fields = el('div', 'model-fields');
+    for (const [label, value] of [['Provider', model.provider_name || 'Custom'], ['Model', model.model || model.name],
+                                  ['Context', `${model.context} tokens`], ['Address', model.base_url]]) {
+      const row = el('div', 'field'); row.append(el('span', '', label), el('small', '', value)); fields.append(row);
+    }
+    const vision = el('input'); vision.type = 'checkbox'; vision.checked = Boolean(model.vision);
+    const toggle = el('label', 'provider-check'); toggle.append(vision, el('span', '', 'Vision: this model can read images'));
+    const note = el('p', 'provider-footnote', 'Turn this on only when the model itself supports images. Kova never detects this for you.');
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => dialog.close();
+    const save = el('button', 'btn primary', 'Save'); save.type = 'button';
+    save.onclick = () => safe(async () => {
+      save.disabled = true;
+      try {
+        const updated = await json('/models', write('PATCH', {name, vision: vision.checked}));
+        Object.assign(model, updated);
+        if ($('model').value === name) await refreshCapabilities(name);
+        dialog.close();
+        toast(`Vision ${updated.vision ? 'on' : 'off'} for ${model.model || model.name}.`);
+      } catch (error) { save.disabled = false; throw error; }
+    });
+    actions.append(cancel, save); form.append(head, intro, fields, toggle, note, actions);
+    dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
+  }
   function theme(value) {
     document.documentElement.dataset.theme = value;
     const next = value === 'light' ? 'Dark theme' : 'Light theme';
@@ -967,11 +1194,12 @@
       await json('/chats'); state.connected = true;
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
-      const [models, status, contract] = await Promise.all([json('/models'), json('/health'), json('/capabilities')]);
+      const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
       renderModels(models);
       $('model').value = status.model; selectedModel = status.model;
-      applyCapabilities(contract);
+      // The contract belongs to the model in the composer, not just the active one.
+      await refreshCapabilities(selectedModel);
       await refreshChats(); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       if (share) {
@@ -1099,7 +1327,7 @@
         providerLogin = null; closeProvider();
         const [models, status] = await Promise.all([json('/models'), json('/health')]);
         state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
-        await refreshCapabilities();
+        await refreshCapabilities(selectedModel);
         syncMenus(); await health(); toast('Provider connected. Ready when you are.'); return;
       }
       const kind = $('provider-kind').value, caps = providerCaps();
@@ -1496,7 +1724,8 @@
   const permissionNotes = {manual: 'Ask before commands and file changes', auto: 'Ask only before destructive commands', full: 'Never ask. Use with care.'};
   menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value],
     actions: [{glyph: 'sliders-horizontal', label: 'Edit permission rules…', run: openRules}]});
-  menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value});
+  menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value,
+    actions: [{glyph: 'sliders-horizontal', label: 'Model settings…', run: () => safe(openModelSettings)}]});
   menu('provider-kind', 'Provider', {width: 240, labelledby: 'provider-kind-label'});
   menu('provider-active', 'Active model', {width: 240, labelledby: 'provider-active-label'});
   function setMode(value) {
@@ -1525,10 +1754,25 @@
   window.addEventListener('online', () => safe(start));
   function historyReplace() { if (location.hash) window.history.replaceState(null, '', location.pathname + location.search); }
   window.addEventListener('beforeunload', () => state.events?.close());
-  setInterval(() => { if (state.connected) health(); }, 30000);
+  // A visible tab polls every 30 s. A hidden tray window skips the poll and backs
+  // off to 2–5 minutes, so it neither blocks a model check nor hammers /health.
+  let healthTimer = null;
+  function scheduleHealth(delay) {
+    clearTimeout(healthTimer);
+    const wait = delay ?? (document.hidden ? 120000 + Math.random() * 180000 : 30000);
+    healthTimer = setTimeout(async () => {
+      if (state.connected && !document.hidden) await health();
+      scheduleHealth();
+    }, wait);
+  }
+  scheduleHealth();
   setInterval(checkStream, 15000);
-  // A phone tab that wakes up checks its stream at once instead of 15 s later.
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkStream(); });
+  // A phone tab that wakes up checks its stream (and model) at once instead of later.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { checkStream(); if (state.connected) health(); }
+    scheduleHealth();
+  });
   window.addEventListener('hashchange', () => { if (/(ticket|pair|share)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
+
   controls(); start();
 })();

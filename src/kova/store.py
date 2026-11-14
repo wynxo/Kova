@@ -7,7 +7,9 @@ single re-entrant lock around every query.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -111,6 +113,11 @@ class Store:
     def _create_tables(self) -> None:
         self._conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,
+                mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER,
+                sha256 TEXT NOT NULL, path TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -302,24 +309,46 @@ class Store:
             if source is None:
                 return None
             cid, created = uuid4().hex[:12], _utc_now_iso()
+            copied_dir = self.path.parent / "attachments" / cid
             try:
+                attachment_ids: dict[str, str] = {}
+                for attachment in self.attachments(chat_id):
+                    ident = uuid4().hex
+                    copied_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    path = copied_dir / (ident + Path(attachment["path"]).suffix)
+                    with open(attachment["path"], "rb") as src:
+                        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        with os.fdopen(fd, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                    attachment_ids[attachment["id"]] = ident
+                    self._conn.execute("INSERT INTO attachments VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path)",
+                                       {**attachment, "id": ident, "chat_id": cid, "path": str(path)})
+
+                def remap(value: str | None) -> str | None:
+                    if value is None:
+                        return None
+                    for old, new in attachment_ids.items():
+                        value = value.replace(old, new)
+                    return value
+
                 self._conn.execute(
                     "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
-                     source['web'], source['permission'], source['cwd'], source['plan']))
+                     source['web'], source['permission'], source['cwd'], remap(source['plan'])))
                 rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute("INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created) VALUES (?, ?, ?, ?, ?, ?)",
-                                             (cid, row['role'], row['content'], row['tool_calls'], row['tool_call_id'], row['created']))
+                                             (cid, row['role'], remap(row['content']), remap(row['tool_calls']), row['tool_call_id'], row['created']))
                     ids[row['id']] = cur.lastrowid
                 compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
                 if compact and compact['cutoff'] in ids:
                     self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?)",
-                                       (cid, ids[compact['cutoff']], compact['summary']))
+                                       (cid, ids[compact['cutoff']], remap(compact['summary'])))
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
+                shutil.rmtree(copied_dir, ignore_errors=True)
                 raise
         return self.get_chat(cid)
 
@@ -389,7 +418,38 @@ class Store:
     def set_title(self, chat_id: str, title: str) -> None:
         self.update_chat(chat_id, title=title)
 
+    def add_attachment(self, row: dict) -> None:
+        with self._lock:
+            self._conn.execute("INSERT INTO attachments VALUES (:id,:chat_id,:name,:mime,:size,:pages,:sha256,:path)", row)
+            self._conn.commit()
+
+    def attachments(self, chat_id: str) -> list[dict]:
+        with self._lock:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM attachments WHERE chat_id = ?", (chat_id,))]
+
+    def delete_attachment(self, chat_id: str, ident: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT path FROM attachments WHERE chat_id = ? AND id = ?", (chat_id, ident)).fetchone()
+            if row is None:
+                return False
+            path = Path(row['path'])
+            path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+            self._conn.execute("DELETE FROM attachments WHERE id = ?", (ident,))
+            self._conn.commit()
+            return True
+
     def delete_chat(self, chat_id: str) -> bool:
+        for row in self.attachments(chat_id):
+            self.delete_attachment(chat_id, row["id"])
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
+            try:
+                (self.path.parent / 'attachments' / chat_id).rmdir()
+            except OSError:
+                pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
@@ -401,6 +461,9 @@ class Store:
 
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
+        for chat in self.list_chats():
+            for row in self.attachments(chat["id"]):
+                self.delete_attachment(chat["id"], row["id"])
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
             self._conn.execute("DELETE FROM messages")

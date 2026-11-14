@@ -3,7 +3,7 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electr
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, executable, external} = require('./core');
+const {settings, executable, external, permissionAllowed} = require('./core');
 let win, tray, child, quitting = false, starting = false, origin, home;
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
@@ -59,7 +59,7 @@ async function create() {
   win.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); if (external(url)) shell.openExternal(url); }
   });
-  win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => callback(permissionAllowed(permission)));
   win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
     const url = new URL(details.url);
     callback({cancel: !['file:', 'devtools:'].includes(url.protocol) && url.origin !== origin});

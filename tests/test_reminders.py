@@ -70,20 +70,127 @@ async def test_notify_failure_does_not_stop_tick(tmp_path):
     assert store.list_reminders(include_done=True)[0]["done"] is True
 
 
-async def test_desktop_notify_skips_when_missing(monkeypatch):
-    monkeypatch.setattr("kova.reminders.shutil.which", lambda name: None)
+def _which(*installed: str):
+    """A fake ``shutil.which``: a PATH containing only the named tools."""
+    return lambda name: f"/usr/bin/{name}" if name in installed else None
+
+
+def _record_popen(monkeypatch):
     events = []
-    monkeypatch.setattr("kova.reminders.subprocess.Popen", lambda *a, **k: events.append(a))
+    monkeypatch.setattr("kova.reminders.subprocess.Popen",
+                        lambda command, *a, **k: events.append(command))
+    return events
+
+
+def test_desktop_notify_skips_when_missing(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which())
+    events = _record_popen(monkeypatch)
     desktop_notify("hi")  # must not raise
     assert events == []
 
 
-async def test_desktop_notify_calls_notify_send(monkeypatch):
-    monkeypatch.setattr("kova.reminders.shutil.which", lambda name: "/usr/bin/notify-send")
-    events = []
-    monkeypatch.setattr("kova.reminders.subprocess.Popen", lambda *a, **k: events.append(a))
+def test_desktop_notify_ignores_unknown_platform(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "aix")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("notify-send", "osascript"))
+    events = _record_popen(monkeypatch)
+    desktop_notify("hi")  # must not raise
+    assert events == []
+
+
+def test_desktop_notify_uses_notify_send_on_linux(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("notify-send"))
+    events = _record_popen(monkeypatch)
     desktop_notify("hello world")
-    assert events[0][0] == ["notify-send", "Kova", "hello world"]
+    assert events == [["notify-send", "Kova", "hello world"]]
+
+
+def test_desktop_notify_falls_back_to_gdbus_on_linux(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("gdbus"))
+    events = _record_popen(monkeypatch)
+    desktop_notify("hello world")
+    (command,) = events
+    assert command[0] == "gdbus"
+    assert "org.freedesktop.Notifications.Notify" in command
+    assert "Kova" in command and "hello world" in command
+
+
+def test_desktop_notify_falls_back_when_first_notifier_fails(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("notify-send", "gdbus"))
+    calls = []
+
+    def popen(command, *a, **k):
+        calls.append(command)
+        if command[0] == "notify-send":
+            raise OSError("notify-send vanished")
+
+    monkeypatch.setattr("kova.reminders.subprocess.Popen", popen)
+    desktop_notify("hi")
+    assert [command[0] for command in calls] == ["notify-send", "gdbus"]
+
+
+def test_desktop_notify_never_raises_when_every_notifier_fails(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("notify-send", "gdbus"))
+    calls = []
+
+    def popen(command, *a, **k):
+        calls.append(command)
+        raise OSError("no notification bus")
+
+    monkeypatch.setattr("kova.reminders.subprocess.Popen", popen)
+    desktop_notify("hi")  # must not raise
+    assert [command[0] for command in calls] == ["notify-send", "gdbus"]
+
+
+def test_desktop_notify_uses_osascript_on_macos(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "darwin")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("osascript"))
+    events = _record_popen(monkeypatch)
+    desktop_notify('say "hi" \\ now')
+    (command,) = events
+    assert command[:2] == ["osascript", "-e"]
+    script = command[2]
+    assert script.startswith('display notification "')
+    assert script.endswith('" with title "Kova"')
+    assert r'\"hi\"' in script and r"\\ now" in script
+
+
+def test_desktop_notify_uses_powershell_toast_on_windows(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "win32")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("powershell"))
+    events = _record_popen(monkeypatch)
+    desktop_notify("don't forget")
+    (command,) = events
+    assert command[0] == "powershell"
+    script = command[-1]
+    assert "Windows.UI.Notifications" in script
+    assert "ToastNotificationManager" in script
+    # PowerShell single-quoted strings double their own quotes.
+    assert "don''t forget" in script
+
+
+def test_desktop_notify_uses_msg_when_windows_has_no_powershell(monkeypatch):
+    monkeypatch.setattr("kova.reminders.sys.platform", "win32")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which("msg.exe"))
+    events = _record_popen(monkeypatch)
+    desktop_notify("hello")
+    assert events == [["msg", "*", "Kova: hello"]]
+
+
+def test_tick_still_publishes_when_no_notifier_exists(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    store.add_reminder(_now() - timedelta(minutes=1), "hello")
+    bus = EventBus()
+    q = bus.subscribe()
+    monkeypatch.setattr("kova.reminders.sys.platform", "linux")
+    monkeypatch.setattr("kova.reminders.shutil.which", _which())
+    loop = ReminderLoop(store, bus, _now)
+    assert [event["text"] for event in loop.tick()] == ["hello"]
+    assert q.get_nowait()["text"] == "hello"
 
 
 async def test_run_logs_tick_error_and_continues(tmp_path, caplog):
