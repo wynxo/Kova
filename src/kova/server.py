@@ -21,7 +21,7 @@ from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
-from kova.models import ModelClient
+from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE, MODES, capabilities as mode_capabilities
 from kova.reminders import ReminderLoop
 from kova.scheduler import Scheduler, parse_schedule
@@ -759,7 +759,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
         client = ModelClient(entry, transport=app.state.agent.transport)
         memory, store = app.state.memory, app.state.store
-        operations = await plan_consolidation(memory, client)
+        try:
+            operations = await plan_consolidation(memory, client)
+        except ModelError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         accepted, refused = await asyncio.to_thread(
             gate_operations, operations, memory.list(),
             min_confidence=config.memory_consolidate_min_confidence,

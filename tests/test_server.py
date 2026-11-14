@@ -330,6 +330,18 @@ def test_manual_compaction_endpoint(server):
     assert 'Hello there!' in str(store.get_context(chat_id))
 
 
+def test_consolidate_reports_a_model_failure(server):
+    """An unreachable model is an expected condition, not an empty 500 (#114)."""
+    client, headers, cfg, fake = server
+    assert client.post('/memory', json={'title': 'Dog', 'body': 'Rex'}, headers=headers).status_code == 200
+    def refuse(request):
+        return httpx.Response(503, json={'error': 'down'})
+    client.app.state.agent.transport = httpx.MockTransport(refuse)
+    response = client.post('/memory/consolidate', json={'dry_run': True}, headers=headers)
+    assert response.status_code == 502
+    assert 'HTTP 503' in response.json()['detail']
+
+
 def test_no_model_after_removing_the_last_provider(server):
     """An empty model list is a setup state, not a raw KeyError (#92)."""
     client, headers, cfg, fake = server
