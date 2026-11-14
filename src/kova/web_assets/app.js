@@ -30,6 +30,13 @@
   $('autostart-toggle').onchange = () => refreshAutostart($('autostart-toggle').checked ? 'on' : 'off');
   const pendingAttachments = [];
   let readingAttachments = false;
+  // Installed PWAs stage share-sheet files in this cache and never send them
+  // through a text draft; the page uploads them through the normal API.
+  const SHARE_CACHE = 'kova-share-v1';
+  const SHARE_TTL = 5 * 60 * 1000;
+  function looksLikeImage(file) {
+    return String(file?.type || '').startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(String(file?.name || ''));
+  }
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
@@ -952,6 +959,64 @@
   }
   function safe(fn) { Promise.resolve().then(fn).catch(error => { toast(error.message); controls(); }); }
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
+  async function readWorkerShare(token) {
+    if (typeof caches === 'undefined' || !location.origin) return null;
+    const root = `${location.origin}/app/share/${encodeURIComponent(token)}`;
+    try {
+      const cache = await caches.open(SHARE_CACHE);
+      const manifest = await cache.match(`${root}/manifest`);
+      if (!manifest) return null;
+      await cache.delete(`${root}/manifest`);
+      const data = await manifest.json();
+      if (!data || !Number.isFinite(data.created) || Date.now() - data.created > SHARE_TTL) {
+        // An expired draft must not leave its file bytes in the cache.
+        for (const entry of data?.files || []) await cache.delete(entry.key);
+        return null;
+      }
+      const files = [];
+      for (const entry of data.files || []) {
+        const stored = await cache.match(entry.key);
+        if (!stored) continue;
+        await cache.delete(entry.key);
+        const blob = await stored.blob();
+        files.push(new File([blob], entry.name || 'file', {type: entry.type || blob.type || 'application/octet-stream'}));
+      }
+      return {text: typeof data.text === 'string' ? data.text : '', files};
+    } catch (_) { return null; }
+  }
+  // Shared files are native attachments, not filename/MIME/base64 prose. Files
+  // from the installed PWA go through the same upload API as the paperclip;
+  // the server fallback has already saved them and hands back ready rows.
+  async function applyShare(draft) {
+    pendingAttachments.length = 0;
+    if (draft.chat) {
+      const accepted = [];
+      for (const row of draft.attachments || []) {
+        if (String(row.mime || '').startsWith('image/') && !offers('vision')) {
+          try { await json(`/chats/${row.chat_id || draft.chat.id}/attachments/${row.id}`, {method: 'DELETE'}); } catch (_) {}
+          toast('This model cannot read images. Turn on Vision for it in Model settings.');
+          continue;
+        }
+        if (accepted.length < 3) accepted.push(row);
+      }
+      if (!accepted.length && !(draft.text || '').trim()) {
+        try {
+          await json(`/chats/${draft.chat.id}`, {method: 'DELETE'});
+        } catch (_) { /* the empty draft is harmless if cleanup is refused */ }
+        setChat(null);
+      } else {
+        setChat(draft.chat);
+        pendingAttachments.push(...accepted);
+        renderAttachments(); controls();
+        await refreshChats();
+      }
+    } else {
+      setChat(null);
+    }
+    $('prompt').value = draft.text || '';
+    resize();
+    if (draft.files?.length) await attachFiles(draft.files);
+  }
   function renderAttachments() {
     $('attachment-chips').replaceChildren();
     for (const item of pendingAttachments.filter(a => a.chat_id === state.chat?.id)) {
@@ -967,14 +1032,19 @@
   }
   async function attachFiles(files) {
     if (readingAttachments || state.busy || !state.connected) return;
-    if (pendingAttachments.length + files.length > 3) return toast('Attach at most three files per turn.');
+    const accepted = [];
+    for (const file of files) {
+      if (looksLikeImage(file) && !offers('vision')) { toast('This model cannot read images. Turn on Vision for it in Model settings.'); continue; }
+      if (file.size > 25 * 1024 * 1024) { toast('Each attachment must be 25 MB or smaller.'); continue; }
+      accepted.push(file);
+    }
+    if (!accepted.length) return;
+    if (pendingAttachments.length + accepted.length > 3) return toast('Attach at most three files per turn.');
     readingAttachments = true; $('attachment-chips').append(el('span', '', 'reading…')); controls();
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value}));
       const chatId = state.chat.id;
-      for (const file of files) {
-        if (file.type.startsWith('image/') && !offers('vision')) { toast('This model cannot read images. Turn on Vision for it in Model settings.'); continue; }
-        if (file.size > 25 * 1024 * 1024) { toast('Each attachment must be 25 MB or smaller.'); continue; }
+      for (const file of accepted) {
         const form = new FormData(); form.append('file', file);
         pendingAttachments.push(await json(`/chats/${chatId}/attachments`, {method: 'POST', body: form}));
       }
@@ -1239,8 +1309,9 @@
       await refreshChats(); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       if (share) {
-        const draft = await json(`/app/share/${encodeURIComponent(share)}`, {method: 'POST'});
-        state.chat = null; $('prompt').value = draft.text; resize();
+        const local = await readWorkerShare(share);
+        const draft = local || await json(`/app/share/${encodeURIComponent(share)}`, {method: 'POST'});
+        await applyShare(draft);
       }
       $('prompt').focus();
     } catch (error) { disconnected(error instanceof TypeError ? 'Kova is offline. Reconnect to your computer to load chats and reminders.' : error.message); }

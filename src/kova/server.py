@@ -336,6 +336,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent = Agent(config, store, memory, tools, transport=app.state.transport, now=now)
     bus = EventBus()
     app.state.store = store
+    # Share tokens live only in memory. Any draft a previous process journaled
+    # is therefore unreachable now: remove the empty conversation it left.
+    for draft_chat in store.reap_share_drafts():
+        store.delete_chat(draft_chat)
     app.state.memory = memory
     app.state.tool_context = tool_context
     app.state.agent = agent

@@ -92,8 +92,8 @@ same commit as the route.
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
 | `GET /app/sw.js` | public | app-shell-only service worker |
-| `POST /app/share` | browser session | bounded multipart share draft |
-| `POST /app/share/{token}` | browser session | consume an owner-bound draft once |
+| `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |
+| `POST /app/share/{token}` | browser session | consume an owner-bound share once |
 
 **Browser login and phone pairing** (`src/kova/web.py`). The launcher holds the
 bearer token; the browser never sees it.
@@ -292,6 +292,19 @@ through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows collapsible reasoning and live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
 stored in `localStorage`.
+
+The installed PWA handles a platform share with its service worker: files wait
+briefly in CacheStorage, then the page uploads them through the normal
+authenticated `/chats/{id}/attachments` API and shows ordinary attachment chips.
+If the worker is not in control, `/app/share` saves the same native attachments
+on the server before redirecting to a one-use composer. Text and link shares
+stay editable drafts. Shared images obey the selected model's vision setting;
+nothing invents a base64-in-text attachment format. A draft chat that is never
+redeemed is deleted with its files on the next browser request after its five
+minutes expire; the page also drops expired worker-staged file bytes. Share
+tokens live only in memory, so a restart makes unredeemed shares unreachable:
+the startup sweep removes the draft chats and files they journaled, while a
+chat that already has messages is always kept.
 
 ## One turn
 
