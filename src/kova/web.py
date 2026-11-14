@@ -7,13 +7,14 @@ The page exchanges it for an HttpOnly cookie, then removes the fragment.
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,7 @@ def require_browser_session(request: Request) -> None:
 
 def install_web(app, require_bearer) -> None:
     """Register public packaged assets and bearer-bootstrapped browser sessions."""
+    app.state.web_shares = {}
     app.state.web_sessions = {}
     app.state.web_tickets = {}
 
@@ -79,7 +81,7 @@ def install_web(app, require_bearer) -> None:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                 "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
-                "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+                "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; worker-src 'self'; manifest-src 'self'"
             )
             response.headers["X-Frame-Options"] = "DENY"
         return response
@@ -87,6 +89,59 @@ def install_web(app, require_bearer) -> None:
     @app.get("/app", include_in_schema=False)
     async def page():
         return FileResponse(ASSETS / "index.html")
+
+    @app.get("/app/manifest.webmanifest", include_in_schema=False)
+    async def manifest():
+        from . import theme
+        data = json.loads((ASSETS / "manifest.webmanifest").read_text())
+        data.update(name=app.state.config.persona_name, short_name=app.state.config.persona_name,
+                    theme_color=theme.ACCENT, background_color=theme.SURFACE)
+        return JSONResponse(data, media_type="application/manifest+json")
+
+    @app.get("/app/sw.js", include_in_schema=False)
+    async def worker():
+        return FileResponse(ASSETS / "sw.js", media_type="application/javascript")
+
+    @app.post("/app/share", dependencies=[Depends(require_browser_session)])
+    async def share(request: Request):
+        # Bound the whole request before parsing multipart (including chunked bodies).
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 2 * 1024 * 1024:
+                raise HTTPException(413, "Share is too large (2 MB maximum).")
+        request._body = bytes(body)
+        from starlette.datastructures import UploadFile
+        async with request.form(max_files=4, max_fields=3) as form:
+            parts = [str(form.get(key, "")) for key in ("title", "text", "url")]
+            for file in form.getlist("files"):
+                if isinstance(file, UploadFile):
+                    content = await file.read()
+                    # The existing composer is text-only: preserve arbitrary files as base64.
+                    import base64
+                    parts.append(f"Shared file: {Path(file.filename or 'file').name}\n"
+                                 f"MIME: {file.content_type}\nBase64: "
+                                 + base64.b64encode(content).decode("ascii"))
+        entries = app.state.web_shares
+        for key, value in list(entries.items()):
+            if value[0] <= time.monotonic():
+                entries.pop(key, None)
+        if len(entries) >= 32:
+            raise HTTPException(429, "Too many pending shares.")
+        token = secrets.token_urlsafe(32)
+        owner = request.cookies.get(COOKIE) or request.cookies.get("kova_device")
+        entries[token] = (time.monotonic() + 300, owner, "\n\n".join(p for p in parts if p))
+        return RedirectResponse("/app#share=" + token, status_code=303)
+
+    @app.post("/app/share/{token}", dependencies=[Depends(require_browser_session)])
+    async def consume_share(token: str, request: Request):
+        entries = app.state.web_shares
+        entry = entries.get(token)
+        owner = request.cookies.get(COOKIE) or request.cookies.get("kova_device")
+        if entry is None or entry[0] <= time.monotonic() or entry[1] != owner:
+            raise HTTPException(404, "Share expired or already used.")
+        entries.pop(token)
+        return {"text": entry[2]}
 
     @app.post("/app/session", dependencies=[Depends(require_bearer)])
     async def issue_ticket():

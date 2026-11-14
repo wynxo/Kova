@@ -1145,7 +1145,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { toast(JSON.parse(event.data).text, 'Reminder'); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
@@ -1185,13 +1185,14 @@
     state.starting = true; state.events?.close();
     // Strip before any asynchronous work, so a consumed ticket never stays in history.
     const fragment = new URLSearchParams(location.hash.slice(1));
-    const ticket = fragment.get('ticket'), pairing = fragment.get('pair');
+    const ticket = fragment.get('ticket'), pairing = fragment.get('pair'), share = fragment.get('share');
     historyReplace();
     try {
       if (ticket) await json('/app/login', write('POST', {ticket}));
       // A phone that scanned a pairing QR code trades its one-use secret for a device cookie.
       if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toast('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true;
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
@@ -1201,8 +1202,12 @@
       await refreshCapabilities(selectedModel);
       await refreshChats(); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
+      if (share) {
+        const draft = await json(`/app/share/${encodeURIComponent(share)}`, {method: 'POST'});
+        state.chat = null; $('prompt').value = draft.text; resize();
+      }
       $('prompt').focus();
-    } catch (error) { disconnected(error.message); }
+    } catch (error) { disconnected(error instanceof TypeError ? 'Kova is offline. Reconnect to your computer to load chats and reminders.' : error.message); }
     finally { state.starting = false; }
   }
   function renderModels(models) {
@@ -1416,6 +1421,42 @@
       });
     };
   }
+  async function notifyReminder(event) {
+    if (document.hasFocus?.() || localStorage.getItem('kova-notify') !== 'yes' ||
+        !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;
+    try {
+      const registration = await navigator.serviceWorker.getRegistration('/app');
+      registration?.active?.postMessage(event);
+    } catch (_) { /* In-page reminders still work when OS notifications are unavailable. */ }
+  }
+  {
+    let installPrompt = null;
+    window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; });
+    const open = $('install-settings');
+    const dialog = el('dialog', 'panel'); dialog.setAttribute('aria-label', 'Install & notifications');
+    const close = el('button', 'btn', 'Close'); close.onclick = () => dialog.close();
+    const install = el('button', 'btn primary', 'Install on this device');
+    install.onclick = async () => {
+      if (installPrompt) { await installPrompt.prompt(); installPrompt = null; }
+      else toast('Use your browser’s Install app or Add to Home Screen menu. Phone installation requires HTTPS.');
+    };
+    const phone = el('button', 'btn', 'Install on your phone');
+    phone.onclick = () => { dialog.close(); $('connect-phone').click(); };
+    const notify = el('button', 'btn');
+    const label = () => { notify.textContent = localStorage.getItem('kova-notify') === 'yes' ? 'Notify me: on' : 'Notify me: off'; }; label();
+    notify.onclick = async () => {
+      if (localStorage.getItem('kova-notify') === 'yes') localStorage.removeItem('kova-notify');
+      else if ('Notification' in window && await Notification.requestPermission() === 'granted') localStorage.setItem('kova-notify', 'yes');
+      else toast('Notifications are unavailable or blocked on this device.');
+      label();
+    };
+    dialog.append(el('h2', '', 'Install on your phone'),
+      el('p', '', 'Scan the phone pairing QR to open /app, then use your browser’s install menu. Installation and notifications require HTTPS (or localhost on this computer). LAN HTTP pairing alone does not enable them.'),
+      phone, install, notify,
+      el('p', '', 'Notify me applies only to this browser/device. Reminders arrive through the local event stream while the app is alive and connected. Fully closed or suspended apps need a push service; Kova does not use FCM or send anything off this machine.'), close);
+    document.body.append(dialog); open.onclick = () => dialog.showModal();
+  }
+
   // Phone pairing (#66). The page on this computer shows a one-use QR code; the
   // phone that scans it opens /app#pair=… over the Wi-Fi and becomes a paired device.
   function onPhone() { return Boolean(location.hostname) && !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname); }
@@ -1731,6 +1772,7 @@
     if (document.visibilityState === 'visible') { checkStream(); if (state.connected) health(); }
     scheduleHealth();
   });
-  window.addEventListener('hashchange', () => { if (/(ticket|pair)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
+  window.addEventListener('hashchange', () => { if (/(ticket|pair|share)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
+
   controls(); start();
 })();

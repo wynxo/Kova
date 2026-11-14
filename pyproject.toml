@@ -17,6 +17,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "pydantic>=2.14.3",
     "pyjwt[crypto]>=2.10",
+    "python-multipart>=0.0.22",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "segno>=1.6",
