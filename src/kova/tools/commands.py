@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import tempfile
 
 from kova import sandbox
 
@@ -48,13 +49,20 @@ async def _kill_tree(process: asyncio.subprocess.Process) -> None:
 
 async def run_command(command: str, cwd: Path, timeout: float = 60,
                       sandboxed: bool = False) -> dict:
+    if sandboxed:
+        with tempfile.TemporaryFile() as status:
+            return await _run_command(command, cwd, timeout, sandboxed, status)
+    return await _run_command(command, cwd, timeout, sandboxed)
+
+
+async def _run_command(command, cwd, timeout, sandboxed, status=None):
     if not command.strip() or "\0" in command:
         raise ValueError("Enter a non-empty command without NUL characters")
     if isinstance(timeout, bool) or not 0 < timeout <= 300:
         raise ValueError("timeout must be greater than 0 and at most 300 seconds")
     argv = shell_command(command)
     if sandboxed:
-        wrapped = sandbox.wrap(argv, cwd)
+        wrapped = sandbox.wrap(argv, cwd, status_fd=status.fileno())
         if wrapped is None:
             # Fail closed: an unavailable sandbox is a refusal, never an
             # unconfined run of a command the user was not asked about.
@@ -64,6 +72,8 @@ async def run_command(command: str, cwd: Path, timeout: float = 60,
         argv = wrapped
     options = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                if os.name == "nt" else {"start_new_session": True})
+    if sandboxed:
+        options["pass_fds"] = (status.fileno(),)
     spawn = asyncio.create_task(asyncio.create_subprocess_exec(
         *argv, cwd=cwd, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **options,
@@ -109,7 +119,8 @@ async def run_command(command: str, cwd: Path, timeout: float = 60,
               "sandboxed": sandboxed, "cwd": str(cwd)}
     if timed_out:
         result["error"] = f"Command timed out after {timeout} seconds; partial changes may remain"
-    elif process.returncode == sandbox.EXIT_UNAVAILABLE and sandboxed:
+    elif sandboxed and os.pread(status.fileno(), 5, 0) != b"ready":
+        result["ok"] = False
         result["error"] = "Command sandbox could not be established; the command did not run."
     elif process.returncode:
         result["error"] = f"Command exited with status {process.returncode}"
