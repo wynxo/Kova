@@ -296,3 +296,8 @@ def save(home: Path, store, chat_id: str, name: str, data: bytes, *,
 def block(row: dict) -> str:
     pages = f'{row["pages"]} pages · ' if row['pages'] is not None else ''
     return f'file: {row["name"]} · {pages}{row["size"] / 1024:.1f} KB\nattachment_id: {row["id"]}\n' + read_text(Path(row['path']), row=row)
+
+
+def index(rows) -> str:
+    """A model-only list of a chat's attachments. Never includes extracted text."""
+    return '\n'.join(f'- {row["name"]} (id {row["id"]})' for row in rows)
