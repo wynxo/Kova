@@ -217,6 +217,10 @@ class Approvals:
     def policy(self, chat_id, name, args, cwd=None):
         rules = [r for r in self.rules if r.scope == "always" or r.chat_id == chat_id]
         action = evaluate_rules(rules, name, args, cwd)
+        # Old persisted grants must not bypass individual destructive approval.
+        command = shell_command_arg(name, args)
+        if action == "allow" and command is not None and command_risk(command) == "destructive":
+            action = None
         message = next((r.message for r in rules if r.action == "deny" and evaluate_rules([r], name, args, cwd) == "deny"), None)
         return action, message
 
@@ -246,9 +250,8 @@ class Approvals:
         pending = self.pending[identifier]
         try:
             decision = await asyncio.wait_for(pending.future, timeout=self.timeout)
-            if decision["decision"] in {"allow_session", "allow_always"}:
-                if pending.risk != "destructive":
-                    self.sessions.add(pending.chat_id)
+            if decision["decision"] in {"allow_session", "allow_always"} and pending.risk != "destructive":
+                self.sessions.add(pending.chat_id)
                 self.rules.append(Rule("allow", pending.tool, scope="always" if decision["decision"] == "allow_always" else "session",
                                        chat_id=pending.chat_id, exact=pending.key,
                                        pattern=str(pending.args.get("command", pending.args.get("path", "")))))

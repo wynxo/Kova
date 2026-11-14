@@ -82,3 +82,29 @@ async def test_edit_card_has_change_summary():
 @pytest.mark.parametrize('command', ["'rm' file", r"r\m file", 'echo ok; "rm" file'])
 def test_denies_normalize_shell_quotes_and_escapes(command):
     assert evaluate_rules([Rule('deny','run_command','rm *')], 'run_command', {'command':command}) == 'deny'
+
+
+@pytest.mark.parametrize('decision', ['allow_session', 'allow_always'])
+@pytest.mark.parametrize('tool', ['run_command', 'job_add'])
+async def test_destructive_approval_is_one_shot(tmp_path, decision, tool):
+    a = Approvals(path=tmp_path / 'rules.json')
+    args = {'command': 'rm -rf build'}
+    event = a.create('c', tool, args, cwd=tmp_path)
+    a.answer('c', event['id'], decision)
+    assert (await a.wait(event['id']))['decision'] == decision
+    assert a.rules == []
+    assert a.policy('c', tool, args, tmp_path)[0] is None
+    assert Approvals(path=a.path).rules == []
+
+
+def test_existing_allow_cannot_bypass_destructive_approval(tmp_path):
+    from kova.permissions import action_key
+
+    args = {'command': 'rm -rf build'}
+    a = Approvals(path=tmp_path / 'rules.json')
+    a.rules = [Rule('allow', 'run_command', exact=action_key('run_command', args, tmp_path))]
+    a.save()
+    fresh = Approvals(path=a.path)
+    assert fresh.policy('c', 'run_command', args, tmp_path)[0] != 'allow'
+    fresh.rules.append(Rule('deny', 'run_command', '*', message='No deletion'))
+    assert fresh.policy('c', 'run_command', args, tmp_path) == ('deny', 'No deletion')
