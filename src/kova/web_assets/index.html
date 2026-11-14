@@ -32,17 +32,19 @@
         <button id="open-memory" type="button" class="nav-row"><span class="icon i-brain" aria-hidden="true"></span>Memory</button>
         <button id="open-reminders" type="button" class="nav-row"><span class="icon i-bell" aria-hidden="true"></span>Reminders</button>
         <button id="add-provider" type="button" class="nav-row"><span class="icon i-plus" aria-hidden="true"></span>Add provider</button>
+        <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
       </nav>
       <div class="footer-bar">
         <div class="local-note"><span class="icon i-lock" aria-hidden="true"></span><div><strong>On your computer</strong><small>Your chats stay yours.</small></div></div>
         <button id="theme" type="button" class="icon-button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span class="sr-only">Light theme</span></button>
+        <button id="open-shortcuts" type="button" class="icon-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><span class="icon i-keyboard" aria-hidden="true"></span></button>
         <button id="disconnect" type="button" class="icon-button" title="Disconnect this window" aria-label="Disconnect this window"><span class="icon i-log-out" aria-hidden="true"></span></button>
       </div>
     </div>
   </aside>
   <main>
     <header class="topbar">
-      <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" aria-expanded="false"><span class="icon i-panel-left" aria-hidden="true"></span></button>
+      <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New conversation</strong>
       <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
     </header>
@@ -56,11 +58,14 @@
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
     <div class="compose-wrap">
+      <button id="jump" type="button" class="jump" hidden title="Jump to the latest message" aria-label="Jump to the latest message"><span class="icon i-arrow-down" aria-hidden="true"></span></button>
       <div id="queue-strip" class="queue-strip" aria-label="Queued messages" hidden></div>
       <form id="composer" class="composer" data-mode="work">
         <label class="sr-only" for="prompt">Message Kova</label>
         <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
         <div class="compose-toolbar">
+          <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
+          <div id="compose-options" class="compose-options">
           <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
             <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
             <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
@@ -70,16 +75,17 @@
           <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
           <label class="chip folder-control work-only" title="Absolute path to an existing working folder"><span class="icon i-folder" aria-hidden="true"></span><input id="cwd" aria-label="Working folder" placeholder="Kova files folder" autocomplete="off" spellcheck="false"></label>
           <button id="web" type="button" class="chip toggle" aria-pressed="true" title="Allow web search"><span class="icon i-globe" aria-hidden="true"></span><span>Web on</span></button>
+          </div>
           <span class="toolbar-gap" aria-hidden="true"></span>
           <span id="model-slot"></span>
           <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>
           <button id="queue" type="button" class="stop" hidden title="Run this message after the current reply"><span class="icon i-plus" aria-hidden="true"></span>Queue</button>
           <button id="steer" type="button" class="stop" hidden title="Send this message into the reply that is running"><span class="icon i-arrow-up" aria-hidden="true"></span>Steer</button>
-          <button id="stop" type="button" class="stop" hidden><span class="icon i-square" aria-hidden="true"></span>Stop</button>
+          <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
-      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line</span></div>
+      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line <span class="hint-dot">·</span> <kbd data-mod>Ctrl</kbd> + <kbd>/</kbd> for shortcuts</span></div>
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
@@ -92,6 +98,21 @@
   </main>
   <div id="toasts" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
+  <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <div class="dialog-head"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button id="shortcuts-close" type="button" class="icon-button" aria-label="Close keyboard shortcuts"><span class="icon i-x" aria-hidden="true"></span></button></div>
+    <dl class="shortcuts">
+      <div><dt>Send the message</dt><dd><kbd>Enter</kbd></dd></div>
+      <div><dt>New line</dt><dd><kbd>Shift</kbd><kbd>Enter</kbd></dd></div>
+      <div><dt>Bring back your last message</dt><dd><kbd>↑</kbd> <span>in an empty box</span></dd></div>
+      <div><dt>Stop the reply</dt><dd><kbd>Esc</kbd></dd></div>
+      <div><dt>Jump to the message box</dt><dd><kbd>/</kbd></dd></div>
+      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
+      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd></div>
+      <div><dt>Show or hide the sidebar</dt><dd><kbd data-mod>Ctrl</kbd><kbd>B</kbd></dd></div>
+      <div><dt>Switch light and dark</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd></dd></div>
+      <div><dt>This list</dt><dd><kbd data-mod>Ctrl</kbd><kbd>/</kbd></dd></div>
+    </dl>
+  </dialog>
   <dialog id="provider-dialog" aria-labelledby="provider-title">
     <form id="provider-form" autocomplete="off">
       <div class="dialog-head"><h2 id="provider-title">Connect a provider</h2><button id="provider-cancel" type="button" class="icon-button" aria-label="Close provider setup"><span class="icon i-x" aria-hidden="true"></span></button></div>

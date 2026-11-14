@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints
+from kova import __version__, checkpoints, pairing
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -202,6 +202,8 @@ def _sse(event: dict) -> str:
 
 async def _require_bearer(request: Request) -> None:
     """Reject anything without the home's bearer token."""
+    if request.scope.get("kova_lan"):
+        raise HTTPException(status_code=403, detail="The Kova token works only on this computer.")
     expected = request.app.state.token
     given = request.headers.get("authorization", "")
     if not hmac.compare_digest(given.encode(), f"Bearer {expected}".encode()):
@@ -264,10 +266,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                           run_prompt=run_job_prompt, is_idle=is_idle)
     app.state.scheduler = scheduler
     reminders = asyncio.create_task(ReminderLoop(store, bus, now, scheduler=scheduler).run())
+    if config.bind == "lan":
+        await pairing.start_lan(app)
     try:
         yield
     finally:
         bus.publish(None)  # end every open /events stream
+        await pairing.stop_lan(app)
         reminders.cancel()
         for turn in list(app.state.turns):
             turn.cancel()
@@ -298,6 +303,7 @@ def create_app(
     app.state.chat_turns = {}
     app.state.steering = {}
     install_web(app, _require_bearer)
+    pairing.install_phone(app, _require_token)
     from kova.provider_routes import install_provider_routes
     config.bind_providers()
     install_provider_routes(app, config, _require_token)

@@ -73,3 +73,21 @@ mode, then on the right:
 
 On narrow terminals the status line drops the least important parts first
 (folder, then stats) and shortens the model name, so it never wraps.
+
+## Web and desktop app
+
+The browser UI and the desktop app share these keys. Press `Ctrl` `/` (`⌘` `/`
+on a Mac) in the app for the same list.
+
+| Key | What it does |
+| --- | --- |
+| `enter` | Send the message (queues it while a reply runs) |
+| `shift+enter` | New line |
+| `↑` in an empty box | Bring back your last message |
+| `esc` | Stop the reply; close the drawer or a menu |
+| `/` | Jump to the message box |
+| `ctrl+k` | New conversation |
+| `ctrl+shift+f` | Search conversations |
+| `ctrl+b` | Show or hide the sidebar |
+| `ctrl+shift+l` | Switch light and dark |
+| `ctrl+/` or `?` | Keyboard shortcuts |

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 
 from . import ToolError
@@ -187,6 +189,37 @@ def _search_rg(rg: str, base: Path, query: str, regex: bool, glob: str | None) -
 
 
 def _search_python(base: Path, query: str, regex: bool, glob: str | None) -> dict:
+    if not regex:
+        return _search_python_scan(base, query, regex, glob)
+    # A thread timeout cannot interrupt CPython's regex engine. subprocess.run
+    # kills and reaps this worker on timeout, including a stuck individual match.
+    request = json.dumps([str(base), query, glob])
+    try:
+        process = subprocess.run(
+            [sys.executable, "-m", "kova.tools._search_worker"],
+            input=request.encode(), capture_output=True, timeout=SEARCH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        matches = []
+        for line in (exc.stdout or b"").splitlines():
+            try:
+                event = json.loads(line)
+            except (ValueError, UnicodeDecodeError):
+                continue  # The kill may interrupt the final protocol record.
+            if "match" in event:
+                matches.append(event["match"])
+        return {"ok": False, "matches": matches, "truncated": True,
+                "engine": "python", "error": "Search timed out; narrow it with path or glob."}
+    if process.returncode:
+        return _error("Python search worker failed.")
+    records = process.stdout.splitlines()
+    if not records:
+        return _error("Python search worker returned no result.")
+    return json.loads(records[-1])["result"]
+
+
+def _search_python_scan(base: Path, query: str, regex: bool, glob: str | None,
+                        on_match=None) -> dict:
     try:
         pattern = re.compile(query if regex else re.escape(query))
     except re.error as exc:
@@ -226,7 +259,10 @@ def _search_python(base: Path, query: str, regex: bool, glob: str | None) -> dic
                     if len(matches) >= SEARCH_MAX_MATCHES:
                         return {"ok": True, "matches": matches, "truncated": True,
                                 "engine": "python"}
-                    matches.append(_match_line(relative, number, line))
+                    match = _match_line(relative, number, line)
+                    matches.append(match)
+                    if on_match is not None:
+                        on_match(match)
     return {"ok": True, "matches": matches, "truncated": truncated, "engine": "python"}
 
 

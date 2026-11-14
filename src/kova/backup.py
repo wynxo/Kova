@@ -256,11 +256,22 @@ def _restore_models(cfg: Config, data: dict) -> bool:
     from kova.config import ProviderEntry
     current = {model.name: model for model in cfg.models}
     existing = {p.id: p for p in cfg.providers}
+    provider_ids = {}
     for raw in data.get('providers', []):
-        if raw.get('id') not in existing:
-            p = ProviderEntry(**{k: v for k, v in raw.items() if k not in ('api_key', 'auth', 'headers')})
-            cfg.providers.append(p)
-            existing[p.id] = p
+        p = ProviderEntry(**{k: v for k, v in raw.items() if k not in ('api_key', 'auth', 'headers')})
+        original_id = p.id
+        local = existing.get(original_id)
+        # IDs are local labels, not connection identities. Never attach local
+        # credentials to a backup's different endpoint or authentication kind.
+        identity = lambda item: (item.base_url.rstrip('/'), item.kind, item.adapter)
+        if local is not None and identity(local) == identity(p):
+            provider_ids[original_id] = local.id
+            continue
+        while p.id in existing:
+            p.id += '-restored'
+        cfg.providers.append(p)
+        existing[p.id] = p
+        provider_ids[original_id] = p.id
     models: list[ModelEntry] = []
     for raw in data.get("models", []):
         if not isinstance(raw, dict) or not raw.get("name"):
@@ -275,10 +286,12 @@ def _restore_models(cfg: Config, data: dict) -> bool:
             model=str(raw.get("model", "")),
             api_key=None,
             context=context,
-            provider=str(raw.get('provider', '')),
+            provider=provider_ids.get(str(raw.get('provider', '')), str(raw.get('provider', ''))),
         )
-        if entry.name in current:
-            entry.api_key = current[entry.name].api_key
+        local = current.get(entry.name)
+        if (local is not None and not entry.provider
+                and local.base_url.rstrip('/') == entry.base_url.rstrip('/')):
+            entry.api_key = local.api_key
         models.append(entry)
     if not models:
         return False
