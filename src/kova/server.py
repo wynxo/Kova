@@ -331,7 +331,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     now: Callable[[], datetime] = app.state.now
     store = Store(config.home / "kova.db", default_cwd=str(config.files_path.resolve()))
     memory = Memory(config.memory_path, config.memory_write_subdir, config.memory_budget)
-    tool_context = ToolContext(config, store, memory, now)
+    from kova.mcp import McpManager
+    mcp = McpManager(config.home)
+    tool_context = ToolContext(config, store, memory, now, mcp=mcp)
     tools = build_tools(tool_context)
     agent = Agent(config, store, memory, tools, transport=app.state.transport, now=now)
     bus = EventBus()
@@ -343,6 +345,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = memory
     app.state.tool_context = tool_context
     app.state.agent = agent
+    app.state.mcp = mcp
+    # MCP servers connect in the background (npx may download first), so the
+    # server answers at once; their tools join the registry when ready.
+    mcp_connect = asyncio.create_task(app.state.mcp_reload()) if config.mcp else None
     app.state.bus = bus
     app.state.conversation_states = ConversationStates(bus)
 
@@ -400,6 +406,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await pairing.stop_lan(app)
         reminders.cancel()
         cleanup.cancel()
+        if mcp_connect is not None:
+            mcp_connect.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await mcp_connect
+        await asyncio.to_thread(mcp.close)
         for turn in list(app.state.turns):
             turn.cancel()
         for task in [reminders, cleanup, *app.state.turns]:
@@ -438,6 +449,8 @@ def create_app(
     from kova.provider_routes import install_provider_routes
     config.bind_providers()
     install_provider_routes(app, config, _require_token)
+    from kova.mcp_routes import install_mcp_routes
+    install_mcp_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""

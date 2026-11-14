@@ -147,6 +147,11 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
+| `GET /mcp` | token or session | list MCP servers with their tools and state |
+| `POST /mcp` | token or session, local only | add an MCP server and connect it (never from a paired phone) |
+| `PATCH/DELETE /mcp/{name}` | token or session | switch an MCP server on or off / remove it and its grants |
+| `POST /mcp/{name}/test` | token or session | reconnect one MCP server now and report its tools |
+| `PATCH /mcp/{name}/tools/{tool:path}` | token or session | switch one MCP tool on or off, or always allow it |
 | `GET/PUT /permission-rules` | token or session | read / replace the rules that pre-approve tools |
 | `GET /autostart` | token or session | inspect start-at-login availability and state |
 | `POST /autostart/{action}` | token or session | enable or disable start at login (`on` or `off`) |
@@ -244,8 +249,8 @@ restarts. See [remote-access.md](remote-access.md).
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
 `status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
-and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
-and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
+`chats` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -422,6 +427,56 @@ returns a string (or an awaitable). `build_tools` collects them and
 | `memory_search` | `tools/memory.py` | search memory notes |
 | `system_info` | `tools/system_info.py` | OS, CPU, RAM, disk, GPU and uptime (read-only) |
 
+### MCP tools (`src/kova/mcp.py`)
+
+Any [Model Context Protocol](https://modelcontextprotocol.io) server can add
+tools. Each `[[mcp]]` entry in `config.toml` (see
+[CONFIG.md](CONFIG.md#mcp-servers)) is either a **stdio** server (Kova starts
+`command args…` and speaks newline-delimited JSON-RPC on its pipes) or a
+**streamable HTTP** server (Kova POSTs to `url`, reads JSON or SSE replies, and
+keeps the `Mcp-Session-Id`, initializing again when the server forgets it). The
+client is hand-written on `subprocess` and `httpx`; there is no SDK dependency.
+
+```
+config.mcp ──▶ McpManager.reload ──▶ McpClient (one per enabled server)
+                    │                    ├── _Stdio: Popen + reader thread
+                    │                    └── _Http: httpx POST, JSON or SSE
+                    ▼
+            McpManager.tools() ──▶ build_tools ──▶ agent.tools  ("server__tool")
+```
+
+- **Startup.** The lifespan creates one `McpManager` (on `ToolContext.mcp`) and
+  connects every enabled server in a background task, in parallel, so a slow
+  `npx` download never delays `/health`. When it finishes, `build_tools`
+  rebuilds the registry and the agent's dict is swapped in one step. The
+  `/mcp` routes (`src/kova/mcp_routes.py`) do the same after every change, so
+  `kova mcp add` and the settings switches apply without a restart.
+- **Names.** A tool becomes `<server>__<tool>`, cleaned to the characters
+  function names allow and cut at 64, so it can never shadow a built-in or
+  another server's tool. Descriptions start with `[<server> MCP]`.
+- **Permissions.** MCP tools are `Tool(external=True)`. `needs_approval` asks
+  before every call in Manual and Auto; only Full access, or a permission rule
+  (checked first, as for every tool), skips the card. The settings switch
+  *Always allow* writes the rule `{"action": "allow", "tool": "<server>__<tool>"}`;
+  removing a server removes every rule for its tools. Chat mode never offers MCP
+  tools, like every non-web tool.
+- **Crashes.** When a stdio server exits, the call in flight fails with the end
+  of its stderr (it is never retried: tools can have side effects), and the
+  next call starts it again, at most three starts a minute. A server that fails
+  to connect is shown with its error and contributes no tools; the others are
+  unaffected.
+- **Sandbox.** `sandbox = true` starts a stdio server through `kova.sandbox`:
+  it may write only to `KOVA_HOME/mcp/<name>` (its working folder) and temporary
+  space. Without Landlock the server is not started. It is off by default
+  because most `npx`/`uvx` servers write to their package caches.
+- **Secrets.** `env` and `headers` can hold tokens. They are hidden from reprs,
+  shown only by name in `kova config show`, never returned by `GET /mcp`, and
+  dropped from backups.
+
+The module's public API (`McpServer`, `McpClient`, `McpManager`,
+`build_mcp_tools`, `servers_from_config`, `validate_server`, `McpError`) is kept
+small on purpose: plugins reuse it to bring their own servers.
+
 Safety lives in the tools, not the prompt. `files.resolve_in` confines every
 path to `config.files_path` (default `~/Kova Files`). `web._check_public`
 rejects anything but HTTP(S) and refuses hosts that resolve to non-global
@@ -496,7 +551,8 @@ context = 32768                          # token budget for history trimming
 
 ```
 ~/.kova/                  KOVA_HOME moves this
-├── config.toml           settings and model servers
+├── config.toml           settings, model servers and MCP servers
+├── mcp/<name>/           working folder of each stdio MCP server
 ├── token                 bearer token for local API calls
 ├── kova.db               chats, messages, reminders, search index
 ├── memory/               Markdown notes (default location)
@@ -508,7 +564,7 @@ context = 32768                          # token budget for history trimming
 
 Backups (`src/kova/backup.py`, `kova export` / `kova import`) are ordinary
 zips: `manifest.json`, chat JSON plus Markdown, memory notes, reminders, and
-`config.toml` with API keys stripped. The token is never included. Update and
+`config.toml` with API keys, provider headers and MCP `env`/`headers` stripped. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
 
@@ -531,6 +587,7 @@ with `KOVA_LIVE=1`.
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
+| `src/kova/mcp.py` | MCP client: stdio/HTTP servers become tools |
 | `src/kova/cli.py` | Typer commands and rendering |
 | `src/kova/autostart.py` | per-user start-at-login entries |
 | `src/kova/ui.py` | terminal chat and slash commands |

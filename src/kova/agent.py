@@ -544,7 +544,7 @@ class Agent:
                                     raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
                                 if policy == 'ask' or (policy != 'allow' and needs_approval(
                                         name, args, permission, cwd, self.config.files_path,
-                                        False, sandboxed=confined)):
+                                        False, sandboxed=confined, external=tools[name].external)):
                                     approval = self.approvals.create(chat_id, name, args, cwd=cwd)
                                     approved_binding = approval["binding"]
                                     try:

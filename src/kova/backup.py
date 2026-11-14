@@ -70,9 +70,10 @@ def _note_files(root: Path) -> list[Path]:
 
 
 def _strip_api_keys(value):
-    """Recursively drop every ``api_key`` key from parsed TOML."""
+    """Recursively drop credentials (keys, auth, headers, MCP env) from parsed TOML."""
     if isinstance(value, dict):
-        return {key: _strip_api_keys(item) for key, item in value.items() if key not in {"api_key", "auth", "headers"}}
+        return {key: _strip_api_keys(item) for key, item in value.items()
+                if key not in {"api_key", "auth", "headers", "env"}}
     if isinstance(value, list):
         return [_strip_api_keys(item) for item in value]
     return value
