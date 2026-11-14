@@ -24,6 +24,21 @@ def adapter_capabilities(adapter: str) -> frozenset[str]:
     return ADAPTER_CAPABILITIES.get(adapter, ADAPTER_CAPABILITIES['openai'])
 
 
+def _tool_input(arguments) -> dict:
+    """Best-effort parse of stored tool arguments.
+
+    History can hold arguments a model streamed badly, so one bad record must
+    never abort every later request in the chat.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        parsed = json.loads(arguments or '{}')
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def anthropic_request(model, messages, tools):
     system, converted = [], []
     for message in messages:
@@ -41,7 +56,7 @@ def anthropic_request(model, messages, tools):
             for call in message.get('tool_calls') or []:
                 function = call['function']
                 blocks.append({'type': 'tool_use', 'id': call['id'], 'name': function['name'],
-                               'input': json.loads(function['arguments'])})
+                               'input': _tool_input(function.get('arguments'))})
         if converted and converted[-1]['role'] == role:
             converted[-1]['content'].extend(blocks)
         else:
