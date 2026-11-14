@@ -244,8 +244,8 @@ restarts. See [remote-access.md](remote-access.md).
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
 `status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
-and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`
-and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+and `doctor`; groups `model`, `providers`, `memory`, `reminders`, `jobs`, `chats`,
+`plugin` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
