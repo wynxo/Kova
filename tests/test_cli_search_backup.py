@@ -82,6 +82,19 @@ def test_chats_export_prints_markdown_or_json(runner):
     assert "Choose either" in both.output
 
 
+def test_an_all_digit_chat_id_is_found_by_id(runner, monkeypatch):
+    """Ids are random hex; one made only of digits is an id, not a list number."""
+    cli_runner, client, cfg, fake, app = runner
+    import kova.store as store_module
+    monkeypatch.setattr(store_module, "uuid4", lambda: type("U", (), {"hex": "147294085793" + "0" * 20})())
+    chat = app.state.store.create_chat("Digits")
+    assert chat["id"] == "147294085793"
+    result = cli_runner.invoke(cli.app, ["chats", "export", chat["id"], "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["id"] == chat["id"]
+    assert cli_runner.invoke(cli.app, ["chats", "export", "99"]).exit_code == 1
+
+
 def test_export_and_import_commands(tmp_path, monkeypatch):
     source_home = tmp_path / "source"
     monkeypatch.setenv("KOVA_HOME", str(source_home))
