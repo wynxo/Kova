@@ -1763,7 +1763,8 @@ app.add_typer(_config, name="config")
 @_config.command("path")
 def config_path():
     """Print the config.toml path for this KOVA_HOME."""
-    console.print(Text(str(kova_home() / "config.toml")))
+    # Written directly, like --json: a wrapped path is not usable in a script.
+    sys.stdout.write(str(kova_home() / "config.toml") + "\n")
 
 
 @_config.command("show")

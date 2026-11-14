@@ -44,6 +44,13 @@ def test_config_path_does_not_start_the_server(home, monkeypatch):
     assert result.stdout.strip() == str(home / "config.toml")
 
 
+def test_config_path_is_never_wrapped_for_scripts(home, monkeypatch):
+    monkeypatch.setattr(cli.console, "width", 20)
+    result = invoke("config", "path")
+    assert result.exit_code == 0, result.output
+    assert result.stdout == str(home / "config.toml") + "\n"
+
+
 def test_config_show_json_is_complete_and_redacts_credentials(home):
     cfg = load_config()
     cfg.providers[0].api_key = SECRET_KEY
