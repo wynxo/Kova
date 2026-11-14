@@ -216,9 +216,21 @@ def test_a_job_shell_command_needs_approval_when_it_is_scheduled(tmp_path):
     files = tmp_path / "files"
     args = {"text": "Back up", "schedule": "every 1h", "command": "echo hi"}
     assert needs_approval("job_add", args, "manual", tmp_path, files) is True
-    assert needs_approval("job_add", args, "auto", tmp_path, files) is False
+    assert needs_approval("job_add", args, "auto", tmp_path, files) is True
     assert needs_approval("job_add", {**args, "command": "rm -rf build"}, "auto",
                           tmp_path, files) is True
     # A prompt-only job carries no command, so it needs no shell approval.
     prompt_only = {"text": "Report", "schedule": "every 1h", "prompt": "Write it."}
     assert needs_approval("job_add", prompt_only, "manual", tmp_path, files) is False
+
+
+@pytest.mark.parametrize('permission', ['manual', 'auto'])
+@pytest.mark.parametrize('sandboxed', [True, False, None])
+def test_scheduled_commands_require_unconfined_approval(tmp_path, permission, sandboxed):
+    args = {'command': 'echo hi', 'schedule': 'every 1h'}
+    assert needs_approval('job_add', args, permission, tmp_path, tmp_path,
+                          sandboxed=sandboxed) is True
+    assert needs_approval('job_add', args, 'full', tmp_path, tmp_path,
+                          sandboxed=sandboxed) is False
+    assert needs_approval('job_add', {'prompt': 'Report'}, permission, tmp_path, tmp_path,
+                          sandboxed=sandboxed) is False
