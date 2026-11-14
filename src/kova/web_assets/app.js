@@ -990,6 +990,111 @@
     syncMenus();
   }
 
+  let localRows = [], localController = null;
+  const localSize = value => value == null ? 'unknown' : `${(value / 1073741824).toFixed(1)} GiB`;
+  function localChoiceChanged() {
+    const row = localRows.find(r => r.id === $('local-model-choice').value);
+    $('local-model-reason').textContent = row ? `${row.rating.replaceAll('-', ' ')}: ${row.reason}` : 'No model fits. Free disk/RAM or choose explicit CPU mode.';
+    $('local-model-size').textContent = row ? `Download about ${localSize(row.download_bytes)} · ${row.quant} · ${row.context} token context` : '';
+    $('local-license').hidden = !row;
+    if (row) $('local-license').href = row.license_url;
+    $('local-install').disabled = !row || row.rating === 'too-big';
+  }
+  async function openLocalModels() {
+    const version = ++providerVersion;
+    clearTimeout(providerTimer);
+    if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {});
+    providerLogin = null;
+    clearProviderSecrets(); lockProvider(true);
+    $('provider-details').hidden = true; $('provider-models-step').hidden = true;
+    $('provider-local').hidden = true; $('provider-next').hidden = true;
+    $('local-model-step').hidden = false; $('provider-back').hidden = false;
+    $('local-progress').hidden = true; $('local-install').disabled = true;
+    $('provider-status').textContent = 'Checking hardware and local backends…';
+    try {
+      const data = await json(`/local-models?cpu=${$('local-cpu').checked ? 'true' : 'false'}`);
+      if (version !== providerVersion) return;
+      const h = data.hardware;
+      $('local-hardware').textContent = `${h.gpu || 'No GPU detected'} · ${localSize(h.vram_bytes)} VRAM · ${localSize(h.ram_bytes)} RAM · ${localSize(h.free_disk)} free`;
+      $('local-disk-note').textContent = data.disk_note;
+      $('local-fit-details').replaceChildren(...data.models.map(row =>
+        el('li', '', `${row.name} · ${row.rating.replaceAll('-', ' ')}: ${row.reason}`)));
+      localRows = data.ollama_present ? data.models : [];
+      $('local-model-choice').replaceChildren(...localRows.map(row => {
+        const option = el('option', '', `${row.name} · ${row.rating.replaceAll('-', ' ')}`);
+        option.value = row.id; option.disabled = row.rating === 'too-big'; return option;
+      }));
+      $('local-model-choice').value = localRows.find(r => r.rating !== 'too-big')?.id || '';
+      localChoiceChanged();
+      $('provider-status').textContent = data.ollama_present ? 'Choose a model, review its licence and download size, then download.'
+        : 'Ollama is not running. Install it from https://ollama.com/download and start it (ollama serve), then retry. Other detected backends can be connected using Local server.';
+      $('local-installed').replaceChildren(...data.installed.map(model => {
+        const row = el('div', 'local-installed-row'), button = el('button', 'btn quiet', 'Remove');
+        button.type = 'button'; button.setAttribute('aria-label', `Remove ${model.name}`);
+        button.onclick = () => safe(async () => {
+          if (!confirm('Remove this model from Ollama and Kova? Other apps using its source tag may be affected. Shared layers may remain.')) return;
+          button.disabled = true;
+          try {
+            const result = await json(`/local-models/${encodeURIComponent(model.provider)}`, {method: 'DELETE'});
+            await refreshLocalSelection();
+            if (version !== providerVersion) return;
+            await openLocalModels(); $('provider-status').textContent = result.message;
+          } catch (error) { $('provider-status').textContent = error.message; button.disabled = false; }
+        });
+        row.append(el('span', '', model.name), button); return row;
+      }));
+    } catch (error) {
+      if (version === providerVersion) $('provider-status').textContent = error.message;
+    }
+  }
+  async function refreshLocalSelection() {
+    const [models, status] = await Promise.all([json('/models'), json('/health')]);
+    state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
+    await refreshCapabilities(); syncMenus(); await health();
+  }
+  async function installLocalModel() {
+    if (localController || $('local-install').disabled) return;
+    const version = ++providerVersion;
+    const controller = new AbortController(); localController = controller;
+    $('local-install').disabled = true; $('local-cpu').disabled = true; $('local-model-choice').disabled = true; $('local-recheck').disabled = true;
+    $('local-stop').hidden = false; $('provider-back').disabled = true;
+    $('local-installed').querySelectorAll('button').forEach(button => { button.disabled = true; });
+    $('local-progress').hidden = false; $('local-progress').removeAttribute('value');
+    $('provider-status').textContent = 'Starting download…';
+    let complete = false;
+    try {
+      const response = await api('/local-models/install', {...write('POST', {model: $('local-model-choice').value, cpu: $('local-cpu').checked}), signal: controller.signal});
+      await readEvents(response, event => {
+        if (version !== providerVersion) return;
+        if (event.type === 'error') throw new Error(event.message);
+        if (event.type === 'done') complete = true;
+        if (event.type === 'progress') {
+          $('provider-status').textContent = event.message;
+          if (event.total) { $('local-progress').max = event.total; $('local-progress').value = event.completed; }
+          else $('local-progress').removeAttribute('value');
+        }
+      });
+      if (version !== providerVersion) return;
+      if (!complete) throw new Error('Download stream ended before completion. Retry to resume. No ready model was confirmed.');
+      await refreshLocalSelection(); closeProvider(); toast('Model ready on this PC. Start chatting.');
+    } catch (error) {
+      if (version === providerVersion) $('provider-status').textContent = controller.signal.aborted
+        ? 'Download cancelled. Retry to resume cached layers. Check the model picker if setup had already finished.' : error.message;
+    } finally {
+      localController = null;
+      $('local-stop').hidden = true; $('provider-back').disabled = false;
+      $('local-cpu').disabled = false; $('local-model-choice').disabled = false; $('local-recheck').disabled = false;
+      $('local-installed').querySelectorAll('button').forEach(button => { button.disabled = false; });
+      if (version === providerVersion) localChoiceChanged();
+    }
+  }
+  $('provider-local').onclick = () => safe(openLocalModels);
+  $('local-cpu').onchange = () => safe(openLocalModels);
+  $('local-recheck').onclick = () => safe(openLocalModels);
+  $('local-model-choice').onchange = localChoiceChanged;
+  $('local-install').onclick = installLocalModel;
+  $('local-stop').onclick = () => localController?.abort();
+
   let providerSpecs = [], providerDraft = null, providerChoices = [], providerLogin = null, providerTimer = null;
   let providerVersion = 0;
   function lockProvider(flag) {
@@ -1001,6 +1106,7 @@
     providerDraft = null;
   }
   function closeProvider() {
+    localController?.abort();
     providerVersion++; clearTimeout(providerTimer);
     if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {});
     providerLogin = null; clearProviderSecrets(); providerChoices = [];
@@ -1065,6 +1171,7 @@
       option.value = spec.id; return option;
     }));
     $('provider-kind').value = 'openai'; $('provider-details').hidden = false;
+    $('provider-local').hidden = false; $('provider-next').hidden = false; $('local-model-step').hidden = true; $('local-cpu').checked = false;
     $('provider-models-step').hidden = true; $('provider-back').hidden = true;
     $('provider-next').disabled = false; lockProvider(false); providerKindChanged(); sidebar(false); $('provider-dialog').showModal();
   });
@@ -1072,6 +1179,8 @@
   $('provider-cancel').onclick = closeProvider;
   $('provider-dialog').addEventListener('cancel', event => { event.preventDefault(); closeProvider(); });
   $('provider-back').onclick = () => {
+    if (localController) return;
+    $('provider-local').hidden = false; $('provider-next').hidden = false; $('local-model-step').hidden = true;
     providerVersion++; clearTimeout(providerTimer);
     if (providerLogin) api(`/providers/auth/${providerLogin}`, {method: 'DELETE'}).catch(() => {});
     providerLogin = null; clearProviderSecrets(); providerChoices = [];
@@ -1079,7 +1188,8 @@
     $('provider-back').hidden = true; $('provider-next').disabled = false; lockProvider(false); providerKindChanged();
   };
   $('provider-form').onsubmit = async event => {
-    event.preventDefault(); const version = ++providerVersion;
+    event.preventDefault(); if (!$('local-model-step').hidden) return;
+    const version = ++providerVersion;
     // Open synchronously with the gesture so browser sign-in is not popup-blocked.
     const signIn = !providerDraft && providerCaps().includes('browser_login');
     const popup = signIn ? window.open('about:blank', '_blank') : null;

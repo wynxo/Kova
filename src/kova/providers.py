@@ -220,7 +220,8 @@ def list_models(provider: ProviderEntry, *, transport: httpx.BaseTransport | Non
     return list(dict.fromkeys(result))
 
 
-def install_provider(cfg: Config, provider: ProviderEntry, selected: list[str], active: str | None = None) -> None:
+def install_provider(cfg: Config, provider: ProviderEntry, selected: list[str], active: str | None = None,
+                     *, context: int = 131072) -> None:
     if not selected or any(not m.strip() for m in selected):
         raise ProviderError('Choose at least one model.')
     cfg.bind_providers()
@@ -234,7 +235,7 @@ def install_provider(cfg: Config, provider: ProviderEntry, selected: list[str], 
     cfg.providers.append(provider)
     for model in dict.fromkeys(selected):
         name = f'{provider.id}/{model}'
-        cfg.models.append(ModelEntry(name, provider.base_url, model, provider=provider.id))
+        cfg.models.append(ModelEntry(name, provider.base_url, model, provider=provider.id, context=context))
     cfg.active = f'{provider.id}/{active or selected[0]}'
     save_config(cfg)
 

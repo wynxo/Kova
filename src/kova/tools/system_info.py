@@ -409,3 +409,39 @@ def tools(ctx: ToolContext) -> list[Tool]:
             system_info,
         ),
     ]
+
+
+def hardware_profile(disk_path=None) -> dict:
+    """Structured, best-effort local hardware; unknown values stay ``None``.
+
+    No network probes, paths, CPU identity or uptime are included. VRAM is the
+    largest single adapter, never the sum of unrelated GPUs. Backend detection
+    is an explicit local-model setup operation, not a side effect of this read.
+    ``disk_path`` is the expected model volume, when the caller knows it.
+    """
+    profile = dict(gpu=None, vram_bytes=None, ram_bytes=None,
+                   available_ram_bytes=None, free_disk=None, os=None, backends=[])
+    try:
+        gpus = _gpus()
+        if gpus:
+            name, size = max(gpus, key=lambda gpu: gpu[1] or 0)
+            profile.update(gpu=name, vram_bytes=size)
+    except Exception:
+        pass
+    try:
+        memory = _ram()
+        if memory:
+            total, used = memory
+            profile['ram_bytes'] = total
+            profile['available_ram_bytes'] = max(total - used, 0) if used is not None else None
+    except Exception:
+        pass
+    try:
+        profile['free_disk'] = int(shutil.disk_usage(disk_path or os.path.expanduser('~')).free)
+    except (OSError, ValueError):
+        pass
+    try:
+        profile['os'] = platform.system() or None
+    except Exception:
+        pass
+    return profile

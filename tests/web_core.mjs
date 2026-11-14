@@ -23,6 +23,7 @@ class Element {
   replaceWith(node) { const parent = this.parentNode, i = parent.children.indexOf(this); parent.children[i] = node; node.parentNode = parent; }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key]; }
+  removeAttribute(key) { delete this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   querySelectorAll() { return []; }
   focus() {}
@@ -41,7 +42,7 @@ const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element()},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
-  performance, URLSearchParams, TextDecoder, console,
+  performance, URLSearchParams, TextDecoder, AbortController, console,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options = {}) => {
@@ -71,7 +72,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged};');
+source = source.replace('controls(); start();', 'globalThis.test = {state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged, openLocalModels, installLocalModel};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -404,3 +405,37 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+
+// Local-model setup is opt-in, hides blocked choices and requires a terminal done.
+let localStream = [{type: 'progress', total: 100, completed: 30, message: 'Downloading'}, {type: 'done'}];
+const localRequests = [];
+sandbox.fetch = async (path, options = {}) => {
+  localRequests.push({path, options});
+  const data = {hardware: {gpu: 'Demo GPU', vram_bytes: 8589934592, ram_bytes: 17179869184, free_disk: 53687091200},
+    ollama_present: true, disk_note: 'Estimated model volume', installed: [], models: [
+      {id: 'small:demo', name: 'Small demo model', quant: 'Q4_K_M', download_bytes: 2000000000, context: 4096,
+       license_url: 'https://example.test/license', rating: 'fits-comfortably', reason: 'Estimated fit'},
+      {id: 'huge:demo', name: 'Huge demo model', rating: 'too-big', reason: 'Need 123456 more bytes'},
+    ]};
+  if (path === '/local-models/install') {
+    const wire = localStream.map(e => `data: ${JSON.stringify(e)}\n\n`).join('');
+    let consumed = false;
+    return {ok: true, body: {getReader: () => ({read: async () => consumed ? {done: true} : (consumed = true, {done: false, value: new TextEncoder().encode(wire)}), releaseLock() {}})}};
+  }
+  return {ok: true, json: async () => path.startsWith('/local-models') ? data : path === '/models' ? [] : {model: '', model_ok: false}};
+};
+assert.equal(localRequests.length, 0, 'no hardware probe until the explicit local step');
+await sandbox.test.openLocalModels();
+assert.ok($('local-hardware').textContent.includes('Demo GPU'));
+assert.equal($('local-model-choice').children[1].disabled, true);
+assert.ok($('local-fit-details').textContent.includes('123456 more bytes'), 'blocked models must show their exact shortfall too');
+assert.equal($('local-install').disabled, false);
+localStream = [{type: 'progress', total: 100, completed: 30, message: 'Downloading'}];
+await sandbox.test.installLocalModel();
+assert.ok($('provider-status').textContent.includes('before completion'));
+assert.equal($('local-progress').value, 30);
+assert.equal($('local-install').disabled, false, 'an interrupted download can be retried');
+localStream = [{type: 'done'}];
+await sandbox.test.installLocalModel();
+assert.equal(JSON.parse(localRequests.find(r => r.path === '/local-models/install').options.body).model, 'small:demo');
+console.log('Local hardware, fit gating, streamed progress and retry checks passed');
