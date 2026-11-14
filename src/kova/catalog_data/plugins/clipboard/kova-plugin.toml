@@ -1,0 +1,14 @@
+# First-party Kova plugin: read and write the system clipboard (issue #91).
+# It adds no new program: the skill tells the model which clipboard command to
+# run with run_command, so every read and write still asks first.
+name = "clipboard"
+version = "0.1.0"
+description = "Lets Kova read what you copied, and copy text back, with no paste step."
+author = "Kova"
+homepage = "https://github.com/wynxo/Kova"
+skills = ["skills"]
+
+[[commands]]
+name = "clip"
+description = "Look at what is on the clipboard and help with it"
+prompt = "Read what is on my clipboard (follow the Clipboard skill) and help me with it. If it is an error or a log line, explain what it means and how to fix it. If it is something else, tell me briefly what it is and ask what I want to do with it."
