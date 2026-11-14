@@ -15,6 +15,7 @@ import httpx
 from kova import sandbox
 from kova.config import load_config
 from kova.providers import ProviderError, list_models, supports
+from kova.reminders import notification_plan
 
 #: The config written by :func:`kova.config.save_config`; anything else is a
 #: typo or a key from a newer version this install does not understand.
@@ -105,6 +106,7 @@ def diagnose() -> list[Check]:
     checks.append(_disk_check(cfg))
     checks.append(_schema_check(cfg))
     checks.append(_tools_check(entry))
+    checks.append(_notifier_check())
     return checks
 
 
@@ -269,4 +271,20 @@ def _tools_check(entry) -> Check:
         'tools', False,
         f'{adapter} adapter does not carry tool calls; choose a model that supports them.',
         'kova setup',
+    )
+
+
+def _notifier_check() -> Check:
+    """Name the OS notifier reminders will use, so silence is diagnosable."""
+    plan = notification_plan('')
+    if plan:
+        names = [name for name, _command in plan]
+        fallback = f" (falling back to {', '.join(names[1:])})" if len(names) > 1 else ''
+        return Check('notifier', True, f'Desktop notifications use {names[0]}{fallback}.')
+    return Check(
+        'notifier', False,
+        'No desktop notifier found. Install notify-send (libnotify-bin on Debian/Ubuntu, '
+        'libnotify on Fedora and Arch) on Linux, or make sure osascript, PowerShell or '
+        'msg.exe is on PATH. Reminders still appear in an open window.',
+        'Install a desktop notifier',
     )
