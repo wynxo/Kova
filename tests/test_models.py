@@ -78,3 +78,30 @@ async def test_http_error_and_missing_tool_id(entry):
         _ = [event async for event in ModelClient(entry, transport).stream([])]
     events, _ = await collect(entry, [{"tool_calls": [{"index": 0, "function": {"name": "x", "arguments": "{}"}}]}])
     assert next(e.tool_call for e in events if e.type == "tool_call")["id"] == "call_0"
+
+
+@pytest.mark.parametrize("delta", [
+    {"content": "An unfinished answer"},
+    {"reasoning_content": "Still thinking"},
+    {"tool_calls": [{"index": 0, "id": "call_cut", "function": {
+        "name": "write_file", "arguments": '{"path":"oops"}'}}]},
+])
+async def test_premature_eof_never_releases_tools_or_success(entry, delta):
+    wire = 'data: ' + json.dumps({"choices": [{"delta": delta}]}) + '\n\n'
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=wire))
+    events = []
+    with pytest.raises(ModelError, match="ended before completion"):
+        async for event in ModelClient(entry, transport).stream([]):
+            events.append(event)
+    assert not any(event.type in {"tool_call", "done"} for event in events)
+
+
+@pytest.mark.parametrize("terminal", [
+    'data: [DONE]\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+])
+async def test_explicit_completion_accepts_done_or_finish_reason(entry, terminal):
+    wire = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n' + terminal
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=wire))
+    events = [event async for event in ModelClient(entry, transport).stream([])]
+    assert events[-1].type == "done"

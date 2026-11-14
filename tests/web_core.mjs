@@ -36,6 +36,7 @@ for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'
 $('mode').value = 'work';
 new Element().append($('connection')); const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [];
+let pendingApprovals = [];
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element()},
@@ -61,6 +62,9 @@ const sandbox = {
       ]},
     };
     if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
+    // A chat whose turn is blocked on an approval that was asked before a reload.
+    if (path === '/chats/blocked') return {ok: true, json: async () => ({id: 'blocked', cwd: '/project', state: 'blocked-on-approval', messages: [{role: 'user', content: 'clean up'}]})};
+    if (path === '/chats/blocked/approvals') return {ok: true, json: async () => pendingApprovals};
     if (path.endsWith('/queue') && (options.method || 'GET') === 'GET') return {ok: true, json: async () => [{id: 9, text: 'later'}]};
     if (path.endsWith('/queue') && options.method === 'POST') return {ok: true, json: async () => ({id: 10, text: body.text})};
     return {ok: true, json: async () => (path in payloads ? payloads[path] : {ok: true})};
@@ -120,6 +124,32 @@ for (const options of [[], ['A', 'B']]) {
   questionView.accept({type: 'question_resolved', id: 'q1'});
   assert.ok(buttons(card).every(b => b.disabled));
   questionView.finish();
+}
+
+// Reloading the page loses the turn's stream, so a still-pending approval is
+// rebuilt from GET /chats/{id}/approvals and can be answered from the new card.
+{
+  const {openChat} = sandbox.test;
+  pendingApprovals = [{type: 'approval', id: 'lost-1', tool: 'run_command', args: {command: 'rm -rf build'}, risk: 'destructive', summary: 'rm -rf build'},
+                      {type: 'question', id: 'lost-q', tool: 'ask_user', args: {question: 'Keep logs?', options: ['Yes', 'No']}, risk: 'normal', summary: 'ask_user: '}];
+  $('messages').replaceChildren();
+  await openChat('blocked'); await tick(); await tick();
+  const view = byClass($('messages'), 'pending-view')[0];
+  assert.ok(view, 'a pending approval is shown again after a reload');
+  assert.ok(view.textContent.includes('rm -rf build') && view.textContent.includes('Keep logs?'));
+  assert.ok(byClass($('messages'), 'background-turn')[0].textContent.includes('paused until you answer'));
+  const [approval, question] = byClass(view, 'approval-card');
+  buttons(approval)[3].onclick(); await tick(); await tick();
+  assert.deepEqual(requests.at(-1), {path: '/chats/blocked/approvals/lost-1', body: {decision: 'deny', message: null}});
+  assert.ok(approval.textContent.includes('Denied'));
+  buttons(question)[0].onclick(); await tick(); await tick();
+  assert.deepEqual(requests.at(-1), {path: '/chats/blocked/approvals/lost-q', body: {decision: 'allow', message: 'Yes'}});
+  // A chat with nothing pending gets no card.
+  pendingApprovals = [];
+  await openChat('blocked'); await tick(); await tick();
+  assert.equal(byClass($('messages'), 'pending-view').length, 0);
+  state.chat = {id: 'chat-1', cwd: '/project'};
+  console.log('Pending approvals recovered after reload passed');
 }
 const body = new Element(), view = turnView(body);
 view.accept({type: 'approval', id: 'danger', risk: 'destructive', summary: 'rm file'});

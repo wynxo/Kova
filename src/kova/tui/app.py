@@ -205,7 +205,7 @@ def _clip(text: str, width: int) -> str:
 class ChatApp:
     """The interactive chat in a terminal, bound to one Kova server and one chat."""
 
-    def __init__(self, client: KovaClient, chat_id: str, *, no_think: bool = False,
+    def __init__(self, client: KovaClient, chat_id: str | None, *, no_think: bool = False,
                  out=None, color: bool | None = None, clear: bool = True,
                  history_path: Path | None = None, memory_path: str = ""):
         self.client = client
@@ -342,6 +342,12 @@ class ChatApp:
 
     # ================================================================ server state
     def refresh_chat(self) -> None:
+        if self.chat_id is None:
+            # Nothing has been said yet; the chat is created on the first
+            # message so opening Kova never leaves an empty row (#100).
+            self.title, self.plan, self.conversation_state = "", [], "done"
+            self.context_chars, self.queued = 0, []
+            return
         chat = self.client.get_chat(self.chat_id) or {}
         self._read_chat(chat)
         cwd = chat.get("cwd")
@@ -366,6 +372,25 @@ class ChatApp:
         self.context_chars = sum(len(str(message.get("content") or ""))
                                  for message in chat.get("messages") or []
                                  if isinstance(message, dict))
+
+    def _ensure_chat(self) -> str | None:
+        """Create the conversation on the first real message, never before (#100)."""
+        if self.chat_id is not None:
+            return self.chat_id
+        try:
+            chat = self.client.create_chat(mode=self.mode, web=self.web,
+                                           permission=self.permission, cwd=self.cwd)
+        except KovaError as exc:
+            self.renderer.error(exc.message)
+            return None
+        self.chat_id = chat["id"]
+        self._read_chat(chat)
+        cwd = chat.get("cwd")
+        if cwd and os.path.isdir(cwd) and cwd != self.cwd:
+            self.cwd = cwd
+            self.files = FileIndex(cwd)
+        self._load_lists_later()
+        return self.chat_id
 
     def _sync_context_window(self) -> None:
         """The active model's context window, from the server's model list."""
@@ -742,10 +767,11 @@ class ChatApp:
             return
         if self.job is not None:
             # Queue runs after this reply; persist it so a reload keeps it.
-            try:
-                self.client.queue_message(self.chat_id, text)
-            except KovaError:
-                pass  # still hold it here for this session
+            if self.chat_id is not None:
+                try:
+                    self.client.queue_message(self.chat_id, text)
+                except KovaError:
+                    pass  # still hold it here for this session
             self.queued.append(text)
             return
         self._dispatch(text)
@@ -779,9 +805,12 @@ class ChatApp:
         if self.context_notes:
             message = "\n\n".join([*self.context_notes, message])
             self.context_notes.clear()
+        chat_id = self._ensure_chat()
+        if chat_id is None:
+            return
         self.context_chars += len(message)
         self.renderer.begin_turn()
-        client, chat_id = self.client, self.chat_id
+        client = self.client
 
         def reply(emit, cancel):
             events = client.stream_message(chat_id, message)
@@ -1067,6 +1096,9 @@ class ChatApp:
                               groups=groups, actions=actions)
 
     def _cmd_compact(self, _rest: str) -> None:
+        if self.chat_id is None:
+            self._done("Nothing to compact yet.", dim=True)
+            return
         self.renderer.begin_turn()
         client, chat_id = self.client, self.chat_id
 
@@ -1093,6 +1125,9 @@ class ChatApp:
 
     def _change_set(self, rest: str) -> dict | None:
         """The change set named by ``rest``, or the newest one when it is empty."""
+        if self.chat_id is None:
+            self._done("No changes recorded yet. Kova checkpoints the files it edits.")
+            return None
         try:
             checkpoints = self.client.list_checkpoints(self.chat_id)
         except KovaError as exc:
@@ -1113,6 +1148,9 @@ class ChatApp:
     def _cmd_changes(self, _rest: str) -> None:
         """Every change set in this chat, newest first."""
         p, r = self.p, self.renderer
+        if self.chat_id is None:
+            self._done("No changes recorded yet. Kova checkpoints the files it edits.")
+            return
         try:
             checkpoints = self.client.list_checkpoints(self.chat_id)
         except KovaError as exc:
@@ -1261,13 +1299,12 @@ class ChatApp:
     _cmd_quit = _cmd_exit
 
     def _cmd_new(self, _rest: str) -> None:
-        chat = self.client.create_chat(mode=self.mode, web=self.web, permission=self.permission,
-                                       cwd=self.cwd)
-        self.chat_id = chat["id"]
-        self.plan = []
+        # No row until something is typed; mode, web, permission and cwd stay
+        # as they are and go to the new chat when it is created (#100).
+        self.chat_id = None
         self.refresh_chat()
         self._load_lists_later()
-        self._done("Started a new chat. Earlier ones stay in /resume.")
+        self._done("Started a new chat. It is saved when you send the first message.")
 
     def _cmd_clear(self, _rest: str) -> None:
         self.screen.clear()
@@ -1288,7 +1325,8 @@ class ChatApp:
         if rest not in MODES:
             self.renderer.error(f'Unknown mode "{rest}". Use /mode {" or ".join(MODES)}.')
             return
-        self.client.update_chat(self.chat_id, mode=rest)
+        if self.chat_id is not None:
+            self.client.update_chat(self.chat_id, mode=rest)
         self.mode = rest
         self._done(f"Mode: {self.p.bold(rest)}. Takes effect on your next message.")
 
@@ -1300,7 +1338,8 @@ class ChatApp:
                 self._done(f"Web search is {'on' if self.web else 'off'}. "
                            "Toggle with /web on or /web off.")
             return
-        self.client.update_chat(self.chat_id, web=rest == "on")
+        if self.chat_id is not None:
+            self.client.update_chat(self.chat_id, web=rest == "on")
         self.web = rest == "on"
         self._done(f"Web search {rest}. Takes effect on your next message.")
 
@@ -1359,6 +1398,8 @@ class ChatApp:
             self._done(f"Permissions: {self.p.bold(level)} · {PERMISSIONS[level]}")
 
     def _set_permission(self, level: str) -> bool:
+        if self.chat_id is None and self._ensure_chat() is None:
+            return False
         chat = self.client.update_chat(self.chat_id, permission=level)
         if "permission" not in chat:
             self.renderer.error("This Kova server doesn't support permission modes yet. "
@@ -1389,7 +1430,7 @@ class ChatApp:
             self.renderer.error(f"Not a folder: {target}")
             return
         folder = str(target.resolve())
-        chat = self.client.update_chat(self.chat_id, cwd=folder)
+        chat = self.client.update_chat(self.chat_id, cwd=folder) if self.chat_id else {}
         self.cwd = folder
         self.files = FileIndex(folder)
         note = "" if "cwd" in chat else self.p.dim(" · for @ files and ! commands")
@@ -1398,6 +1439,9 @@ class ChatApp:
     def _cmd_fork(self, rest: str) -> None:
         """``/fork`` copies this conversation and switches to the copy;
         ``/fork <n or id>`` copies an earlier one (same numbering as /resume)."""
+        if self.chat_id is None and not rest:
+            self._done("Nothing to fork yet.", dim=True)
+            return
         chats = self.client.list_chats()[:30]
         self._chats = chats
         chat = None
