@@ -552,16 +552,17 @@ def test_chat_think_toggle_and_no_think(runner):
 
 def test_chat_clear_preserves_conversation_and_new_resets_it(runner):
     cli_runner, client, cfg, fake = runner
+    fake.scripts = [text("First"), text("Second"), text("Third")]
     result = cli_runner.invoke(cli.app, ["--new"],
-                               input="first\n/clear\nsecond\n/new\n/quit\n")
+                               input="first\n/clear\nsecond\n/new\nthird\n/quit\n")
     assert result.exit_code == 0, result.output
     chats = client.list_chats()
-    assert len(chats) == 2
+    assert len(chats) == 2  # /new starts a fresh one only once a message is sent
     messages = [client.get_chat(chat["id"])["messages"] for chat in chats]
-    assert sorted(len(items) for items in messages) == [0, 4]
+    assert sorted(len(items) for items in messages) == [2, 4]
     user_messages = [message["content"] for items in messages for message in items
                      if message["role"] == "user"]
-    assert user_messages == ["first", "second"]
+    assert sorted(user_messages) == ["first", "second", "third"]
     assert "\x1b[" not in result.output  # /clear must not emit cursor controls to pipes.
 
 

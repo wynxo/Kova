@@ -316,13 +316,14 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
         console.print()
 
 
-def _header(client: KovaClient, console: Console, chat_id: str | None = None) -> None:
+def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
+            mode: str | None = None, web: bool | None = None) -> None:
     health = client.health()
     cfg = load_config()
     notes = len(client.memory_list())
     chat = client.get_chat(chat_id) if chat_id else None
-    mode = (chat.get("mode") if chat else None) or "work"
-    web = (chat.get("web", True) if chat else True)
+    mode = mode or (chat.get("mode") if chat else None) or "work"
+    web = web if web is not None else (chat.get("web", True) if chat else True)
 
     from kova import __version__
     from kova.tui.brand import assistant_name, gradient_text, wordmark
@@ -532,20 +533,36 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
             chat_id = chats[0]["id"]
             if mode is not None or web is not None:  # explicit flags win over stored settings
                 client.update_chat(chat_id, mode=mode, web=web)
-        else:
-            chat_id = client.create_chat(mode=mode, web=web, cwd=os.getcwd())["id"]
+        # Otherwise stay without a chat: the first message creates it, so
+        # opening Kova and leaving never leaves an empty conversation (#100).
     if _full_screen(console):
         from kova.tui.app import ChatApp
 
         cfg = load_config()
-        ChatApp(client, chat_id, no_think=no_think, history_path=cfg.home / "chat_history.jsonl",
-                memory_path=str(cfg.memory_path)).run()
+        app = ChatApp(client, chat_id, no_think=no_think,
+                      history_path=cfg.home / "chat_history.jsonl",
+                      memory_path=str(cfg.memory_path))
+        if mode is not None:
+            app.mode = mode
+        if web is not None:
+            app.web = web
+        app.run()
         return
-    _header(client, console, chat_id)
-    current = client.get_chat(chat_id) or {}
-    toolbar_state = {"mode": current.get("mode") or "work",
-                     "web": current.get("web", True),
+    current = (client.get_chat(chat_id) or {}) if chat_id else {}
+    toolbar_state = {"mode": mode or current.get("mode") or "work",
+                     "web": current.get("web", True) if web is None else web,
                      "model": str(client.health()["model"])}
+    _header(client, console, chat_id, mode=toolbar_state["mode"], web=toolbar_state["web"])
+    pending = {"cwd": current.get("cwd") or os.getcwd(),
+               "permission": current.get("permission")}
+
+    def ensure_chat() -> str:
+        nonlocal chat_id
+        if chat_id is None:
+            chat_id = client.create_chat(
+                mode=toolbar_state["mode"], web=toolbar_state["web"],
+                permission=pending["permission"], cwd=pending["cwd"])["id"]
+        return chat_id
 
     def _toolbar() -> list[tuple[str, str]]:
         state = "on" if toolbar_state["web"] else "off"
@@ -582,19 +599,17 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         if command in ("/exit", "/quit") and not args:
             break
         if command == "/new" and not args:
-            current = client.get_chat(chat_id) or {}
-            chat_id = client.create_chat(mode=current.get("mode"), web=current.get("web"),
-                                         permission=current.get("permission"),
-                                         cwd=current.get("cwd") or os.getcwd())["id"]
-            toolbar_state["mode"] = current.get("mode") or "work"
-            toolbar_state["web"] = current.get("web", True)
-            console.print("Started a new chat.", style=theme.MUTED)
+            # Defer creation to the first message so /new leaves no empty row (#100).
+            chat_id = None
+            console.print("Started a new chat. It is saved when you send the first message.",
+                          style=theme.MUTED)
         elif command == "/help" and not args:
             _help(console)
         elif command == "/clear" and not args:
             if console.is_terminal:
                 console.clear()
-            _header(client, console, chat_id)
+            _header(client, console, chat_id, mode=toolbar_state["mode"],
+                    web=toolbar_state["web"])
         elif command == "/think" and not args:
             show_thinking = not show_thinking
             no_think = False
@@ -602,11 +617,11 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                           style=theme.MUTED)
         elif command == "/mode":
             if not args:
-                chat = client.get_chat(chat_id) or {}
-                console.print(f"Current mode: {chat.get('mode') or 'work'}. "
+                console.print(f"Current mode: {toolbar_state['mode']}. "
                               f"Switch with /mode {' or '.join(MODES)}.", style=theme.MUTED)
             elif args[0] in MODES:
-                client.update_chat(chat_id, mode=args[0])
+                if chat_id is not None:
+                    client.update_chat(chat_id, mode=args[0])
                 toolbar_state["mode"] = args[0]
                 console.print(f"Mode: {args[0]}. Takes effect on your next message.",
                               style=theme.MUTED)
@@ -615,12 +630,12 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                               style=theme.ERROR)
         elif command == "/web":
             if not args:
-                chat = client.get_chat(chat_id) or {}
-                state = "on" if chat.get("web", True) else "off"
+                state = "on" if toolbar_state["web"] else "off"
                 console.print(f"Web search is {state}. Toggle with /web on or /web off.",
                               style=theme.MUTED)
             elif args[0] in ("on", "off"):
-                client.update_chat(chat_id, web=args[0] == "on")
+                if chat_id is not None:
+                    client.update_chat(chat_id, web=args[0] == "on")
                 toolbar_state["web"] = args[0] == "on"
                 console.print(f"Web search {args[0]}. Takes effect on your next message.",
                               style=theme.MUTED)
@@ -640,15 +655,21 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
                                        style=theme.ERROR))
         elif command == "/permissions":
-            chat = client.get_chat(chat_id) or {}
             if not args:
-                current_level = chat.get("permission")
+                current_level = pending["permission"]
                 state = f"Permissions: {current_level}. " if current_level else ""
                 console.print(f"{state}Switch with /permissions {' | '.join(PERMISSIONS)}.",
                               style=theme.MUTED)
             elif args[0] in PERMISSIONS:
-                updated = client.update_chat(chat_id, permission=args[0])
-                if "permission" in updated:
+                if chat_id is None:
+                    pending["permission"] = args[0]
+                    changed = True
+                else:
+                    updated = client.update_chat(chat_id, permission=args[0])
+                    changed = "permission" in updated
+                    if changed:
+                        pending["permission"] = updated["permission"]
+                if changed:
                     console.print(f"Permissions: {args[0]} · {PERMISSIONS[args[0]]}.",
                                   style=theme.MUTED)
                 else:
@@ -659,7 +680,9 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         elif command == "/cd":
             target = os.path.abspath(os.path.expanduser(args[0] if args else "~"))
             if os.path.isdir(target):
-                client.update_chat(chat_id, cwd=target)
+                if chat_id is not None:
+                    client.update_chat(chat_id, cwd=target)
+                pending["cwd"] = target
                 console.print(f"Folder: {target}", style=theme.MUTED)
             else:
                 console.print(f"Not a folder: {target}", style=theme.ERROR)
@@ -667,6 +690,9 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
             console.print("Steering a running reply needs the full-screen chat or the web UI.",
                           style=theme.MUTED)
         elif command in ("/changes", "/diff", "/restore"):
+            if chat_id is None:
+                console.print("Nothing changed yet.", style=theme.MUTED)
+                continue
             try:
                 if command == "/changes":
                     _changes(client, console, chat_id)
@@ -683,6 +709,8 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 resumed = client.get_chat(chat_id) or {}
                 toolbar_state["mode"] = resumed.get("mode") or "work"
                 toolbar_state["web"] = resumed.get("web", True)
+                pending["cwd"] = resumed.get("cwd") or os.getcwd()
+                pending["permission"] = resumed.get("permission")
                 console.print(f"Resumed {chats[int(args[0]) - 1].get('title') or 'Untitled'}.",
                               style=theme.MUTED)
             else:
@@ -699,5 +727,6 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 console.print(Text(f"› {stripped}", style=f"bold {theme.USER}"))
             else:
                 console.print()
-            _render_turn(client, chat_id, stripped, no_think, console, show_thinking=show_thinking)
+            _render_turn(client, ensure_chat(), stripped, no_think, console,
+                         show_thinking=show_thinking)
     console.print("Until next time.", style=theme.MUTED)
