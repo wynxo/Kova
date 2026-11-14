@@ -242,3 +242,44 @@ def test_delete_chat_removes_preexisting_empty_directory(server):
     folder.mkdir(parents=True)
     assert client.delete(f'/chats/{chat}', headers=headers).status_code == 200
     assert not folder.exists()
+
+
+@pytest.mark.parametrize("delete_source", [True, False])
+def test_fork_copies_attachments_independently(server, delete_source):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    row = attachments.save(cfg.home, store, chat, 'demo.txt', b'hello')
+    cutoff = store.add_message(chat, 'user', 'attachment_id: ' + row['id'])
+    store.add_message(chat, 'assistant', tool_calls=[{'id': 'call', 'type': 'function', 'function': {'name': 'read_attachment', 'arguments': '{"attachment_id": "' + row['id'] + '"}'}}])
+    assert store.save_compaction(chat, 0, cutoff, 'attachment_id: ' + row['id'])
+    fork = store.fork_chat(chat)
+    copied = store.attachments(fork['id'])
+    assert len(copied) == 1
+    assert copied[0]['id'] != row['id']
+    assert copied[0]['id'] in fork['messages'][0]['content']
+    assert copied[0]['id'] in fork['messages'][1]['tool_calls'][0]['function']['arguments']
+    assert copied[0]['id'] in store.context_snapshot(fork['id'])[0]
+    assert Path(copied[0]['path']).read_bytes() == b'hello'
+    first, second = (chat, fork["id"]) if delete_source else (fork["id"], chat)
+    surviving = copied[0] if delete_source else store.attachments(chat)[0]
+    store.delete_chat(first)
+    assert Path(surviving["path"]).read_bytes() == b"hello"
+    store.delete_chat(second)
+    assert not Path(copied[0]['path']).exists()
+
+
+def test_failed_fork_rolls_back_attachment_copies(server, monkeypatch):
+    client, headers, cfg, fake = server
+    store = client.app.state.store
+    chat = store.create_chat()['id']
+    row = attachments.save(cfg.home, store, chat, 'demo.txt', b'hello')
+    before = store.list_chats()
+    def fail(*args):
+        raise OSError('copy failed')
+    monkeypatch.setattr('kova.store.shutil.copyfileobj', fail)
+    with pytest.raises(OSError, match='copy failed'):
+        store.fork_chat(chat)
+    assert store.list_chats() == before
+    assert list((cfg.home / 'attachments').iterdir()) == [cfg.home / 'attachments' / chat]
+    assert store.attachments(chat)[0]['id'] == row['id']
