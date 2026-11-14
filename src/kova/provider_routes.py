@@ -112,9 +112,12 @@ def install_provider_routes(app, config: Config, require_token):
         except KeyError:
             entry = None
         provider = entry._provider if entry is not None else None
+        caps = providers.capabilities(provider)
+        if entry is None or not entry.vision:
+            caps = caps - {'vision'}
         return {'provider': provider.id if provider else '',
-                'capabilities': sorted(providers.capabilities(provider)),
-                'offered': {mode: sorted(providers.offered(provider, mode)) for mode in modes.MODES}}
+                'capabilities': sorted(caps),
+                'offered': {mode: sorted(providers.offered(provider, mode) & caps | (providers.offered(provider, mode) & {'approvals'})) for mode in modes.MODES}}
 
     @router.get('/providers')
     async def listing():

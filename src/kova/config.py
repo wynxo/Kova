@@ -37,6 +37,7 @@ class ModelEntry:
     api_key: str | None = field(default=None, repr=False)
     context: int = 131072
     provider: str = ""
+    vision: bool = False
     _provider: ProviderEntry | None = field(default=None, repr=False, compare=False)
     _bound_api_key: str | None = field(default=None, repr=False, compare=False)
 
@@ -204,7 +205,7 @@ def save_config(cfg: Config) -> None:
             'memory': memory, 'tui': {'theme': cfg.tui_theme, 'keys': cfg.tui_keys}, 'persona': {'name': cfg.persona_name, 'tone': cfg.persona_tone,
                                            'configured': cfg.persona_configured}, 'providers': providers,
             'models': [{'name': m.name, 'provider': m.provider, 'base_url': m.base_url,
-                        'model': m.model, 'context': m.context} for m in cfg.models]}
+                        'model': m.model, 'context': m.context, 'vision': m.vision} for m in cfg.models]}
     if cfg.bind == 'lan':
         data['bind'] = 'lan'
     private_write(cfg.home / 'config.toml', tomli_w.dumps(data))

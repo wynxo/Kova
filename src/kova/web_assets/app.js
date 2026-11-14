@@ -3,6 +3,8 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null};
+  const pendingAttachments = [];
+  let readingAttachments = false;
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
@@ -53,6 +55,7 @@
   }
   function controls() {
     const busy = state.busy;
+    const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     $('permission').disabled ||= !offers('approvals');
     $('cwd').disabled ||= !offers('tools');
@@ -64,7 +67,10 @@
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
     $('options-label').textContent = $('mode').value === 'chat' ? 'Chat' : 'Work';
-    $('send').disabled = !state.connected || !$('prompt').value.trim();
+    $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
+    $('attach').disabled = state.busy || readingAttachments || !state.connected;
+    $('attach').classList.toggle('text-only', !offers('vision'));
+    $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need a vision-enabled model or OCR text';
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
     $('stop').disabled = state.stopRequested;
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
@@ -83,7 +89,7 @@
   async function api(path, options = {}) {
     let response;
     try { response = await fetch(path, {credentials: 'same-origin', ...options,
-      headers: {'Content-Type': 'application/json', ...options.headers}}); }
+      headers: {...(typeof FormData !== 'undefined' && options.body instanceof FormData ? {} : {'Content-Type': 'application/json'}), ...options.headers}}); }
     catch (_) { throw new Error('Cannot reach Kova. Check the server, then retry.'); }
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
@@ -288,6 +294,7 @@
   }
   function setChat(chat) {
     state.chat = chat;
+    renderAttachments();
     pageTitle();
     $('mode').value = chat?.mode || 'work';
     $('permission').value = chat?.permission || 'manual';
@@ -799,15 +806,16 @@
   $('compact-now').onclick = () => safe(compactChat);
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
-    if (!text || !state.connected) return;
-    const command = parseCommand(text);
+    if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
+    const command = text ? parseCommand(text) : null;
     if (command) {
       try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
       catch (error) { toast(error.message); }
       return;
     }
+    if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
-    await sendText(text);
+    await sendText(text || 'Please read the attached files.');
   }
   async function sendText(text) {
     if (!text || state.busy || !state.connected) return;
@@ -818,7 +826,8 @@
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
       empty(false); message('user', text); $('prompt').value = ''; resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null}));
+      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: pendingAttachments.filter(a => a.chat_id === state.chat.id).map(a => a.id)}));
+      for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments();
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
       await readEvents(response, data => {
@@ -857,6 +866,43 @@
   }
   function safe(fn) { Promise.resolve().then(fn).catch(error => { toast(error.message); controls(); }); }
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
+  function renderAttachments() {
+    $('attachment-chips').replaceChildren();
+    for (const item of pendingAttachments.filter(a => a.chat_id === state.chat?.id)) {
+      const chip = el('span', 'attachment-chip', `${item.name} · ${(item.size / 1024).toFixed(1)} KB${item.pages ? ` · ${item.pages} pages` : ''} · ready `);
+      const remove = el('button', '', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${item.name}`);
+      remove.onclick = () => safe(async () => {
+        await json(`/chats/${item.chat_id}/attachments/${item.id}`, {method: 'DELETE'});
+        pendingAttachments.splice(pendingAttachments.indexOf(item), 1); renderAttachments(); controls();
+      });
+      chip.append(remove); $('attachment-chips').append(chip);
+    }
+    $('attachment-note').hidden = !pendingAttachments.some(a => a.chat_id === state.chat?.id);
+  }
+  async function attachFiles(files) {
+    if (readingAttachments || state.busy || !state.connected) return;
+    if (pendingAttachments.length + files.length > 3) return toast('Attach at most three files per turn.');
+    readingAttachments = true; $('attachment-chips').append(el('span', '', 'reading…')); controls();
+    try {
+      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value}));
+      const chatId = state.chat.id;
+      for (const file of files) {
+        if (file.type.startsWith('image/') && !offers('vision')) { toast('This model cannot read images; attach OCR text or choose a vision-enabled model.'); continue; }
+        if (file.size > 25 * 1024 * 1024) { toast('Each attachment must be 25 MB or smaller.'); continue; }
+        const form = new FormData(); form.append('file', file);
+        pendingAttachments.push(await json(`/chats/${chatId}/attachments`, {method: 'POST', body: form}));
+      }
+    } catch (error) { toast(error.message); }
+    finally { readingAttachments = false; renderAttachments(); controls(); }
+  }
+  $('attach').onclick = () => $('attachment-input').click();
+  $('attachment-input').onchange = event => { attachFiles([...event.target.files]); event.target.value = ''; };
+  $('composer').addEventListener('dragover', event => { event.preventDefault(); });
+  $('composer').addEventListener('drop', event => { event.preventDefault(); attachFiles([...event.dataTransfer.files]); });
+  $('prompt').addEventListener('paste', event => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (files.length) { event.preventDefault(); attachFiles(files); }
+  });
   $('composer').addEventListener('submit', send);
   $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
   $('prompt').addEventListener('keydown', event => {
