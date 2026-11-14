@@ -29,7 +29,9 @@ class LoginBody(BaseModel):
 
 def require_same_origin(request: Request) -> None:
     """Reject rebinding and cross-origin browser requests, including other ports."""
-    if urlsplit(str(request.url)).hostname not in {"127.0.0.1", "localhost", "::1"}:
+    # The LAN listener has already pinned Host to its own address (kova.pairing).
+    if not request.scope.get("kova_lan") and \
+            urlsplit(str(request.url)).hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise HTTPException(403, "browser access is local only")
     origin = request.headers.get("origin")
     expected = str(request.base_url).rstrip("/")
@@ -46,6 +48,15 @@ def _prune(entries: dict[str, float]) -> None:
 
 
 def require_browser_session(request: Request) -> None:
+    if request.scope.get("kova_lan"):
+        # A phone on the Wi-Fi: only a paired device's cookie counts, never a session.
+        from kova.pairing import DEVICE_COOKIE, NOT_PAIRED
+        device = request.app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+        if device is None:
+            raise HTTPException(401, NOT_PAIRED)
+        request.app.state.devices.touch(device)
+        require_same_origin(request)
+        return
     sessions = request.app.state.web_sessions
     _prune(sessions)
     if request.cookies.get(COOKIE, "") not in sessions:
@@ -107,8 +118,16 @@ def install_web(app, require_bearer) -> None:
 
     @app.post("/app/logout", dependencies=[Depends(require_browser_session)])
     async def logout(request: Request):
-        app.state.web_sessions.pop(request.cookies.get(COOKIE), None)
         response = JSONResponse({"ok": True})
+        if request.scope.get("kova_lan"):
+            # "Disconnect" on a phone unpairs it for good.
+            from kova.pairing import DEVICE_COOKIE
+            device = app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+            if device is not None:
+                app.state.devices.revoke(device["id"])
+            response.delete_cookie(DEVICE_COOKIE, path="/")
+            return response
+        app.state.web_sessions.pop(request.cookies.get(COOKIE), None)
         response.delete_cookie(COOKIE, path="/")
         return response
 
