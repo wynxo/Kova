@@ -134,7 +134,10 @@ class ModelClient:
                         if tools and response.status_code in (400, 422) and 'tool' in body and any(
                             word in body for word in ('not supported', 'unsupported', 'does not support')
                         ):
-                            async for event in self.stream(messages, tools=None):
+                            # Retry with the already-scanned copy: re-scanning the
+                            # original here would re-emit the privacy event for the
+                            # same turn.
+                            async for event in self.stream(request_messages, tools=None):
                                 yield event
                             return
                         hint = {

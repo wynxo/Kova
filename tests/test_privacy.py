@@ -193,6 +193,33 @@ async def test_openai_payload_is_exactly_the_redacted_copy():
     assert source == before
 
 
+async def test_tool_rejection_retry_emits_one_privacy_event():
+    seen: list[dict] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        seen.append(payload)
+        if "tools" in payload:
+            return httpx.Response(
+                400, text='{"error": {"message": "tools are not supported"}}',
+                headers={"content-type": "application/json"})
+        return openai_response(request)
+
+    entry = ModelEntry("m", "https://example.test/v1", "model", api_key="provider-auth-key")
+    tools_schema = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    events = [event async for event in ModelClient(
+        entry, transport=httpx.MockTransport(handle), privacy="redact").stream(messages(), tools_schema)]
+    assert events[-1].type == "done"
+    # The guard reports once per turn, not once per internal retry.
+    assert [event.privacy for event in events if event.type == "privacy"] == [
+        {"mode": "redact", "count": 3,
+         "kinds": ["openai_key", "github_token", "env_assignment"],
+         "incomplete": False}]
+    assert len(seen) == 2
+    assert seen[1]["messages"] == redacted_messages()
+    assert "tools" not in seen[1]
+
+
 async def test_anthropic_payload_is_exactly_the_redacted_copy():
     seen: list[dict] = []
     entry = native_entry("anthropic")
