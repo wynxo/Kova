@@ -116,12 +116,14 @@ def render_chat_markdown(chat: dict) -> str:
     for message in chat.get("messages", []):
         role = message.get("role")
         content = message.get("content")
-        if role not in ("user", "assistant") or not content:
+        names = [row.get("name") for row in message.get("attachments") or []
+                 if isinstance(row, dict) and isinstance(row.get("name"), str) and row["name"]]
+        if role not in ("user", "assistant") or (not content and not names):
             continue
         wrote = True
         lines.append("## You" if role == "user" else "## Kova")
         lines.append("")
-        lines.append(content.rstrip())
+        lines.append(content.rstrip() if content else "_Attached: " + ", ".join(names) + "_")
         lines.append("")
     if not wrote:
         lines.extend(["_No messages yet._", ""])

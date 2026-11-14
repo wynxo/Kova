@@ -306,6 +306,10 @@ class Agent:
             block = '\n\n'.join(attachments.block(r) for r in attached)
             model_text = f'{text}\n\n{block}' if text else block
         user_message_id = self.store.add_message(chat_id, 'user', text)
+        if attached:
+            # Keep the file names attached to this message for reloaded chats.
+            # The link carries no extracted text and is not part of model history.
+            self.store.link_message_attachments(user_message_id, attached)
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
         mode = (chat or {}).get('mode') or DEFAULT_MODE

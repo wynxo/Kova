@@ -236,14 +236,24 @@
     node.append(row);
     return {node, row, detail, hint: detail.textContent};
   }
-  function message(role, content, heading) {
+  function message(role, content, heading, attachments = []) {
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode(heading || 'You'));
     else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode(heading || state.persona.name)); }
     const body = el('div', 'message-body');
-    if (role === 'user') body.textContent = content || '';
-    else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
+    if (role === 'user') {
+      body.textContent = content || '';
+      if (Array.isArray(attachments) && attachments.length) {
+        const files = el('div', 'message-attachments');
+        for (const file of attachments) {
+          const chip = el('span', 'attachment-chip message-attachment', file.name || 'Attached file');
+          chip.title = 'Attached file';
+          files.append(chip);
+        }
+        body.append(files);
+      }
+    } else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
     if (role === 'user' && content) messageActions(article, () => content, 'user');
     return body;
@@ -359,7 +369,7 @@
     // A saved turn reads like a live one: every round of it sits under one heading.
     const turns = []; let turn = null;
     for (const msg of chat?.messages || []) {
-      if (msg.role === 'user') { message('user', msg.content); turn = null; }
+      if (msg.role === 'user') { message('user', msg.content, undefined, msg.attachments || []); turn = null; }
       else if (msg.role === 'assistant') {
         if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
         if (msg.content) { const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
@@ -899,9 +909,10 @@
     let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
-      empty(false); message('user', text); $('prompt').value = ''; resize(); options(false);
+      const outgoing = pendingAttachments.filter(a => a.chat_id === state.chat.id);
+      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: pendingAttachments.filter(a => a.chat_id === state.chat.id).map(a => a.id)}));
+      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: outgoing.map(a => a.id)}));
       for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments();
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();

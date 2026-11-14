@@ -124,6 +124,28 @@ def test_import_round_trip_and_merge_skips_existing(tmp_path):
     assert len(store.list_reminders()) == 1
 
 
+def test_import_restores_message_attachment_names(tmp_path):
+    """A reloaded transcript keeps the file label, not the extracted document text."""
+    source = _home(tmp_path, "source")
+    store = Store(source.home / "kova.db")
+    chat = store.create_chat("Notes")
+    message_id = store.add_message(chat["id"], "user", "")
+    store.link_message_attachments(message_id, [{"id": "attachment-1", "name": "notes.txt"}])
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup, store=store)
+
+    with zipfile.ZipFile(backup) as archive:
+        payload = json.loads(archive.read(f"chats/{chat['id']}.json"))
+        assert payload["messages"][0]["attachments"] == [{"id": "attachment-1", "name": "notes.txt"}]
+        assert "_Attached: notes.txt_" in archive.read(f"chats/{chat['id']}.md").decode()
+
+    target = load_config(tmp_path / "target")
+    import_archive(target, backup)
+    restored = Store(target.home / "kova.db").get_chat(chat["id"])
+    assert restored["messages"][0]["content"] == ""
+    assert restored["messages"][0]["attachments"] == [{"id": "attachment-1", "name": "notes.txt"}]
+
+
 def test_replace_clears_local_data_and_restores_config_keys(tmp_path):
     source = _home(tmp_path, "source")
     _, chat_id = _seed(source)

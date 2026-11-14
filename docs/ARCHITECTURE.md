@@ -644,8 +644,12 @@ transcript messages and must be attached again for a later visual turn.
 Extracted text is request context, not transcript data. A turn stores only the
 user's typed message; the extracted block is re-applied in memory to that
 message for each model call, so search, Markdown/JSON exports, backups and
-generated titles never contain document text. The system prompt carries a
-turn-only index of the chat's attachment names and ids, which keeps
-`read_attachment` usable on later turns. One consequence: a title generated for
-an attachment-only turn uses the file name, and an assistant answer that quotes
-the document is still stored like any other reply.
+generated titles never contain document text. The message gets a small
+metadata link to the uploaded files it used (name, id and order, with no
+extracted text), so clients can show the file names after a reload instead of
+an empty bubble, and a fork copies and remaps those links with its attachment
+copies. The system prompt carries a turn-only index of the chat's attachment
+names and ids, which keeps `read_attachment` usable on later turns. One
+consequence: a title generated for an attachment-only turn uses the file name,
+and an assistant answer that quotes the document is still stored like any
+other reply.

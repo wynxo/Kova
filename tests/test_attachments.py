@@ -34,7 +34,9 @@ def test_upload_turn_and_delete(server):
     response = client.post(f'/chats/{chat}/messages', headers=headers, json={'text': 'Explain', 'attachments': [row['id']]})
     assert response.status_code == 200
     history = client.get(f'/chats/{chat}', headers=headers).json()['messages']
-    assert [message['content'] for message in history if message['role'] == 'user'] == ['Explain']
+    users = [message for message in history if message['role'] == 'user']
+    assert [message['content'] for message in users] == ['Explain']
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'demo.py'}]
     sent = fake.requests[0]['messages'][-1]
     assert sent['role'] == 'user'
     assert 'file: demo.py' in sent['content']
@@ -60,6 +62,7 @@ def test_extracted_text_stays_out_of_transcript_search_and_backup(server, tmp_pa
 
     body = client.get(f'/chats/{chat}', headers=headers).json()
     assert body['title'] == 'Summarize'
+    assert body['messages'][0]['attachments'] == [{'id': row['id'], 'name': 'notes.txt'}]
     assert all(sentinel not in (message.get('content') or '') for message in body['messages'])
     assert all('attachment_id' not in (message.get('content') or '') for message in body['messages'])
     assert sentinel not in str(client.app.state.store.get_context(chat))
@@ -86,7 +89,10 @@ def test_attachment_only_turn_titles_with_filename(server):
     body = client.get(f'/chats/{chat}', headers=headers).json()
     assert body['title'] == 'quarterly-notes.txt'
     assert sentinel not in str(body) and 'attachment_id' not in str(body)
-    assert [m['content'] for m in body['messages'] if m['role'] == 'user'] == ['']
+    users = [m for m in body['messages'] if m['role'] == 'user']
+    assert [m['content'] for m in users] == ['']
+    # The empty bubble keeps a truthful name for reloaded clients, without text.
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'quarterly-notes.txt'}]
 
 
 def test_read_attachment_still_works_from_a_later_turn(server):
@@ -107,9 +113,10 @@ def test_read_attachment_still_works_from_a_later_turn(server):
     assert row['id'] in prompt and sentinel not in prompt
     assert any(message.get('role') == 'tool' and sentinel in message['content']
                for message in fake.requests[2]['messages'])
-    users = [m['content'] for m in client.get(f'/chats/{chat}', headers=headers).json()['messages']
+    users = [m for m in client.get(f'/chats/{chat}', headers=headers).json()['messages']
              if m['role'] == 'user']
-    assert users == ['Keep this', 'Read line two']
+    assert [m['content'] for m in users] == ['Keep this', 'Read line two']
+    assert users[0]['attachments'] == [{'id': row['id'], 'name': 'notes.txt'}]
 
 
 def test_ownership_limits_cleanup(server):
@@ -368,6 +375,7 @@ def test_fork_copies_attachments_independently(server, delete_source):
     chat = store.create_chat()['id']
     row = attachments.save(cfg.home, store, chat, 'demo.txt', b'hello')
     cutoff = store.add_message(chat, 'user', 'attachment_id: ' + row['id'])
+    store.link_message_attachments(cutoff, [row])
     store.add_message(chat, 'assistant', tool_calls=[{'id': 'call', 'type': 'function', 'function': {'name': 'read_attachment', 'arguments': '{"attachment_id": "' + row['id'] + '"}'}}])
     assert store.save_compaction(chat, 0, cutoff, 'attachment_id: ' + row['id'])
     fork = store.fork_chat(chat)
@@ -375,6 +383,7 @@ def test_fork_copies_attachments_independently(server, delete_source):
     assert len(copied) == 1
     assert copied[0]['id'] != row['id']
     assert copied[0]['id'] in fork['messages'][0]['content']
+    assert fork['messages'][0]['attachments'] == [{'id': copied[0]['id'], 'name': 'demo.txt'}]
     assert copied[0]['id'] in fork['messages'][1]['tool_calls'][0]['function']['arguments']
     assert copied[0]['id'] in store.context_snapshot(fork['id'])[0]
     assert Path(copied[0]['path']).read_bytes() == b'hello'

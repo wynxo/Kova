@@ -134,6 +134,13 @@ class Store:
                 tool_call_id TEXT,
                 created TEXT
             );
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                message_id INTEGER NOT NULL,
+                attachment_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (message_id, attachment_id)
+            );
             CREATE TABLE IF NOT EXISTS chat_compactions (
                 chat_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL, summary TEXT NOT NULL
             );
@@ -341,6 +348,17 @@ class Store:
                     cur = self._conn.execute("INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created) VALUES (?, ?, ?, ?, ?, ?)",
                                              (cid, row['role'], remap(row['content']), remap(row['tool_calls']), row['tool_call_id'], row['created']))
                     ids[row['id']] = cur.lastrowid
+                links = self._conn.execute(
+                    "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
+                    "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
+                    "WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position", (chat_id,)).fetchall()
+                for link in links:
+                    if link['message_id'] in ids:
+                        self._conn.execute(
+                            "INSERT INTO message_attachments (message_id, attachment_id, name, position) VALUES (?, ?, ?, ?)",
+                            (ids[link['message_id']],
+                             attachment_ids.get(link['attachment_id'], link['attachment_id']),
+                             link['name'], link['position']))
                 compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
                 if compact and compact['cutoff'] in ids:
                     self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?)",
@@ -452,6 +470,9 @@ class Store:
                 pass
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions WHERE chat_id = ?", (chat_id,))
+            self._conn.execute(
+                "DELETE FROM message_attachments WHERE message_id IN "
+                "(SELECT id FROM messages WHERE chat_id = ?)", (chat_id,))
             self._conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
             self._conn.execute("DELETE FROM queued_messages WHERE chat_id = ?", (chat_id,))
@@ -466,6 +487,7 @@ class Store:
                 self.delete_attachment(chat["id"], row["id"])
         with self._lock:
             self._conn.execute("DELETE FROM chat_compactions")
+            self._conn.execute("DELETE FROM message_attachments")
             self._conn.execute("DELETE FROM messages")
             self._conn.execute("DELETE FROM checkpoints")
             self._conn.execute("DELETE FROM queued_messages")
@@ -509,7 +531,7 @@ class Store:
                     tool_calls = message.get("tool_calls")
                     if tool_calls is not None and not isinstance(tool_calls, str):
                         tool_calls = json.dumps(tool_calls)
-                    self._conn.execute(
+                    cur = self._conn.execute(
                         "INSERT INTO messages "
                         "(chat_id, role, content, tool_calls, tool_call_id, created) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -522,6 +544,9 @@ class Store:
                             message.get("created") or created,
                         ),
                     )
+                    rows = message.get("attachments")
+                    if isinstance(rows, list):
+                        self._add_message_attachments(cur.lastrowid, rows)
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
@@ -628,15 +653,46 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    def link_message_attachments(self, message_id: int, rows: list[dict]) -> None:
+        """Record which uploaded files a message used, without storing their text."""
+        with self._lock:
+            self._add_message_attachments(message_id, rows)
+            self._conn.commit()
+
+    def _add_message_attachments(self, message_id: int, rows: list[dict]) -> None:
+        for position, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            name, ident = row.get('name'), row.get('id')
+            if not isinstance(name, str) or not name:
+                continue
+            ident = ident if isinstance(ident, str) and ident else f'import-{message_id}-{position}'
+            self._conn.execute(
+                "INSERT OR REPLACE INTO message_attachments "
+                "(message_id, attachment_id, name, position) VALUES (?, ?, ?, ?)",
+                (message_id, ident, name, position),
+            )
+
     def get_messages(self, chat_id: str, include_created: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id, created "
+                "SELECT id, role, content, tool_calls, tool_call_id, created "
                 "FROM messages WHERE chat_id = ? ORDER BY id",
                 (chat_id,),
             ).fetchall()
+            links = self._conn.execute(
+                "SELECT ma.message_id, ma.attachment_id, ma.name "
+                "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
+                "WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
+                (chat_id,),
+            ).fetchall()
+        attached: dict[int, list[dict]] = {}
+        for link in links:
+            attached.setdefault(link["message_id"], []).append(
+                {"id": link["attachment_id"], "name": link["name"]}
+            )
         messages: list[dict] = []
-        for role, content, tool_calls, tool_call_id, created in rows:
+        for message_id, role, content, tool_calls, tool_call_id, created in rows:
             message: dict = {"role": role, "content": content}
             if tool_calls is not None:
                 message["tool_calls"] = json.loads(tool_calls)
@@ -644,6 +700,8 @@ class Store:
                 message["tool_call_id"] = tool_call_id
             if include_created:
                 message["created"] = created
+            if message_id in attached:
+                message["attachments"] = attached[message_id]
             messages.append(message)
         return messages
 
