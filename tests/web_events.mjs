@@ -135,3 +135,23 @@ assert.equal(sources.length, 3, 'a signed-out window does not keep reconnecting'
 await runTimers();
 assert.equal(sources.length, 3);
 console.log('Live event stream reconnect, backoff, staleness and restart passed');
+
+// Share fragments coexist with login fragments and are stripped before consumption.
+chatsStatus = 200;
+let registration;
+sandbox.navigator = {serviceWorker: {register: async (...args) => {registration = args;}}};
+const normalFetch = sandbox.fetch;
+sandbox.fetch = async (path, options) => path === '/app/share/demo-share'
+  ? {ok: true, status: 200, json: async () => ({text: 'Shared title\nShared link'})}
+  : normalFetch(path, options);
+let stripped = false;
+sandbox.window.history.replaceState = () => { stripped = true; };
+sandbox.location.hash = '#ticket=demo-ticket&share=demo-share';
+sandbox.window.listeners.hashchange(); await tick();
+assert.ok(stripped, 'share and login secrets removed from history');
+assert.ok(requests.includes('/app/login'), 'ticket exchange is preserved');
+assert.equal($('prompt').value, 'Shared title\nShared link');
+console.log('Combined ticket/share fragment prefill passed');
+
+assert.equal(registration[0], '/app/sw.js');
+assert.equal(registration[1].scope, '/app');

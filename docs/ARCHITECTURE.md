@@ -64,6 +64,10 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 | `GET /health` | public | version, active model name, whether the model answers |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icon and vendored libraries |
+| `GET /app/manifest.webmanifest` | public | persona-named install manifest |
+| `GET /app/sw.js` | public | app-shell-only service worker |
+| `POST /app/share` | browser session or paired device | bounded multipart share draft |
+| `POST /app/share/{token}` | browser session or paired device | consume an owner-bound draft once |
 | `POST /app/session` | bearer token | mint a single-use login ticket |
 | `POST /app/login` | ticket | exchange it for a session cookie |
 | `POST /app/logout` | browser session | revoke the cookie |

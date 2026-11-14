@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add an installable app shell, one-use phone share drafts, and opt-in device reminders while the app is alive; closed-app push is not supported.
+
 - Session picker gains fork: `/fork` copies the current chat (or `/fork 2` any earlier one), and **Ctrl+S** in the `/resume` picker forks the highlighted chat; forks keep messages and compacted context and continue independently.
 - Remappable keyboard shortcuts: bind every chat action under `[tui.keys]` in `config.toml`.
 - Light terminal theme: set `theme = "light"` under `[tui]`; colours adapt to a light background before terminal colour-depth downscaling.
