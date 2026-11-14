@@ -1,3 +1,4 @@
+import os
 """Provider boundaries: migration, credentials, catalog validation and wire formats."""
 import json
 import stat
@@ -28,7 +29,8 @@ api_key = "private"
     config.save_config(cfg)
     saved = (tmp_path / 'config.toml').read_text()
     assert saved.count('api_key = "private"') == 1
-    assert stat.S_IMODE((tmp_path / 'config.toml').stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / 'config.toml').stat().st_mode) == 0o600
     again = config.load_config(tmp_path)
     assert again.active == 'fast' and again.active_model().api_key == 'private'
 
@@ -159,7 +161,8 @@ def test_backup_excludes_all_provider_credentials(tmp_path):
     p.headers = {'X-Secret': 'header-private'}
     config.save_config(cfg)
     exported = _config_bytes(cfg).decode()
-    assert 'private' not in exported
+    for secret in (*p.auth.values(), *p.headers.values()):
+        assert secret not in exported
 
 
 @pytest.mark.real_default

@@ -30,7 +30,15 @@ from kova.tools.reminders import format_relative, format_when
 from kova.tui import brand
 from kova.ui import _run_chat
 
-console = Console()
+
+class _CliConsole(Console):
+    @property
+    def is_terminal(self) -> bool:
+        # A redirected stream stays plain, even when CI exports FORCE_COLOR.
+        return bool(getattr(self.file, "isatty", lambda: False)()) and super().is_terminal
+
+
+console = _CliConsole()
 
 SYMBOL_OK = "✓"
 SYMBOL_ERROR = "✗"
@@ -123,6 +131,23 @@ def _clip(value: str, limit: int = 60) -> str:
 
 
 class _KovaGroup(TyperGroup):
+    def main(self, *args, **kwargs):
+        from typer import rich_utils
+
+        # Windows pipes otherwise default to a legacy code page that cannot
+        # encode the wordmark. CLI output is UTF-8, like Kova's data files.
+        if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+
+        # Typer caches CI color flags at import. Decide against the current
+        # stream instead (also covers CliRunner and every nested command).
+        previous = rich_utils.FORCE_TERMINAL
+        rich_utils.FORCE_TERMINAL = console.is_terminal
+        try:
+            return super().main(*args, **kwargs)
+        finally:
+            rich_utils.FORCE_TERMINAL = previous
+
     def format_help(self, ctx, formatter):
         brand.style_help(self)
         if ctx.parent is None:
