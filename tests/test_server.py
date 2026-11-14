@@ -131,6 +131,27 @@ def test_memory_location_keeps_the_configured_budget(server, tmp_path):
     assert client.app.state.memory.budget == cfg.memory_budget
 
 
+def test_memory_location_is_normalised(server, tmp_path, monkeypatch):
+    """The live memory folder must match what a restart would read (#90)."""
+    client, headers, cfg, fake = server
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('USERPROFILE', str(home))  # Windows expands ~ from this
+    for bad in ('', '   ', 'relative/dir', 'bad\0path'):
+        assert client.post('/memory/location', json={'path': bad}, headers=headers).status_code == 422
+    response = client.post('/memory/location', json={'path': '~/notes'}, headers=headers)
+    assert response.status_code == 200
+    root = (home / 'notes').resolve()
+    assert client.app.state.memory.root == root
+    assert client.app.state.agent.memory.root == root
+    assert cfg.memory_path == root
+    assert load_config(cfg.home).memory_path == root
+    assert client.post('/memory', json={'title': 'Groceries', 'body': 'milk'},
+                       headers=headers).status_code == 200
+    assert (root / 'groceries.md').is_file()
+
+
 def test_memory_settings_roundtrip_and_guards(server):
     client, headers, cfg, fake = server
     settings = client.get("/memory/settings", headers=headers).json()
@@ -319,6 +340,24 @@ def test_consolidate_reports_a_model_failure(server):
     response = client.post('/memory/consolidate', json={'dry_run': True}, headers=headers)
     assert response.status_code == 502
     assert 'HTTP 503' in response.json()['detail']
+
+
+def test_no_model_after_removing_the_last_provider(server):
+    """An empty model list is a setup state, not a raw KeyError (#92)."""
+    client, headers, cfg, fake = server
+    chat_id = client.post('/chats', headers=headers).json()['id']
+    cfg.models.clear()
+    cfg.active = ''
+    response = client.post(f'/chats/{chat_id}/messages', json={'text': 'hi'}, headers=headers)
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    assert events[-1] == {'type': 'error', 'message': 'No model is set up yet. Run: kova setup'}
+    compact = client.post(f'/chats/{chat_id}/compact', headers=headers)
+    assert compact.status_code == 422
+    assert compact.json()['detail'] == 'No model is set up yet. Run: kova setup'
+    consolidate = client.post('/memory/consolidate', json={'dry_run': True}, headers=headers)
+    assert consolidate.status_code == 422
+    assert consolidate.json()['detail'] == 'No model is set up yet. Run: kova setup'
 
 
 def test_permission_rules_authenticated_validated_and_persisted(server):

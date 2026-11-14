@@ -47,7 +47,7 @@ def _resolve(host: str) -> list[str]:
     return [info[4][0] for info in socket.getaddrinfo(host, None)]
 
 
-def _check_public(url: str) -> None:
+def _check_public(url: str) -> str:
     """Refuse non-http(s) URLs and hosts on this machine or the local network.
 
     A web page could otherwise trick the model into reading the user's own
@@ -61,18 +61,27 @@ def _check_public(url: str) -> None:
         addrs = _resolve(host)
     except OSError as exc:
         raise ToolError(f"Can't resolve {host}") from exc
+    if not addrs:
+        raise ToolError(f"Can't resolve {host}")
     for addr in addrs:
         ip = ipaddress.ip_address(addr.split("%")[0])
         if not ip.is_global:
             raise ToolError("Kova only fetches public web pages, not local or private addresses")
 
+    return addrs[0]
 
 def _fetch(args: dict) -> str:
     url = args["url"]
-    with httpx.Client(transport=_transport, timeout=15, follow_redirects=False) as client:
+    with httpx.Client(transport=_transport, timeout=15, follow_redirects=False, trust_env=False) as client:
         for _ in range(6):  # follow up to 5 redirects, checking each hop
-            _check_public(url)
-            response = client.send(client.build_request("GET", url), stream=True)
+            address = _check_public(url)
+            request = client.build_request("GET", url)
+            # Keep HTTP authority and TLS identity, but never resolve the name
+            # again at connection time. Environment proxies are disabled above.
+            hostname = request.url.host
+            request.url = request.url.copy_with(host=address)
+            request.extensions["sni_hostname"] = hostname
+            response = client.send(request, stream=True)
             if response.is_redirect and "location" in response.headers:
                 response.close()
                 url = urljoin(url, response.headers["location"])

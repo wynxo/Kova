@@ -52,8 +52,9 @@ main() {
         pid=$(cat "$data/server.pid")
         case "$pid" in ''|*[!0-9]*) die 'Invalid server.pid; cannot safely stop the server.' ;; esac
         [ "$pid" -gt 1 ] || die 'Invalid server PID.'
-        say "Stopping Kova server $pid ..."
-        if kill -0 "$pid" 2>/dev/null; then kill "$pid" || die 'Could not stop Kova server.'; fi
+        # No installed Python command remains to verify process identity safely.
+        say 'Skipping unverifiable server.pid; no process was signalled. Stop any Kova server manually.'
+        rm -f -- "$data/server.pid"
     fi
     if [ -n "$uv" ]; then
         # uv treats an already-absent tool as a successful no-op.

@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+import psutil
 
 from kova import __version__
 from kova.config import kova_home
@@ -122,6 +123,27 @@ def update(ref: str, emit=print) -> None:
     emit("✓ Updated Kova. Run: kova")
 
 
+def verified_server(pid: int, home: Path):
+    """Return a PID-reuse-aware handle only for this home's Kova server."""
+    if pid <= 1:
+        return None
+    try:
+        process = psutil.Process(pid)
+        args = process.cmdline()
+        module = any(args[i:i + 3] == ['-m', 'kova', 'serve'] for i in range(len(args)))
+        script = len(args) >= 2 and Path(args[0]).stem in ('kova', 'kova.exe') and args[1] == 'serve'
+        script = script or (len(args) >= 3 and Path(args[1]).stem == 'kova' and args[2] == 'serve')
+        if not (module or script):
+            return None
+        environment = process.environ()
+        owner_home = environment.get('KOVA_HOME') or str(Path.home() / '.kova')
+        if Path(owner_home).resolve() != home.resolve():
+            return None
+        return process
+    except (psutil.Error, OSError, ValueError):
+        return None
+
+
 def stop_server(home: Path) -> None:
     pidfile = home / "server.pid"
     if not pidfile.exists():
@@ -134,10 +156,15 @@ def stop_server(home: Path) -> None:
         pidfile.unlink(missing_ok=True)
         return
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
+        process = verified_server(pid, home)
+        if process is None:
+            pidfile.unlink(missing_ok=True)
+            return
+        process.send_signal(signal.SIGTERM)
         pidfile.unlink(missing_ok=True)
-    except OSError as exc:
+    except (ProcessLookupError, psutil.NoSuchProcess):
+        pidfile.unlink(missing_ok=True)
+    except (OSError, psutil.Error) as exc:
         raise LifecycleError(f"Could not stop the Kova server: {exc}") from exc
 
 

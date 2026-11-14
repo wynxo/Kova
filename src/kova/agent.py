@@ -343,9 +343,16 @@ class Agent:
             if (chat or {}).get('plan'):
                 prompt += "\nCurrent plan: " + json.dumps(chat['plan'])
         self.config.bind_providers()
-        entry = (next(m for m in self.config.models if m.name == model)
-                 if model is not None else self.config.active_model())
-        if not entry.model:
+        if model is not None:
+            entry = next((m for m in self.config.models if m.name == model), None)
+        else:
+            try:
+                entry = self.config.active_model()
+            except KeyError:
+                # Removing the last provider empties models and active; that is a
+                # setup state, not a crash (#92).
+                entry = None
+        if entry is None or not entry.model:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         client = ModelClient(entry, transport=self.transport)
