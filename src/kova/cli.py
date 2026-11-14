@@ -520,6 +520,12 @@ def serve():
 def stop():
     """Stop a background Kova server."""
     cfg = load_config()
+    from kova.managed_engine import stop_owned
+    from kova.local_models import LocalModelError
+    try:
+        stop_owned(cfg.home)
+    except LocalModelError as exc:
+        _fail(str(exc))
     pidfile = cfg.home / "server.pid"
     if not pidfile.exists():
         client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
@@ -827,6 +833,13 @@ def model_use(name: str):
             _fail(f'No model named "{name}".')
         raise
     _ok(f"{name} is now active.")
+
+
+@_model.command("remove-local")
+def model_remove_local(provider: str):
+    """Remove a managed local model's weights and connection (not an engine install)."""
+    result = get_client().local_model_remove(provider)
+    _ok(result['message'])
 
 
 _mcp = typer.Typer(no_args_is_help=True, help="Use the tools of MCP (Model Context Protocol) servers.")
@@ -1730,6 +1743,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("bind", "bind", "choice", ("loopback", "lan")),
         _ConfigField("compact_threshold", "compact_threshold", "float", minimum=0.1, maximum=0.99),
         _ConfigField("files_path", "files_path", "path"),
+        _ConfigField("local.idle_unload_minutes", "local_idle_unload_minutes", "int", minimum=0),
         _ConfigField("memory.budget", "memory_budget", "int", minimum=0),
         _ConfigField("memory.consolidate", "memory_consolidate", "bool"),
         _ConfigField("memory.consolidate_hour", "memory_consolidate_hour", "int",
@@ -1939,6 +1953,7 @@ def _config_snapshot(cfg) -> dict:
         "files_path": str(cfg.files_path),
         "bind": cfg.bind,
         "privacy": {"secrets": cfg.privacy_secrets},
+        "local": {"idle_unload_minutes": cfg.local_idle_unload_minutes},
         "oauth_host_id": cfg.oauth_host_id,
         "memory": {
             "path": str(cfg.memory_path),
@@ -2015,6 +2030,7 @@ def _config_rows(snapshot: dict) -> list[tuple[str, str]]:
         ("compact_threshold", str(snapshot["compact_threshold"])),
         ("files_path", snapshot["files_path"]),
         ("bind", snapshot["bind"]),
+        ("local.idle_unload_minutes", str(snapshot["local"]["idle_unload_minutes"])),
         ("privacy.secrets", snapshot["privacy"]["secrets"]),
         ("oauth_host_id", snapshot["oauth_host_id"]),
         ("memory.path", memory["path"]),

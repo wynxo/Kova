@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from kova.config import ModelEntry
+from kova.config import Config, ModelEntry
 from kova.privacy import is_loopback_url, protect_messages
 
 
@@ -65,11 +65,12 @@ class ModelClient:
     """Send messages and stream model events."""
 
     def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
-                 timeout: float = 300, privacy: str = "off"):
+                 timeout: float = 300, privacy: str = "off", config: Config | None = None):
         self.entry = entry
         self.transport = transport
         self.timeout = timeout
         self.privacy = privacy
+        self.config = config
 
     def _url(self, path: str) -> str:
         return f"{self.entry.base_url.rstrip('/')}/{path}"
@@ -81,6 +82,20 @@ class ModelClient:
         return {"Authorization": f"Bearer {self.entry.api_key}"} if self.entry.api_key else {}
 
     async def stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
+        if self.config is not None and (self.entry.provider or '').startswith('managed-'):
+            from kova.managed_engine import manager
+            from kova.local_models import LocalModelError
+            try:
+                async with manager(self.config).use(self.entry, transport=self.transport):
+                    async for event in self._stream(messages, tools):
+                        yield event
+            except LocalModelError as exc:
+                raise ModelError(str(exc)) from None
+        else:
+            async for event in self._stream(messages, tools):
+                yield event
+
+    async def _stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
         from kova.providers import ProviderError
         if not self.entry.model.strip():
             raise ModelError("No model is configured. Run: kova setup")

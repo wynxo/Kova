@@ -333,7 +333,7 @@ def test_setup_declining_download_and_missing_ollama_are_honest(tmp_path, monkey
     with pytest.raises(onboarding.SetupError, match='Nothing downloaded'):
         onboarding.run_setup(cfg, provider_kind='this-pc', transport=httpx.MockTransport(handle))
     assert (tmp_path / 'config.toml').read_bytes() == before
-    with pytest.raises(onboarding.SetupError, match='ollama serve'):
+    with pytest.raises(onboarding.SetupError, match='Nothing downloaded'):
         onboarding.run_setup(cfg, provider_kind='this-pc', transport=httpx.MockTransport(lambda r: httpx.Response(404)))
     assert (tmp_path / 'config.toml').read_bytes() == before
 

@@ -397,6 +397,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 pass  # cleanup must never stop the server
 
     cleanup = asyncio.create_task(sweep_attachments())
+    from kova.managed_engine import manager
+    engine = manager(config)
+    # Recover an owned orphan from a previous server, then load only on a chat.
+    await engine.stop()
+    engine_idle = asyncio.create_task(engine.idle_loop())
     if config.bind == "lan":
         await pairing.start_lan(app)
     try:
@@ -406,6 +411,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await pairing.stop_lan(app)
         reminders.cancel()
         cleanup.cancel()
+        engine_idle.cancel()
         if mcp_connect is not None:
             mcp_connect.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -413,9 +419,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(mcp.close)
         for turn in list(app.state.turns):
             turn.cancel()
-        for task in [reminders, cleanup, *app.state.turns]:
+        for task in [reminders, cleanup, engine_idle, *app.state.turns]:
             with suppress(asyncio.CancelledError):
                 await task
+        await engine.stop()
         await app.state.model_health.close()
 
 
@@ -680,7 +687,7 @@ def create_app(
                 raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
             event = await compact(app.state.store, chat_id,
                                   ModelClient(entry, transport=app.state.agent.transport,
-                                              privacy=config.privacy_secrets),
+                                              privacy=config.privacy_secrets, config=config),
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
@@ -961,7 +968,7 @@ def create_app(
         if not entry.model:
             raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
         client = ModelClient(entry, transport=app.state.agent.transport,
-                             privacy=config.privacy_secrets)
+                             privacy=config.privacy_secrets, config=config)
         memory, store = app.state.memory, app.state.store
         try:
             operations = await plan_consolidation(memory, client)
