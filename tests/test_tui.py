@@ -489,12 +489,25 @@ class StubClient:
         self.approvals, self.stops, self.notes, self.sent = [], [], [], []
         self.queues: list[dict] = []
         self.steers: list[str] = []
+        self.created: list[dict] = []
         self.checkpoints: list[dict] = []
         self.diffs: dict[tuple[int, str], dict] = {}
         self.restores: list[int] = []
 
     def get_chat(self, _chat_id):
         return self.chat
+
+    def create_chat(self, title=None, mode=None, web=None, permission=None, cwd=None):
+        chat = {"id": f"c{len(self.created) + 2}", "title": title or "",
+                "mode": mode or "work", "web": True if web is None else web,
+                "permission": permission or "manual", "cwd": cwd or os.getcwd(),
+                "messages": []}
+        self.created.append(chat)
+        self.chat = chat
+        return dict(chat)
+
+    def list_chats(self):
+        return [dict(self.chat)] + [dict(chat) for chat in self.created[:-1]]
 
     def update_chat(self, _chat_id, **fields):
         allowed = ("title", "mode", "web") + (("permission", "cwd") if self.permissions else ())
@@ -1275,3 +1288,23 @@ def test_an_unknown_change_set_is_reported():
     app = chat_app(client)
     app.command("/diff 99")
     assert "No change set '99'" in transcript(app)
+
+
+def test_new_chat_is_created_only_by_the_first_message():
+    """Opening Kova and /new must not leave empty conversations (#100)."""
+    client = StubClient([{"type": "text", "text": "Hi"}, {"type": "done"}])
+    app = ChatApp(client, None, out=io.StringIO(), color=False, clear=False)
+    app.refresh_chat()
+    app.command("/mode chat")
+    app.command("/web off")
+    for _ in range(3):
+        app.command("/new")
+    assert client.created == []
+    assert app.chat_id is None
+    app.submit("hello")
+    drain(app)
+    assert len(client.created) == 1
+    created = client.created[0]
+    assert app.chat_id == created["id"]
+    assert (created["mode"], created["web"]) == ("chat", False)
+    assert client.sent == ["hello"]

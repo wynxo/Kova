@@ -77,6 +77,23 @@ def working_folder(value: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def memory_folder(value: str) -> Path:
+    """Validate and normalise a memory root so a restart reads the same folder (#90)."""
+    if not value.strip() or "\0" in value:
+        raise HTTPException(status_code=422, detail="memory folder must be a non-empty path")
+    try:
+        path = Path(value.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError("memory folder must be absolute")
+        path = path.resolve(strict=False)
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise ValueError("memory folder is not a directory")
+        return path
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class NoteBody(BaseModel):
     """A memory note to save."""
     title: str
@@ -421,6 +438,17 @@ def create_app(
             raise
         return {"ok": True}
 
+    @api.get("/chats/{chat_id}/approvals")
+    async def pending_approvals(chat_id: str) -> list[dict]:
+        """Approvals and questions still waiting for an answer in this chat.
+
+        The card exists only in the turn's SSE stream; a reloaded page or a
+        second window rebuilds it from here and answers through the POST below.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return app.state.agent.approvals.pending_for(chat_id)
+
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
     async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
         chat = app.state.store.get_chat(chat_id)
@@ -445,9 +473,13 @@ def create_app(
         async with chat_lock(chat_id):
             if app.state.store.get_chat(chat_id) is None:
                 raise HTTPException(status_code=404, detail="chat not found")
-            entry = config.active_model()
+            try:
+                entry = config.active_model()
+            except KeyError as exc:
+                raise HTTPException(status_code=422,
+                                    detail="No model is set up yet. Run: kova setup") from exc
             if not entry.model:
-                raise HTTPException(status_code=422, detail="No model is configured")
+                raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
             event = await compact(app.state.store, chat_id, ModelClient(entry, transport=app.state.agent.transport),
                                   context_tokens=entry.context, threshold=config.compact_threshold, force=True)
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
@@ -621,7 +653,7 @@ def create_app(
 
     @api.post("/memory/location")
     async def memory_use(body: MemoryLocationBody) -> dict:
-        memory = Memory(Path(body.path), "Kova" if body.obsidian else None, config.memory_budget)
+        memory = Memory(memory_folder(body.path), "Kova" if body.obsidian else None, config.memory_budget)
         config.memory_path = memory.root
         config.memory_write_subdir = memory.write_subdir
         save_config(config)
@@ -712,9 +744,13 @@ def create_app(
     async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
         """Plan one consolidation run and, unless asked to dry-run, apply it."""
         from kova.review import gate_operations, plan_consolidation, apply_operations
-        entry = config.active_model()
+        try:
+            entry = config.active_model()
+        except KeyError as exc:
+            raise HTTPException(status_code=422,
+                                detail="No model is set up yet. Run: kova setup") from exc
         if not entry.model:
-            raise HTTPException(status_code=422, detail="No model is configured")
+            raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
         client = ModelClient(entry, transport=app.state.agent.transport)
         memory, store = app.state.memory, app.state.store
         operations = await plan_consolidation(memory, client)
