@@ -505,12 +505,16 @@ def stop():
         pidfile.unlink(missing_ok=True)
         return
     try:
-        os.kill(pid, signal.SIGTERM)
+        if lifecycle.verified_server(pid, pidfile.parent) is None:
+            pidfile.unlink(missing_ok=True)
+            _muted("Stale or unverifiable server PID; no process was signalled.")
+            return
+        lifecycle.stop_server(pidfile.parent)
         _ok("Server stopped.")
     except ProcessLookupError:
         pidfile.unlink(missing_ok=True)
         _muted("Server was not running.")
-    except OSError as exc:
+    except (OSError, lifecycle.LifecycleError) as exc:
         _error_line(f"Could not stop the server: {exc}")
 
 
@@ -591,8 +595,12 @@ def _restart_server(cfg) -> bool:
         pidfile.unlink(missing_ok=True)
         return False
     try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
+        process = lifecycle.verified_server(pid, cfg.home)
+        if process is None:
+            pidfile.unlink(missing_ok=True)
+            return False
+        process.send_signal(signal.SIGTERM)
+    except (OSError, lifecycle.psutil.Error):
         return False
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:

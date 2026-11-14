@@ -128,6 +128,7 @@ def test_uninstall_data_choices(lifecycle, monkeypatch, tmp_path, args, answer, 
     (home / "config.toml").write_text(f'[memory]\npath = "{external.as_posix()}"\n')
     events = []
     (home / "server.pid").write_text("12345")
+    monkeypatch.setattr(lifecycle, "verified_server", lambda pid, home: SimpleNamespace(send_signal=lambda sig: lifecycle.os.kill(pid, sig)))
     monkeypatch.setattr(lifecycle.os, "kill", lambda pid, sig: events.append((pid, sig)))
     def run(cmd, **kwargs):
         events.append(cmd)
