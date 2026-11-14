@@ -663,10 +663,19 @@ class Store:
             messages.append((row[0], message))
         return summary, cutoff, messages
 
-    def get_context(self, chat_id: str) -> list[dict]:
+    def get_context_entries(self, chat_id: str) -> list[tuple[int | None, dict]]:
+        """Like :meth:`get_context`, but keep each stored message's row id.
+
+        Callers use the id to attach turn-only content to the message they just
+        wrote without changing what is stored. The compacted summary has no
+        row, so its ``None`` id marks it as not a stored message.
+        """
         summary, _, rows = self.context_snapshot(chat_id)
-        prefix = [{"role": "user", "content": "Conversation summary (earlier context):\n" + summary}] if summary else []
-        return prefix + [message for _, message in rows]
+        prefix = [(None, {"role": "user", "content": "Conversation summary (earlier context):\n" + summary})] if summary else []
+        return prefix + rows
+
+    def get_context(self, chat_id: str) -> list[dict]:
+        return [message for _, message in self.get_context_entries(chat_id)]
 
     def save_compaction(self, chat_id: str, expected_cutoff: int, cutoff: int, summary: str) -> bool:
         with self._lock:

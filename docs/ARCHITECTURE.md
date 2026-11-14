@@ -640,3 +640,12 @@ bundled). Extracted text, or image data for a declared vision model, is sent to
 the configured model only as part of a requested chat turn; no external
 extraction or file-upload service is used. Raw images are not stored in
 transcript messages and must be attached again for a later visual turn.
+
+Extracted text is request context, not transcript data. A turn stores only the
+user's typed message; the extracted block is re-applied in memory to that
+message for each model call, so search, Markdown/JSON exports, backups and
+generated titles never contain document text. The system prompt carries a
+turn-only index of the chat's attachment names and ids, which keeps
+`read_attachment` usable on later turns. One consequence: a title generated for
+an attachment-only turn uses the file name, and an assistant answer that quotes
+the document is still stored like any other reply.
