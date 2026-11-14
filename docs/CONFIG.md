@@ -25,7 +25,7 @@ kova                         # starts a fresh background server
 ```
 
 `kova doctor` checks that the file parses, its schema is current, provider
-references resolve, and top-level keys are known.
+references resolve, and its keys are known.
 
 Comments, hand-written keys and formatting are preserved when Kova saves the
 file: it edits the document already on disk instead of rebuilding it. Keys this
@@ -102,7 +102,7 @@ or model references.
 | `providers` | `providers` | Provider connections. Each has `id`, `name`, `base_url`, `kind`, `adapter`, and optionally redacted-in-output `api_key`, `headers` and `auth`. Manage with `kova providers`, `kova setup` and `kova providers login`. |
 | `oauth_host_id` | `oauth_host_id` | A stable generated host identifier used by provider authentication. Leave it in place; changing it makes an owned login look like a new host. |
 | — | `home` | The resolved Kova home folder (`KOVA_HOME` or `~/.kova`). It is derived at load time and is not stored in `config.toml`. |
-| — | `_extra` | In-memory home for top-level keys this version does not recognise, populated on load. Saves edit the existing document, so unknown keys and comments survive; `kova doctor`'s schema check lists them with suggestions. Credential-shaped unknown keys are redacted by `config show`. |
+| — | `_extra` | In-memory home for top-level keys this version does not recognise, populated on load. Saves edit the existing document, so unknown keys and comments survive; `kova doctor`'s schema check lists them with suggestions. Unknown keys whose names look like credentials (`private_key`, `access_key`, `cookie`, `headers`, …) have their values redacted by `config show`. |
 
 Older `[[models]]` entries that carry `base_url` and `api_key` still load. On the
 next save Kova writes schema version 2 and creates matching `[[providers]]`

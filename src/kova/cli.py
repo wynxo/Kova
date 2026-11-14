@@ -1389,10 +1389,35 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
 # config: read and change ~/.kova/config.toml without a text editor.
 
 REDACTED = "<redacted>"
-_SECRET_NAME = re.compile(
-    r"(api[_-]?key|token|secret|password|passwd|authorization|bearer|credential|oauth|auth)",
-    re.IGNORECASE,
-)
+#: Whole name parts that mark an unknown value as credential-shaped. Unknown
+#: keys are never interpreted, so anything that could be a key, token, session
+#: or custom header is hidden rather than guessed to be harmless.
+_SECRET_WORDS = frozenset({
+    "apikey", "auth", "authorization", "bearer", "cert", "certificate",
+    "cookie", "cookies", "credential", "credentials", "dsn", "header",
+    "headers", "key", "keys", "oauth", "pass", "passphrase", "passwd",
+    "password", "private", "pwd", "secret", "secrets", "session", "signature",
+    "token", "tokens", "webhook",
+})
+_NAME_PART = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+
+
+def _secret_name(name: str) -> bool:
+    """Whether a key name looks like it holds a credential.
+
+    Matching is by whole name parts (split on punctuation and camel case), so
+    ``private_key``, ``apiKey`` and ``aws_access_key_id`` match while
+    ``tokenizer`` and ``monkey`` do not.
+    """
+    for chunk in re.split(r"[^A-Za-z0-9]+", name):
+        if not chunk:
+            continue
+        lowered = chunk.lower()
+        if lowered in _SECRET_WORDS:
+            return True
+        if any(part.lower() in _SECRET_WORDS for part in _NAME_PART.findall(chunk)):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -1459,7 +1484,7 @@ def _config_path_value(key: str, raw: str) -> Path:
         raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be a non-empty path.')
     try:
         return Path(text).expanduser().resolve()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise _ConfigValueError(f'Invalid value for {key}: "{raw}" is not a usable path ({exc}).')
 
 
@@ -1583,7 +1608,7 @@ def _redact_extra(value: object) -> object:
     """Redact unknown keys whose names look like credentials."""
     if isinstance(value, dict):
         return {
-            str(key): REDACTED if _SECRET_NAME.search(str(key)) else _redact_extra(item)
+            str(key): REDACTED if _secret_name(str(key)) else _redact_extra(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):

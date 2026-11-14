@@ -97,6 +97,47 @@ def test_redaction_covers_unknown_credential_shaped_keys():
     assert all(secret not in json.dumps(redacted) for secret in SECRETS)
 
 
+@pytest.mark.parametrize("key", [
+    "private_key",
+    "access_key",
+    "aws_access_key_id",
+    "apiKey",
+    "refreshToken",
+    "client_secret",
+    "cookie",
+    "session_id",
+    "headers",
+    "Authorization",
+    "passphrase",
+    "webhook_url",
+])
+def test_unknown_key_names_that_look_like_credentials_are_redacted(key):
+    assert cli._redact_extra({key: SECRET_KEY})[key] == cli.REDACTED
+
+
+@pytest.mark.parametrize("key", ["tokenizer", "monkey", "keyboard", "custom_accent", "theme"])
+def test_unknown_names_that_only_contain_a_secret_word_are_not_redacted(key):
+    assert cli._redact_extra({key: "visible"})[key] == "visible"
+
+
+def test_config_show_redacts_unknown_private_key_and_session_values(home):
+    (home / "config.toml").write_text(
+        'private_key = "-----BEGIN RSA PRIVATE KEY-----\\nFAKEKEYMATERIAL"\n'
+        'access_key = "AKIAFAKEACCESSKEY0000"\n'
+        'cookie = "session=fakecookievalue"\n'
+        "custom_accent = \"kept\"\n"
+    )
+    result = invoke("config", "show", "--json")
+    assert result.exit_code == 0, result.output
+    extra = json.loads(result.stdout)["extra"]
+    assert extra["private_key"] == cli.REDACTED
+    assert extra["access_key"] == cli.REDACTED
+    assert extra["cookie"] == cli.REDACTED
+    assert extra["custom_accent"] == "kept"
+    assert "FAKEKEYMATERIAL" not in result.stdout
+    assert "fakecookievalue" not in result.stdout
+
+
 @pytest.mark.parametrize(
     "key,value,attr,expected",
     [
@@ -179,6 +220,7 @@ def test_config_set_tui_key_and_refuses_a_duplicate(home):
         ("active", "missing", "not a configured model"),
         ("bind", "internet", "one of: loopback, lan"),
         ("memory.write_subdir", "../outside", "without separators"),
+        ("files_path", "~definitelynotauser/x", "not a usable path"),
         ("tui.keys.nope", "ctrl-g", "unknown TUI action"),
     ],
 )
