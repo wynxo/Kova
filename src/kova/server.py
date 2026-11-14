@@ -327,6 +327,29 @@ def create_app(
 
     api = APIRouter(dependencies=[Depends(_require_token)])
 
+    def autostart_result(action: str) -> dict:
+        from kova import autostart
+        try:
+            if action == "on":
+                autostart.enable()
+            elif action == "off":
+                autostart.disable()
+            result = autostart.status()
+            return {"available": result.available, "enabled": result.enabled,
+                    "stale": result.stale}
+        except (autostart.AutostartError, OSError):
+            raise HTTPException(503, "Start at login is unavailable. Check your system startup settings.") from None
+
+    @api.get("/autostart")
+    def autostart_status() -> dict:
+        return autostart_result("status")
+
+    @api.post("/autostart/{action}")
+    def autostart_update(action: str) -> dict:
+        if action not in {"on", "off"}:
+            raise HTTPException(400, "Choose on or off.")
+        return autostart_result(action)
+
     @api.get("/persona")
     async def persona() -> dict:
         current = load_config(config.home)

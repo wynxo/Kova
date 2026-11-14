@@ -3,6 +3,31 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null};
+  let autostartBusy = false;
+  async function refreshAutostart(action) {
+    if (autostartBusy) return;
+    autostartBusy = true;
+    const toggle = $('autostart-toggle');
+    toggle.disabled = true;
+    toggle.indeterminate = true;
+    $('autostart-refresh').disabled = true;
+    $('autostart-status').textContent = 'Checking start at login…';
+    try {
+      const result = await api(action ? `/autostart/${action}` : '/autostart', action ? {method: 'POST'} : {});
+      toggle.checked = result.enabled;
+      toggle.indeterminate = false;
+      toggle.disabled = !result.available;
+      $('autostart-status').textContent = !result.available ? 'Unavailable on this system.' : result.stale ? 'Startup entry is stale. Turn on to repair it, or off to remove it.' : result.enabled ? 'Starts at sign-in.' : 'Start at sign-in is off.';
+    } catch (error) {
+      $('autostart-status').textContent = 'Could not confirm start at login. Refresh to retry.';
+    } finally {
+      autostartBusy = false;
+      $('autostart-refresh').disabled = false;
+    }
+  }
+  $('settings').addEventListener('toggle', () => { if ($('settings').open) refreshAutostart(); });
+  $('autostart-refresh').onclick = () => refreshAutostart();
+  $('autostart-toggle').onchange = () => refreshAutostart($('autostart-toggle').checked ? 'on' : 'off');
   const scroll = $('scroll-area');
   let nearBottom = true;
   scroll.addEventListener('wheel', event => { if (event.deltaY < 0) nearBottom = false; }, {passive: true});
