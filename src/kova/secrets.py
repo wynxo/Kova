@@ -8,7 +8,8 @@ call before a request leaves the machine.
 
 The detectors are known shapes, not guesses:
 
-* private key blocks and headers,
+* private key blocks and headers (an unterminated header redacts the rest of
+  the text, since the body could be key material),
 * access tokens from common providers (OpenAI, Anthropic, GitHub, Slack,
   Google, AWS, Stripe, SendGrid, npm, GitLab, Hugging Face),
 * JWTs and ``Bearer`` tokens,
@@ -81,13 +82,20 @@ _PLACEHOLDER_VALUES = frozenset({
 #: Leading shapes that mean "fill this in" rather than "this is the value".
 _PLACEHOLDER_PREFIXES = ("$", "<", "{", "%(", "your-", "your_")
 
+#: Longest key block the complete-block rule will pair; beyond it the header is
+#: treated as unterminated rather than assuming the body is safe.
+_PEM_MAX_BLOCK = 32768
+
 _PEM_BLOCK = re.compile(
     r"(?m)^[ \t]*-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
-    r"[\s\S]{0,32768}?"
+    rf"[\s\S]{{0,{_PEM_MAX_BLOCK}}}?"
     r"-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
 )
 _PEM_HEADER = re.compile(
     r"(?m)^[ \t]*-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+)
+_PEM_END = re.compile(
+    r"(?m)^[ \t]*-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
 )
 _CREDENTIAL_URL = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|ftps?|https?)"
@@ -261,9 +269,26 @@ def _token_locate(match: re.Match[str]) -> tuple[int, int, str] | None:
     return match.start("token"), match.end("token"), raw
 
 
+def _pem_header_locate(match: re.Match[str]) -> tuple[int, int, str] | None:
+    """A header is a complete finding only when no END pairs with it nearby.
+
+    ``_PEM_BLOCK`` handles a well-formed block first. When the END line is
+    missing (or too far away), the body cannot be shown to be anything but key
+    material, so the finding covers the rest of the text instead of leaving it
+    in the output. That is deliberately fail-closed, and it still lets a later
+    header in the same text be found because this rule never swallows a block
+    that has its own END.
+    """
+    text = match.string
+    end = _PEM_END.search(text, match.end())
+    if end is not None and end.end() - match.start() <= _PEM_MAX_BLOCK:
+        return None
+    return match.start(), len(text), text[match.start():]
+
+
 _RULES: tuple[_Rule, ...] = (
     _Rule("private_key", _PEM_BLOCK),
-    _Rule("private_key", _PEM_HEADER),
+    _Rule("private_key", _PEM_HEADER, _pem_header_locate),
     _Rule("credential_url", _CREDENTIAL_URL, _url_locate),
     _Rule("anthropic_key", _ANTHROPIC_KEY),
     _Rule("openai_key", _OPENAI_KEY),

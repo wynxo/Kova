@@ -99,12 +99,27 @@ def test_private_key_block_is_redacted_as_one_span(label):
     assert result.text == finding.placeholder
 
 
-def test_a_truncated_private_key_header_is_still_flagged():
+def test_a_truncated_private_key_header_redacts_the_material_after_it():
     text = "-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEKEYMATERIAL"
     scan = detect(text)
     assert scan.kinds == ("private_key",)
-    assert scan.findings[0].end == len("-----BEGIN OPENSSH PRIVATE KEY-----")
-    assert "BEGIN OPENSSH PRIVATE KEY" not in redact(text).text
+    # There is no END line to prove the body is not key material, so the whole
+    # remainder is treated as part of the key.
+    assert scan.findings[0].end == len(text)
+    result = redact(text)
+    assert "BEGIN OPENSSH PRIVATE KEY" not in result.text
+    assert "FAKEKEYMATERIAL" not in result.text
+
+
+def test_a_truncated_header_after_a_complete_block_still_redacts_its_body():
+    text = ("-----BEGIN PRIVATE KEY-----\nFIRSTKEY\n-----END PRIVATE KEY-----\n"
+            "notes\n"
+            "-----BEGIN EC PRIVATE KEY-----\nSECONDKEY")
+    result = redact(text)
+    assert len(result.findings) == 2
+    assert "FIRSTKEY" not in result.text
+    assert "SECONDKEY" not in result.text
+    assert "notes" in result.text
 
 
 @pytest.mark.parametrize("url", URLS)
