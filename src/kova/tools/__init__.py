@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from kova.config import Config
 from kova.memory import Memory
@@ -21,6 +21,9 @@ class Tool:
     description: str
     parameters: dict
     run: Callable[[dict], str | Awaitable[str]]
+    #: Runs code Kova does not control (an MCP server). Such a tool asks before
+    #: every call unless a permission rule allows it or the chat has full access.
+    external: bool = False
 
 
 @dataclass
@@ -29,6 +32,8 @@ class ToolContext:
     store: Store
     memory: Memory
     now: Callable[[], datetime]
+    #: Connected MCP servers (``kova.mcp.McpManager``); their tools join the registry.
+    mcp: Any = None
 
 
 def build_tools(ctx: ToolContext) -> dict[str, Tool]:
@@ -38,7 +43,12 @@ def build_tools(ctx: ToolContext) -> dict[str, Tool]:
     tools = [*web.tools(), *files.tools(ctx), *reminders.tools(ctx), *jobs.tools(ctx),
              *skills.tools(ctx), *sessions.tools(ctx),
              *memory.tools(ctx), *system_info.tools(ctx), *core.tools(ctx.config.files_path)]
-    return {tool.name: tool for tool in tools}
+    registry = {tool.name: tool for tool in tools}
+    # MCP tools are named "server__tool", so they cannot shadow a built-in;
+    # setdefault keeps that true even for a hand-made manager.
+    for tool in ctx.mcp.tools() if ctx.mcp is not None else []:
+        registry.setdefault(tool.name, tool)
+    return registry
 
 
 def openai_schemas(tools: dict[str, Tool]) -> list[dict]:

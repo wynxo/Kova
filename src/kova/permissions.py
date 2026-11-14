@@ -79,7 +79,8 @@ def shell_command_arg(name: str, args: dict) -> str | None:
 
 
 def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Path,
-                   session_allowed: bool = False, sandboxed: bool | None = None) -> bool:
+                   session_allowed: bool = False, sandboxed: bool | None = None,
+                   external: bool = False) -> bool:
     """Whether a tool call needs an explicit answer.
 
     ``sandboxed`` describes what the OS will actually enforce for a command:
@@ -91,9 +92,16 @@ def needs_approval(name: str, args: dict, permission: str, cwd: Path, files: Pat
     A confined normal command runs without a prompt. Confinement contains what
     a command can reach, but deleting the working folder itself is still the
     user's data, so plainly destructive commands keep asking.
+
+    ``external`` marks a tool that runs code Kova does not control, such as an
+    MCP server's tool: Kova cannot classify or confine what it does, so it
+    asks in Manual and Auto alike. Only a permission rule (checked before this)
+    or Full access skips the question.
     """
     if permission == "full":
         return False
+    if external:
+        return True
     command = shell_command_arg(name, args)
     if command is not None:
         # Scheduled scripts run later, unconfined, not in this turn's sandbox.
@@ -235,7 +243,10 @@ class Approvals:
         command = shell_command_arg(name, args)
         risk = command_risk(command) if command is not None else "normal"
         future = asyncio.get_running_loop().create_future()
-        if command is None:
+        if command is None and "path" not in args and args:
+            # Tools without a path (MCP tools, for one) show their arguments.
+            summary = f"{name}: {json.dumps(args, ensure_ascii=False, sort_keys=True)[:500]}"
+        elif command is None:
             summary = f"{name}: {args.get('path', '')}"
         elif name == "run_command":
             summary = command

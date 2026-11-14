@@ -24,6 +24,11 @@ Example:
 ]
 ```
 
+MCP tools (`<server>__<tool>`, see [CONFIG.md](CONFIG.md#mcp-servers)) always ask
+in Manual and Auto, because Kova cannot classify what they do. A rule such as
+`{"action": "allow", "tool": "files__read_*"}` pre-approves them; the app's
+**Always allow** switch writes exactly that rule for one tool.
+
 Tool names and command/path patterns use case-sensitive shell-style globs.
 Deny and ask match any command part; pattern allows must match every part.
 Separators `;`, `&&`, `||`, pipes, newlines, parentheses and backticks are split

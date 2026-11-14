@@ -27,6 +27,7 @@ CONFIG_SCHEMA = 2
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
+    'mcp',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -43,6 +44,11 @@ MODEL_CONFIG_KEYS = frozenset({
 })
 PROVIDER_CONFIG_KEYS = frozenset({
     'id', 'name', 'base_url', 'kind', 'adapter', 'api_key', 'headers', 'auth',
+})
+#: One ``[[mcp]]`` table: a Model Context Protocol server (see kova.mcp).
+MCP_CONFIG_KEYS = frozenset({
+    'name', 'command', 'args', 'env', 'url', 'headers', 'enabled',
+    'disabled_tools', 'sandbox',
 })
 
 #: Warnings already shown in this process, keyed by file and rendered message.
@@ -80,7 +86,8 @@ def unknown_config_keys(data: Mapping[str, Any]) -> list[tuple[str, str | None]]
     for section, known in CONFIG_SECTION_KEYS.items():
         found.extend(_scan_unknown(data.get(section), known, f'{section}.'))
     for section, known in (('models', MODEL_CONFIG_KEYS),
-                           ('providers', PROVIDER_CONFIG_KEYS)):
+                           ('providers', PROVIDER_CONFIG_KEYS),
+                           ('mcp', MCP_CONFIG_KEYS)):
         entries = data.get(section)
         if isinstance(entries, list):
             for index, entry in enumerate(entries):
@@ -134,6 +141,50 @@ class ModelEntry:
 
 
 @dataclass
+class McpServerEntry:
+    """One ``[[mcp]]`` server. Exactly one of ``command`` (stdio) or ``url`` (HTTP).
+
+    ``env`` and ``headers`` may hold tokens, so they are hidden from reprs,
+    redacted by ``kova config show`` and stripped from backups.
+    """
+    name: str
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict, repr=False)
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict, repr=False)
+    enabled: bool = True
+    #: Tools of this server the user switched off; they never reach the model.
+    disabled_tools: list[str] = field(default_factory=list)
+    #: Confine a stdio server's writes to its own folder (Linux Landlock).
+    sandbox: bool = False
+
+    @property
+    def transport(self) -> str:
+        return "http" if self.url else "stdio"
+
+
+def _mcp_entry(raw: Mapping[str, Any]) -> McpServerEntry | None:
+    """Parse one ``[[mcp]]`` table leniently; a broken entry is skipped, not fatal."""
+    if not isinstance(raw, Mapping):
+        return None
+
+    def strings(value) -> list[str]:
+        return [str(v) for v in value] if isinstance(value, list) else []
+
+    def mapping(value) -> dict[str, str]:
+        return {str(k): str(v) for k, v in value.items()} if isinstance(value, Mapping) else {}
+
+    return McpServerEntry(
+        # A bad entry still loads (and fails validation when used), so a save
+        # never drops a table the user is half-way through writing.
+        name=str(raw.get('name') or ''), command=str(raw.get('command') or ''), args=strings(raw.get('args')),
+        env=mapping(raw.get('env')), url=str(raw.get('url') or ''), headers=mapping(raw.get('headers')),
+        enabled=bool(raw.get('enabled', True)), disabled_tools=strings(raw.get('disabled_tools')),
+        sandbox=bool(raw.get('sandbox', False)))
+
+
+@dataclass
 class Config:
     home: Path
     models: list[ModelEntry]
@@ -162,6 +213,8 @@ class Config:
     persona_tone: str = "warm"
     persona_configured: bool = False
     bind: str = "loopback"  # "lan" also serves paired phones on the private LAN address
+    #: MCP servers whose tools Kova may use (``[[mcp]]``, see kova.mcp).
+    mcp: list[McpServerEntry] = field(default_factory=list)
     #: Outbound secret handling: "off" (compatible default), "redact" or "block".
     privacy_secrets: str = "off"
     _extra: dict = field(default_factory=dict, repr=False)
@@ -260,6 +313,8 @@ def load_config(home: Path | None = None) -> Config:
                  persona_tone=data.get('persona', {}).get('tone', 'warm'),
                  persona_configured=data.get('persona', {}).get('configured', False),
                  bind='lan' if data.get('bind') == 'lan' else 'loopback',
+                 mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
+                      if entry is not None] if isinstance(data.get('mcp'), list) else [],
                  privacy_secrets=privacy_secrets)
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
@@ -398,6 +453,22 @@ def _model_values(model: ModelEntry) -> dict[str, Any]:
     }
 
 
+def _mcp_values(server: McpServerEntry) -> dict[str, Any]:
+    # Empty optional fields stay out of the file, so a hand-written entry
+    # keeps its shape: a stdio server never grows ``url = ""``.
+    return {
+        'name': server.name,
+        'command': server.command or _UNSET,
+        'args': list(server.args) if server.args else _UNSET,
+        'env': dict(server.env) if server.env else _UNSET,
+        'url': server.url or _UNSET,
+        'headers': dict(server.headers) if server.headers else _UNSET,
+        'enabled': server.enabled,
+        'disabled_tools': list(server.disabled_tools) if server.disabled_tools else _UNSET,
+        'sandbox': True if server.sandbox else _UNSET,
+    }
+
+
 def save_config(cfg: Config) -> None:
     cfg.privacy_secrets = normalize_mode(cfg.privacy_secrets)
     # Legacy callers may still assign a model's key before saving.
@@ -433,6 +504,10 @@ def save_config(cfg: Config) -> None:
     _put(persona, 'configured', cfg.persona_configured)
     _merge_entry_tables(doc, 'providers', cfg.providers, 'id', _provider_values)
     _merge_entry_tables(doc, 'models', cfg.models, 'name', _model_values)
+    if cfg.mcp or isinstance(doc.get('mcp'), tomlkit.items.AoT):
+        _merge_entry_tables(doc, 'mcp', cfg.mcp, 'name', _mcp_values)
+        if not cfg.mcp:
+            del doc['mcp']
     _put(doc, 'bind', 'lan' if cfg.bind == 'lan' else _UNSET)
     private_write(cfg.home / 'config.toml', tomlkit.dumps(doc))
 

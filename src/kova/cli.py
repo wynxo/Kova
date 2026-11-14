@@ -829,6 +829,128 @@ def model_use(name: str):
     _ok(f"{name} is now active.")
 
 
+_mcp = typer.Typer(no_args_is_help=True, help="Use the tools of MCP (Model Context Protocol) servers.")
+app.add_typer(_mcp, name="mcp")
+
+_MCP_STATE = {"connected": theme.SUCCESS, "connecting": theme.WARNING, "error": theme.ERROR, "off": theme.MUTED}
+
+
+def _pairs(values: list[str], label: str) -> dict[str, str]:
+    """``KEY=VALUE`` options as a dict; a malformed one is an error, not a guess."""
+    result = {}
+    for value in values:
+        key, sep, item = value.partition("=")
+        if not sep or not key.strip():
+            _fail(f"{label} must look like NAME=VALUE (got {value.split('=')[0]!r}).")
+        result[key.strip()] = item
+    return result
+
+
+def _mcp_tools(row: dict) -> None:
+    if row["error"]:
+        _error_line(row["error"])
+    if not row["tools"]:
+        if row["state"] == "connected":
+            _muted(f"{row['name']} offers no tools.")
+        return
+    table = _table(caption=f"{len(row['tools'])} tools · Kova asks before each call unless always allowed")
+    table.add_column("Tool", no_wrap=True)
+    table.add_column("Kova name", style=theme.MUTED, no_wrap=True)
+    table.add_column("On", no_wrap=True)
+    table.add_column("Description", style=theme.MUTED, overflow="fold", max_width=60)
+    for tool in row["tools"]:
+        table.add_row(tool["name"], tool["kova_name"], "yes" if tool["enabled"] else "no",
+                      _clip(tool["description"].split("\n")[0], 60))
+    console.print(table)
+
+
+@_mcp.command("list")
+def mcp_list():
+    """Show MCP servers, whether they are connected, and their tools."""
+    rows = get_client().mcp_list()
+    if not rows:
+        _empty("No MCP servers yet.",
+               "Add one: kova mcp add NAME -- COMMAND [ARGS...]   or   kova mcp add NAME --url URL")
+        return
+    table = _table(caption=f"{len(rows)} server(s) · docs/CONFIG.md#mcp-servers")
+    table.add_column("Server", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Tools", justify="right", no_wrap=True)
+    table.add_column("Runs", style=theme.MUTED, overflow="fold")
+    for row in rows:
+        enabled = sum(1 for tool in row["tools"] if tool["enabled"])
+        tools = f"{enabled}/{len(row['tools'])}" if row["tools"] else "-"
+        table.add_row(row["name"], Text(row["state"], style=_MCP_STATE.get(row["state"], "")), tools,
+                      f"{row['transport']} · {_clip(row['target'], 70)}")
+    console.print(table)
+    for row in rows:
+        if row["error"]:
+            _error_line(row["error"])
+
+
+@_mcp.command("add")
+def mcp_add(
+    name: str = typer.Argument(..., help="Short name; tools appear as NAME__tool."),
+    command: list[str] = typer.Argument(None, help="Command and arguments of a stdio server (after --)."),
+    url: str | None = typer.Option(None, "--url", help="Address of a streamable HTTP server."),
+    env: list[str] = typer.Option([], "--env", help="NAME=VALUE for a stdio server's environment."),
+    header: list[str] = typer.Option([], "--header", help="NAME=VALUE HTTP header, e.g. Authorization=Bearer …"),
+    sandbox: bool = typer.Option(False, "--sandbox", help="Confine a stdio server's writes to its own folder."),
+):
+    """Add an MCP server and connect to it.
+
+    kova mcp add files -- npx -y @modelcontextprotocol/server-filesystem ~/projects
+    kova mcp add docs --url https://example.com/mcp
+    """
+    command = list(command or [])
+    if bool(command) == bool(url):
+        _fail("Give either a command (after --) or --url, not both.",
+              hint="kova mcp add NAME -- COMMAND [ARGS...]   or   kova mcp add NAME --url URL")
+    server = {"name": name, "command": command[0] if command else "", "args": command[1:],
+              "env": _pairs(env, "--env"), "url": url or "", "headers": _pairs(header, "--header"),
+              "sandbox": sandbox}
+    row = get_client().mcp_add(server)
+    if row["state"] == "connected":
+        _ok(f"Added {name}: {len(row['tools'])} tool(s). Kova asks before each call.")
+        _mcp_tools(row)
+    else:
+        _ok(f"Added {name}, but it is not connected yet.")
+        if row["error"]:
+            _error_line(row["error"])
+        _muted(f"Fix it, then run: kova mcp test {name}")
+
+
+@_mcp.command("remove")
+def mcp_remove(name: str):
+    """Stop an MCP server and forget it (and its always-allow rules)."""
+    try:
+        get_client().mcp_remove(name)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No MCP server named "{name}".', hint="See them with: kova mcp list")
+        raise
+    _ok(f"Removed {name}.")
+
+
+@_mcp.command("test")
+def mcp_test(name: str):
+    """Reconnect an MCP server now and list the tools it offers."""
+    try:
+        row = get_client().mcp_test(name)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No MCP server named "{name}".', hint="See them with: kova mcp list")
+        raise
+    if row["state"] == "off":
+        _fail(f"{name} is switched off.", hint="Turn it on in Settings › MCP servers, or set enabled = true.")
+    if row["state"] != "connected":
+        _fail(row["error"] or f"{name} did not connect.")
+    info = row.get("server_info") or {}
+    label = " ".join(part for part in (info.get("name"), info.get("version")) if part)
+    _ok(f"{name} is working" + (f" ({label})" if label else "") + ".")
+    _mcp_tools(row)
+
+
 def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
     table = _table(caption=caption)
     table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
@@ -1861,6 +1983,21 @@ def _config_snapshot(cfg) -> dict:
             }
             for model in cfg.models
         ],
+        "mcp": [
+            {
+                "name": server.name,
+                "command": server.command,
+                "args": list(server.args),
+                # Environment variables and headers carry tokens: names only.
+                "env": {name: REDACTED for name in server.env},
+                "url": _display_url(server.url),
+                "headers": {name: REDACTED for name in server.headers},
+                "enabled": server.enabled,
+                "disabled_tools": list(server.disabled_tools),
+                "sandbox": server.sandbox,
+            }
+            for server in cfg.mcp
+        ],
         "extra": _redact_extra(cfg._extra),
     }
 
@@ -1921,6 +2058,18 @@ def _config_rows(snapshot: dict) -> list[tuple[str, str]]:
             ))
     else:
         rows.append(("providers", "(none)"))
+    for index, server in enumerate(snapshot["mcp"]):
+        target = server["url"] or " ".join([server["command"], *server["args"]])
+        details = [server["name"], "on" if server["enabled"] else "off", target]
+        if server["env"]:
+            details.append(f'{len(server["env"])} env var(s)')
+        if server["headers"]:
+            details.append(f'{len(server["headers"])} header(s)')
+        if server["disabled_tools"]:
+            details.append(f'{len(server["disabled_tools"])} tool(s) off')
+        if server["sandbox"]:
+            details.append("sandboxed")
+        rows.append((f"mcp.{index}", " · ".join(details)))
     if snapshot["extra"]:
         rows.append(("extra", json.dumps(snapshot["extra"], sort_keys=True, default=str)))
     return rows

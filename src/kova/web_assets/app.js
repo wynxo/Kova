@@ -1646,6 +1646,98 @@
       });
     };
   }
+  // MCP servers (#135): tools from Model Context Protocol servers, each with an
+  // on/off switch and an "always allow" switch. Secrets stay out of the browser:
+  // tokens go through `kova mcp add --env/--header` or config.toml.
+  {
+    const launch = $('open-mcp'), enc = encodeURIComponent;
+    const dialog = el('dialog', 'panel mcp-dialog'); dialog.setAttribute('aria-label', 'MCP servers');
+    const head = el('div', 'dialog-head'), close = iconButton('x', 'Close MCP servers');
+    close.onclick = () => dialog.close(); head.append(el('h2', '', 'MCP servers'), close);
+    const intro = el('p', 'panel-intro', 'Tools from MCP servers join Kova’s own in work mode. Kova asks before every call unless you switch on Always allow.');
+    const list = el('div', 'panel-list'), form = el('form', 'panel-form');
+    const name = el('input'), target = el('input'), args = el('textarea');
+    name.required = true; name.placeholder = 'Name, e.g. github'; name.maxLength = 32; name.autocomplete = 'off';
+    target.required = true; target.placeholder = 'Command (e.g. npx) or https:// address'; target.autocomplete = 'off';
+    args.rows = 2; args.placeholder = 'Arguments, one per line (commands only)';
+    for (const field of [name, target, args]) field.setAttribute('aria-label', field.placeholder);
+    const save = el('button', 'btn primary', 'Add server'); save.type = 'submit';
+    form.append(name, target, args, save,
+      el('p', 'panel-meta', 'Need a token? Add the server with kova mcp add --env or --header, so it never passes through the browser.'));
+    dialog.append(head, intro, list, form); document.body.append(dialog);
+    const expanded = new Set();
+    let version = 0;
+    function toggle(label, checked, change) {
+      const wrap = el('label', 'mcp-switch'), box = el('input'); box.type = 'checkbox'; box.checked = checked;
+      box.onchange = () => safe(async () => {
+        box.disabled = true;
+        try { await change(box.checked); }
+        catch (error) { box.checked = !box.checked; throw error; }
+        finally { box.disabled = false; }
+      });
+      wrap.append(box, el('span', '', label)); return wrap;
+    }
+    const patchTool = (server, tool, body) => json(`/mcp/${enc(server)}/tools/${enc(tool)}`, write('PATCH', body)).then(refresh);
+    function render(rows) {
+      list.replaceChildren();
+      if (!rows.length) list.append(el('p', 'panel-empty', 'No MCP servers yet. Add one below, or run kova mcp add in a terminal.'));
+      for (const row of rows) {
+        const item = el('section', 'panel-item mcp-server'), text = el('div'), actions = el('div', 'mcp-actions');
+        const count = `${row.tools.length} tool${row.tools.length === 1 ? '' : 's'}`;
+        text.append(el('strong', '', row.name),
+          el('p', 'panel-meta', [row.transport, row.state === 'connected' ? count : row.state, row.target].join(' · ')));
+        if (row.error) text.append(el('p', 'mcp-error', row.error));
+        text.append(toggle('Server on', row.enabled, async on => { await json(`/mcp/${enc(row.name)}`, write('PATCH', {enabled: on})); await refresh(); }));
+        if (row.tools.length) {
+          const tools = el('details', 'mcp-tools'); tools.open = expanded.has(row.name);
+          tools.ontoggle = () => { if (tools.open) expanded.add(row.name); else expanded.delete(row.name); };
+          tools.append(el('summary', '', `Tools (${row.tools.filter(tool => tool.enabled).length} on)`));
+          for (const tool of row.tools) {
+            const line = el('div', 'mcp-tool'), info = el('div');
+            info.append(el('code', '', tool.name));
+            if (tool.description) info.append(el('p', 'panel-meta', tool.description));
+            line.append(info, toggle('On', tool.enabled, on => patchTool(row.name, tool.name, {enabled: on})),
+              toggle('Always allow', tool.always_allow, on => patchTool(row.name, tool.name, {always_allow: on})));
+            tools.append(line);
+          }
+          text.append(tools);
+        }
+        const test = el('button', 'btn quiet', 'Test'); test.type = 'button'; test.title = `Reconnect ${row.name}`;
+        test.onclick = () => safe(async () => {
+          test.disabled = true; test.textContent = 'Testing…';
+          try { const result = await json(`/mcp/${enc(row.name)}/test`, {method: 'POST'}); toast(result.error || `${row.name} is working.`, 'MCP'); await refresh(); }
+          finally { test.disabled = false; test.textContent = 'Test'; }
+        });
+        const remove = iconButton('trash-2', `Remove ${row.name}`);
+        remove.onclick = () => safe(async () => {
+          if (!confirm(`Remove ${row.name}? Its tools and always-allow switches go with it.`)) return;
+          remove.disabled = true;
+          try { await json(`/mcp/${enc(row.name)}`, {method: 'DELETE'}); await refresh(); }
+          finally { remove.disabled = false; }
+        });
+        actions.append(test, remove); item.append(text, actions); list.append(item);
+      }
+    }
+    async function refresh() {
+      const current = ++version, rows = await json('/mcp');
+      if (current === version) render(rows);
+    }
+    launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); await refresh(); });
+    form.onsubmit = event => {
+      event.preventDefault(); if (save.disabled) return;
+      safe(async () => {
+        save.disabled = true; save.textContent = 'Connecting…';
+        const where = target.value.trim(), url = /^https?:\/\//i.test(where);
+        const body = url ? {name: name.value.trim(), url: where}
+          : {name: name.value.trim(), command: where, args: args.value.split('\n').map(line => line.trim()).filter(Boolean)};
+        try {
+          const row = await json('/mcp', write('POST', body));
+          if (row.error) toast(row.error, 'MCP');
+          name.value = ''; target.value = ''; args.value = ''; expanded.add(row.name); await refresh();
+        } finally { save.disabled = false; save.textContent = 'Add server'; }
+      });
+    };
+  }
   async function notifyReminder(event) {
     if (document.hasFocus?.() || localStorage.getItem('kova-notify') !== 'yes' ||
         !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;

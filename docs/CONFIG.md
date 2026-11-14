@@ -141,6 +141,7 @@ or model references.
 | `schema_version` | — | Always `2` for the current provider-aware format. `kova doctor` reports older or unknown schemas. |
 | `models` | `models` | Selected model aliases. Each entry has `name`, `provider`, `base_url`, `model`, `context` (token budget for history trimming) and `vision` (whether the model accepts images). Manage with `kova model add`, `kova model use` and `kova model list`. |
 | `providers` | `providers` | Provider connections. Each has `id`, `name`, `base_url`, `kind`, `adapter`, and optionally redacted-in-output `api_key`, `headers` and `auth`. Manage with `kova providers`, `kova setup` and `kova providers login`. |
+| `mcp` | `mcp` | MCP servers whose tools Kova may use, one `[[mcp]]` table each. See [MCP servers](#mcp-servers). Manage with `kova mcp add`, `kova mcp list`, `kova mcp remove` and the **MCP servers** panel in the app. |
 | `oauth_host_id` | `oauth_host_id` | A stable generated host identifier used by provider authentication. Leave it in place; changing it makes an owned login look like a new host. |
 | — | `home` | The resolved Kova home folder (`KOVA_HOME` or `~/.kova`). It is derived at load time and is not stored in `config.toml`. |
 | — | `_extra` | In-memory home for top-level keys this version does not recognise, populated on load. Saves edit the existing document, so unknown keys and comments survive; `kova doctor`'s schema check lists them with suggestions. Unknown keys whose names look like credentials (`private_key`, `access_key`, `cookie`, `headers`, …) have their values redacted by `config show`. |
@@ -150,6 +151,86 @@ next save Kova writes schema version 2 and creates matching `[[providers]]`
 entries without changing the active model or the old aliases. Keys, custom
 headers and owned OAuth tokens stay in this file and are never copied into a
 backup.
+
+## MCP servers
+
+Kova can use the tools of any [Model Context Protocol](https://modelcontextprotocol.io)
+server. Each server is one `[[mcp]]` table:
+
+```toml
+# A local server Kova starts and talks to over stdin/stdout (stdio).
+[[mcp]]
+name = "files"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/projects"]
+
+# Environment variables are passed to the server; use them for tokens.
+[[mcp]]
+name = "github"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_PERSONAL_ACCESS_TOKEN = "..." }
+disabled_tools = ["delete_repository"]
+
+# A remote server over streamable HTTP.
+[[mcp]]
+name = "docs"
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ..." }
+enabled = false
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `name` | required | Letters, digits, `-` and `_`, at most 32 characters, no `__`. Tools appear to the model as `<name>__<tool>`. |
+| `command` | — | Program to start for a **stdio** server. Give exactly one of `command` or `url`. |
+| `args` | `[]` | Arguments for `command`. |
+| `env` | `{}` | Extra environment variables for a stdio server, on top of Kova's own. |
+| `url` | — | Address of a **streamable HTTP** server (`http://` or `https://`). |
+| `headers` | `{}` | HTTP headers sent with every request, such as `Authorization`. |
+| `enabled` | `true` | `false` keeps the entry but stops the server and hides its tools. |
+| `disabled_tools` | `[]` | Tool names (as the server spells them) the model never sees. The app's per-tool switches edit this list. |
+| `sandbox` | `false` | Start a stdio server inside the Linux Landlock sandbox: it may write only to `KOVA_HOME/mcp/<name>` and temporary space. Without Landlock the server is not started. Most `npx`/`uvx` servers need to write to their package cache, so this is opt-in. |
+
+A stdio server runs in its own folder, `KOVA_HOME/mcp/<name>`, so relative paths
+in `args` resolve there. Use absolute paths for anything else.
+
+The usual way to add one is the CLI, which writes the table through the running
+server and connects at once:
+
+```sh
+kova mcp add files -- npx -y @modelcontextprotocol/server-filesystem ~/projects
+kova mcp add github --env GITHUB_PERSONAL_ACCESS_TOKEN=... -- npx -y @modelcontextprotocol/server-github
+kova mcp add docs --url https://example.com/mcp --header "Authorization=Bearer ..."
+kova mcp list              # servers, state and tool counts
+kova mcp test github       # reconnect now and list its tools
+kova mcp remove docs       # stop it and forget it
+```
+
+In the app, **MCP servers** in the sidebar lists every server with its tools,
+an on/off switch for each server and tool, **Always allow** per tool, a **Test**
+button and **Remove**. Servers that need a token are best added with the CLI, so
+the token never passes through the browser.
+
+How the tools behave:
+
+- **Approval.** Kova cannot see what an MCP tool does, so every call shows an
+  approval card in Manual and Auto (Full access runs without asking). **Always
+  allow** in the app adds the permission rule
+  `{"action": "allow", "tool": "github__create_issue"}`; you can also write
+  such rules yourself, for example `"tool": "files__*"` (see
+  [permission-rules.md](permission-rules.md)). Removing a server removes the
+  rules for its tools.
+- **Work mode only.** Chat mode offers only web tools, so MCP tools are used in
+  work mode.
+- **Crashes.** If a stdio server exits, the call it was running fails (it is not
+  repeated), and the next call starts the server again, up to three times a
+  minute. `kova mcp test NAME` reconnects it on demand.
+- **Secrets.** `env` and `headers` values are redacted by `kova config show`,
+  never returned to the app, and stripped from backups.
+
+A server whose tool list changes while running shows the new tools after
+`kova mcp test NAME` or a restart.
 
 ## TUI keys
 
@@ -248,6 +329,10 @@ The example omits `api_key`; when one is present, `config show` still prints
   losing the value.
 - **A port change did nothing.** The old server is still running. Run `kova
   stop`, then start Kova again.
+- **An MCP server shows "error".** `kova mcp test NAME` prints the reason,
+  including the last lines the server wrote to stderr. Check the command runs
+  in a terminal, that tokens in `env`/`headers` are set, and that `npx`/`uvx`
+  is installed. Fix the entry, then test again.
 - **A provider disappeared.** Provider references must resolve. Re-add it with
   `kova providers add` or reconnect the model with `kova setup`.
 - **Keys are exposed.** They should not be: `config show` redacts them. If you

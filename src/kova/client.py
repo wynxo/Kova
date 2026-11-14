@@ -391,6 +391,22 @@ class KovaClient:
     def model_use(self, name: str) -> dict:
         return self._request("POST", "/models/active", json={"name": name}).json()
 
+    # MCP servers connect while these requests wait; give them time to start.
+    def mcp_list(self) -> list[dict]:
+        return self._request("GET", "/mcp").json()
+
+    def mcp_add(self, server: dict) -> dict:
+        return self._request("POST", "/mcp", json=server, timeout=90).json()
+
+    def mcp_remove(self, name: str) -> dict:
+        return self._request("DELETE", f"/mcp/{name}", timeout=30).json()
+
+    def mcp_test(self, name: str) -> dict:
+        return self._request("POST", f"/mcp/{name}/test", timeout=90).json()
+
+    def mcp_update(self, name: str, *, enabled: bool) -> dict:
+        return self._request("PATCH", f"/mcp/{name}", json={"enabled": enabled}, timeout=90).json()
+
 
 def _spawn_server(cfg: Config) -> int:
     """Start ``kova serve`` detached and record its pid; return the pid."""
