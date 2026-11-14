@@ -461,12 +461,14 @@ def _copy_tree(source: Path, target: Path) -> None:
 
 
 def install(source: str | Path, home: Path | None = None, *,
-            confirm: Callable[[Plugin], bool] | None = None) -> Plugin | None:
+            confirm: Callable[[Plugin], bool] | None = None,
+            source_label: str | None = None) -> Plugin | None:
     """Install a plugin from a local path or a git URL; ``confirm`` gates it.
 
     ``confirm`` sees the parsed plugin before anything is written and may
     refuse; returning ``False`` (or raising) cancels the install. Never trust
-    a plugin without showing the user exactly what it adds.
+    a plugin without showing the user exactly what it adds. ``source_label``
+    replaces the recorded source (the catalog records ``catalog:<name>``).
     """
     home = Path(home) if home else kova_home()
     source = str(source)
@@ -488,7 +490,7 @@ def install(source: str | Path, home: Path | None = None, *,
         if confirm is not None and not confirm(plugin):
             return None
         _copy_tree(manifest_dir, target)
-        _write_state(target, enabled=True, source=spec, version=plugin.version)
+        _write_state(target, enabled=True, source=source_label or spec, version=plugin.version)
         _sync_rules(home, plugin.name, plugin_rules(plugin))
         return parse_manifest(target)
     finally:
@@ -506,17 +508,27 @@ def _local_root(path: Path) -> Path:
 
 
 def update(name: str, home: Path | None = None, *,
-           confirm: Callable[[Plugin], bool] | None = None) -> Plugin | None:
-    """Re-install a plugin from its recorded source, preserving enable state."""
+           confirm: Callable[[Plugin], bool] | None = None,
+           from_dir: Path | None = None) -> Plugin | None:
+    """Re-install a plugin from its recorded source, preserving enable state.
+
+    ``from_dir`` replaces it from an already fetched folder instead (the
+    catalog passes its checksum-verified download) and keeps the source.
+    """
     home = Path(home) if home else kova_home()
     plugin, target = _find(home, name)
-    if not plugin.source:
+    if not plugin.source and from_dir is None:
         raise PluginError(f"Plugin {name!r} has no recorded source to update from.")
     enabled = plugin.enabled
     source = plugin.source
     temporary: Path | None = None
     try:
-        if _looks_like_git(source):
+        if from_dir is not None:
+            manifest_dir = _manifest_dir(Path(from_dir))
+        elif source.startswith("catalog:"):
+            raise PluginError(
+                f"{name!r} came from the catalog. Update it with: kova catalog install {name} --upgrade")
+        elif _looks_like_git(source):
             temporary = Path(tempfile.mkdtemp(prefix="kova-plugin-"))
             manifest_dir = _manifest_dir(_clone(source, temporary))
         else:

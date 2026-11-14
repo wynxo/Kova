@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "name": "Kova extensions",
+  "updated": "2026-11-14",
+  "extensions": [
+    {
+      "name": "clipboard",
+      "kind": "plugin",
+      "version": "0.1.0",
+      "description": "Lets Kova read what you copied, and copy text back, with no paste step. Adds /clip.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/plugins/clipboard",
+      "source": {
+        "url": "bundled:plugins/clipboard",
+        "sha256": "cc9201d83f524c93983b7249fbb829da06b3559dc39a32a6b520aa87631b1c82"
+      },
+      "permissions": [
+        "Runs a clipboard command (wl-paste, xclip, pbpaste or PowerShell Get-Clipboard) through run_command; Kova asks first unless you allowed it.",
+        "No new programs, network access or permission rules."
+      ],
+      "tags": ["clipboard", "productivity", "first-party"],
+      "issue": 91
+    },
+    {
+      "name": "morning-briefing",
+      "kind": "plugin",
+      "version": "0.1.0",
+      "description": "One short summary of reminders, overnight jobs and memory changes, with a focus for the day. Adds /briefing.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/plugins/morning-briefing",
+      "source": {
+        "url": "bundled:plugins/morning-briefing",
+        "sha256": "76ddf0aef8ed44a280e3d6b9ac9cdcd93ecd6998be0a476bf93ed39826ca2398"
+      },
+      "permissions": [
+        "Reads your reminders, scheduled jobs and memory notes with Kova's own tools.",
+        "Only schedules a daily briefing job if you agree in the chat."
+      ],
+      "tags": ["briefing", "reminders", "productivity", "first-party"],
+      "issue": 95
+    },
+    {
+      "name": "file-watcher",
+      "kind": "plugin",
+      "version": "0.1.0",
+      "description": "Tells you when a config, save or log file changes, with a short diff. Needs a watch job kind in Kova first.",
+      "author": "Kova",
+      "permissions": ["Will watch only the files you choose."],
+      "tags": ["files", "notifications", "first-party"],
+      "status": "coming-soon",
+      "issue": 108
+    },
+    {
+      "name": "explain-error",
+      "kind": "skill",
+      "version": "0.1.0",
+      "description": "Turns a pasted error, stack trace or log line into what went wrong, the likely cause and the next step.",
+      "author": "Kova",
+      "source": {
+        "url": "bundled:skills/explain-error.md",
+        "sha256": "c52ca681c5208a59483636b702a4b5b620bc8c8dc52ed3b672c16ad0078acd39"
+      },
+      "permissions": ["Instructions only: adds one line to the prompt, uses no tools."],
+      "tags": ["errors", "debugging", "first-party"]
+    },
+    {
+      "name": "weekly-review",
+      "kind": "skill",
+      "version": "0.1.0",
+      "description": "A short weekly review: what got done, what slipped, and the three things that matter next week.",
+      "author": "Kova",
+      "source": {
+        "url": "bundled:skills/weekly-review.md",
+        "sha256": "535ebc0a3998476263ce53a332883799aba3dc558a981d3ab32541c8a895638c"
+      },
+      "permissions": ["Offers to save a memory note and set reminders; only does either after you agree."],
+      "tags": ["planning", "productivity", "first-party"]
+    }
+  ]
+}

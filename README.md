@@ -81,6 +81,7 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
 - Connect API-key providers, a ChatGPT subscription, an installed login, or your own model server
+- Extensions: browse and install plugins and skills from a checksum-pinned catalog (`kova catalog`, or **Extensions** in the app); see [docs/EXTENSIONS.md](docs/EXTENSIONS.md)
 
 ## Desktop app
 
@@ -468,6 +469,10 @@ kova memory use <vault> --obsidian
 ```
 
 In this mode Kova reads your whole vault when searching, but only ever writes inside `<vault>/Kova/`. Your own notes are never touched.
+
+## Skills and extensions
+
+Skills are Kova's procedural memory: one Markdown file each, with a one-line description that sits in the prompt and instructions loaded only when needed. Kova writes the ones it learns into `~/.kova/skills/Kova/`; files you put elsewhere in `~/.kova/skills/` are read but never rewritten by the model. `kova skills list|show|rm`, or **Extensions → Installed** in the app, shows every skill with where it came from, and lets you read, edit and delete it. More skills and plugins come from the catalog: `kova catalog search`, then `kova catalog install NAME`. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 ## Where your data lives
 

@@ -1,0 +1,14 @@
+# First-party Kova plugin: a one-glance morning summary (issue #95).
+# Built from Kova's own tools (reminders, jobs, memory); it runs nothing by
+# itself. The user can schedule it as a daily prompt job if they want.
+name = "morning-briefing"
+version = "0.1.0"
+description = "One short summary of what ran overnight, what is coming up and what changed in memory."
+author = "Kova"
+homepage = "https://github.com/wynxo/Kova"
+skills = ["skills"]
+
+[[commands]]
+name = "briefing"
+description = "Your morning briefing: jobs, reminders, memory and a focus"
+prompt = "Give me my morning briefing. Follow the Morning briefing skill."

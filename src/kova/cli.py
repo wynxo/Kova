@@ -289,6 +289,12 @@ app.add_typer(_jobs, name="jobs")
 _plugins = typer.Typer(no_args_is_help=True, help="Install plugin bundles of skills, commands and MCP servers.")
 app.add_typer(_plugins, name="plugin")
 
+_catalog = typer.Typer(no_args_is_help=True, help="Browse and install plugins and skills from the extensions catalog.")
+app.add_typer(_catalog, name="catalog")
+
+_skills = typer.Typer(no_args_is_help=True, help="See, read and delete the skills Kova uses.")
+app.add_typer(_skills, name="skills")
+
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
@@ -1406,6 +1412,11 @@ def plugin_install(
         _plugin_summary(plugin)
         return yes or typer.confirm("Install this plugin?", default=False)
 
+    name, _version = _catalog_split(source)
+    if (not Path(source).expanduser().exists() and not plugins._looks_like_git(source)
+            and plugins._NAME_RE.match(name)):
+        _catalog_install(source, yes=yes, kind="plugin")
+        return
     try:
         plugin = plugins.install(source, confirm=confirm)
     except plugins.PluginError as exc:
@@ -1483,6 +1494,11 @@ def plugin_update(
     """Re-install a plugin from its original source, showing what it adds."""
     from kova import plugins
 
+    current = next((item for item in plugins.installed() if item.name == name), None)
+    if current is not None and (current.source or "").startswith("catalog:"):
+        _catalog_install(name, yes=yes, kind="plugin", upgrade=True)
+        return
+
     def confirm(plugin):
         _plugin_summary(plugin)
         return yes or typer.confirm("Update to this version?", default=False)
@@ -1495,6 +1511,259 @@ def plugin_update(
         _muted("Cancelled.")
         return
     _ok(f"Updated {plugin.name} {plugin.version}.")
+
+
+# ---------------------------------------------------------------------------
+# Extensions catalog
+# ---------------------------------------------------------------------------
+
+def _catalog_split(spec: str) -> tuple[str, str | None]:
+    from kova import catalog
+    return catalog.split_spec(spec)
+
+
+def _load_catalog():
+    from kova import catalog
+    loaded = catalog.load(catalog.configured_url(load_config()))
+    if loaded.warning:
+        _muted(loaded.warning)
+    return loaded
+
+
+def _catalog_state(entry, home) -> Text:
+    from kova import catalog
+    if not entry.available:
+        return Text("coming soon", style=theme.FAINT)
+    installed = catalog.installed_version(entry, home)
+    if installed is None:
+        return Text("available", style=theme.MUTED)
+    if installed != entry.version:
+        return Text(f"{installed} → {entry.version}", style=theme.ACCENT)
+    return Text("installed", style=theme.SUCCESS)
+
+
+def _catalog_summary(staged) -> None:
+    """The confirmation screen: where it comes from, its checksum, what it adds."""
+    info = staged.describe()
+    if staged.plugin is not None:
+        _plugin_summary(staged.plugin)
+    else:
+        skill = info["skill"]
+        console.print()
+        console.print(Text(f"{skill['name']} (skill) {info['version']}", style=f"bold {theme.ACCENT}"))
+        console.print(Text(skill["description"], style=theme.MUTED))
+        console.print()
+        _plugin_section("Instructions added to the prompt when the skill is loaded",
+                        skill["body"].splitlines())
+        console.print()
+    _plugin_section("Catalog says", info["permissions"])
+    console.print(Text(f"Source: {info['source']}", style=theme.FAINT))
+    console.print(Text(f"SHA-256: {info['sha256']} (verified)", style=theme.FAINT))
+    console.print()
+
+
+def _catalog_install(spec: str, *, yes: bool, kind: str | None = None, upgrade: bool = False) -> None:
+    from kova import catalog
+
+    name, version = _catalog_split(spec)
+    loaded = _load_catalog()
+    try:
+        entry = loaded.get(name)
+        if kind and entry.kind != kind:
+            _fail(f"{name} is a {entry.kind} in the catalog, not a {kind}.",
+                  hint=f"Install it with: kova catalog install {name}")
+        installed = catalog.installed_version(entry, load_config().home)
+        if installed is not None and not upgrade:
+            if installed == entry.version:
+                _ok(f"{name} {installed} is already installed.")
+                return
+            _fail(f"{name} {installed} is installed; the catalog has {entry.version}.",
+                  hint=f"Update it with: kova catalog install {name} --upgrade")
+        if upgrade and installed == entry.version:
+            _ok(f"{name} {installed} is already the catalog's version.")
+            return
+
+        def confirm(staged) -> bool:
+            _catalog_summary(staged)
+            verb = "Update to this version?" if installed else f"Install this {entry.kind}?"
+            return yes or typer.confirm(verb, default=False)
+
+        result = catalog.install(name, version=version, catalog=loaded, confirm=confirm,
+                                 upgrade=installed is not None)
+    except catalog.CatalogError as exc:
+        _fail(str(exc))
+    if result is None:
+        _muted("Cancelled.")
+        return
+    _ok(f"Installed {result}.")
+    _muted("Its skills apply from your next message. A plugin's MCP servers and rules "
+           "reach a running server after: kova stop")
+
+
+@_catalog.command("search")
+def catalog_search(
+    query: str = typer.Argument("", help="Words to look for in names, descriptions and tags."),
+    kind: str = typer.Option(None, "--kind", help="Only plugin or skill."),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
+    """Search the extensions catalog."""
+    if kind not in (None, "plugin", "skill"):
+        _fail("--kind must be plugin or skill.")
+    loaded = _load_catalog()
+    entries = loaded.search(query, kind)
+    home = load_config().home
+    if as_json:
+        from kova import catalog
+        print(json.dumps([{**entry.as_dict(), "installed_version": catalog.installed_version(entry, home)}
+                          for entry in entries], ensure_ascii=False))
+        return
+    if not entries:
+        _empty("Nothing in the catalog matches that.", "Try fewer words, or: kova catalog search")
+        return
+    origin = "bundled with Kova" if loaded.bundled else loaded.source
+    table = _table(caption=f"{len(entries)} extension(s) · {origin}")
+    table.add_column("Name", no_wrap=True)
+    table.add_column("Kind", no_wrap=True)
+    table.add_column("Version", no_wrap=True)
+    table.add_column("State", no_wrap=True)
+    table.add_column("About", overflow="fold")
+    for entry in entries:
+        table.add_row(Text(entry.name, style="bold"), entry.kind, entry.version,
+                      _catalog_state(entry, home), _clip(entry.description, 70))
+    console.print(table)
+    _muted("Details: kova catalog show NAME    Install: kova catalog install NAME")
+
+
+@_catalog.command("show")
+def catalog_show(
+    name: str = typer.Argument(..., help="The extension's name."),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object for scripts."),
+):
+    """Show one extension: what it is, who made it, its source and checksum."""
+    from kova import catalog
+
+    loaded = _load_catalog()
+    try:
+        entry = loaded.get(name)
+    except catalog.CatalogError as exc:
+        _fail(str(exc))
+    home = load_config().home
+    if as_json:
+        print(json.dumps({**entry.as_dict(), "installed_version": catalog.installed_version(entry, home)},
+                         ensure_ascii=False))
+        return
+    console.print(Text.assemble((entry.name, f"bold {theme.ACCENT}"), (f"  {entry.kind} {entry.version}  ", theme.MUTED),
+                                _catalog_state(entry, home)))
+    if entry.description:
+        console.print(Text(entry.description))
+    meta = [part for part in (f"by {entry.author}" if entry.author else "", entry.homepage) if part]
+    if meta:
+        console.print(Text("  ".join(meta), style=theme.FAINT))
+    if entry.tags:
+        console.print(Text("Tags: " + ", ".join(entry.tags), style=theme.FAINT))
+    console.print()
+    _plugin_section("What it may do", entry.permissions)
+    if entry.available:
+        console.print(Text(f"Source: {entry.url}", style=theme.FAINT))
+        console.print(Text(f"SHA-256: {entry.sha256}", style=theme.FAINT))
+        _muted(f"Install: kova catalog install {entry.name}")
+    else:
+        _muted("Coming soon" + (f" (issue #{entry.issue})" if entry.issue else "") + ".")
+
+
+@_catalog.command("install")
+def catalog_install(
+    spec: str = typer.Argument(..., help="NAME, or NAME@VERSION to insist on the pinned version."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Install without asking; still shows what it adds."),
+    upgrade: bool = typer.Option(False, "--upgrade", help="Replace an installed older version."),
+):
+    """Install a plugin or skill: verify its checksum, show what it adds, then ask."""
+    _catalog_install(spec, yes=yes, upgrade=upgrade)
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+_SKILL_ORIGINS = {"learned": "learned by Kova", "catalog": "from the catalog",
+                  "yours": "added by you", "plugin": "plugin"}
+
+
+def _skill_origin(row: dict) -> str:
+    if row["origin"] == "plugin":
+        return f"plugin {row['plugin']}"
+    return _SKILL_ORIGINS[row["origin"]]
+
+
+def _find_skill(name: str) -> dict:
+    from kova import extensions
+    rows = extensions.list_skills(load_config().home)
+    wanted = name.strip().casefold()
+    matches = [row for row in rows if row["id"] == name or row["name"].casefold() == wanted
+               or Path(row["id"]).stem.casefold() == wanted]
+    if not matches:
+        _fail(f'No skill named "{name}".', hint="See them with: kova skills list")
+    if len(matches) > 1:
+        _fail(f'More than one skill is called "{name}".',
+              hint="Use its id from: kova skills list --json")
+    return matches[0]
+
+
+@_skills.command("list")
+def skills_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
+    """List every skill the model can see, and where each came from."""
+    from kova import extensions
+
+    rows = extensions.list_skills(load_config().home)
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return
+    if not rows:
+        _empty("No skills yet.", "Kova writes them as it learns; or browse: kova catalog search --kind skill")
+        return
+    table = _table(caption=f"{len(rows)} skill(s)")
+    table.add_column("Skill", no_wrap=True)
+    table.add_column("From", no_wrap=True)
+    table.add_column("About", overflow="fold")
+    for row in rows:
+        table.add_row(Text(row["name"], style="bold"), _skill_origin(row), _clip(row["description"], 70))
+    console.print(table)
+
+
+@_skills.command("show")
+def skills_show(name: str = typer.Argument(..., help="A skill's name or id.")):
+    """Print a skill's full instructions."""
+    row = _find_skill(name)
+    console.print(Text.assemble((row["name"], f"bold {theme.ACCENT}"), (f"  {_skill_origin(row)}", theme.MUTED)))
+    console.print(Text(row["description"], style=theme.MUTED))
+    console.print(Text(row["id"], style=theme.FAINT))
+    console.print()
+    console.print(Text(row["body"]))
+
+
+@_skills.command("rm")
+def skills_rm(
+    name: str = typer.Argument(..., help="A skill's name or id."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Delete without asking."),
+):
+    """Delete a skill (plugin skills go with their plugin instead)."""
+    from kova import extensions
+    from kova.skills import SkillError
+
+    row = _find_skill(name)
+    if not row["editable"]:
+        _fail(f'"{row["name"]}" comes with the {row["plugin"]} plugin.',
+              hint=f"Disable it with: kova plugin disable {row['plugin']}")
+    if not yes and not typer.confirm(f'Delete the skill "{row["name"]}"?', default=False):
+        _muted("Cancelled.")
+        return
+    try:
+        extensions.delete_skill(load_config().home, row["id"])
+    except SkillError as exc:
+        _fail(str(exc))
+    _ok(f'Deleted "{row["name"]}".')
 
 
 # ---------------------------------------------------------------------------
@@ -1741,6 +2010,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
     for field in (
         _ConfigField("active", "active", "active"),
         _ConfigField("bind", "bind", "choice", ("loopback", "lan")),
+        _ConfigField("catalog.url", "catalog_url", "catalog"),
         _ConfigField("compact_threshold", "compact_threshold", "float", minimum=0.1, maximum=0.99),
         _ConfigField("files_path", "files_path", "path"),
         _ConfigField("local.idle_unload_minutes", "local_idle_unload_minutes", "int", minimum=0),
@@ -1836,6 +2106,16 @@ def _parse_config_value(field: _ConfigField, raw: str, cfg) -> object:
             raise _ConfigValueError(
                 f'Invalid value for {key}: "{raw}" must be one folder name without separators.')
         return text
+    if field.kind == "catalog":
+        if not text or text == "bundled":
+            return text
+        if "\0" in text or any(ch.isspace() for ch in text):
+            raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be a URL or a path.')
+        if text.startswith(("http://", "https://")):
+            if not text.startswith("https://"):
+                raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must use https.')
+            return text
+        return str(_config_path_value(key, text))
     if field.kind == "persona":
         try:
             return Persona(text).name
