@@ -265,6 +265,49 @@ def test_optional_keys_are_removed_when_unset(tmp_path):
     assert "write_subdir" not in text
 
 
+def test_reordering_models_and_providers_is_saved_with_their_extras(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[[models]]\n"
+        'name = "a"\n'
+        'provider = "p"\n'
+        'base_url = "http://127.0.0.1:1/v1"\n'
+        'model = "a"\n'
+        'a_mystery = "keep-a"  # a note\n'
+        "\n[[models]]\n"
+        'name = "b"\n'
+        'provider = "p"\n'
+        'base_url = "http://127.0.0.1:1/v1"\n'
+        'model = "b"\n'
+        'b_mystery = "keep-b"  # b note\n'
+        "\n[[providers]]\n"
+        'id = "p"\n'
+        'name = "P"\n'
+        'base_url = "http://127.0.0.1:1/v1"\n'
+        'p_mystery = "keep-p"\n'
+        "\n[[providers]]\n"
+        'id = "q"\n'
+        'name = "Q"\n'
+        'base_url = "http://127.0.0.1:2/v1"\n'
+        'q_mystery = "keep-q"\n'
+    )
+    cfg = load_config(tmp_path)
+    cfg.models.reverse()
+    cfg.providers.reverse()
+    save_config(cfg)
+
+    again = load_config(tmp_path)
+    assert [model.name for model in again.models] == ["b", "a"]
+    assert [provider.id for provider in again.providers] == ["q", "p"]
+    text = path.read_text()
+    assert 'a_mystery = "keep-a"  # a note' in text
+    assert 'b_mystery = "keep-b"  # b note' in text
+    assert 'p_mystery = "keep-p"' in text
+    assert 'q_mystery = "keep-q"' in text
+    # The moved table kept its own extra, rather than donating it to a neighbour.
+    assert text.index('b_mystery = "keep-b"') < text.index('a_mystery = "keep-a"')
+
+
 def test_unknown_key_helper_reports_paths_and_suggestions_only():
     from kova.config import config_key_warnings, unknown_config_keys
 

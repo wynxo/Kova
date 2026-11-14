@@ -327,12 +327,18 @@ def _merge_map(table, values: Mapping[str, str]) -> None:
 
 def _merge_entry_tables(doc, name: str, entries: list, identity: str,
                         values_for) -> None:
-    """Update known fields in place, leaving each table's extras and comments."""
+    """Update known fields in place, leaving each table's extras and comments.
+
+    The file order follows ``entries``: a caller that reorders models or
+    providers must see that order after the next load, while each moved table
+    keeps its own unknown keys and comments.
+    """
     tables = doc.get(name)
     if not isinstance(tables, tomlkit.items.AoT):
         tables = tomlkit.aot()
         doc[name] = tables
     matched: set[int] = set()
+    ordered: list = []
     for entry in entries:
         values = values_for(entry)
         table = None
@@ -345,11 +351,17 @@ def _merge_entry_tables(doc, name: str, entries: list, identity: str,
             table = tomlkit.table()
             tables.append(table)
             matched.add(len(tables) - 1)
+        ordered.append(table)
         for key, value in values.items():
             _put(table, key, value)
     for index in range(len(tables) - 1, -1, -1):
         if index not in matched:
             del tables[index]
+    if any(tables[index] is not table for index, table in enumerate(ordered)):
+        for index in range(len(tables) - 1, -1, -1):
+            del tables[index]
+        for table in ordered:
+            tables.append(table)
 
 
 def _provider_values(provider: ProviderEntry) -> dict[str, Any]:
