@@ -47,8 +47,8 @@ function Uninstall-Kova {
         if (-not [int]::TryParse((Get-Content -LiteralPath $PidFile -Raw).Trim(), [ref]$ServerPid) -or $ServerPid -le 1) {
             throw 'Invalid server PID; cannot safely stop Kova.'
         }
-        $Server = Get-Process -Id $ServerPid -ErrorAction SilentlyContinue
-        if ($Server) { Stop-Process -Id $ServerPid -ErrorAction Stop }
+        Write-Host 'Skipping unverifiable server.pid; no process was signalled. Stop any Kova server manually.'
+        Remove-Item -LiteralPath $PidFile -Force
     }
     $Uv = Join-Path $Bin 'uv.exe'
     if (-not (Test-Path -LiteralPath $Uv)) {

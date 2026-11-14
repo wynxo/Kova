@@ -237,6 +237,21 @@ async def test_fresh_install_asks_for_setup_instead_of_calling_a_model(tmp_path)
     assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]
 
 
+async def test_removing_the_last_model_still_asks_for_setup(tmp_path):
+    from kova.agent import Agent
+    from kova.config import load_config
+    from kova.memory import Memory
+    from kova.store import Store
+
+    cfg = load_config(tmp_path)
+    cfg.models.clear()
+    cfg.active = ''
+    agent = Agent(cfg, Store(tmp_path / "kova.db"), Memory(tmp_path / "memory"), {})
+    chat = agent.store.create_chat()
+    events = [e async for e in agent.run_turn(chat["id"], "hi")]
+    assert events == [{"type": "error", "message": "No model is set up yet. Run: kova setup"}]
+
+
 async def test_tool_wire_metadata_survives_store_and_next_round(setup):
     script = tool('memory_search', {'query':'hello'})
     script[0]['tool_calls'][0]['extra_content'] = {'google': {'thought_signature': 'opaque-signature'}}
@@ -259,3 +274,23 @@ async def test_tool_argument_snapshots_arrive_before_execution_with_full_result(
     result = next(e for e in events if e['type'] == 'tool_result')
     assert result['output'] == 'x' * 1000 and len(result['summary']) == 200
     assert events[0] == {'type': 'reasoning', 'text': 'thinking now'}
+
+
+@pytest.mark.parametrize('permission', ['manual', 'auto'])
+async def test_scheduled_script_asks_even_with_chat_sandbox(setup, monkeypatch, permission):
+    from kova import sandbox
+
+    cfg, store, memory, tools, chat_id = setup
+    monkeypatch.setattr(sandbox, 'available', lambda: True)
+    store.update_chat(chat_id, permission=permission)
+    fake = FakeModel([tool('job_add', {'text': 'Repeat', 'schedule': 'every 1h',
+                                      'command': 'echo hi'}), text('Denied')])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    approvals = []
+    async for event in agent.run_turn(chat_id, 'Schedule it'):
+        if event['type'] == 'approval':
+            approvals.append(event)
+            agent.approvals.answer(chat_id, event['id'], 'deny')
+    assert len(approvals) == 1
+    assert approvals[0]['tool'] == 'job_add'
+    assert store.list_jobs() == []

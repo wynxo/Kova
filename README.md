@@ -296,6 +296,12 @@ Each chat has a saved `permission` setting, selectable in the desktop composer o
 | **auto** | Sandboxed normal commands run; destructive or unconfined commands need approval | Run inside the working folder |
 | **full** | Never ask, including destructive commands, and no sandbox | Never ask, still folder-contained |
 
+Scheduled shell jobs (`job_add` with `command`) run unconfined as your user,
+not inside the chat command sandbox. Scheduling one requires approval in Manual
+and Auto even when Landlock is available; Full access skips that prompt. The
+approval authorizes the recurring command. Prompt-only jobs do not require shell
+approval. Existing jobs are not re-approved by this scheduling check.
+
 Reads, listings, searches, and plans never ask. A sandboxed command that cannot be confined (no Landlock, or `KOVA_SANDBOX=off`) asks in every mode except Full, so a missing sandbox never becomes an unconfined auto-run. The destructive-command classifier still gates obvious data loss inside the working folder — deletion, disk operations, pipe-to-shell, package removal, elevation and discarding Git work, including Windows equivalents — even when the write itself would be contained.
 
 Approvals appear inline with a summary, risk badge, optional guidance, and **Allow**, **Allow for this chat**, or **Deny**. A session allowance lasts only for that chat while this server runs; destructive commands always need individual approval unless the chat is in Full access. For a destructive call, an API `allow_session` answer allows that single call only and never creates a session allowance. Changing the folder or permission mode clears a session allowance. Stop denies pending requests; unanswered requests are denied after **10 minutes**. Denial and optional guidance are returned to the model. Noninteractive `kova ask` denies approval-requiring actions immediately and prints a hint to continue in interactive chat, so scripts do not hang waiting for a prompt. Settings cannot change during an active turn: stop it first.
@@ -319,6 +325,12 @@ Content-Type: application/json
 ```
 
 `decision` is `allow`, `allow_session`, or `deny`. The optional `message` gives guidance on a denied action. Unknown, already answered, expired, stopped, or other-chat approval IDs return 404; malformed decisions return 422. All existing bearer/session and browser same-origin checks apply.
+
+Approvals and `ask_user` questions still waiting in a chat can be listed at any time, so a reloaded page or a second window can rebuild the card and answer it. Each item is the exact event the stream sent:
+
+```http
+GET /chats/{chat_id}/approvals
+```
 
 An additive `approval_resolved` event carries `id`, `decision`, and `message` so clients can retire cards on answers or timeout. Stop ends the stream with the existing `stopped` event.
 

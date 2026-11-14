@@ -423,8 +423,10 @@ paired with its authenticated, read-only `/key` endpoint for key validation.
 OpenAI-compatible streaming, Anthropic Messages (system content, tool schemas,
 tool-use/results, thinking deltas), or Responses (instructions, function calls
 and outputs, text/reasoning deltas). Native streams must receive a successful
-terminal event before tools execute or a turn succeeds. The agent sees only
-normalized events and keeps its existing tool loop.
+terminal event before tools execute or a turn succeeds. OpenAI-compatible streams
+must receive `[DONE]` or a nonempty `finish_reason`; an early connection close
+is reported as an error and accumulated tool calls are not executed. The agent
+sees only normalized events and keeps its existing tool loop.
 
 `provider_auth.py` implements the documented public ChatGPT-plan OAuth flow:
 a loopback listener is bound before opening the browser, PKCE/S256, random state

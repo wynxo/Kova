@@ -688,3 +688,24 @@ async def test_run_turn_distinguishes_calls_by_arguments(setup):
     assert all(r["ok"] is False for r in results)
     assert not any(e["type"] == "error" for e in events)
     assert events[-1]["type"] == "done"
+
+
+async def test_truncated_model_stream_cannot_execute_a_complete_looking_tool(setup):
+    import httpx
+
+    cfg, store, memory, tools, chat_id = setup
+    executed = []
+    tools["probe"] = Tool("probe", "test", {"type": "object"},
+                          lambda args: executed.append(args) or "ran")
+    frame = {"choices": [{"delta": {"tool_calls": [{
+        "index": 0, "id": "call_cut", "function": {
+            "name": "probe", "arguments": "{}"}}]}}]}
+    wire = "data: " + json.dumps(frame) + "\n\n"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=wire))
+    agent = Agent(cfg, store, memory, tools, transport=transport)
+    events = [event async for event in agent.run_turn(chat_id, "hello")]
+    assert executed == []
+    assert events[-1]["type"] == "error"
+    assert "ended before completion" in events[-1]["message"]
+    assert not any(event["type"] in {"tool_call", "tool_result", "done"} for event in events)
+    assert not any(message.get("tool_calls") for message in store.get_messages(chat_id))

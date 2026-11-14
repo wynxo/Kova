@@ -93,3 +93,10 @@ def test_persona_names_are_trimmed_and_validated():
     with pytest.raises(ValueError):
         Persona('Nova', 'snarky')
     assert all(tone in TONES for tone in ('warm', 'concise', 'professional', 'playful'))
+
+
+def test_empty_memory_path_falls_back_to_the_default(tmp_path):
+    """An empty [memory] path must not root notes at the process directory (#90)."""
+    (tmp_path / "config.toml").write_text('[memory]\npath = ""\n')
+    cfg = load_config(tmp_path)
+    assert cfg.memory_path == tmp_path / "memory"
