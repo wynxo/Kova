@@ -4,6 +4,21 @@ Your own private AI that lives on your computer.
 
 Want to work on it? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md) to run it from source and make it yours.
 
+## See Kova
+
+[Run the two-minute judge demo](docs/DEMO.md) · [Full screenshot gallery](docs/screenshots/README.md)
+
+![Kova web chat in the dark desktop layout](docs/screenshots/web-chat-1440x900-dark.png)
+
+| Approve an action on a phone | Chat in the terminal |
+| --- | --- |
+| [![Phone-width approval card](docs/screenshots/web-approval-360x740-dark.png)](docs/screenshots/web-approval-360x740-dark.png) | [![Terminal reply](docs/screenshots/tui-after-reply.png)](docs/screenshots/tui-after-reply.png) |
+
+![Electron shell starting Kova](docs/screenshots/desktop-starting.png)
+
+Existing UI captures; the web gallery uses a local stub model, not a live-model
+benchmark. See the [capture notes](docs/screenshots/README.md).
+
 ## Install
 
 Linux / macOS (as your normal user, no sudo):
