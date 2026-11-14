@@ -499,7 +499,7 @@ def test_windows_shell_selection_without_elevation(monkeypatch):
     from kova.tools import commands
     monkeypatch.setattr(commands, 'os', SimpleNamespace(name='nt', environ={'COMSPEC': 'cmd.exe'}))
     monkeypatch.setattr(commands.shutil, 'which', lambda name: 'pwsh.exe' if name == 'pwsh' else None)
-    assert commands.shell_command('Get-Location') == ['pwsh.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-Location; exit $LASTEXITCODE']
+    assert commands.shell_command('Get-Location') == ['pwsh.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-Location' + commands._PWSH_EXIT]
     monkeypatch.setattr(commands.shutil, 'which', lambda _: None)
     assert commands.shell_command('dir') == ['cmd.exe', '/d', '/s', '/c', 'dir']
 
