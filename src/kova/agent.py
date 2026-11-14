@@ -242,6 +242,11 @@ class Agent:
         # File contents for per-turn checkpoints, outside every working folder.
         self.blobs = BlobStore(config.home / "checkpoints")
 
+    def _skills_block(self) -> str:
+        """The prompt's skills block, with plugins enabled since the server started."""
+        self.skills.extra_roots = plugins.plugin_skill_roots(self.config.home)
+        return self.skills.prompt_block()
+
     async def _review(self, chat_id: str, cwd: Path, tracker: ChangeTracker | None,
                       label: str) -> dict | None:
         """Record the files this turn changed and describe them for review.
@@ -372,7 +377,7 @@ class Agent:
             index = ""
         memories = [note for note in memories if note.slug != "index"]
         try:
-            skills = await asyncio.to_thread(self.skills.prompt_block) if mode != 'chat' else ""
+            skills = await asyncio.to_thread(self._skills_block) if mode != 'chat' else ""
         except Exception:  # a broken skill file must not block the prompt
             skills = ""
         try:  # the identity is a nicety: trouble reading it must never block a chat

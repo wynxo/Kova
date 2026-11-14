@@ -28,3 +28,11 @@ def no_sandbox(monkeypatch):
     """Pretend the OS sandbox is unavailable (for approval-flow tests)."""
     from kova import sandbox
     monkeypatch.setattr(sandbox, "available", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _offline_catalog(monkeypatch):
+    """The extensions catalog never reaches the network in tests: the default
+    index is the bundled one, and remote tests pass their own mock transport."""
+    import kova.catalog
+    monkeypatch.setattr(kova.catalog, "DEFAULT_URL", "bundled")

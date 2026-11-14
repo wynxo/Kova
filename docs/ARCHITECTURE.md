@@ -158,6 +158,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
+| `GET /extensions/catalog` | token or session | the extensions catalog (configured index or the bundled one), with install state |
+| `POST /extensions/catalog/{name}/preview` | token or session, local only | download and verify one extension; return what it adds and a one-use ticket |
+| `DELETE /extensions/catalog/preview/{ticket}` | token or session | drop a verified download the user did not confirm |
+| `POST /extensions/install` | token or session, local only | install a previewed extension once the user confirms |
+| `GET /extensions/plugins` | token or session | installed plugins with exactly what each adds |
+| `PATCH/DELETE /extensions/plugins/{name}` | token or session | enable (local only) or disable a plugin / remove it and everything it added |
+| `GET /extensions/skills` | token or session | every skill the model sees, with its origin |
+| `GET/PUT/DELETE /extensions/skills/{skill_id:path}` | token or session | read, edit or delete one skill (plugin skills are read-only) |
 | `GET /local-models` | token or session | opt-in hardware/backend check and rated local-model catalog |
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
@@ -253,7 +261,7 @@ restarts. See [remote-access.md](remote-access.md).
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
 `status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `plugin` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+`chats`, `plugin`, `catalog`, `skills` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -605,6 +613,34 @@ What a plugin contributes, and how it is wired in:
   policy and sandbox as built-in tools. Disabling or removing a plugin deletes
   its rules; removing also deletes its folder, skills and commands.
 
+## Extensions catalog
+
+`src/kova/catalog.py` reads a JSON index of plugins and skills from
+`[catalog] url` (an https URL or a local file) and falls back to the index
+bundled in `src/kova/catalog_data/`, which also holds the first-party
+extensions. Every available entry pins one `version` and a `source` with a
+`sha256`. The format, and how to publish an extension, is in
+[EXTENSIONS.md](EXTENSIONS.md).
+
+Installing is fetch, verify, show, confirm, write. `catalog.stage` downloads
+(or copies a `bundled:` source) into a private temp folder, refuses a
+checksum, name or version that differs from the index, and unpacks archives
+with regular files only. The CLI then prints the same screen as
+`kova plugin install`; the web app gets it from
+`POST /extensions/catalog/{name}/preview` with a one-use ticket and only
+`POST /extensions/install` writes. Plugins are installed through
+`plugins.install` with the source recorded as `catalog:<name>`; skills land in
+`skills/catalog/`. `kova catalog search|show|install` and `kova plugin install
+<name>` use it.
+
+`src/kova/extensions.py` lists every skill the model sees with its origin:
+`learned` (Kova wrote it, `skills/Kova/`), `catalog`, `yours` (a file you put
+in `skills/`) and `plugin` (read-only; disable or remove the plugin instead).
+`kova skills list|show|rm` and the **Extensions** dialog (Installed · Plugins ·
+Skills) use it; the dialog can also edit a skill in place.
+`src/kova/extension_routes.py` refreshes the running agent's plugin skills,
+permission rules and MCP servers after a change, so nothing needs a restart.
+
 ## Tests
 
 `tests/` is pytest-based. `tests/conftest.py` gives most tests a configured
@@ -627,6 +663,7 @@ with `KOVA_LIVE=1`.
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
 | `src/kova/mcp.py` | MCP client: stdio/HTTP servers become tools |
+| `src/kova/catalog.py` | extensions catalog: index, checksums, install |
 | `src/kova/cli.py` | Typer commands and rendering |
 | `src/kova/autostart.py` | per-user start-at-login entries |
 | `src/kova/ui.py` | terminal chat and slash commands |

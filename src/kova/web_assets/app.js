@@ -1738,6 +1738,180 @@
       });
     };
   }
+  // Extensions (#137): the catalog of plugins and skills, and everything that is
+  // installed. Installing is preview, then confirm: the server downloads the
+  // source, checks its pinned checksum and shows exactly what it adds; nothing
+  // is written until Install. Skills show where they came from and, unless a
+  // plugin owns them, can be read, edited and deleted here.
+  {
+    const launch = $('open-extensions'), enc = encodeURIComponent;
+    const dialog = el('dialog', 'panel ext-dialog'); dialog.setAttribute('aria-label', 'Extensions');
+    const head = el('div', 'dialog-head'), close = iconButton('x', 'Close extensions');
+    close.onclick = () => dialog.close(); head.append(el('h2', '', 'Extensions'), close);
+    const intro = el('p', 'panel-intro', 'Add abilities to Kova. Nothing runs until you have seen what it adds and said yes.');
+    const tabs = el('div', 'segmented ext-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Extensions');
+    const search = el('input'); search.type = 'search'; search.placeholder = 'Search extensions'; search.setAttribute('aria-label', 'Search extensions');
+    const list = el('div', 'panel-list ext-list'), footer = el('p', 'panel-meta ext-source');
+    let tab = 'installed', data = {catalog: null, plugins: [], skills: []}, version = 0;
+    const buttons = {};
+    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills']]) {
+      const button = el('button', '', label); button.type = 'button'; button.setAttribute('role', 'tab');
+      button.onclick = () => { tab = key; render(); };
+      buttons[key] = button; tabs.append(button);
+    }
+    dialog.append(head, intro, tabs, search, list, footer); document.body.append(dialog);
+    search.oninput = () => render();
+    const ORIGINS = {learned: 'Learned by Kova', catalog: 'From the catalog', yours: 'Added by you', plugin: 'Plugin'};
+    const matches = (...parts) => {
+      const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const text = parts.flat().filter(Boolean).join(' ').toLowerCase();
+      return words.every(word => text.includes(word));
+    };
+    function section(parent, title, lines) {
+      if (!lines.length) return;
+      parent.append(el('p', 'ext-label', title));
+      const ul = el('ul', 'ext-lines'); for (const line of lines) ul.append(el('li', '', line)); parent.append(ul);
+    }
+    // The same list `kova plugin install` prints before it asks.
+    function pluginAdds(parent, info) {
+      section(parent, 'MCP servers (tools)', info.mcp.map(server => {
+        const target = server.url || [server.command, ...server.args].join(' ');
+        const notes = [server.url ? 'network access' : '', server.env_keys.length ? 'env: ' + server.env_keys.join(', ') : ''].filter(Boolean);
+        return `${server.name} → ${target}${notes.length ? ` (${notes.join('; ')})` : ''}`;
+      }));
+      section(parent, 'Skills', info.skills.map(skill => skill.description ? `${skill.name} — ${skill.description}` : skill.name));
+      section(parent, 'Slash commands', info.commands.map(command => command.description ? `/${command.name} — ${command.description}` : `/${command.name}`));
+      section(parent, 'Permission rules', info.permissions.map(rule => `${rule.action} ${rule.tool} ${rule.pattern}`));
+      if (!info.mcp.length && !info.skills.length && !info.commands.length && !info.permissions.length) parent.append(el('p', 'panel-meta', 'Adds nothing yet.'));
+    }
+    function toggle(label, checked, change) {
+      const wrap = el('label', 'mcp-switch'), box = el('input'); box.type = 'checkbox'; box.checked = checked;
+      box.onchange = () => safe(async () => {
+        box.disabled = true;
+        try { await change(box.checked); }
+        catch (error) { box.checked = !box.checked; throw error; }
+        finally { box.disabled = false; }
+      });
+      wrap.append(box, el('span', '', label)); return wrap;
+    }
+    function heading(text) { list.append(el('h3', 'ext-heading', text)); }
+    function renderPlugin(plugin) {
+      const item = el('section', 'panel-item'), text = el('div'), actions = el('div', 'mcp-actions');
+      text.append(el('strong', '', `${plugin.name} ${plugin.version}`));
+      if (plugin.description) text.append(el('p', '', plugin.description));
+      text.append(el('p', 'panel-meta', [plugin.author ? `by ${plugin.author}` : '', plugin.source?.startsWith('catalog:') ? 'from the catalog' : plugin.source].filter(Boolean).join(' · ')));
+      const adds = el('details', 'mcp-tools'); adds.append(el('summary', '', 'What it adds')); pluginAdds(adds, plugin);
+      text.append(toggle('On', plugin.enabled, async on => { await json(`/extensions/plugins/${enc(plugin.name)}`, write('PATCH', {enabled: on})); await refresh(); }), adds);
+      const remove = iconButton('trash-2', `Remove ${plugin.name}`);
+      remove.onclick = () => safe(async () => {
+        if (!confirm(`Remove ${plugin.name}? Its skills, commands, MCP servers and rules go with it.`)) return;
+        remove.disabled = true;
+        try { await json(`/extensions/plugins/${enc(plugin.name)}`, {method: 'DELETE'}); await refresh(); }
+        finally { remove.disabled = false; }
+      });
+      actions.append(remove); item.append(text, actions); list.append(item);
+    }
+    function renderSkill(skill) {
+      const item = el('section', 'panel-item'), text = el('div'), actions = el('div', 'mcp-actions');
+      const origin = skill.origin === 'plugin' ? `Plugin ${skill.plugin}` : ORIGINS[skill.origin];
+      const when = skill.updated ? new Date(skill.updated) : null;
+      text.append(el('strong', '', skill.name), el('p', '', skill.description),
+        el('p', 'panel-meta', [origin, skill.version ? `v${skill.version}` : '', when && !isNaN(when) ? when.toLocaleDateString() : ''].filter(Boolean).join(' · ')));
+      const body = el('details', 'mcp-tools'); body.append(el('summary', '', 'Instructions'), el('pre', 'ext-body', skill.body));
+      text.append(body);
+      if (skill.editable) {
+        const edit = el('button', 'btn quiet', 'Edit'); edit.type = 'button';
+        edit.onclick = () => {
+          const form = el('form', 'ext-edit'), name = el('input'), description = el('input'), instructions = el('textarea');
+          name.value = skill.name; name.maxLength = 60; name.required = true; name.setAttribute('aria-label', 'Skill name');
+          description.value = skill.description; description.maxLength = 240; description.required = true; description.setAttribute('aria-label', 'One-line description');
+          instructions.value = skill.body; instructions.rows = 8; instructions.required = true; instructions.setAttribute('aria-label', 'Instructions');
+          const save = el('button', 'btn primary', 'Save'); save.type = 'submit';
+          const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => render();
+          const row = el('div', 'dialog-actions'); row.append(cancel, save);
+          form.append(name, description, instructions, row);
+          form.onsubmit = event => {
+            event.preventDefault(); if (save.disabled) return;
+            safe(async () => {
+              save.disabled = true;
+              try { await json(`/extensions/skills/${enc(skill.id)}`, write('PUT', {name: name.value, description: description.value, body: instructions.value})); await refresh(); }
+              finally { save.disabled = false; }
+            });
+          };
+          body.replaceWith(form); edit.disabled = true; name.focus();
+        };
+        const remove = iconButton('trash-2', `Delete ${skill.name}`);
+        remove.onclick = () => safe(async () => {
+          if (!confirm(`Delete the skill “${skill.name}”? Kova will no longer see it.`)) return;
+          remove.disabled = true;
+          try { await json(`/extensions/skills/${enc(skill.id)}`, {method: 'DELETE'}); await refresh(); }
+          finally { remove.disabled = false; }
+        });
+        actions.append(edit, remove);
+      }
+      item.append(text, actions); list.append(item);
+    }
+    function renderEntry(entry) {
+      const item = el('section', 'panel-item'), text = el('div'), actions = el('div', 'mcp-actions');
+      text.append(el('strong', '', `${entry.name} ${entry.version}`));
+      if (entry.description) text.append(el('p', '', entry.description));
+      text.append(el('p', 'panel-meta', [entry.author ? `by ${entry.author}` : '', entry.tags.join(', ')].filter(Boolean).join(' · ')));
+      section(text, 'What it may do', entry.permissions);
+      if (entry.status === 'available') text.append(el('p', 'panel-meta ext-code', `Source: ${entry.source.url}`));
+      const button = el('button', 'btn quiet'); button.type = 'button';
+      const upgrade = !!entry.installed_version;
+      if (entry.status !== 'available') { button.textContent = 'Coming soon'; button.disabled = true; }
+      else if (entry.installed_version && !entry.update_available) { button.textContent = 'Installed'; button.disabled = true; }
+      else button.textContent = upgrade ? 'Update' : 'Install';
+      button.onclick = () => safe(async () => {
+        button.disabled = true; button.textContent = 'Checking…';
+        let preview;
+        try { preview = await json(`/extensions/catalog/${enc(entry.name)}/preview`, write('POST', {version: entry.version})); }
+        catch (error) { button.disabled = false; button.textContent = upgrade ? 'Update' : 'Install'; throw error; }
+        const box = el('div', 'ext-confirm');
+        box.append(el('p', 'ext-label', `Checksum verified · SHA-256 ${preview.sha256.slice(0, 16)}…`), el('p', 'panel-meta ext-code', `Source: ${preview.source}`));
+        if (preview.plugin) pluginAdds(box, preview.plugin);
+        if (preview.skill) { box.append(el('p', 'ext-label', 'Instructions it adds')); box.append(el('pre', 'ext-body', preview.skill.body)); }
+        const yes = el('button', 'btn primary', upgrade ? 'Update' : 'Install'); yes.type = 'button';
+        const no = el('button', 'btn quiet', 'Cancel'); no.type = 'button';
+        const row = el('div', 'dialog-actions'); row.append(no, yes); box.append(row);
+        no.onclick = () => { api(`/extensions/catalog/preview/${enc(preview.ticket)}`, {method: 'DELETE'}).catch(() => {}); render(); };
+        yes.onclick = () => safe(async () => {
+          yes.disabled = true; no.disabled = true; yes.textContent = 'Installing…';
+          try { const done = await json('/extensions/install', write('POST', {ticket: preview.ticket, upgrade})); toast(`Installed ${done.installed}.`, 'Extensions'); await refresh(); }
+          catch (error) { await refresh(); throw error; }
+        });
+        text.append(box); button.remove(); yes.focus();
+      });
+      actions.append(button); item.append(text, actions); list.append(item);
+    }
+    function render() {
+      for (const [key, button] of Object.entries(buttons)) { button.setAttribute('aria-selected', String(key === tab)); button.tabIndex = key === tab ? 0 : -1; }
+      list.replaceChildren();
+      const filtered = search.value.trim() !== '';
+      if (tab === 'installed') {
+        const shownPlugins = data.plugins.filter(plugin => matches(plugin.name, plugin.description));
+        const shownSkills = data.skills.filter(skill => matches(skill.name, skill.description, skill.origin, skill.plugin));
+        if (shownPlugins.length) { heading('Plugins'); shownPlugins.forEach(renderPlugin); }
+        if (shownSkills.length) { heading('Skills'); shownSkills.forEach(renderSkill); }
+        if (!shownPlugins.length && !shownSkills.length) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'Nothing installed yet. Browse Plugins or Skills, or let Kova learn a skill while you work.'));
+        footer.textContent = 'Skills learned by Kova live in your skills folder; plugin skills go with their plugin.';
+        return;
+      }
+      if (!data.catalog) { list.append(el('p', 'panel-empty', 'Loading the catalog…')); return; }
+      const entries = data.catalog.entries.filter(entry => entry.kind === tab && matches(entry.name, entry.description, entry.tags, entry.author));
+      if (!entries.length) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'The catalog has nothing here yet.'));
+      entries.forEach(renderEntry);
+      footer.textContent = data.catalog.warning || (data.catalog.bundled ? 'Catalog bundled with Kova.' : `Catalog: ${data.catalog.source}`);
+    }
+    async function refresh() {
+      const current = ++version;
+      const [plugins, skills, catalog] = await Promise.all([json('/extensions/plugins'), json('/extensions/skills'), json('/extensions/catalog')]);
+      if (current !== version) return;
+      data = {plugins, skills, catalog}; render();
+    }
+    launch.onclick = () => safe(async () => { sidebar(false); render(); dialog.showModal(); await refresh(); });
+  }
   async function notifyReminder(event) {
     if (document.hasFocus?.() || localStorage.getItem('kova-notify') !== 'yes' ||
         !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;

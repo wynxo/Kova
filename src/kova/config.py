@@ -27,7 +27,7 @@ CONFIG_SCHEMA = 2
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp',
+    'mcp', 'catalog',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -38,6 +38,7 @@ CONFIG_SECTION_KEYS = {
     'tui': frozenset({'theme', 'keys'}),
     'persona': frozenset({'name', 'tone', 'configured'}),
     'privacy': frozenset({'secrets'}),
+    'catalog': frozenset({'url'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
@@ -217,6 +218,8 @@ class Config:
     mcp: list[McpServerEntry] = field(default_factory=list)
     #: Outbound secret handling: "off" (compatible default), "redact" or "block".
     privacy_secrets: str = "off"
+    #: Extensions catalog index (``[catalog] url``); empty means the default.
+    catalog_url: str = ""
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -315,7 +318,8 @@ def load_config(home: Path | None = None) -> Config:
                  bind='lan' if data.get('bind') == 'lan' else 'loopback',
                  mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
                       if entry is not None] if isinstance(data.get('mcp'), list) else [],
-                 privacy_secrets=privacy_secrets)
+                 privacy_secrets=privacy_secrets,
+                 catalog_url=_catalog_url(data.get('catalog')))
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
     cfg._extra = {k: v for k, v in data.items() if k not in TOP_LEVEL_CONFIG_KEYS}
@@ -323,6 +327,13 @@ def load_config(home: Path | None = None) -> Config:
     # Tighten legacy credential files too, not only new writes.
     path.chmod(0o600)
     return cfg
+
+
+def _catalog_url(table: Any) -> str:
+    if not isinstance(table, Mapping):
+        return ''
+    value = table.get('url')
+    return value.strip() if isinstance(value, str) else ''
 
 
 def private_write(path: Path, text: str) -> None:
@@ -509,6 +520,11 @@ def save_config(cfg: Config) -> None:
         if not cfg.mcp:
             del doc['mcp']
     _put(doc, 'bind', 'lan' if cfg.bind == 'lan' else _UNSET)
+    if cfg.catalog_url or 'catalog' in doc:
+        catalog = _section(doc, 'catalog')
+        _put(catalog, 'url', cfg.catalog_url.strip() or _UNSET)
+        if not catalog:
+            del doc['catalog']
     private_write(cfg.home / 'config.toml', tomlkit.dumps(doc))
 
 
