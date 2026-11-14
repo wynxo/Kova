@@ -1988,7 +1988,7 @@ def providers_list():
 
 
 @_providers.command('add')
-def provider_add(kind: str | None = typer.Argument(None, help='Optional provider type, such as openai, chatgpt, local or custom.')):
+def provider_add(kind: str | None = typer.Argument(None, help='Optional provider type: openai, chatgpt, local, custom, or this-pc to download a fitting model.')):
     try:
         onboarding.run_setup(load_config(), provider_kind=kind)
     except onboarding.SetupError as exc:

@@ -451,6 +451,8 @@ def create_app(
     install_provider_routes(app, config, _require_token)
     from kova.mcp_routes import install_mcp_routes
     install_mcp_routes(app, config, _require_token)
+    from kova.local_model_routes import install_local_model_routes
+    install_local_model_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""

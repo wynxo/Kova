@@ -127,7 +127,23 @@
   <dialog id="provider-dialog" aria-labelledby="provider-title">
     <form id="provider-form" autocomplete="off">
       <div class="dialog-head"><h2 id="provider-title">Connect a provider</h2><button id="provider-cancel" type="button" class="icon-button" aria-label="Close provider setup"><span class="icon i-x" aria-hidden="true"></span></button></div>
-      <p class="provider-intro">Choose where your messages go. Connecting only lists models, never sends a chat.</p>
+      <p class="provider-intro">Choose where your messages go. Existing connections only list models. The PC flow downloads and loads one; neither sends a chat.</p>
+      <button id="provider-local" type="button" class="btn quiet">Use a model on this PC</button>
+      <section id="local-model-step" hidden aria-label="Get a local model">
+        <p id="local-hardware" class="local-hardware" role="status"></p>
+        <p id="local-disk-note" class="provider-footnote"></p>
+        <button id="local-recheck" type="button" class="btn quiet">Check hardware and Ollama again</button>
+        <p>Ollama must already be installed and running. Downloads contact the model host; chats stay on this PC. Retry resumes interrupted layers.</p>
+        <label class="provider-check"><input id="local-cpu" type="checkbox"><span>CPU only: offer a small 3B model (can be slow). Use this if GPU memory is unknown.</span></label>
+        <label>Model<select id="local-model-choice" aria-describedby="local-model-reason"></select></label>
+        <ul id="local-fit-details" aria-label="Why each model fits or is blocked"></ul>
+        <p id="local-model-reason"></p>
+        <p id="local-model-size"></p>
+        <a id="local-license" target="_blank" rel="noopener noreferrer">Read the model licence before downloading</a>
+        <progress id="local-progress" aria-label="Model download progress" hidden></progress>
+        <div class="dialog-actions"><button id="local-install" type="button" class="btn primary" disabled>Download and use model</button><button id="local-stop" type="button" class="btn quiet" hidden>Cancel download</button></div>
+        <div id="local-installed" aria-label="Downloaded models"></div>
+      </section>
       <div id="provider-details">
         <div class="field"><span id="provider-kind-label">Provider</span><span id="provider-kind-slot"></span><select id="provider-kind" hidden tabindex="-1" aria-hidden="true"></select></div>
         <label>Connection name<input id="provider-name" placeholder="e.g. personal" required pattern="[a-zA-Z0-9_-]+" maxlength="64"></label>

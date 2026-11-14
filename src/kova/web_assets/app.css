@@ -977,3 +977,11 @@ dialog.mcp-dialog { width:min(600px, calc(100vw - 24px)); }
 .attachment-chip button { cursor: pointer; }
 #attachment-note { color: var(--muted); }
 #attach.text-only { opacity: .55; }
+
+/* The local-model step stays inside the provider dialog on desktop and phone. */
+.local-hardware { padding: 14px; border: 1px solid var(--border); border-radius: 12px; font-weight: 600; }
+#local-model-step { display: grid; gap: 12px; }
+#local-model-step[hidden] { display: none; }
+#local-model-choice { width: 100%; padding: 10px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+#local-progress { width: 100%; accent-color: var(--accent); }
+.local-installed-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }

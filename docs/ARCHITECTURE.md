@@ -158,6 +158,9 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
+| `GET /local-models` | token or session | opt-in hardware/backend check and rated local-model catalog |
+| `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
+| `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
 | `DELETE /providers/{identifier}` | token or session | remove a provider connection |
 | `POST /providers/{identifier}/login` | token or session | sign in to a connected provider again |
@@ -750,3 +753,49 @@ names and ids, which keeps `read_attachment` usable on later turns. One
 consequence: a title generated for an attachment-only turn uses the file name,
 and an assistant answer that quotes the document is still stored like any
 other reply.
+
+### Getting a model on this PC (Ollama)
+
+`local_models.py` owns the curated Q4_K_M catalog, conservative fit estimates
+and explicit Ollama lifecycle. `tools/system_info.hardware_profile()` reuses
+the system tool's probes but returns structured data, without paths, CPU
+identity or uptime. Unknown RAM, disk or GPU memory never becomes a confident
+recommendation. The largest measured GPU is used, not summed VRAM. Estimates
+reserve display/OS memory and use a bounded 4096-token context. Disk is an
+estimate for the current account or `OLLAMA_MODELS` volume; a separately run
+Ollama daemon may use another account/volume, which the UI explicitly notes.
+
+Setup offers **Use a model on this PC** (also `kova providers add this-pc`).
+The desktop offers the same step under **Add provider**. Only choosing that
+step probes the usual loopback Ollama, LM Studio and llama.cpp endpoints;
+there is no LAN scan or automatic model download. Without measurable VRAM,
+the user can explicitly choose the small 3B CPU model, with a speed warning.
+The catalog shows download size, quantization, fit reasons and licence links.
+A too-big/unknown fit is blocked before any download.
+
+Authenticated `GET /local-models` returns the hardware card, rated catalog and
+managed connections. `POST /local-models/install` streams SSE `progress`,
+`ping`, `error` and terminal `done` events. One lifecycle operation runs at a
+time per server. Disconnect/cancel closes the upstream request; retry calls
+Ollama's pull again so Ollama can resume its cached layers. Kova never keeps
+its own `.part` files or weights. Pull must explicitly succeed before an
+Ollama alias is created with persistent `num_ctx` (and `num_gpu=0` in CPU mode),
+so later OpenAI-compatible chats retain the chosen settings. Empty-prompt
+warmup loads the model without sending a test chat. GPU selection additionally
+requires Ollama's running-model response to confirm full GPU residency; a
+silent CPU fallback does not produce a ready provider. Only then is a local
+provider saved and selected, using the alias and the same context budget.
+
+`DELETE /local-models/{provider_id}` unloads/deletes the managed alias and its
+source tag, then removes the connection. The desktop Remove action warns that
+other Ollama apps may use the source tag. A source tag referenced by another
+Kova model/CPU variant is kept, and shared layers used by other Ollama tags
+may remain. Unrelated tags/providers and the Ollama service are never stopped.
+Interrupted/failed operations report a next step without upstream bodies,
+credentials or stack traces. Successful download alone is not reported as a
+ready model. Ollama HTTP, lifecycle, auth, fitting and UI behavior are tested
+with synthetic hardware and mocked HTTP; tests never download models.
+
+Managed llama.cpp binaries, GGUF downloads, process supervision and idle
+unload (Path B of #69) remain a follow-up; this path requires an existing
+Ollama installation and tells the user how to install/start it when absent.
