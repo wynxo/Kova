@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import get_close_matches
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import typer
 from rich import box
@@ -1616,6 +1617,25 @@ def _redact_extra(value: object) -> object:
     return value
 
 
+def _display_url(value: str) -> str:
+    """Mask userinfo embedded in a URL; never echo it in ``config show``."""
+    try:
+        parts = urlsplit(value)
+        if not (parts.username or parts.password):
+            return value
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        # A URL this version cannot parse could hide anything in its userinfo.
+        return REDACTED
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{REDACTED}@{host}"
+    if port is not None:
+        netloc += f":{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def _config_snapshot(cfg) -> dict:
     """A complete, credential-safe view of every Config field."""
     return {
@@ -1650,7 +1670,7 @@ def _config_snapshot(cfg) -> dict:
             {
                 "id": provider.id,
                 "name": provider.name,
-                "base_url": provider.base_url,
+                "base_url": _display_url(provider.base_url),
                 "kind": provider.kind,
                 "adapter": provider.adapter,
                 "api_key": REDACTED if provider.api_key else None,
@@ -1663,7 +1683,7 @@ def _config_snapshot(cfg) -> dict:
             {
                 "name": model.name,
                 "provider": model.provider,
-                "base_url": model.base_url,
+                "base_url": _display_url(model.base_url),
                 "model": model.model,
                 "context": model.context,
                 "vision": model.vision,

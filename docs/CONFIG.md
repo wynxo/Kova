@@ -13,8 +13,9 @@ kova config set port 7788         # validate, then save one setting
 
 The file is written atomically with mode `0600` on Unix because it can hold API
 keys and OAuth metadata. `config show` never prints those values: it displays
-`<redacted>` (or just a "key set" note in the human table). Backups and exports
-strip credentials too. There is deliberately no "show secrets" switch.
+`<redacted>` (or just a "key set" note in the human table). Base URLs with
+embedded `user:password@` userinfo are masked too. Backups and exports strip
+credentials too. There is deliberately no "show secrets" switch.
 
 A running server reads `config.toml` at startup. After `kova config set`, restart
 it to apply the change:

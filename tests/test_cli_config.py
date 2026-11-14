@@ -138,6 +138,20 @@ def test_config_show_redacts_unknown_private_key_and_session_values(home):
     assert "fakecookievalue" not in result.stdout
 
 
+def test_config_show_masks_userinfo_in_urls(home):
+    secret = "fake-url-password-0005"
+    cfg = load_config()
+    cfg.providers[0].base_url = f"https://user:{secret}@example.test/v1"
+    save_config(cfg)
+    result = invoke("config", "show", "--json")
+    assert result.exit_code == 0, result.output
+    provider = json.loads(result.stdout)["providers"][0]
+    assert provider["base_url"] == f"https://{cli.REDACTED}@example.test/v1"
+    assert secret not in result.stdout
+    human = invoke("config", "show")
+    assert secret not in human.output
+
+
 @pytest.mark.parametrize(
     "key,value,attr,expected",
     [
