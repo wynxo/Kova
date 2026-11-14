@@ -7,6 +7,7 @@ The page exchanges it for an HttpOnly cookie, then removes the fragment.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
@@ -17,10 +18,17 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
 
 COOKIE = "kova_session"
 SESSION_SECONDS = 12 * 3600
 TICKET_SECONDS = 60
+SHARE_SECONDS = 300
+SHARE_MAX_BYTES = 2 * 1024 * 1024
+# The composer sends at most three attachments per turn; a share may not stage
+# more files than the composer can ingest.
+SHARE_MAX_FILES = 3
 ASSETS = Path(__file__).with_name("web_assets")
 
 
@@ -65,6 +73,26 @@ def require_browser_session(request: Request) -> None:
     require_same_origin(request)
 
 
+def _share_owner(request: Request) -> str:
+    """The browser session or paired device that submitted a share."""
+    return request.cookies.get(COOKIE) or request.cookies.get("kova_device") or ""
+
+
+def _drop_share(app, entry: dict) -> None:
+    """Remove timing and any draft chat a share never handed to a composer."""
+    if entry.get("chat"):
+        app.state.store.delete_chat(entry["chat"]["id"])
+
+
+def _prune_shares(app) -> None:
+    entries = app.state.web_shares
+    now = time.monotonic()
+    for key, entry in list(entries.items()):
+        if entry["expires"] <= now:
+            entries.pop(key, None)
+            _drop_share(app, entry)
+
+
 def install_web(app, require_bearer) -> None:
     """Register public packaged assets and bearer-bootstrapped browser sessions."""
     app.state.web_shares = {}
@@ -104,44 +132,75 @@ def install_web(app, require_bearer) -> None:
 
     @app.post("/app/share", dependencies=[Depends(require_browser_session)])
     async def share(request: Request):
+        """Turn a platform share into one-use composer text and native attachments."""
         # Bound the whole request before parsing multipart (including chunked bodies).
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
-            if len(body) > 2 * 1024 * 1024:
+            if len(body) > SHARE_MAX_BYTES:
                 raise HTTPException(413, "Share is too large (2 MB maximum).")
         request._body = bytes(body)
-        from starlette.datastructures import UploadFile
-        async with request.form(max_files=4, max_fields=3) as form:
-            parts = [str(form.get(key, "")) for key in ("title", "text", "url")]
-            for file in form.getlist("files"):
-                if isinstance(file, UploadFile):
-                    content = await file.read()
-                    # The existing composer is text-only: preserve arbitrary files as base64.
-                    import base64
-                    parts.append(f"Shared file: {Path(file.filename or 'file').name}\n"
-                                 f"MIME: {file.content_type}\nBase64: "
-                                 + base64.b64encode(content).decode("ascii"))
+        from kova import attachments
+        from kova.modes import DEFAULT_MODE
+
+        parts: list[str] = []
+        uploads: list[UploadFile] = []
+        rows: list[dict] = []
+        chat = None
+        try:
+            async with request.form(max_files=SHARE_MAX_FILES, max_fields=3) as form:
+                parts = [str(form.get(key, "")).strip() for key in ("title", "text", "url")]
+                uploads = [file for file in form.getlist("files")
+                           if isinstance(file, UploadFile) and file.filename]
+                chat_title = (parts[0] or parts[1] or parts[2] or "Shared files")[:80]
+                for file in uploads:
+                    content = await file.read(attachments.MAX_BYTES + 1)
+                    if chat is None:
+                        chat = app.state.store.create_chat(
+                            chat_title, mode=DEFAULT_MODE, web=True, permission="manual",
+                            cwd=str(app.state.config.files_path.resolve()))
+                    rows.append(await asyncio.to_thread(
+                        attachments.save, app.state.config.home, app.state.store,
+                        chat["id"], file.filename, content))
+        except MultiPartException as exc:
+            if chat is not None:
+                app.state.store.delete_chat(chat["id"])
+            raise HTTPException(400, str(exc)) from None
+        except attachments.AttachmentError as exc:
+            if chat is not None:
+                app.state.store.delete_chat(chat["id"])
+            raise HTTPException(400, str(exc)) from None
+        except Exception:
+            if chat is not None:
+                app.state.store.delete_chat(chat["id"])
+            raise
+
+        _prune_shares(app)
         entries = app.state.web_shares
-        for key, value in list(entries.items()):
-            if value[0] <= time.monotonic():
-                entries.pop(key, None)
         if len(entries) >= 32:
+            if chat is not None:
+                app.state.store.delete_chat(chat["id"])
             raise HTTPException(429, "Too many pending shares.")
         token = secrets.token_urlsafe(32)
-        owner = request.cookies.get(COOKIE) or request.cookies.get("kova_device")
-        entries[token] = (time.monotonic() + 300, owner, "\n\n".join(p for p in parts if p))
+        entries[token] = {
+            "expires": time.monotonic() + SHARE_SECONDS,
+            "owner": _share_owner(request),
+            "text": "\n\n".join(part for part in parts if part),
+            "chat": chat,
+            "attachments": rows if chat is not None else [],
+        }
         return RedirectResponse("/app#share=" + token, status_code=303)
 
     @app.post("/app/share/{token}", dependencies=[Depends(require_browser_session)])
     async def consume_share(token: str, request: Request):
+        _prune_shares(app)
         entries = app.state.web_shares
         entry = entries.get(token)
-        owner = request.cookies.get(COOKIE) or request.cookies.get("kova_device")
-        if entry is None or entry[0] <= time.monotonic() or entry[1] != owner:
+        if entry is None or entry["owner"] != _share_owner(request):
             raise HTTPException(404, "Share expired or already used.")
         entries.pop(token)
-        return {"text": entry[2]}
+        return {"text": entry["text"], "chat": entry["chat"],
+                "attachments": entry["attachments"]}
 
     @app.post("/app/session", dependencies=[Depends(require_bearer)])
     async def issue_ticket():

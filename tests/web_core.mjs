@@ -37,18 +37,30 @@ for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'
 $('mode').value = 'work';
 new Element().append($('connection')); const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [];
+const uploads = [];
 let pendingApprovals = [];
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
     get activeElement() { return focusedElement; }},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
-  performance, URLSearchParams, TextDecoder, console, FormData,
+  performance, URLSearchParams, TextDecoder, console, FormData, File,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
   localStorage: {getItem() {return 'dark';}, setItem() {}},
   fetch: async (path, options = {}) => {
-    const body = options.body ? JSON.parse(options.body) : null;
+    const form = options.body instanceof FormData ? options.body : null;
+    const body = !form && options.body ? JSON.parse(options.body) : null;
     requests.push({path, body});
+    if (form) uploads.push({path, file: form.get('file')});
+    if (path === '/chats' && options.method === 'POST') {
+      return {ok: true, json: async () => ({id: 'new-chat', title: null, mode: body?.mode || 'work',
+        permission: 'manual', cwd: '/project', web: true, messages: [], plan: []})};
+    }
+    if (path === '/chats/new-chat/attachments' && form) {
+      const file = form.get('file');
+      return {ok: true, json: async () => ({id: 'uploaded', chat_id: 'new-chat', name: file.name,
+        mime: file.type || 'text/plain', size: file.size, pages: null})};
+    }
     const payloads = {
       '/chats': [],
       // The capability contract the server declares, and the catalog with it.
@@ -80,7 +92,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -515,6 +527,71 @@ await tick(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/models' && r.body?.name === 'vision-model' && r.body?.vision === false));
 settings.remove();
 console.log('Attachment chips, input handlers, selected-model gating and Model settings passed');
+
+// Share-sheet files become native composer attachments, never base64 prose.
+state.connected = true; state.busy = false; state.chat = null;
+sandbox.test.pendingAttachments.length = 0;
+applyCapabilities({offered: {work: ['vision']}}); $('mode').value = 'work'; controls();
+const beforeShare = requests.length;
+await sandbox.test.applyShare({text: 'Handle this', files: [new File(['hello'], 'note.txt', {type: 'text/plain'})]});
+assert.equal($('prompt').value, 'Handle this');
+assert.equal(uploads.at(-1).file.name, 'note.txt', 'shared files upload through the attachment API');
+const uploaded = sandbox.test.pendingAttachments.at(-1);
+assert.equal(uploaded.chat_id, 'new-chat');
+assert.ok(!$('prompt').value.includes('Base64') && !$('prompt').value.includes('note.txt'));
+assert.match($('attachment-chips').textContent, /note.txt/);
+
+// A non-vision model refuses a shared image before any upload or chat is made.
+applyCapabilities({offered: {work: []}}); state.chat = null;
+sandbox.test.pendingAttachments.length = 0;
+const beforeImage = requests.length, beforeVisionToast = $('toasts').children.length;
+await sandbox.test.applyShare({text: '', files: [new File(['png'], 'shot.png', {type: 'image/png'})]});
+await tick();
+assert.equal(requests.length, beforeImage, 'no chat or upload request for a refused image');
+assert.equal(sandbox.test.pendingAttachments.length, 0);
+assert.equal($('toasts').children.length, beforeVisionToast + 1);
+assert.match($('toasts').textContent, /Turn on Vision for it in Model settings/);
+
+// The server fallback already saved files: the composer adopts those rows and
+// deletes an image the selected model cannot read.
+applyCapabilities({offered: {work: []}}); state.busy = false;
+const rejectedChat = {id: 'rejected-chat', mode: 'work', permission: 'manual', cwd: '/project', web: true, messages: []};
+const beforeRejected = requests.length;
+await sandbox.test.applyShare({text: '', chat: rejectedChat,
+  attachments: [{id: 'image-1', chat_id: 'rejected-chat', name: 'shot.png', mime: 'image/png', size: 3}]});
+await tick();
+assert.ok(requests.some(r => r.path === '/chats/rejected-chat/attachments/image-1'));
+assert.ok(requests.some(r => r.path === '/chats/rejected-chat' && r.body === null),
+          'an empty share chat is removed when every file was refused');
+assert.equal(sandbox.test.pendingAttachments.length, 0);
+assert.equal(state.chat, null);
+applyCapabilities({offered: {work: ['vision']}});
+const keptChat = {id: 'kept-chat', mode: 'work', permission: 'manual', cwd: '/project', web: true, messages: []};
+await sandbox.test.applyShare({text: 'Look', chat: keptChat,
+  attachments: [{id: 'file-1', chat_id: 'kept-chat', name: 'note.txt', mime: 'text/plain', size: 7},
+                {id: 'image-2', chat_id: 'kept-chat', name: 'shot.png', mime: 'image/png', size: 3}]});
+assert.equal(state.chat.id, 'kept-chat');
+assert.equal($('prompt').value, 'Look');
+assert.match($('attachment-chips').textContent, /note.txt/);
+assert.match($('attachment-chips').textContent, /shot.png/);
+assert.equal(sandbox.test.pendingAttachments.length, 2);
+
+// A worker-staged share is read once and yields real File objects for the
+// authenticated upload path; a second read finds nothing.
+const workerFiles = new Map();
+workerFiles.set('http://localhost/app/share/abc/manifest', new Response(JSON.stringify({
+  created: Date.now(), text: 'From phone',
+  files: [{name: 'photo.png', type: 'image/png', key: 'http://localhost/app/share/abc/file/0'}]})));
+workerFiles.set('http://localhost/app/share/abc/file/0', new Response(new Blob([new Uint8Array([1, 2, 3])], {type: 'image/png'})));
+sandbox.location.origin = 'http://localhost';
+sandbox.caches = {open: async () => ({
+  match: async key => workerFiles.get(key), delete: async key => workerFiles.delete(key)})};
+const fromWorker = await sandbox.test.readWorkerShare('abc');
+assert.equal(fromWorker.text, 'From phone');
+assert.equal(fromWorker.files[0].name, 'photo.png');
+assert.ok(fromWorker.files[0] instanceof File);
+assert.equal(await sandbox.test.readWorkerShare('abc'), null, 'a worker share is consumed once');
+console.log('Native file shares, vision rejection and worker handoff passed');
 
 // Native selected-text drops must remain available to the textarea.
 let textDropPrevented = false;
