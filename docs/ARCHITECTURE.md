@@ -774,7 +774,10 @@ authenticated server or spawns the installed CLI (uv from source as fallback),
 then mints /app/session tickets for the existing fragment/login flow.
 The bearer token never enters renderer code. Context isolation, sandboxing,
 disabled Node integration, blocked remote resources/navigation and denied
-permissions keep the shell local. Startup/error pages are bundled files.
+permissions keep the shell local. The only chat-page preload action opens a
+native working-folder dialog; main-process checks restrict it to the owned
+top-level `/app` frame on the configured origin. It exposes no credentials or
+arbitrary IPC. Browsers use a separate folder-path dialog instead. Startup/error pages are bundled files.
 
 Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.

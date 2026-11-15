@@ -100,6 +100,48 @@ const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+// The quiet trigger reflects effective settings without adding toolbar controls.
+state.connected = true; state.offered = {work: ['approvals', 'tools'], chat: []}; $('model').value = 'demo';
+state.models = [{name: 'demo', model: 'Demo Model'}];
+$('mode').value = 'work'; $('permission').value = 'manual';
+$('web').setAttribute('aria-pressed', 'true'); controls();
+assert.equal($('options-label').textContent, 'Demo Model · Work');
+assert.equal($('composer-state').hidden, true);
+$('permission').value = 'full'; controls();
+assert.equal($('composer-state').hidden, false);
+assert.match($('options').getAttribute('aria-label'), /Full access/);
+$('mode').value = 'chat'; controls();
+assert.equal($('composer-state').hidden, true, 'inactive work permissions are not advertised in Chat');
+$('web').setAttribute('aria-pressed', 'false'); controls();
+assert.match($('options').getAttribute('aria-label'), /Web off/);
+$('mode').value = 'work'; $('permission').value = 'manual';
+$('web').setAttribute('aria-pressed', 'true'); controls();
+// The native picker is used only on explicit activation, cancel preserves cwd.
+sandbox.window.kovaDesktop = {pickFolder: async () => '/chosen'};
+$('cwd').value = '/project';
+await $('cwd-picker').onclick(); await tick();
+assert.equal($('cwd').value, '/chosen');
+sandbox.window.kovaDesktop.pickFolder = async () => null;
+await $('cwd-picker').onclick(); await tick();
+assert.equal($('cwd').value, '/chosen');
+delete sandbox.window.kovaDesktop;
+// Web/PWA fallback is a separate labeled dialog, not the hidden cwd value.
+$('folder-dialog').showModal = () => { $('folder-dialog').open = true; };
+$('folder-dialog').close = () => { $('folder-dialog').open = false; };
+await $('cwd-picker').onclick();
+assert.equal($('folder-dialog').open, true);
+assert.equal($('folder-path').value, '/chosen');
+$('folder-path').value = '/browser-choice';
+$('folder-form').onsubmit({preventDefault() {}}); await tick();
+assert.equal($('cwd').value, '/browser-choice');
+assert.equal($('folder-dialog').open, false);
+$('cwd-reset').onclick(); await tick();
+assert.equal($('cwd').value, '');
+$('cwd').disabled = true;
+await $('cwd-picker').onclick();
+assert.equal($('folder-dialog').open, false, 'unsupported tools cannot open a folder picker');
+state.offered = null;
+console.log('Compact composer state and native folder picker passed');
 // The controls follow the declared contract: the provider's capabilities
 // intersected with the mode's, never a hardcoded mode name.
 const openai = {provider: 'openai', capabilities: ['api_key', 'tools'],

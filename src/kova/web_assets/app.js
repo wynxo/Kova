@@ -121,12 +121,14 @@
     $('cwd').disabled ||= !offers('tools');
     $('composer').dataset.mode = $('mode').value;
     const nothingToSend = !state.connected || !$('prompt').value.trim();
-    // With steering the composer stays usable mid-reply; without it the reply
-    // is stopped or waited for, so send is withheld while one runs.
-    $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
+    // Keep one round action: Send at rest, Stop while a reply runs.
+    // Typed follow-ups still offer Queue and Steer.
+    $('send').hidden = busy; $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
-    $('options-label').textContent = $('mode').value === 'chat' ? 'Chat' : 'Work';
+    $('cwd-picker').disabled = $('cwd').disabled;
+    $('cwd-reset').disabled = $('cwd').disabled;
+    $('options').disabled = !state.connected;
     $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = state.busy || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
@@ -1077,10 +1079,45 @@
       if (last) { event.preventDefault(); $('prompt').value = last.content; resize(); }
     }
   });
-  function options(open) {
-    $('composer').classList.toggle('options-open', open); $('options').setAttribute('aria-expanded', String(open));
+  function placeOptions() {
+    const panel = $('compose-options');
+    if (panel.hidden) return;
+    const rect = $('options').getBoundingClientRect(), edge = 12, gap = 8;
+    const above = rect.top - gap - edge, below = innerHeight - rect.bottom - gap - edge;
+    const up = above >= Math.min(panel.scrollHeight, 340) || above > below;
+    panel.style.maxHeight = `${Math.max(80, up ? above : below)}px`;
+    panel.style.top = up ? 'auto' : `${rect.bottom + gap}px`;
+    panel.style.bottom = up ? `${innerHeight - rect.top + gap}px` : 'auto';
+    panel.style.left = `${Math.max(edge, Math.min(rect.right - panel.offsetWidth, innerWidth - panel.offsetWidth - edge))}px`;
   }
-  $('options').onclick = () => options(!$('composer').classList.contains('options-open'));
+  function options(open, refocus = false) {
+    $('composer').classList.toggle('options-open', open);
+    $('options').setAttribute('aria-expanded', String(open));
+    $('compose-options').hidden = !open;
+    if (open) {
+      placeOptions();
+      $('compose-options').querySelector('button:not(:disabled)')?.focus({preventScroll: true});
+    } else {
+      closeMenu();
+      if (refocus) $('options').focus({preventScroll: true});
+    }
+  }
+  $('options').onclick = () => options($('compose-options').hidden);
+  $('options').addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options(true); }
+  });
+  $('compose-options').addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); options(false, true); }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!$('compose-options').hidden && !$('compose-options').contains(event.target) &&
+        !$('options').contains(event.target) && !popup?.node.contains(event.target)) options(false);
+  }, true);
+  document.addEventListener('focusin', event => {
+    if (!$('compose-options').hidden && !$('compose-options').contains(event.target) &&
+        !$('options').contains(event.target) && !popup?.node.contains(event.target)) options(false);
+  });
+  window.addEventListener('resize', placeOptions);
   $('stop').onclick = stop; $('new-chat').onclick = newChat;
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
@@ -1144,14 +1181,39 @@
   $('permission').onchange = () => safe(async () => {
     try { await chatSetting({permission: $('permission').value}); }
     catch (error) { $('permission').value = state.chat?.permission || 'manual'; throw error; }
+    finally { syncMenus(); }
   });
   $('cwd').onchange = () => safe(async () => {
     try { await chatSetting({cwd: $('cwd').value.trim()}); }
     catch (error) { $('cwd').value = state.chat?.cwd || ''; throw error; }
+    finally { syncMenus(); }
   });
+  $('cwd-picker').onclick = async () => {
+    if ($('cwd').disabled) return;
+    if (window.kovaDesktop?.pickFolder) {
+      try {
+        const path = await window.kovaDesktop.pickFolder();
+        if (path !== null) { $('cwd').value = path; $('cwd').onchange(); }
+      } catch (_) { toast('Could not open the folder picker. Try again.'); }
+    } else {
+      $('folder-path').value = $('cwd').value;
+      options(false); $('folder-dialog').showModal();
+      $('folder-path').focus();
+    }
+  };
+  $('cwd-reset').onclick = () => { if (!$('cwd').disabled) { $('cwd').value = ''; $('cwd').onchange(); } };
+  $('folder-close').onclick = () => $('folder-dialog').close();
+  $('folder-dialog').addEventListener('close', () => $('options').focus());
+  $('folder-default').onclick = () => { $('folder-path').value = ''; $('folder-form').requestSubmit(); };
+  $('folder-form').onsubmit = event => {
+    event.preventDefault();
+    if ($('cwd').disabled) return;
+    $('cwd').value = $('folder-path').value.trim();
+    $('cwd').onchange(); $('folder-dialog').close();
+  };
   $('web').onclick = () => safe(async () => {
     const web = $('web').getAttribute('aria-pressed') !== 'true';
-    await chatSetting({web}); $('web').setAttribute('aria-pressed', String(web)); $('web').lastElementChild.textContent = `Web ${web ? 'on' : 'off'}`;
+    await chatSetting({web}); $('web').setAttribute('aria-pressed', String(web)); $('web').lastElementChild.textContent = `Web ${web ? 'on' : 'off'}`; syncMenus();
   });
   let selectedModel = '';
   $('model').onchange = () => safe(async () => {
@@ -2072,6 +2134,20 @@
   let popup = null;
   function optionsOf(select) { return [...(select.options || [])]; }
   function syncMenus() {
+    const model = state.models.find(entry => entry.name === $('model').value);
+    const mode = $('mode').value === 'chat' ? 'Chat' : 'Work';
+    const label = `${model?.model || model?.name || 'Choose model'} · ${mode}`;
+    const notes = [];
+    if (offers('approvals') && $('permission').value !== 'manual') notes.push($('permission').value === 'full' ? 'Full access' : 'Auto permissions');
+    if ($('web').getAttribute('aria-pressed') === 'false') notes.push('Web off');
+    $('options-label').textContent = label;
+    $('composer-state').hidden = !notes.length;
+    const description = [label, ...notes, 'Model and chat options'].join(', ');
+    $('options').title = description; $('options').setAttribute('aria-label', description);
+    const cwd = $('cwd').value.trim();
+    $('cwd-reset').hidden = !cwd;
+    $('cwd-label').textContent = cwd ? cwd.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || cwd : 'Kova files folder';
+    $('cwd-picker').title = cwd || 'Use the Kova files folder';
     for (const owner of menus) {
       const chosen = optionsOf(owner.select).find(option => option.value === owner.select.value);
       owner.text.textContent = chosen?.textContent || owner.placeholder;

@@ -37,6 +37,12 @@
         <button id="open-mcp" type="button" class="nav-row"><span class="icon i-sliders-horizontal" aria-hidden="true"></span>MCP servers</button>
         <button id="install-settings" type="button" class="nav-row">Install &amp; notifications</button>
         <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
+        <details id="settings" class="sidebar-settings">
+          <summary class="nav-row"><span class="icon i-sliders-horizontal" aria-hidden="true"></span>Startup settings</summary>
+          <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+          <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
+          <button id="autostart-refresh" type="button">Refresh</button>
+        </details>
       </nav>
       <div class="footer-bar">
         <div class="local-note"><span class="icon i-lock" aria-hidden="true"></span><div><strong>On your computer</strong><small>Your chats stay yours.</small></div></div>
@@ -71,32 +77,33 @@
         <div id="attachment-chips" aria-live="polite"></div>
         <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
         <input id="attachment-input" type="file" multiple hidden>
-        <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
+        <textarea id="prompt" rows="1" placeholder="Ask anything. / commands" maxlength="100000"></textarea>
         <div class="compose-toolbar">
-          <button id="commands" type="button" class="chip" aria-label="Show commands">/</button>
-          <button id="attach" class="chip" type="button" aria-label="Attach files">📎</button>
-          <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
-          <div id="compose-options" class="compose-options">
-          <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
-            <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
-            <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
-          </div>
-          <select id="mode" hidden tabindex="-1" aria-hidden="true"><option value="work">Work</option><option value="chat">Chat</option></select>
-          <span id="permission-slot" class="work-only"></span>
-          <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
-          <label class="chip folder-control work-only" title="Absolute path to an existing working folder"><span class="icon i-folder" aria-hidden="true"></span><input id="cwd" aria-label="Working folder" placeholder="Kova files folder" autocomplete="off" spellcheck="false"></label>
-          <button id="web" type="button" class="chip toggle" aria-pressed="true" title="Allow web search"><span class="icon i-globe" aria-hidden="true"></span><span>Web on</span></button>
-          </div>
+          <button id="commands" type="button" hidden aria-label="Show commands">/</button>
+          <button id="attach" class="icon-button" type="button" aria-label="Attach files"><span class="icon i-paperclip" aria-hidden="true"></span></button>
           <span class="toolbar-gap" aria-hidden="true"></span>
-          <span id="model-slot"></span>
-          <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
+          <button id="options" type="button" class="menu-button composer-menu" aria-expanded="false" aria-haspopup="dialog" aria-controls="compose-options" aria-label="Model and chat options"><span id="composer-state" class="composer-state" hidden aria-hidden="true"></span><span id="options-label" class="menu-value">Choose model · Work</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>
           <button id="queue" type="button" class="stop" hidden title="Run this message after the current reply"><span class="icon i-plus" aria-hidden="true"></span>Queue</button>
           <button id="steer" type="button" class="stop" hidden title="Send this message into the reply that is running"><span class="icon i-arrow-up" aria-hidden="true"></span>Steer</button>
           <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
+        <div id="compose-options" class="compose-options" role="dialog" aria-label="Model and chat options" hidden>
+          <div class="compose-option-row"><span class="compose-option-label">Model</span><span id="model-slot"></span></div>
+          <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
+          <div class="compose-option-row"><span class="compose-option-label">Mode</span><div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
+            <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
+            <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
+          </div></div>
+          <select id="mode" hidden tabindex="-1" aria-hidden="true"><option value="work">Work</option><option value="chat">Chat</option></select>
+          <div class="compose-option-row work-only"><span class="compose-option-label">Permissions</span><span id="permission-slot"></span></div>
+          <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
+          <button id="cwd-picker" type="button" class="compose-picker work-only" aria-label="Choose working folder"><span class="icon i-folder" aria-hidden="true"></span><span class="compose-picker-text"><span>Working folder</span><small id="cwd-label">Kova files folder</small></span><span class="icon i-chevron-right" aria-hidden="true"></span></button>
+          <button id="cwd-reset" type="button" class="btn quiet small work-only" hidden>Use default folder</button>
+          <input id="cwd" type="hidden">
+          <button id="web" type="button" class="compose-picker" aria-pressed="true" title="Allow web search"><span class="icon i-globe" aria-hidden="true"></span><span class="compose-picker-text">Web search</span><span>Web on</span></button>
+        </div>
       </form>
-      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line <span class="hint-dot">·</span> <kbd data-mod>Ctrl</kbd> + <kbd>/</kbd> for shortcuts</span></div>
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
@@ -110,6 +117,14 @@
   <div id="toasts" role="status" aria-live="polite"></div>
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
+  <dialog id="folder-dialog" aria-labelledby="folder-title">
+    <form id="folder-form">
+      <div class="dialog-head"><h2 id="folder-title">Working folder</h2><button id="folder-close" type="button" class="icon-button" aria-label="Close working folder picker"><span class="icon i-x" aria-hidden="true"></span></button></div>
+      <p>Choose a folder on the computer running Kova. Leave blank to use the Kova files folder.</p>
+      <label>Folder path<input id="folder-path" placeholder="Absolute folder path" autocomplete="off" spellcheck="false"></label>
+      <div class="dialog-actions"><button id="folder-default" type="button" class="btn quiet">Use default</button><button type="submit" class="btn primary">Use folder</button></div>
+    </form>
+  </dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <div class="dialog-head"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button id="shortcuts-close" type="button" class="icon-button" aria-label="Close keyboard shortcuts"><span class="icon i-x" aria-hidden="true"></span></button></div>
     <dl class="shortcuts">
@@ -164,12 +179,6 @@
       <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
     </form>
   </dialog>
-  <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
-    <summary>Settings</summary>
-    <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
-    <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
-    <button id="autostart-refresh" type="button">Refresh</button>
-  </details>
   <noscript>Kova needs JavaScript enabled. Open kova-web to connect.</noscript>
 </body>
 </html>

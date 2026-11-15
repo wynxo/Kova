@@ -177,6 +177,7 @@ noscript { position:fixed; inset:auto 16px 16px; padding:12px 14px; border-radiu
   -webkit-mask:var(--i) center / contain no-repeat;
   mask:var(--i) center / contain no-repeat;
 }
+.i-paperclip { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'/%3E%3C/svg%3E"); }
 .i-arrow-down { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14'/%3E%3Cpath d='m19 12-7 7-7-7'/%3E%3C/svg%3E"); }
 .i-arrow-up { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 7-7 7 7'/%3E%3Cpath d='M12 19V5'/%3E%3C/svg%3E"); }
 .i-bell { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/%3E%3Cpath d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/%3E%3C/svg%3E"); }
@@ -270,7 +271,7 @@ dialog input:not([type="checkbox"]), dialog textarea {
 dialog textarea { resize:vertical; min-height:64px; line-height:1.5; font-family:var(--font); }
 dialog textarea#provider-headers { font:12.5px/1.5 var(--mono); }
 dialog input:not([type="checkbox"]):focus-visible, dialog textarea:focus-visible {
-  outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
+  outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft);
 }
 input::placeholder, textarea::placeholder { color:var(--text-3); opacity:1; }
 input:disabled, textarea:disabled { opacity:.55; }
@@ -369,6 +370,8 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 
 .sidebar-footer { flex:none; padding-top:8px; border-top:1px solid var(--border); }
 .footer-nav { display:grid; gap:1px; }
+.sidebar-settings summary { list-style:none; cursor:pointer; }
+.sidebar-settings > :not(summary) { margin:8px 10px; font-size:12px; color:var(--text-2); }
 .nav-row {
   display:flex; align-items:center; gap:10px; width:100%; height:34px; padding:0 10px;
   border-radius:var(--r-sm); color:var(--text-2); font-size:13.5px; text-align:left;
@@ -453,25 +456,44 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
   background:var(--surface); box-shadow:var(--shadow-md);
   transition:border-color var(--fast), box-shadow var(--fast);
 }
-.composer:focus-within { border-color:var(--accent-line); box-shadow:var(--shadow-md), 0 0 0 3px var(--accent-soft); }
+.composer:focus-within { border-color:var(--accent-line); box-shadow:var(--shadow-md), 0 0 0 2px var(--accent-soft); }
 #prompt {
   display:block; width:100%; min-height:50px; max-height:180px; padding:15px 16px 6px;
   border:0; outline:0; resize:none; background:none; color:var(--text);
   font:15px/1.5 var(--font); overflow-y:auto;
 }
-.compose-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 8px 8px; min-width:0; }
+.compose-toolbar { display:flex; flex-wrap:nowrap; align-items:center; gap:6px; padding:6px 10px 10px; min-width:0; }
 .toolbar-gap { flex:1 1 0; min-width:0; }
-.chip.options-toggle { display:none; flex:none; }
-.options-toggle:hover { background:var(--surface-2); color:var(--text); }
-.options-toggle[aria-expanded="true"] { border-color:var(--accent-line); color:var(--text); }
-.compose-options { display:contents; }
+#attach { flex:none; width:36px; height:36px; border-radius:50%; }
+#attach .icon { width:18px; height:18px; }
+.compose-toolbar .composer-menu { max-width:min(320px, calc(100% - 90px)); height:36px; }
+.composer-state { flex:none; width:5px; height:5px; border-radius:50%; background:var(--warn); }
+.compose-options {
+  position:fixed; z-index:70; width:340px; max-width:calc(100vw - 24px); max-height:min(420px, calc(100dvh - 24px));
+  overflow-y:auto; padding:8px; border:1px solid var(--border-strong); border-radius:16px;
+  background:var(--surface-2); box-shadow:var(--shadow-lg); font-size:13px;
+}
+.compose-option-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 4px 5px 10px; min-width:0; }
+.compose-option-label { flex:none; color:var(--text-2); font-size:12px; }
 .composer[data-mode="chat"] .work-only { display:none; }
 #permission-slot, #model-slot { display:inline-flex; min-width:0; }
 #model-slot { flex:0 1 auto; }
-#model-slot .menu-button { max-width:230px; }
-/* Mid-reply, with a message typed, the row belongs to Queue, Steer and Stop.
-   The model cannot change until the reply ends, so it steps aside. */
-.composer:has(#queue:not([hidden])) #model-slot { display:none; }
+#model-slot .menu-button { max-width:210px; }
+.compose-picker { display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:8px 10px; border-radius:10px; text-align:left; color:var(--text-2); }
+.compose-picker:hover:not(:disabled) { background:var(--surface-3); color:var(--text); }
+.compose-picker:disabled { opacity:.5; }
+.compose-picker > .icon { width:16px; height:16px; }
+.compose-picker-text { display:flex; flex:1; flex-direction:column; gap:3px; min-width:0; color:var(--text); }
+.compose-picker small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--text-3); }
+#web { border-top:1px solid var(--border); border-radius:0 0 10px 10px; margin-top:4px; }
+#web > span:last-child { font-size:11px; }
+#web[aria-pressed="false"] > span:last-child { color:var(--warn); }
+#folder-dialog { width:420px; }
+#folder-dialog p { color:var(--text-2); font-size:13px; line-height:1.6; }
+/* Queue and Steer replace the disabled settings trigger on narrow rows. */
+@container composer (max-width:480px) {
+  .composer:has(#queue:not([hidden])) #options { display:none; }
+}
 
 .segmented { display:inline-flex; flex:none; gap:2px; padding:2px; border-radius:var(--r-md); background:var(--surface-2); }
 .segmented button {
@@ -511,13 +533,9 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .chip.toggle[aria-pressed="true"] { border-color:transparent; background:var(--accent-soft); color:var(--accent); }
 .chip.toggle[aria-pressed="true"]:hover:not(:disabled) { background:color-mix(in srgb, var(--accent) 20%, transparent); color:var(--accent); }
 .chip.toggle:disabled { opacity:.5; }
-.folder-control { flex:1 1 110px; max-width:210px; cursor:text; }
-.folder-control:hover { border-color:var(--border-strong); }
-.folder-control:focus-within { border-color:var(--accent-line); color:var(--text); }
-.folder-control input { flex:1; width:100%; padding:0; border:0; outline:0; background:none; color:var(--text); font-size:13px; text-overflow:ellipsis; }
 
 .send {
-  display:grid; place-items:center; flex:none; width:34px; height:34px; border-radius:11px;
+  display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:50%;
   background:var(--accent); color:var(--on-accent);
   transition:background var(--fast), color var(--fast), transform var(--fast);
 }
@@ -526,8 +544,8 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .send:active:not(:disabled) { transform:scale(.95); }
 .send:disabled { background:var(--surface-3); color:var(--text-3); }
 .stop {
-  display:inline-flex; align-items:center; gap:7px; flex:none; height:34px; padding:0 12px;
-  border:1px solid var(--border-strong); border-radius:11px; background:var(--surface-2);
+  display:inline-flex; align-items:center; gap:7px; flex:none; height:36px; padding:0 10px;
+  border:1px solid var(--border-strong); border-radius:999px; background:var(--surface-2);
   font-size:13px; font-weight:550; transition:background var(--fast);
 }
 .send.stop-round { background:var(--text); color:var(--bg); animation:working 1.8s ease-out infinite; }
@@ -540,12 +558,6 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 #queue, #steer { color:var(--text-2); }
 #queue .icon, #steer .icon { width:13px; height:13px; }
 #queue:hover:not(:disabled), #steer:hover:not(:disabled) { color:var(--accent); }
-.compose-hint { display:flex; justify-content:space-between; gap:12px; padding:8px 6px 0; color:var(--text-3); font-size:11.5px; white-space:nowrap; }
-.compose-hint > span { overflow:hidden; text-overflow:ellipsis; }
-.compose-hint kbd { font-size:10px; padding:2px 4px; }
-.hint-dot { margin:0 3px; }
-.is-empty .compose-hint { display:none; }
-
 /* ---------- Popover menus ---------- */
 .popover {
   position:fixed; z-index:80; display:flex; flex-direction:column;
@@ -906,7 +918,6 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .messages { padding:20px 14px 28px; gap:22px; }
   .message.user { max-width:88%; }
   .compose-wrap { padding-left:10px; padding-right:10px; }
-  .compose-hint { display:none; }
   .welcome { padding:12px 16px 20px; }
   .welcome-mark { width:40px; height:40px; margin-bottom:16px; }
   .welcome p { font-size:14px; }
@@ -916,31 +927,6 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .suggestion-text span { display:block; }
   #prompt { font-size:16px; }
   @keyframes fade { from { opacity:0; } }
-}
-@container composer (max-width:620px) and (min-width:480.02px) {
-  /* Two tidy rows: mode, permission, web; then folder, model, send. */
-  .toolbar-gap { flex:1 0 100%; height:0; order:4; }
-  .segmented { order:1; }
-  #permission-slot { order:2; }
-  #web { order:3; }
-  .folder-control { order:5; flex:1 1 110px; max-width:none; }
-  #model-slot { order:6; margin-left:auto; flex:0 1 auto; max-width:46%; }
-  .composer[data-mode="chat"] #model-slot { max-width:calc(100% - 46px); }
-  .send, .stop { order:7; }
-}
-@container composer (max-width:480px) {
-  /* Phones: one quiet row. Mode, permission, folder and web fold away behind
-     the options chip and open as a row above it. */
-  .chip.options-toggle { display:inline-flex; }
-  .segmented button .icon { display:none; }
-  .compose-options { display:none; }
-  .composer.options-open .compose-options {
-    display:flex; flex-wrap:wrap; align-items:center; gap:6px; order:-1; flex:1 0 100%;
-    margin-bottom:2px; padding-bottom:8px; border-bottom:1px solid var(--border); animation:rise var(--fast) var(--ease);
-  }
-  .folder-control { flex:1 1 100%; max-width:none; }
-  #model-slot { flex:0 1 auto; min-width:0; }
-  #model-slot .menu-button { max-width:100%; }
 }
 @media (max-width:560px) {
   #toasts { right:12px; left:12px; width:auto; }

@@ -1,9 +1,10 @@
 'use strict';
-const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electron');
+const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, dialog} = require('electron');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const {settings, executable, external, permissionAllowed} = require('./core');
+const {registerFolderPicker} = require('./folder-picker');
 let win, tray, child, quitting = false, starting = false, origin, home;
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
@@ -81,6 +82,7 @@ async function create() {
   ipcMain.handle('retry', event => {
     if (event.sender === win.webContents && event.senderFrame.url.startsWith('file:')) start();
   });
+  registerFolderPicker({ipcMain, dialog, getWindow: () => win, getOrigin: () => origin});
   await start();
 }
 async function status(error = false) {
