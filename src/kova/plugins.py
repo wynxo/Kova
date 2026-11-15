@@ -486,6 +486,8 @@ def _looks_like_git(source: str) -> bool:
 
 
 def _clone(url: str, destination: Path) -> Path:
+    from kova.egress import check_external_process
+    check_external_process()
     result = subprocess.run(
         ["git", "clone", "--depth", "1", "--", url, str(destination)],
         capture_output=True, text=True)

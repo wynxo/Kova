@@ -37,6 +37,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from kova import egress
+
 from kova import plugins
 from kova.config import kova_home
 from kova.skills import Skill, load_skills
@@ -244,7 +246,7 @@ def _http_get(url: str, *, timeout: float, client: httpx.Client | None = None) -
     if urlparse(url).scheme != "https" and urlparse(url).hostname not in ("127.0.0.1", "localhost"):
         raise CatalogError(f"Refusing a plain-http download: {url}")
     own = client is None
-    client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+    client = client or egress.Client(timeout=timeout, follow_redirects=True)
     try:
         with client.stream("GET", url, timeout=timeout) as response:
             if response.status_code != 200:

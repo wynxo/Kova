@@ -94,6 +94,15 @@ class KovaClient:
             self._check(response)
         return response
 
+    def privacy_report(self, days: int = 30, chat_id: str | None = None) -> dict:
+        params = {'days': days}
+        if chat_id is not None:
+            params['chat_id'] = chat_id
+        return self._request('GET', '/privacy', params=params).json()
+
+    def privacy_update(self, local_only: bool) -> dict:
+        return self._request('PATCH', '/privacy', json={'local_only': local_only}).json()
+
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:

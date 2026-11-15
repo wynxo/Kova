@@ -9,7 +9,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from kova import modes, provider_auth, providers
+from kova import modes, provider_auth, providers, egress
 from kova.config import Config, ProviderEntry, save_config
 
 
@@ -55,6 +55,8 @@ def install_provider_routes(app, config: Config, require_token):
     pending: dict = {}
 
     async def build(body: ProviderBody):
+        if body.base_url:
+            egress.check_url(body.base_url)
         identifier = body.id or body.kind
         if not re.fullmatch(r'[a-zA-Z0-9_-]+', identifier):
             raise providers.ProviderError('Connection name must contain only letters, numbers, hyphens or underscores.')
@@ -181,6 +183,7 @@ def install_provider_routes(app, config: Config, require_token):
 
     @router.post('/providers/{identifier}/login')
     async def login(identifier: str, body: ProviderBody):
+        egress.check_external_process()
         p = next((p for p in config.providers if p.id == identifier), None)
         if not p:
             raise HTTPException(404, 'No provider with that name.')
@@ -209,6 +212,7 @@ def install_provider_routes(app, config: Config, require_token):
 
     @router.post('/providers/auth/start')
     async def start():
+        egress.check_url(provider_auth.ISSUER)
         # Bound pending listeners and expire them in LoginAttempt, including cancelled UI flows.
         for key, attempt in list(pending.items()):
             if attempt.done.is_set():

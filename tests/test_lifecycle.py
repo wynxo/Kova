@@ -52,7 +52,7 @@ def remote(lifecycle, monkeypatch, sha="b" * 40, version="0.1.0"):
         if "/commits/" in url:
             return httpx.Response(200, json={"sha": sha}, request=request)
         return httpx.Response(200, text=f'[project]\nversion = "{version}"\n', request=request)
-    monkeypatch.setattr(lifecycle.httpx, "get", get)
+    monkeypatch.setattr(lifecycle.egress, "get", get)
 
 
 @pytest.mark.parametrize("same", [True, False])
@@ -86,7 +86,7 @@ def test_update_check_reports_version_difference(lifecycle, monkeypatch):
 
 
 def test_update_check_network_error(lifecycle, monkeypatch):
-    monkeypatch.setattr(lifecycle.httpx, "get", Mock(side_effect=httpx.ConnectError("offline")))
+    monkeypatch.setattr(lifecycle.egress, "get", Mock(side_effect=httpx.ConnectError("offline")))
     result = CliRunner().invoke(app, ["update", "--check"])
     assert result.exit_code == 1
     assert "Could not check" in result.output

@@ -466,7 +466,7 @@ def test_actual_managed_route_runs_shared_core_and_shutdown_stops_engine(runtime
     monkeypatch.setattr(local_models, 'inspect', inspect)
     monkeypatch.setattr(local_models, 'hardware_profile', lambda *a: profile())
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': transport}))
+    monkeypatch.setattr(local_models.egress, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': transport}))
     with TestClient(create_app(cfg)) as client:
         headers = {'Authorization': 'Bearer ' + config.ensure_token(cfg.home)}
         response = client.post('/local-models/install', headers=headers, json={'model': 'qwen3:4b', 'backend': 'managed'})
