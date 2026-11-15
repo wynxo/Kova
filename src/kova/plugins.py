@@ -9,8 +9,9 @@ it declares:
   the model (only ``learned`` skills under the skills root are).
 - ``commands`` — slash commands for the terminal chat. Each is a canned prompt
   sent as the user's turn; a plugin command runs nothing by itself.
-- ``mcp`` — MCP server definitions. Kova does not run these yet: they are
-  exposed through :func:`plugin_mcp_servers` for the MCP client to consume.
+  - ``mcp`` — MCP server definitions. Kova loads the servers of enabled plugins
+    through :func:`plugin_mcp_entries`, giving each a name prefixed with the
+    plugin so it cannot collide with a user's own server.
 - ``permissions`` — default permission rules installed into
   ``permission-rules.json``, tagged with their plugin, and removed on
   disable/remove. They go through the exact same permission policy and sandbox
@@ -35,7 +36,7 @@ from pathlib import Path
 from typing import Callable
 
 from kova import __version__
-from kova.config import kova_home
+from kova.config import McpServerEntry, kova_home
 from kova.permissions import Rule
 from kova.skills import Skill, load_skills
 
@@ -413,6 +414,44 @@ def plugin_mcp_servers(home: Path | None = None) -> list[dict]:
     return servers
 
 
+def _plugin_server_name(plugin_name: str, server_name: str) -> str:
+    """A Kova server name for one of a plugin's MCP servers.
+
+    Prefixed with the plugin so it can never collide with a user's own server,
+    and cleaned to the characters a tool name allows (letters, digits, '-' and
+    '_'), so the resulting ``<server>__<tool>`` is always a valid function
+    name. Falls back to ``x`` when a side is empty.
+    """
+    def clean(value: str) -> str:
+        value = re.sub(r"[^a-z0-9-]", "_", (value or "").lower())
+        value = re.sub(r"_+", "_", value).strip("_")
+        return value or "x"
+    return f"{clean(plugin_name)}_{clean(server_name)}"
+
+
+def plugin_mcp_entries(home: Path | None = None) -> list[McpServerEntry]:
+    """MCP servers of every enabled plugin, as manager-ready ``McpServerEntry`` values.
+
+    Each server's name is prefixed with its plugin (see
+    :func:`_plugin_server_name`) so it cannot collide with a user's own
+    ``[[mcp]]`` server, and the plugin's name rides on the ``plugin`` field so
+    :func:`McpManager.status` and the CLI can mark it as coming from a plugin.
+    Disabled servers are skipped, matching :func:`plugin_mcp_servers`.
+    """
+    entries: list[McpServerEntry] = []
+    for plugin in enabled_plugins(home):
+        for server in plugin.mcp:
+            if not server.enabled:
+                continue
+            entries.append(McpServerEntry(
+                name=_plugin_server_name(plugin.name, server.name),
+                command=server.command, args=list(server.args),
+                env=dict(server.env), url=server.url, headers={},
+                enabled=server.enabled, disabled_tools=[], sandbox=False,
+                plugin=plugin.name))
+    return entries
+
+
 def describe(plugin: Plugin) -> dict:
     """Exactly what a plugin adds, for the install-time confirmation screen.
 
@@ -594,6 +633,6 @@ def _sync_rules(home: Path, name: str, rules: list[Rule]) -> None:
 __all__ = [
     "MANIFEST", "McpServer", "Plugin", "PluginCommand", "PluginError",
     "describe", "disable", "enable", "enabled_plugins", "find_manifest", "install",
-    "installed", "parse_manifest", "plugin_commands", "plugin_mcp_servers",
+    "installed", "parse_manifest", "plugin_commands", "plugin_mcp_entries", "plugin_mcp_servers",
     "plugin_rules", "plugin_skill_roots", "plugins_dir", "remove", "update",
 ]
