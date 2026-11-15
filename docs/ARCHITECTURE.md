@@ -295,7 +295,9 @@ prints reminder pop-ups while you chat.
 
 `src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
 `desktop/` — the checkout it runs from, or the copy the installers stage under
-`KOVA_HOME/desktop` — and installs the Electron dependencies with `npm ci` while
+`KOVA_HOME/desktop`. Installers prepare Electron and register a normal OS launcher
+by default (opt out with `--no-desktop`); those launch the binary directly.
+The developer/terminal launcher can still run `npm ci` while
 `node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
 the browser; for any other failure it exits non-zero. The Electron shell starts
 (or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use
@@ -386,6 +388,40 @@ indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
 split into at most 12 de-duplicated words, and each chat contributes only its
 best hit, with a short snippet.
+
+### Incognito conversations
+
+`POST /chats {"ephemeral": true}` creates a conversation in a separate SQLite
+`:memory:` connection, never a flagged row in the disk database. Its reserved
+`incognito-` id namespace routes chat-scoped reads and writes (including queues,
+steers, plans and compaction summaries) to RAM even after deletion, so a late
+write cannot fall back to disk. SQLite temporary tables also use memory. The
+normal store listing, full-text/LIKE search and backups only read the persistent
+connection; the authenticated chat list explicitly includes live incognito chats
+so clients can display them. Imports and forks cannot turn one into a saved chat.
+
+Incognito is conversation-only: no tools, memory recall, writes, review,
+consolidation, file sessions or checkpoints. Uploads are rejected before multipart
+parsing can spool files to disk, including paste/drop uploads in the web client.
+Compaction still works, but its summary lives only in the in-memory connection.
+No transcript, reasoning, tool arguments or provider error bodies are logged by
+these paths. A normal chat is unaffected.
+
+Entry points are `kova --incognito`, `kova ask --incognito`, `/incognito` in the
+terminal or web composer, and **New incognito chat** / **Ctrl+Shift+N** in the
+web/desktop client. Each shows an Incognito marker and explains that the provider
+still receives messages. Terminal input history is not saved once a session has
+entered incognito, even after switching back to a saved chat. One-shot `ask`
+discards its chat in `finally`, including on failure. Leaving an incognito chat
+in a client deletes it; normal browser close/reload sends a keepalive delete.
+Deleting an active incognito cancels its turn. Shutdown drops the entire RAM
+store, and a fresh server cannot recover it, including after a crash.
+
+This controls Kova's storage, not model-provider retention, terminal scrollback,
+user-directed shell redirection, browser/OS crash dumps or OS swap. If a browser
+or terminal is killed before it can send cleanup, the RAM-only chat can remain
+in the current server until explicitly deleted or the server stops; it is never
+recovered from disk.
 
 ## Memory
 

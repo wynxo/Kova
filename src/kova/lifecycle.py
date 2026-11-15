@@ -174,6 +174,24 @@ def validate_purge(home: Path) -> None:
         raise LifecycleError(f"Refusing to delete {home}: data must be a real directory inside your home.")
 
 
+def remove_desktop_registration() -> None:
+    """Remove only the per-user launcher/icon written by our installers."""
+    if sys.platform == "linux":
+        share = Path.home() / ".local/share"
+        (share / "applications/kova.desktop").unlink(missing_ok=True)
+        (share / "icons/hicolor/512x512/apps/kova.png").unlink(missing_ok=True)
+        for name, args in (
+            ("update-desktop-database", [str(share / "applications")]),
+            ("gtk-update-icon-cache", ["-f", "-t", str(share / "icons/hicolor")]),
+        ):
+            if tool := shutil.which(name):
+                subprocess.run([tool, *args], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif sys.platform == "darwin":
+        bundle = Path.home() / "Applications/Kova.app"
+        if (bundle / "Contents/Info.plist").is_file() and not bundle.is_symlink():
+            shutil.rmtree(bundle)
+
+
 def _windows_uninstall(uv: str, home: Path, purge: bool) -> None:
     """Wait for this executable to exit before uv removes it (Windows file locking)."""
     def ps(value: str) -> str:
@@ -193,6 +211,7 @@ Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue
 & {ps(uv)} tool uninstall kova-ai
 if ($LASTEXITCODE -ne 0) {{ throw 'uv uninstall failed; data was kept.' }}
 {data}
+Remove-Item -LiteralPath (Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Kova.lnk') -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath 'HKCU:\\{UNINSTALL_KEY}' -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath {ps(str(Path.home() / '.local/share/kova/uninstall.ps1'))} -ErrorAction SilentlyContinue
 Write-Host 'Done. Kova is removed.'
@@ -230,6 +249,7 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
         subprocess.run([uv, "tool", "uninstall", "kova-ai"], check=True, env=tool_env())
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova uninstall failed; your data was kept: {exc}") from exc
+    remove_desktop_registration()
     if purge and home.exists():
         shutil.rmtree(home)
         emit(f"✓ Deleted {home}.")

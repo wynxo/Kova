@@ -32,7 +32,8 @@ The server only listens on `127.0.0.1:7700`, and the clients start it for you.
 stops a background one.
 
 The desktop app needs Node.js 22+ and npm; `./desktop-app` installs its
-Electron dependencies on first run. Without Node/npm it says so and opens the
+Electron dependencies on first run (developer convenience only; normal installers
+prepare them and register an OS launcher at install time). Without Node/npm it says so and opens the
 web UI instead, which `./desktop-app --browser` selects directly (the installed
 equivalent is `kova-web`).
 

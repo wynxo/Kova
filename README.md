@@ -4,6 +4,20 @@ Your own private AI that lives on your computer.
 
 Want to work on it? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md) to run it from source and make it yours.
 
+## Incognito chats
+
+Use `kova --incognito`, `kova ask --incognito "your question"`, or `/incognito`
+in terminal chat. In the web/desktop app choose **New incognito chat** or press
+**Ctrl+Shift+N** (Cmd+Shift+N on macOS).
+
+Incognito chats live only in server memory: no saved transcript, search results,
+exports, backups, memories or checkpoints. Tools and attachments are disabled.
+Leaving the chat discards it, and stopping the server discards every incognito
+chat. The terminal does not save input history after entering incognito.
+**Your model provider still receives the messages you send.** If a client is
+killed before cleanup, its chat stays only in RAM until deleted or server stop.
+See [incognito storage and boundaries](docs/ARCHITECTURE.md#incognito-conversations).
+
 ## See Kova
 
 [Run the two-minute judge demo](docs/DEMO.md) · [Full screenshot gallery](docs/screenshots/README.md)
@@ -33,14 +47,44 @@ Windows (PowerShell, not Administrator):
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/install.ps1 | iex"
 ```
 
-Then connect a provider and chat:
+Then open **Kova** from your application menu / Super search (Linux), **Start**
+(Windows), or **Applications / Spotlight** (macOS). Choose **Add provider** in
+the app to connect a model and start chatting. No terminal is needed to launch it.
+
+The installer sets up [uv](https://docs.astral.sh/uv/), Python 3.12, the Kova
+backend and Electron dependencies **during installation**, and registers the
+launcher automatically. Source installs need **Node.js 22+ including npm** from
+[nodejs.org](https://nodejs.org); if missing, the installer explains how to add
+it and rerun. Everything is per-user, without sudo or shell-profile changes.
+On Windows it also adds Kova to Settings → Apps. No clone needed; the Python
+distribution is **kova-ai**, installed from GitHub, not PyPI.
+
+### Download the desktop app
+
+Version-tagged builds are published to [GitHub Releases](https://github.com/wynxo/Kova/releases):
+**.deb / AppImage** for Linux, **Setup .exe** for Windows, **.dmg** for macOS
+(arm64 for Apple Silicon, x64 for Intel). Assets appear when a maintainer pushes
+a version tag; not every source revision has a download. These builds include
+Electron and **do not need Node/npm**, but **Python, the Kova backend and a model
+are not bundled**. Install the backend once with the CLI-only installer:
 
 ```sh
-kova setup
-kova
+curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh -s -- --no-desktop
 ```
 
-The installer adds the `kova` command using [uv](https://docs.astral.sh/uv/) (installed automatically if needed). It also installs the desktop app: `kova-app` opens the Electron window and `kova-web` opens the same chats in your browser. On Linux/macOS, follow its printed PATH line or add it to your shell profile. On Windows it updates your user PATH and adds Kova to Settings → Apps. No clone needed; installs currently come from GitHub as **kova-ai**, not PyPI.
+Windows: download `install.ps1` from this repository and run
+`powershell -ExecutionPolicy Bypass -File .\install.ps1 --no-desktop`.
+The installer supplies uv and Python automatically. Then install the .deb or
+.exe, or open the .dmg and drag **Kova** to **Applications**, and launch Kova
+from the app menu. For AppImage, mark it executable in your file manager and
+double-click; choose .deb or the one-line installer for menu integration.
+Builds are currently unsigned / not notarized; Windows and macOS may show an
+unverified-publisher prompt. See [desktop build notes](desktop/README.md).
+
+For terminal users, `kova setup` and `kova` remain available. On Linux/macOS,
+follow the installer's printed PATH line if your shell cannot find `kova`;
+the menu launcher does not need that PATH change. `--no-desktop` skips desktop
+files, dependencies and registration for headless/CLI-only installations.
 
 Update: `kova update` (or rerun the installer). Check first: `kova update --check`. Pin a tag/commit with `kova update --ref v0.2.0`, or `KOVA_REF=v0.2.0` for the installer (`$env:KOVA_REF='v0.2.0'` on Windows). Tags shown here are examples, not published releases.
 
@@ -85,22 +129,23 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 
 ## Desktop app
 
-`kova-app` opens your chats in the desktop app: an Electron window over the same
-local server as the CLI. It installs its Node dependencies with `npm ci` on first
-run, so it needs Node.js 22+ and npm; if they are missing it says so and opens the
-web UI instead. `kova-web` opens that same UI in your default browser
-(`kova-app --browser` is the older spelling of the same thing). From a checkout,
-`./desktop-app` (`desktop-app.bat` on Windows) runs exactly what `kova-app` does.
+Open **Kova** from the app menu to use the Electron window over the same local
+server as the CLI. The installer prepares Electron before adding the launcher,
+so the first click does not run npm. `kova-app` remains a terminal shortcut;
+`kova-web` opens the same chats in your browser. No chats, settings, provider
+credentials or models are duplicated between clients.
 
-The installer keeps a copy of the desktop app in `~/.kova/desktop` (or your
-`KOVA_HOME`), so the commands work from a plain install with no checkout. On Linux,
-`./install.sh --desktop` also registers Kova in your application menu.
+The one-line installers stage the shell in `~/.kova/desktop` (or `KOVA_HOME`).
+Uninstalling removes their menu entry / Start shortcut / Applications launcher,
+icon and staged Electron files even when chat data is kept. Downloaded packages
+are managed separately by your OS: uninstall the shell there and use
+`kova uninstall` to remove the Python backend.
 
 The Electron shell starts the server when it is down, reads the local token, and
 exchanges it for a one-use ticket; its caches and remembered window bounds live
 under `KOVA_HOME`. The page may request the **Notification** permission for OS
 notifications; every other permission request is denied. Closing the window hides
-it to the tray. Packaged builds (AppImage/deb, NSIS, DMG) are configured in
+it to the tray. Packaged builds (AppImage/deb, NSIS, DMG) are published by the version-tag workflow in
 [desktop/README.md](desktop/README.md); they are built per platform and need the
 Kova Python CLI installed separately.
 
@@ -502,10 +547,9 @@ Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in
 
 ### Electron desktop app
 
-`kova-app` runs the Electron app in `desktop/` (from a checkout, `./desktop-app`;
-Windows: `desktop-app.bat`) with Node.js/npm installed. It runs `npm ci` there on
-first use; without Node/npm it says so and opens the web UI with `kova-web`.
-The installers keep a copy of `desktop/` in `~/.kova/desktop`, so `kova-app` works
-without a checkout; Linux can register the menu entry with `./install.sh --desktop`.
-AppImage/deb, NSIS and DMG builds are configured in [desktop/README.md](desktop/README.md).
-Packaged Electron builds require the Kova Python CLI installed separately.
+Developer-only: `./desktop-app` (`desktop-app.bat` on Windows) runs the checkout
+through uv. It needs Node.js 22+/npm and can run `npm ci` on first use; this is
+not the normal user's launcher. `./desktop-app --browser` opens the web UI.
+For build commands and the version-tagged release workflow, see
+[desktop/README.md](desktop/README.md). Packaged shells still use the same
+separately installed Python backend.

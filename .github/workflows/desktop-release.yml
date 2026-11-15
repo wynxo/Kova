@@ -1,0 +1,113 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Package (${{ matrix.os }}, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+          - os: macos-latest
+            platform: mac
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Set artifact version from tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs');
+          const version = process.env.RELEASE_TAG.replace(/^v/, '');
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Invalid version tag');
+          for (const file of ['package.json', 'package-lock.json']) {
+            const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+            pkg.version = version;
+            if (pkg.packages) pkg.packages[''].version = version;
+            fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');
+          }
+          JS
+      - run: npm ci --include=dev
+      - run: npm test
+      - name: Build installers (unsigned)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+
+  release:
+    name: Attach installers to GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Install Kova
+
+          Download the installer for your platform: Linux .deb (app menu) or AppImage,
+          Windows Setup .exe (Start menu), macOS .dmg (drag Kova to Applications).
+          macOS downloads are labeled arm64 (Apple Silicon) or x64 (Intel).
+
+          These unsigned builds include Electron, but NOT the Python server or a model.
+          Install the backend once with the one-line installer using --no-desktop:
+          https://github.com/wynxo/Kova#install
+          That installer sets up uv and Python 3.12 automatically; Node/npm is not
+          needed for packaged downloads. Then open Kova and choose Add provider.
+
+          Uninstall the downloaded shell through your OS; use `kova uninstall`
+          separately to remove the backend (keeps data unless you choose --purge).
+          NOTES
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "Kova $RELEASE_TAG" --notes-file notes.md
+          fi
+          gh release upload "$RELEASE_TAG" artifacts/* --clobber

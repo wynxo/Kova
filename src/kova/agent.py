@@ -254,7 +254,7 @@ class Agent:
         A checkpoint never fails a turn: any problem recording one is dropped
         and the turn ends normally.
         """
-        if tracker is None or not tracker.touched:
+        if self.store.is_ephemeral(chat_id) or tracker is None or not tracker.touched:
             return None
         try:
             files, skipped = await asyncio.to_thread(tracker.finish)
@@ -320,7 +320,8 @@ class Agent:
             self.store.link_message_attachments(user_message_id, attached)
         set_current_chat(chat_id)
         chat = self.store.get_chat(chat_id)
-        mode = (chat or {}).get('mode') or DEFAULT_MODE
+        incognito = self.store.is_ephemeral(chat_id)
+        mode = 'chat' if incognito else (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
         cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
         permission = (chat or {}).get('permission', 'manual')
@@ -328,7 +329,8 @@ class Agent:
         # other mode runs commands inside the OS sandbox when the kernel
         # supports one, and asks when it does not.
         confined = permission != 'full' and sandbox.available()
-        tools = select_tools(mode, web, self.tools)
+        # Incognito cannot execute arbitrary plugins or tools that persist data.
+        tools = {} if incognito else select_tools(mode, web, self.tools)
         if rows:
             def read_attachment(args):
                 row = rows.get(args.get('id'))
@@ -362,16 +364,16 @@ class Agent:
                     title_source = message['content']
                     break
         try:
-            memories = await asyncio.to_thread(self.memory.search, model_text, 5, mode="hybrid")
+            memories = [] if incognito else await asyncio.to_thread(self.memory.search, model_text, 5, mode="hybrid")
         except Exception:  # memory trouble must never block a chat
             memories = []
         try:
-            memory_usage = await asyncio.to_thread(self.memory.usage)
+            memory_usage = 0 if incognito else await asyncio.to_thread(self.memory.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
         # The index is always loaded; topic notes are only the ones recall picked.
         try:
-            index = await asyncio.to_thread(self.memory.index_text,
+            index = "" if incognito else await asyncio.to_thread(self.memory.index_text,
                                             getattr(self.config, 'memory_index_lines', 200))
         except Exception:  # a broken index must not block the prompt either
             index = ""
@@ -389,6 +391,10 @@ class Agent:
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0),
                                      index=index or None)
+        if incognito:
+            prompt += ("\nIncognito: this conversation lives only in server memory. "
+                       "Do not save memories, use tools, or claim it will be remembered. "
+                       "The configured model provider still receives messages.")
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {permission}"
             instructions = await asyncio.to_thread(project_instructions, cwd,
@@ -499,7 +505,7 @@ class Agent:
                     review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
                     if review is not None:
                         yield review
-                    if self.memory_review is not None:
+                    if not incognito and self.memory_review is not None:
                         # Opt-in background passes run last so the answer is already
                         # stored; a failure there can never break the reply.
                         for notice in await self.memory_review.after_turn(

@@ -156,6 +156,34 @@ assert reply == "Hello from smoke test!", reply
 PY
 step "chat stream -> reply and done event"
 
+# Exercise incognito through a real process, including its on-disk server log.
+"${RUN[@]}" - "$BASE" "$TOKEN" "$WORK/home" "$SERVER_LOG" <<'PYTEST' || fail "incognito content reached disk"
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+base, token, home, server_log = sys.argv[1:]
+canary = 'incognito-smoke-canary-73921'
+def request(path, body=None, method=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method,
+        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return response.read()
+chat = json.loads(request('/chats', {'ephemeral': True, 'title': canary}))
+assert chat['ephemeral'] is True
+cid = chat['id']
+assert b'event: done' in request(f'/chats/{cid}/messages', {'text': canary})
+assert json.loads(request(f'/chats/{cid}'))['messages'][0]['content'] == canary
+for path in [*Path(home).rglob('*'), Path(server_log)]:
+    if path.is_file():
+        assert canary.encode() not in path.read_bytes(), path.name
+request(f'/chats/{cid}', method='DELETE')
+assert all(c['id'] != cid for c in json.loads(request('/chats')))
+PYTEST
+step "incognito turn -> no transcript or title on disk, including server log"
+
 STATUS="$(fetch "$WORK/index.html" "$BASE/app")"
 [[ "$STATUS" == 200 ]] || fail "GET /app returned $STATUS"
 expect_type "GET /app" "text/html"

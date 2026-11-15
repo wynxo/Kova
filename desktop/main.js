@@ -3,7 +3,7 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electr
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, executable, external, permissionAllowed} = require('./core');
+const {settings, serverCommand, external, permissionAllowed} = require('./core');
 let win, tray, child, quitting = false, starting = false, origin, home;
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
@@ -97,14 +97,11 @@ async function ticket() {
 }
 function launchServer() {
   if (child) return;
-  const cli = executable('kova');
-  const uv = executable('uv');
-  if (!cli && !uv) throw new Error('Install Kova or uv first');
-  const cwd = path.resolve(__dirname, '..');
+  const backend = serverCommand(path.resolve(__dirname, '..'), home);
   const log = fs.openSync(path.join(home, 'server.log'), 'a', 0o600);
   try {
-    child = spawn(cli || uv, cli ? ['serve'] : ['run', 'kova', 'serve'], {
-      cwd: !cli && fs.existsSync(path.join(cwd, 'pyproject.toml')) ? cwd : home,
+    child = spawn(backend.command, backend.args, {
+      cwd: backend.cwd,
       env: {...process.env, KOVA_HOME: home}, stdio: ['ignore', log, log], windowsHide: true});
     child.on('error', () => { child = null; });
     child.on('exit', () => { child = null; });

@@ -5,6 +5,7 @@ function Install-Kova {
     $ErrorActionPreference = 'Stop'
     $Ref = if ($env:KOVA_REF) { $env:KOVA_REF } else { 'main' }
     $Dev = $false
+    $RegisterDesktop = $true
     for ($i = 0; $i -lt $InstallArgs.Count; $i++) {
         switch ($InstallArgs[$i]) {
             { $_ -in '--ref', '-Ref' } {
@@ -13,8 +14,9 @@ function Install-Kova {
                 $Ref = $InstallArgs[$i]
             }
             { $_ -in '--dev', '-Dev' } { $Dev = $true }
+            { $_ -in '--no-desktop', '-NoDesktop' } { $RegisterDesktop = $false }
             { $_ -in '--help', '-h', '-Help' } {
-                Write-Host 'Usage: .\install.ps1 [--ref REF] [--dev]'
+                Write-Host 'Usage: .\install.ps1 [--ref REF] [--dev] [--no-desktop]'
                 return
             }
             default { throw "Unknown option: $($InstallArgs[$i])" }
@@ -70,47 +72,80 @@ function Install-Kova {
     & $Uv @UvArgs $Source
     if ($LASTEXITCODE -ne 0) { throw "uv tool install failed ($LASTEXITCODE)." }
 
-    # The Electron app is not part of the Python wheel, so keep a copy of
-    # desktop\ under the data dir: kova-app runs it (and npm ci) from there.
-    $Data = if ($env:KOVA_HOME) { $env:KOVA_HOME } else { Join-Path $env:USERPROFILE '.kova' }
-    $DesktopDest = Join-Path $Data 'desktop'
-    $DesktopSource = $null
-    if ($env:KOVA_SOURCE -and (Test-Path -LiteralPath (Join-Path $env:KOVA_SOURCE 'desktop\package.json'))) {
-        $DesktopSource = Join-Path $env:KOVA_SOURCE 'desktop'
-    } elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'desktop\package.json'))) {
-        $DesktopSource = Join-Path $PSScriptRoot 'desktop'
-    } elseif ($Dev -and (Test-Path -LiteralPath (Join-Path $Source 'desktop\package.json'))) {
-        $DesktopSource = Join-Path $Source 'desktop'
-    } else {
-        $Zip = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N') + '.zip')
-        $Tree = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N'))
-        Write-Host "Downloading the desktop app from https://github.com/wynxo/Kova/archive/$Ref.zip ..."
-        try {
-            Invoke-WebRequest -UseBasicParsing "https://github.com/wynxo/Kova/archive/$Ref.zip" -OutFile $Zip
-            Expand-Archive -LiteralPath $Zip -DestinationPath $Tree -Force
-            $DesktopSource = Get-ChildItem -LiteralPath $Tree -Directory |
-                ForEach-Object { Join-Path $_.FullName 'desktop' } |
-                Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') } |
-                Select-Object -First 1
-        } catch {
-            Write-Host "Note: the desktop app files could not be downloaded ($($_.Exception.Message))."
-        } finally {
-            Remove-Item -LiteralPath $Zip, $Tree -Recurse -Force -ErrorAction SilentlyContinue
+    # The desktop app is optional: if it cannot be prepared, finish the CLI install anyway.
+    if ($RegisterDesktop) { try {
+        if (-not (Get-Command node -ErrorAction SilentlyContinue) -or -not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            throw 'The desktop app needs Node.js 22+ (including npm). Install it from https://nodejs.org and rerun this installer to add Kova to the Start menu.'
         }
-    }
-    if ($DesktopSource) {
-        New-Item -ItemType Directory -Path $DesktopDest -Force | Out-Null
-        Get-ChildItem -LiteralPath $DesktopSource -Force |
-            Where-Object { $_.Name -notin 'node_modules', 'dist' } |
-            ForEach-Object {
-                $Target = Join-Path $DesktopDest $_.Name
-                Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
-                Copy-Item -LiteralPath $_.FullName -Destination $Target -Recurse -Force
+        & node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'
+        if ($LASTEXITCODE -ne 0) { throw 'Install Node.js 22+ from https://nodejs.org and rerun this installer.' }
+        # Keep the desktop source and prepare Electron before creating the shortcut.
+        $Data = if ($env:KOVA_HOME) { $env:KOVA_HOME } else { Join-Path $env:USERPROFILE '.kova' }
+        $DesktopDest = Join-Path $Data 'desktop'
+        $DesktopSource = $null
+        if ($env:KOVA_SOURCE -and (Test-Path -LiteralPath (Join-Path $env:KOVA_SOURCE 'desktop\package.json'))) {
+            $DesktopSource = Join-Path $env:KOVA_SOURCE 'desktop'
+        } elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'desktop\package.json'))) {
+            $DesktopSource = Join-Path $PSScriptRoot 'desktop'
+        } elseif ($Dev -and (Test-Path -LiteralPath (Join-Path $Source 'desktop\package.json'))) {
+            $DesktopSource = Join-Path $Source 'desktop'
+        } else {
+            $Zip = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N') + '.zip')
+            $Tree = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N'))
+            Write-Host "Downloading the desktop app from https://github.com/wynxo/Kova/archive/$Ref.zip ..."
+            try {
+                Invoke-WebRequest -UseBasicParsing "https://github.com/wynxo/Kova/archive/$Ref.zip" -OutFile $Zip
+                Expand-Archive -LiteralPath $Zip -DestinationPath $Tree -Force
+                $DesktopSource = Get-ChildItem -LiteralPath $Tree -Directory |
+                    ForEach-Object { Join-Path $_.FullName 'desktop' } |
+                    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') } |
+                    Select-Object -First 1
+            } catch {
+                Write-Host "Note: the desktop app files could not be downloaded ($($_.Exception.Message))."
+            } finally {
+                Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
             }
-        Write-Host "Desktop app files: $DesktopDest"
-    } else {
-        Write-Host 'Note: the desktop app files were not installed. kova-web works now; rerun this installer to add kova-app.'
-    }
+        }
+        if ($DesktopSource) {
+            New-Item -ItemType Directory -Path $DesktopDest -Force | Out-Null
+            Get-ChildItem -LiteralPath $DesktopSource -Force |
+                Where-Object { $_.Name -notin 'node_modules', 'dist' } |
+                ForEach-Object {
+                    $Target = Join-Path $DesktopDest $_.Name
+                    Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
+                    Copy-Item -LiteralPath $_.FullName -Destination $Target -Recurse -Force
+                }
+            Push-Location -LiteralPath $DesktopDest
+            try {
+                Write-Host 'Preparing Electron (this may take a few minutes) ...'
+                & npm ci --include=dev
+                if ($LASTEXITCODE -ne 0) { throw 'npm ci failed. Check your connection to the npm registry and rerun this installer.' }
+            } finally {
+                Pop-Location
+                if ($Tree) { Remove-Item -LiteralPath $Tree -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+            $Electron = Join-Path $DesktopDest 'node_modules\electron\dist\electron.exe'
+            if (-not (Test-Path -LiteralPath $Electron)) { throw 'Electron is missing after npm ci. Rerun with Electron downloads enabled.' }
+            # Direct Electron target: no console window and no Node/npm needed on click.
+            $Programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+            New-Item -ItemType Directory -Path $Programs -Force | Out-Null
+            $Shell = New-Object -ComObject WScript.Shell
+            $Shortcut = $Shell.CreateShortcut((Join-Path $Programs 'Kova.lnk'))
+            $Shortcut.TargetPath = $Electron
+            $Shortcut.Arguments = "`"$DesktopDest`" `"--kova-home=$Data`""
+            $Shortcut.WorkingDirectory = $DesktopDest
+            $Shortcut.Description = 'Private local AI assistant'
+            $Shortcut.Save()
+            Write-Host 'Registered Kova in your Start menu.'
+            Write-Host "Desktop app files: $DesktopDest"
+        } else {
+            if ($Tree) { Remove-Item -LiteralPath $Tree -Recurse -Force -ErrorAction SilentlyContinue }
+            throw 'Desktop files could not be installed. Check your connection and rerun this installer to add it.'
+        }
+    } catch {
+        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova-web."
+        $RegisterDesktop = $false
+    } }
 
     # Persist only a user PATH entry; never modify system PATH or shell profiles.
     $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -147,8 +182,9 @@ function Install-Kova {
     foreach ($Name in $Values.Keys) { New-ItemProperty -Path $Key -Name $Name -Value $Values[$Name] -PropertyType String -Force | Out-Null }
     foreach ($Name in 'NoModify', 'NoRepair') { New-ItemProperty -Path $Key -Name $Name -Value 1 -PropertyType DWord -Force | Out-Null }
     Write-Host 'Registered Kova in Settings > Apps (current user only).'
-    Write-Host 'Done. Run: kova setup'
-    Write-Host 'Then: kova'
+    if ($RegisterDesktop) { Write-Host 'Done. Open Kova from the Start menu and choose Add provider.' }
+    else { Write-Host 'Done (without the desktop app). Run: kova setup' }
+    Write-Host 'Terminal chat: kova setup, then kova'
     Write-Host 'Desktop app: kova-app    Web UI in your browser: kova-web'
 }
 Install-Kova -InstallArgs $args

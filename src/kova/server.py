@@ -46,6 +46,7 @@ class ChatBody(BaseModel):
     web: bool | None = None
     permission: Literal["manual", "auto", "full"] | None = None
     cwd: str | None = None
+    ephemeral: bool | None = None
 
 
 class PersonaBody(BaseModel):
@@ -424,6 +425,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await task
         await engine.stop()
         await app.state.model_health.close()
+        store.drop_ephemeral()
 
 
 def create_app(
@@ -517,7 +519,7 @@ def create_app(
 
     @api.get("/chats")
     async def list_chats() -> list[dict]:
-        return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats()]
+        return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
 
     @api.post("/chats")
     async def create_chat(body: ChatBody | None = None) -> dict:
@@ -526,6 +528,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
         return app.state.store.create_chat(
             body.title if body else None,
+            ephemeral=bool(body and body.ephemeral),
             mode=mode or DEFAULT_MODE,
             web=body.web if body is not None and body.web is not None else True,
             permission=body.permission if body and body.permission else "manual",
@@ -540,6 +543,8 @@ def create_app(
 
     @api.post("/chats/{chat_id}/fork")
     async def fork_chat(chat_id: str) -> dict:
+        if app.state.store.is_ephemeral(chat_id):
+            raise HTTPException(409, "Incognito chats cannot be forked or exported.")
         async with chat_lock(chat_id):
             chat = app.state.store.fork_chat(chat_id)
             if chat is None:
@@ -555,6 +560,8 @@ def create_app(
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody) -> dict:
+        if body.ephemeral is not None:
+            raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         changes: dict[str, str | bool] = {}
         if body.title is not None:
             title = body.title.strip()
@@ -612,10 +619,17 @@ def create_app(
 
     @api.delete("/chats/{chat_id}")
     async def delete_chat(chat_id: str) -> dict:
+        if app.state.store.is_ephemeral(chat_id):
+            # Closing a private chat cancels its work instead of retaining its
+            # content until a disconnected provider eventually finishes.
+            for task in list(app.state.chat_turns.get(chat_id, ())):
+                task.cancel()
         async with chat_lock(chat_id):
             deleted = app.state.store.delete_chat(chat_id)
         app.state.chat_locks.pop(chat_id, None)
-        if not deleted:
+        # A second window or a restarted server may already have discarded
+        # this RAM-only chat. Let clients leave it without getting stuck.
+        if not deleted and not app.state.store.is_ephemeral(chat_id):
             raise HTTPException(status_code=404, detail="chat not found")
         app.state.agent.approvals.sessions.discard(chat_id)
         for key in list(app.state.agent.file_sessions):

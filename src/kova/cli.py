@@ -213,10 +213,11 @@ def root(
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
     mode: str | None = typer.Option(None, "--mode", help="Start the chat in this mode: chat or work."),
     no_web: bool = typer.Option(False, "--no-web", help="Turn web search off for this chat."),
+    incognito: bool = typer.Option(False, "--incognito", help="Keep this chat in memory only; no tools or memories."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
     if ctx.invoked_subcommand is None:
-        _start_chat(new, chat, resume, no_think, mode, no_web)
+        _start_chat(new, chat, resume, no_think, mode, no_web, **({"incognito": True} if incognito else {}))
 
 
 def _lifecycle_line(message: str) -> Text:
@@ -403,6 +404,7 @@ def ask(
                                      help="Attach a file's contents (repeatable)."),
     model: str | None = typer.Option(None, "--model", "-m",
                                      help="Use this model for this question only."),
+    incognito: bool = typer.Option(False, "--incognito", help="Do not save this question or remember it."),
     as_json: bool = typer.Option(False, "--json", help="Print a JSON object for scripts."),
     chat_id: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
     think: bool = typer.Option(False, "--think", help="Also print the reasoning to stderr."),
@@ -414,6 +416,11 @@ def ask(
     git diff | kova ask "review this"
     """
     _check_mode(mode)
+    if incognito and chat_id:
+        _ask_error("Use --incognito without --chat to start a private one-off question.")
+    if incognito:
+        _stderr.print("Incognito: not saved on this PC. Your provider still receives messages.", markup=False)
+    cleanup_id = None
     if think:
         reason = _reasoning_error(model)
         if reason:
@@ -429,7 +436,10 @@ def ask(
         if chat_id is None:
             first_line = ((text or prompt).strip().splitlines() or [""])[0]
             title = ASK_TITLE_PREFIX + first_line[:54]
-            chat_id = client.create_chat(title, mode=mode)["id"]
+            chat_id = client.create_chat("Incognito" if incognito else title, mode=mode,
+                                         **({"ephemeral": True} if incognito else {}))["id"]
+            if incognito:
+                cleanup_id = chat_id
         elif mode is not None:
             client.update_chat(chat_id, mode=mode)
         pieces: list[str] = []
@@ -469,11 +479,15 @@ def ask(
                 break
     except KovaError as exc:
         _ask_error(str(exc))
+    finally:
+        if cleanup_id is not None:
+            client.delete_chat(cleanup_id)
     if reasoning:
         _stderr.print()
     if as_json:
         print(json.dumps({"answer": "".join(pieces), "chat_id": chat_id,
-                          "model": used_model, "tools": tools}, ensure_ascii=False))
+                          "model": used_model, "tools": tools,
+                          **({"incognito": True} if incognito else {})}, ensure_ascii=False))
     else:
         print()
 
@@ -486,14 +500,17 @@ def chat(
     no_think: bool = typer.Option(False, "--no-think", help="Hide the model's reasoning."),
     mode: str | None = typer.Option(None, "--mode", help="Start the chat in this mode: chat or work."),
     no_web: bool = typer.Option(False, "--no-web", help="Turn web search off for this chat."),
+    incognito: bool = typer.Option(False, "--incognito", help="Keep this chat in memory only; no tools or memories."),
 ):
     """Old name for plain ``kova``; kept so existing habits and scripts still work."""
-    _start_chat(new, chat, resume, no_think, mode, no_web)
+    _start_chat(new, chat, resume, no_think, mode, no_web, **({"incognito": True} if incognito else {}))
 
 
 def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
-                mode: str | None, no_web: bool) -> None:
+                mode: str | None, no_web: bool, incognito: bool = False) -> None:
     _check_mode(mode)
+    if incognito and (chat or resume):
+        _fail("Use --incognito for a new chat, without --chat or --resume.")
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
         console.print()
@@ -509,7 +526,8 @@ def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
     if resume:
         chat = _resolve_chat_id(client, resume)
     _run_chat(client, chat_id=chat, new=new, no_think=no_think, mode=mode,
-              web=False if no_web else None, console=console)
+              web=False if no_web else None, console=console,
+              **({"incognito": True} if incognito else {}))
 
 
 @app.command()
@@ -1931,6 +1949,8 @@ def chats_export(
     full = chat if "messages" in chat else client.get_chat(chat["id"])
     if full is None:
         _fail(f'No chat "{ref}".')
+    if full.get("ephemeral"):
+        _fail("Incognito chats cannot be exported.")
     if as_json:
         sys.stdout.write(json.dumps(full, indent=2, ensure_ascii=False) + "\n")
     else:
