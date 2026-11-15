@@ -4,6 +4,20 @@ Your own private AI that lives on your computer.
 
 Want to work on it? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md) to run it from source and make it yours.
 
+## Incognito chats
+
+Use `kova --incognito`, `kova ask --incognito "your question"`, or `/incognito`
+in terminal chat. In the web/desktop app choose **New incognito chat** or press
+**Ctrl+Shift+N** (Cmd+Shift+N on macOS).
+
+Incognito chats live only in server memory: no saved transcript, search results,
+exports, backups, memories or checkpoints. Tools and attachments are disabled.
+Leaving the chat discards it, and stopping the server discards every incognito
+chat. The terminal does not save input history after entering incognito.
+**Your model provider still receives the messages you send.** If a client is
+killed before cleanup, its chat stays only in RAM until deleted or server stop.
+See [incognito storage and boundaries](docs/ARCHITECTURE.md#incognito-conversations).
+
 ## See Kova
 
 [Run the two-minute judge demo](docs/DEMO.md) · [Full screenshot gallery](docs/screenshots/README.md)

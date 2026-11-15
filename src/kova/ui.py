@@ -544,9 +544,11 @@ def _full_screen(console: Console) -> bool:
 
 def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = False,
               *, new: bool = False, mode: str | None = None, web: bool | None = None,
-              console: Console) -> None:
+              console: Console, incognito: bool = False) -> None:
+    if incognito:
+        new = True
     if chat_id is None:
-        chats = client.list_chats() if not new else []
+        chats = [c for c in client.list_chats() if not c.get("ephemeral")] if not new else []
         if chats:
             chat_id = chats[0]["id"]
             if mode is not None or web is not None:  # explicit flags win over stored settings
@@ -558,7 +560,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
 
         cfg = load_config()
         app = ChatApp(client, chat_id, no_think=no_think,
-                      history_path=cfg.home / "chat_history.jsonl",
+                      history_path=cfg.home / "chat_history.jsonl", incognito=incognito,
                       memory_path=str(cfg.memory_path))
         if mode is not None:
             app.mode = mode
@@ -567,6 +569,9 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         app.run()
         return
     current = (client.get_chat(chat_id) or {}) if chat_id else {}
+    incognito = incognito or bool(current.get("ephemeral"))
+    if incognito:
+        console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=theme.WARNING)
     toolbar_state = {"mode": mode or current.get("mode") or "work",
                      "web": current.get("web", True) if web is None else web,
                      "model": str(client.health()["model"])}
@@ -579,13 +584,18 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         if chat_id is None:
             chat_id = client.create_chat(
                 mode=toolbar_state["mode"], web=toolbar_state["web"],
-                permission=pending["permission"], cwd=pending["cwd"])["id"]
+                permission=pending["permission"], cwd=pending["cwd"],
+                **({"ephemeral": True} if incognito else {}))["id"]
         return chat_id
+
+    def close_incognito() -> None:
+        if incognito and chat_id is not None:
+            client.delete_chat(chat_id)
 
     def _toolbar() -> list[tuple[str, str]]:
         state = "on" if toolbar_state["web"] else "off"
         return [("class:bottom-toolbar",
-                 f" {toolbar_state['mode']} · {toolbar_state['model']} "
+                 f" {'Incognito · ' if incognito else ''}{toolbar_state['mode']} · {toolbar_state['model']} "
                  f"· web {state} · /help for commands ")]
 
     interactive = sys.stdin.isatty() and console.is_terminal
@@ -597,160 +607,172 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                                 style=None if "NO_COLOR" in os.environ else _CHAT_STYLE,
                                 bottom_toolbar=None if "NO_COLOR" in os.environ else _toolbar)
         threading.Thread(target=_watch_reminders, args=(client, console), daemon=True).start()
-    show_thinking = False
-    while True:
-        try:
-            if session is None:
-                line = console.input(f"[bold {theme.USER}]› [/]")
-            else:
-                with patch_stdout(raw=True):
-                    line = session.prompt([("class:prompt", "› ")])
-        except EOFError:
-            break
-        except KeyboardInterrupt:
-            console.print("Input cleared · Ctrl+D to leave.", style=theme.MUTED)
-            continue
-        stripped = line.strip()
-        if not stripped:
-            continue
-        command, *args = stripped.split(maxsplit=1)
-        if command in ("/exit", "/quit") and not args:
-            break
-        if command == "/new" and not args:
-            # Defer creation to the first message so /new leaves no empty row (#100).
-            chat_id = None
-            console.print("Started a new chat. It is saved when you send the first message.",
-                          style=theme.MUTED)
-        elif command == "/help" and not args:
-            _help(console)
-        elif command == "/clear" and not args:
-            if console.is_terminal:
-                console.clear()
-            _header(client, console, chat_id, mode=toolbar_state["mode"],
-                    web=toolbar_state["web"])
-        elif command == "/think" and not args:
-            show_thinking = not show_thinking
-            no_think = False
-            console.print("Reasoning expanded." if show_thinking else "Reasoning collapsed.",
-                          style=theme.MUTED)
-        elif command == "/mode":
-            if not args:
-                console.print(f"Current mode: {toolbar_state['mode']}. "
-                              f"Switch with /mode {' or '.join(MODES)}.", style=theme.MUTED)
-            elif args[0] in MODES:
-                if chat_id is not None:
-                    client.update_chat(chat_id, mode=args[0])
-                toolbar_state["mode"] = args[0]
-                console.print(f"Mode: {args[0]}. Takes effect on your next message.",
-                              style=theme.MUTED)
-            else:
-                console.print(f'Unknown mode "{args[0]}". Use /mode {" or ".join(MODES)}.',
-                              style=theme.ERROR)
-        elif command == "/web":
-            if not args:
-                state = "on" if toolbar_state["web"] else "off"
-                console.print(f"Web search is {state}. Toggle with /web on or /web off.",
-                              style=theme.MUTED)
-            elif args[0] in ("on", "off"):
-                if chat_id is not None:
-                    client.update_chat(chat_id, web=args[0] == "on")
-                toolbar_state["web"] = args[0] == "on"
-                console.print(f"Web search {args[0]}. Takes effect on your next message.",
-                              style=theme.MUTED)
-            else:
-                console.print("Use /web on or /web off.", style=theme.ERROR)
-        elif command == "/model":
-            if not args:
-                _models(client, console)
-            else:
-                try:
-                    client.model_use(args[0])
-                    toolbar_state["model"] = args[0]
-                    console.print(Text(f"Now using {args[0]}.", style=theme.MUTED))
-                except KovaError as exc:
-                    if exc.status != 404:
-                        raise
-                    console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
-                                       style=theme.ERROR))
-        elif command == "/permissions":
-            if not args:
-                current_level = pending["permission"]
-                state = f"Permissions: {current_level}. " if current_level else ""
-                console.print(f"{state}Switch with /permissions {' | '.join(PERMISSIONS)}.",
-                              style=theme.MUTED)
-            elif args[0] in PERMISSIONS:
-                if chat_id is None:
-                    pending["permission"] = args[0]
-                    changed = True
+    try:
+        show_thinking = False
+        while True:
+            try:
+                if session is None:
+                    line = console.input(f"[bold {theme.USER}]› [/]")
                 else:
-                    updated = client.update_chat(chat_id, permission=args[0])
-                    changed = "permission" in updated
-                    if changed:
-                        pending["permission"] = updated["permission"]
-                if changed:
-                    console.print(f"Permissions: {args[0]} · {PERMISSIONS[args[0]]}.",
+                    with patch_stdout(raw=True):
+                        line = session.prompt([("class:prompt", "› ")])
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                console.print("Input cleared · Ctrl+D to leave.", style=theme.MUTED)
+                continue
+            stripped = line.strip()
+            if not stripped:
+                continue
+            command, *args = stripped.split(maxsplit=1)
+            if command in ("/exit", "/quit") and not args:
+                break
+            if command == "/incognito" and not args:
+                close_incognito()
+                chat_id = None
+                incognito = True
+                console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=theme.WARNING)
+            elif command == "/new" and not args:
+                close_incognito()
+                incognito = False
+                # Defer creation to the first message so /new leaves no empty row (#100).
+                chat_id = None
+                console.print("Started a new chat. It is saved when you send the first message.",
+                              style=theme.MUTED)
+            elif command == "/help" and not args:
+                _help(console)
+            elif command == "/clear" and not args:
+                if console.is_terminal:
+                    console.clear()
+                _header(client, console, chat_id, mode=toolbar_state["mode"],
+                        web=toolbar_state["web"])
+            elif command == "/think" and not args:
+                show_thinking = not show_thinking
+                no_think = False
+                console.print("Reasoning expanded." if show_thinking else "Reasoning collapsed.",
+                              style=theme.MUTED)
+            elif command == "/mode":
+                if not args:
+                    console.print(f"Current mode: {toolbar_state['mode']}. "
+                                  f"Switch with /mode {' or '.join(MODES)}.", style=theme.MUTED)
+                elif args[0] in MODES:
+                    if chat_id is not None:
+                        client.update_chat(chat_id, mode=args[0])
+                    toolbar_state["mode"] = args[0]
+                    console.print(f"Mode: {args[0]}. Takes effect on your next message.",
                                   style=theme.MUTED)
                 else:
-                    console.print("This Kova server doesn't support permission modes yet.",
+                    console.print(f'Unknown mode "{args[0]}". Use /mode {" or ".join(MODES)}.',
                                   style=theme.ERROR)
-            else:
-                console.print(f"Use /permissions {' | '.join(PERMISSIONS)}.", style=theme.ERROR)
-        elif command == "/cd":
-            target = os.path.abspath(os.path.expanduser(args[0] if args else "~"))
-            if os.path.isdir(target):
-                if chat_id is not None:
-                    client.update_chat(chat_id, cwd=target)
-                pending["cwd"] = target
-                console.print(f"Folder: {target}", style=theme.MUTED)
-            else:
-                console.print(f"Not a folder: {target}", style=theme.ERROR)
-        elif command == "/steer":
-            console.print("Steering a running reply needs the full-screen chat or the web UI.",
-                          style=theme.MUTED)
-        elif command in ("/changes", "/diff", "/restore"):
-            if chat_id is None:
-                console.print("Nothing changed yet.", style=theme.MUTED)
-                continue
-            try:
-                if command == "/changes":
-                    _changes(client, console, chat_id)
-                elif command == "/diff":
-                    _diff(client, console, chat_id, args[0] if args else "")
+            elif command == "/web":
+                if not args:
+                    state = "on" if toolbar_state["web"] else "off"
+                    console.print(f"Web search is {state}. Toggle with /web on or /web off.",
+                                  style=theme.MUTED)
+                elif args[0] in ("on", "off"):
+                    if chat_id is not None:
+                        client.update_chat(chat_id, web=args[0] == "on")
+                    toolbar_state["web"] = args[0] == "on"
+                    console.print(f"Web search {args[0]}. Takes effect on your next message.",
+                                  style=theme.MUTED)
                 else:
-                    _restore(client, console, chat_id, args[0] if args else "")
-            except KovaError as exc:
-                console.print(exc.message, style=theme.ERROR)
-        elif command == "/resume":
-            chats = client.list_chats()[:15]
-            if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):
-                chat_id = chats[int(args[0]) - 1]["id"]
-                resumed = client.get_chat(chat_id) or {}
-                toolbar_state["mode"] = resumed.get("mode") or "work"
-                toolbar_state["web"] = resumed.get("web", True)
-                pending["cwd"] = resumed.get("cwd") or os.getcwd()
-                pending["permission"] = resumed.get("permission")
-                console.print(f"Resumed {chats[int(args[0]) - 1].get('title') or 'Untitled'}.",
+                    console.print("Use /web on or /web off.", style=theme.ERROR)
+            elif command == "/model":
+                if not args:
+                    _models(client, console)
+                else:
+                    try:
+                        client.model_use(args[0])
+                        toolbar_state["model"] = args[0]
+                        console.print(Text(f"Now using {args[0]}.", style=theme.MUTED))
+                    except KovaError as exc:
+                        if exc.status != 404:
+                            raise
+                        console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
+                                           style=theme.ERROR))
+            elif command == "/permissions":
+                if not args:
+                    current_level = pending["permission"]
+                    state = f"Permissions: {current_level}. " if current_level else ""
+                    console.print(f"{state}Switch with /permissions {' | '.join(PERMISSIONS)}.",
+                                  style=theme.MUTED)
+                elif args[0] in PERMISSIONS:
+                    if chat_id is None:
+                        pending["permission"] = args[0]
+                        changed = True
+                    else:
+                        updated = client.update_chat(chat_id, permission=args[0])
+                        changed = "permission" in updated
+                        if changed:
+                            pending["permission"] = updated["permission"]
+                    if changed:
+                        console.print(f"Permissions: {args[0]} · {PERMISSIONS[args[0]]}.",
+                                      style=theme.MUTED)
+                    else:
+                        console.print("This Kova server doesn't support permission modes yet.",
+                                      style=theme.ERROR)
+                else:
+                    console.print(f"Use /permissions {' | '.join(PERMISSIONS)}.", style=theme.ERROR)
+            elif command == "/cd":
+                target = os.path.abspath(os.path.expanduser(args[0] if args else "~"))
+                if os.path.isdir(target):
+                    if chat_id is not None:
+                        client.update_chat(chat_id, cwd=target)
+                    pending["cwd"] = target
+                    console.print(f"Folder: {target}", style=theme.MUTED)
+                else:
+                    console.print(f"Not a folder: {target}", style=theme.ERROR)
+            elif command == "/steer":
+                console.print("Steering a running reply needs the full-screen chat or the web UI.",
                               style=theme.MUTED)
-            else:
-                for index, chat in enumerate(chats, 1):
-                    mark = "›" if chat["id"] == chat_id else " "
-                    console.print(Text(f"{mark}{index:>3}  {chat.get('title') or 'Untitled'}"))
-                console.print("/resume <n> opens one.", style=theme.MUTED)
-        elif command in _plugin_commands():
-            from kova import plugins
+            elif command in ("/changes", "/diff", "/restore"):
+                if chat_id is None:
+                    console.print("Nothing changed yet.", style=theme.MUTED)
+                    continue
+                try:
+                    if command == "/changes":
+                        _changes(client, console, chat_id)
+                    elif command == "/diff":
+                        _diff(client, console, chat_id, args[0] if args else "")
+                    else:
+                        _restore(client, console, chat_id, args[0] if args else "")
+                except KovaError as exc:
+                    console.print(exc.message, style=theme.ERROR)
+            elif command == "/resume":
+                chats = [c for c in client.list_chats() if not c.get("ephemeral")][:15]
+                if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):
+                    close_incognito()
+                    incognito = False
+                    chat_id = chats[int(args[0]) - 1]["id"]
+                    resumed = client.get_chat(chat_id) or {}
+                    toolbar_state["mode"] = resumed.get("mode") or "work"
+                    toolbar_state["web"] = resumed.get("web", True)
+                    pending["cwd"] = resumed.get("cwd") or os.getcwd()
+                    pending["permission"] = resumed.get("permission")
+                    console.print(f"Resumed {chats[int(args[0]) - 1].get('title') or 'Untitled'}.",
+                                  style=theme.MUTED)
+                else:
+                    for index, chat in enumerate(chats, 1):
+                        mark = "›" if chat["id"] == chat_id else " "
+                        console.print(Text(f"{mark}{index:>3}  {chat.get('title') or 'Untitled'}"))
+                    console.print("/resume <n> opens one.", style=theme.MUTED)
+            elif command in _plugin_commands():
+                from kova import plugins
 
-            prompt = plugins.plugin_commands().get(command[1:]).prompt
-            _render_turn(client, ensure_chat(), prompt, no_think, console,
-                         show_thinking=show_thinking)
-        elif stripped.startswith("/"):
-            console.print("Unknown command. Type /help to see commands.", style=theme.ERROR)
-        else:
-            if session is None:
-                # Piped input leaves no visible line behind, so echo it as the
-                # user's turn; an interactive prompt already stays on screen.
-                console.print(Text(f"› {stripped}", style=f"bold {theme.USER}"))
+                prompt = plugins.plugin_commands().get(command[1:]).prompt
+                _render_turn(client, ensure_chat(), prompt, no_think, console,
+                             show_thinking=show_thinking)
+            elif stripped.startswith("/"):
+                console.print("Unknown command. Type /help to see commands.", style=theme.ERROR)
             else:
-                console.print()
-            _render_turn(client, ensure_chat(), stripped, no_think, console,
-                         show_thinking=show_thinking)
+                if session is None:
+                    # Piped input leaves no visible line behind, so echo it as the
+                    # user's turn; an interactive prompt already stays on screen.
+                    console.print(Text(f"› {stripped}", style=f"bold {theme.USER}"))
+                else:
+                    console.print()
+                _render_turn(client, ensure_chat(), stripped, no_think, console,
+                             show_thinking=show_thinking)
+    finally:
+        close_incognito()
     console.print("Until next time.", style=theme.MUTED)

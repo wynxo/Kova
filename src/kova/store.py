@@ -14,6 +14,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
@@ -98,6 +99,20 @@ def _like_snippet(content: str, terms: list[str], before: int = 60, after: int =
     return ("…" if start else "") + body + ("…" if end < len(content) else "")
 
 
+def _chat_scoped(method):
+    """Route chat data to RAM, including late writes after an incognito closes.
+
+    The reserved id namespace prevents an orphaned queue/turn from ever falling
+    back to the persistent connection. No connection swapping or global state.
+    """
+    @wraps(method)
+    def routed(self, chat_id, *args, **kwargs):
+        if self.is_ephemeral(chat_id) and not self._memory_only:
+            return method(self._temporary_store(), chat_id, *args, **kwargs)
+        return method(self, chat_id, *args, **kwargs)
+    return routed
+
+
 @dataclass
 class Store:
     path: Path
@@ -105,12 +120,36 @@ class Store:
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_only = str(self.path) == ":memory:"
+        self._temporary = None
+        if not self._memory_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.execute("PRAGMA temp_store = MEMORY")
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._create_tables()
-        self._setup_fts()
+        self.fts_enabled = False
+        if not self._memory_only:
+            self._setup_fts()
+
+    @staticmethod
+    def is_ephemeral(chat_id: str) -> bool:
+        """The reserved incognito namespace is never allowed onto disk."""
+        return chat_id.startswith("incognito-")
+
+    def _temporary_store(self) -> Store:
+        with self._lock:
+            if self._temporary is None:
+                self._temporary = Store(Path(":memory:"), self.default_cwd)
+            return self._temporary
+
+    def drop_ephemeral(self) -> None:
+        """Discard all incognito state at shutdown, without touching the disk."""
+        with self._lock:
+            if self._temporary is not None:
+                self._temporary._conn.close()
+                self._temporary = None
 
     # -- schema -----------------------------------------------------------
     def _create_tables(self) -> None:
@@ -305,24 +344,29 @@ class Store:
 
     # -- chats ------------------------------------------------------------
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
-                    web: bool = True, permission: str = "manual", cwd: str | None = None) -> dict:
+                    web: bool = True, permission: str = "manual", cwd: str | None = None, *,
+                    ephemeral: bool = False) -> dict:
+        if ephemeral and not self._memory_only:
+            return self._temporary_store().create_chat(title or "Incognito", "chat", False, "manual", cwd)
         if mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
         if permission not in PERMISSIONS:
             raise ValueError(f"unknown permission '{permission}'")
         cwd = cwd or self.default_cwd or str(Path.home() / "Kova Files")
         with self._lock:
-            cid = uuid4().hex[:12]
+            cid = ("incognito-" if self._memory_only else "") + uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
                 "INSERT INTO chats (id, title, created, mode, web, permission, cwd) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (cid, title, created, mode, web, permission, cwd),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": []}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": [], **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str) -> dict | None:
         """Atomically clone a conversation, including its compacted context."""
+        if self.is_ephemeral(chat_id):
+            raise ValueError("Incognito chats cannot be forked or exported.")
         with self._lock:
             source = self._conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
             if source is None:
@@ -384,7 +428,7 @@ class Store:
                 raise
         return self.get_chat(cid)
 
-    def list_chats(self) -> list[dict]:
+    def list_chats(self, *, include_ephemeral: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, COUNT(m.id) AS message_count, "
@@ -393,9 +437,10 @@ class Store:
                 "GROUP BY c.id "
                 "ORDER BY last_message DESC, c.created DESC, c.id DESC"
             ).fetchall()
-        return [
+        chats = [
             {
                 "id": r["id"],
+                **({"ephemeral": True} if self._memory_only else {}),
                 "title": r["title"],
                 "created": r["created"],
                 "mode": r["mode"],
@@ -407,7 +452,12 @@ class Store:
             }
             for r in rows
         ]
+        if include_ephemeral and self._temporary is not None:
+            chats += self._temporary.list_chats()
+            chats.sort(key=lambda c: (c["last_message"], c["created"], c["id"]), reverse=True)
+        return chats
 
+    @_chat_scoped
     def get_chat(self, chat_id: str, include_created: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
@@ -424,9 +474,11 @@ class Store:
             "permission": row["permission"],
             "cwd": row["cwd"],
             "plan": json.loads(row["plan"]),
+            **({"ephemeral": True} if self._memory_only else {}),
             "messages": self.get_messages(chat_id, include_created=include_created),
         }
 
+    @_chat_scoped
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
                     cwd: str | None = None, plan: list[dict] | None = None) -> None:
@@ -447,10 +499,13 @@ class Store:
             )
             self._conn.commit()
 
+    @_chat_scoped
     def set_title(self, chat_id: str, title: str) -> None:
         self.update_chat(chat_id, title=title)
 
     def add_attachment(self, row: dict) -> None:
+        if self.is_ephemeral(row["chat_id"]):
+            raise ValueError("Incognito chats cannot keep attachments.")
         row = {"created": None, "used": 0, **row}
         with self._lock:
             self._conn.execute(
@@ -463,10 +518,12 @@ class Store:
         with self._lock:
             return [dict(row) for row in self._conn.execute("SELECT * FROM attachments")]
 
+    @_chat_scoped
     def attachments(self, chat_id: str) -> list[dict]:
         with self._lock:
             return [dict(row) for row in self._conn.execute("SELECT * FROM attachments WHERE chat_id = ?", (chat_id,))]
 
+    @_chat_scoped
     def mark_attachments_used(self, chat_id: str, ids: list[str]) -> None:
         """Retain these uploads: a persisted message has taken responsibility for them."""
         unique = list(dict.fromkeys(ids))
@@ -478,6 +535,7 @@ class Store:
                 [(chat_id, ident) for ident in unique])
             self._conn.commit()
 
+    @_chat_scoped
     def add_share_draft(self, chat_id: str) -> None:
         """Remember a share's draft chat until the share is redeemed or expires.
 
@@ -490,6 +548,7 @@ class Store:
                 "INSERT OR REPLACE INTO share_drafts (chat_id) VALUES (?)", (chat_id,))
             self._conn.commit()
 
+    @_chat_scoped
     def drop_share_draft(self, chat_id: str) -> None:
         """Forget a draft journal entry once the share is handed off."""
         with self._lock:
@@ -512,6 +571,7 @@ class Store:
             return [chat_id for chat_id in ids if not self._conn.execute(
                 "SELECT 1 FROM messages WHERE chat_id = ? LIMIT 1", (chat_id,)).fetchone()]
 
+    @_chat_scoped
     def referenced_attachment_ids(self, chat_id: str) -> set[str]:
         """Every attachment id a saved chat still uses.
 
@@ -547,6 +607,7 @@ class Store:
         found.update(link["attachment_id"] for link in links)
         return found
 
+    @_chat_scoped
     def delete_attachment(self, chat_id: str, ident: str) -> bool:
         with self._lock:
             row = self._conn.execute("SELECT path FROM attachments WHERE chat_id = ? AND id = ?", (chat_id, ident)).fetchone()
@@ -562,10 +623,11 @@ class Store:
             self._conn.commit()
             return True
 
+    @_chat_scoped
     def delete_chat(self, chat_id: str) -> bool:
         for row in self.attachments(chat_id):
             self.delete_attachment(chat_id, row["id"])
-        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
+        if not self._memory_only and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):
             try:
                 (self.path.parent / 'attachments' / chat_id).rmdir()
             except OSError:
@@ -585,6 +647,7 @@ class Store:
 
     def clear_chats(self) -> None:
         """Delete every chat and message (used by a replacing import)."""
+        self.drop_ephemeral()
         for chat in self.list_chats():
             for row in self.attachments(chat["id"]):
                 self.delete_attachment(chat["id"], row["id"])
@@ -605,6 +668,8 @@ class Store:
         never overwrites local history.
         """
         chat_id = chat.get("id")
+        if chat.get("ephemeral") or (isinstance(chat_id, str) and self.is_ephemeral(chat_id)):
+            raise ValueError("Incognito chats cannot be imported.")
         if not isinstance(chat_id, str) or not chat_id:
             raise ValueError("chat has no id")
         with self._lock:
@@ -732,6 +797,7 @@ class Store:
         return results[: max(1, limit)]
 
     # -- messages ---------------------------------------------------------
+    @_chat_scoped
     def add_message(
         self,
         chat_id: str,
@@ -777,6 +843,7 @@ class Store:
                 (message_id, ident, name, position),
             )
 
+    @_chat_scoped
     def get_messages(self, chat_id: str, include_created: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -809,6 +876,7 @@ class Store:
             messages.append(message)
         return messages
 
+    @_chat_scoped
     def context_snapshot(self, chat_id: str) -> tuple[str | None, int, list[tuple[int, dict]]]:
         """Return the stored summary and uncompressed messages with stable IDs."""
         with self._lock:
@@ -825,6 +893,7 @@ class Store:
             messages.append((row[0], message))
         return summary, cutoff, messages
 
+    @_chat_scoped
     def get_context_entries(self, chat_id: str) -> list[tuple[int | None, dict]]:
         """Like :meth:`get_context`, but keep each stored message's row id.
 
@@ -836,9 +905,11 @@ class Store:
         prefix = [(None, {"role": "user", "content": "Conversation summary (earlier context):\n" + summary})] if summary else []
         return prefix + rows
 
+    @_chat_scoped
     def get_context(self, chat_id: str) -> list[dict]:
         return [message for _, message in self.get_context_entries(chat_id)]
 
+    @_chat_scoped
     def save_compaction(self, chat_id: str, expected_cutoff: int, cutoff: int, summary: str) -> bool:
         with self._lock:
             current = self._conn.execute("SELECT cutoff FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
@@ -851,6 +922,7 @@ class Store:
             return True
 
     # -- queued messages --------------------------------------------------
+    @_chat_scoped
     def queue_message(self, chat_id: str, text: str, model: str | None = None) -> int:
         """Persist a message to run after the chat's current turn ends."""
         with self._lock:
@@ -871,6 +943,8 @@ class Store:
         note did not exist) and ``after`` what replaced it; ``detail`` carries
         whatever the caller needs to describe the change to a person.
         """
+        if chat_id is not None and self.is_ephemeral(chat_id):
+            raise ValueError("Incognito chats cannot record memories.")
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, created) "
@@ -882,6 +956,7 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    @_chat_scoped
     def queued_messages(self, chat_id: str) -> list[dict]:
         """The chat's queued messages, oldest first."""
         with self._lock:
@@ -890,6 +965,7 @@ class Store:
                 "WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
         return [dict(row) for row in rows]
 
+    @_chat_scoped
     def pop_queued_message(self, chat_id: str) -> dict | None:
         """Remove and return the oldest queued message for a chat."""
         with self._lock:
@@ -902,6 +978,7 @@ class Store:
             self._conn.commit()
             return dict(row)
 
+    @_chat_scoped
     def delete_queued_message(self, chat_id: str, message_id: int) -> bool:
         with self._lock:
             cur = self._conn.execute(
@@ -910,6 +987,7 @@ class Store:
             self._conn.commit()
             return cur.rowcount > 0
 
+    @_chat_scoped
     def clear_queued(self, chat_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM queued_messages WHERE chat_id = ?", (chat_id,))
@@ -918,6 +996,8 @@ class Store:
     # -- checkpoints ------------------------------------------------------
     def add_checkpoint(self, chat_id: str, root: str, files: dict, label: str | None = None) -> int:
         """Record one turn's changed files: path -> before/after digests and stats."""
+        if self.is_ephemeral(chat_id):
+            raise ValueError("Incognito chats cannot create checkpoints.")
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO checkpoints (chat_id, created, label, root, files) VALUES (?, ?, ?, ?, ?)",
@@ -983,6 +1063,7 @@ class Store:
         return {"id": row["id"], "chat_id": row["chat_id"], "created": row["created"],
                 "label": row["label"], "root": row["root"], "files": json.loads(row["files"])}
 
+    @_chat_scoped
     def list_checkpoints(self, chat_id: str) -> list[dict]:
         """One chat's checkpoints, newest first."""
         with self._lock:
@@ -991,6 +1072,7 @@ class Store:
                 "WHERE chat_id = ? ORDER BY id DESC", (chat_id,)).fetchall()
         return [self._checkpoint(row) for row in rows]
 
+    @_chat_scoped
     def get_checkpoint(self, chat_id: str, checkpoint_id: int) -> dict | None:
         with self._lock:
             row = self._conn.execute(
@@ -998,6 +1080,7 @@ class Store:
                 "WHERE chat_id = ? AND id = ?", (chat_id, checkpoint_id)).fetchone()
         return self._checkpoint(row) if row is not None else None
 
+    @_chat_scoped
     def checkpoints_from(self, chat_id: str, checkpoint_id: int) -> list[dict]:
         """Checkpoints at or after one id, oldest first, for a restore plan."""
         with self._lock:
@@ -1006,6 +1089,7 @@ class Store:
                 "WHERE chat_id = ? AND id >= ? ORDER BY id", (chat_id, checkpoint_id)).fetchall()
         return [self._checkpoint(row) for row in rows]
 
+    @_chat_scoped
     def delete_checkpoints(self, chat_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM checkpoints WHERE chat_id = ?", (chat_id,))
@@ -1029,6 +1113,7 @@ class Store:
         entries = self.memory_diary(limit=1, kind=kind)
         return entries[-1] if entries else None
 
+    @_chat_scoped
     def memory_review_turns(self, chat_id: str) -> int:
         """How many user turns this chat had when it was last reviewed (0 if never)."""
         with self._lock:
@@ -1037,6 +1122,7 @@ class Store:
             ).fetchone()
         return int(row["turns"]) if row is not None else 0
 
+    @_chat_scoped
     def set_memory_review_turns(self, chat_id: str, turns: int) -> None:
         with self._lock:
             self._conn.execute(

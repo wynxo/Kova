@@ -55,7 +55,7 @@ const sandbox = {
     if (form) uploads.push({path, file: form.get('file')});
     if (path === '/chats' && options.method === 'POST') {
       return {ok: true, json: async () => ({id: 'new-chat', title: null, mode: body?.mode || 'work',
-        permission: 'manual', cwd: '/project', web: true, messages: [], plan: []})};
+        permission: 'manual', cwd: '/project', web: true, messages: [], plan: [], ephemeral: !!body?.ephemeral})};
     }
     if (path === '/chats/new-chat/attachments' && form) {
       const file = form.get('file');
@@ -93,7 +93,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -664,3 +664,30 @@ await sandbox.test.installLocalModel();
 const lastLocalInstall = localRequests.filter(r => r.path === '/local-models/install').at(-1);
 assert.equal(JSON.parse(lastLocalInstall.options.body).backend, 'managed');
 console.log('Managed engine desktop selection and explicit install passed');
+
+// Incognito uses only RAM on the server; the client never stages uploads and
+// discards it on navigation, reload, and a normal tab close.
+sandbox.fetch = oldFetch;
+state.busy = false; state.connected = true; state.chat = null; $('search').value = '';
+await sandbox.test.newIncognito();
+assert.equal(requests.filter(r => r.path === '/chats' && r.body).at(-1).body.ephemeral, true);
+assert.equal(state.chat.ephemeral, true);
+assert.equal($('incognito-note').hidden, false);
+assert.equal($('chat-title').textContent, 'Incognito');
+assert.equal($('attach').disabled, true);
+assert.equal($('mode').disabled, true);
+const beforeUpload = uploads.length;
+await sandbox.test.attachFiles([new File(['private'], 'private.txt', {type: 'text/plain'})]);
+assert.equal(uploads.length, beforeUpload, 'incognito must not upload or stage a file');
+await assert.rejects(sandbox.test.dispatchCommand({name: 'fork', args: ''}), /Incognito/);
+$('prompt').value = 'incognito-draft-canary';
+const closedId = state.chat.id;
+const beforeClose = requests.length;
+sandbox.window.listeners.pagehide();
+assert.equal(requests[beforeClose].path, `/chats/${closedId}`);
+await sandbox.test.newChat();
+assert.equal(state.chat, null);
+assert.equal($('prompt').value, '', 'an unsent incognito draft must not enter a saved chat');
+assert.equal($('incognito-note').hidden, true);
+assert.ok(requests.slice(beforeClose).filter(r => r.path === `/chats/${closedId}`).length >= 2);
+console.log('Incognito entry, marking, upload prevention, fork refusal and cleanup passed');

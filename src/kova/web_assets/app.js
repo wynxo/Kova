@@ -116,7 +116,8 @@
   function controls() {
     const busy = state.busy;
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
-    for (const id of ['new-chat', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
+    for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
+    for (const id of ['mode', 'web', 'permission', 'cwd']) $(id).disabled ||= !!state.chat?.ephemeral;
     $('permission').disabled ||= !offers('approvals');
     $('cwd').disabled ||= !offers('tools');
     $('composer').dataset.mode = $('mode').value;
@@ -128,7 +129,7 @@
     $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
     $('options-label').textContent = $('mode').value === 'chat' ? 'Chat' : 'Work';
     $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
-    $('attach').disabled = state.busy || readingAttachments || !state.connected;
+    $('attach').disabled = !!state.chat?.ephemeral || state.busy || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
     $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need Vision turned on in Model settings';
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
@@ -271,7 +272,7 @@
     for (const chat of chats) {
       const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
       const button = el('button', 'history-open');
-      const title = chat.title || 'New conversation';
+      const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
       button.append(el('span', 'history-title', title)); button.title = title;
       const date = new Date(chat.last_message || chat.created);
       button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
@@ -279,6 +280,7 @@
       const actions = el('details', 'history-actions');
       actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
       for (const [symbol, name, fn] of [['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
+        if (chat.ephemeral && symbol === 'copy') continue;
         const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
         action.onclick = () => safe(fn); actions.append(action);
       }
@@ -310,8 +312,9 @@
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
   }
   function pageTitle() {
-    $('chat-title').textContent = state.chat?.title || 'New conversation';
-    document.title = state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
+    $('incognito-note').hidden = !state.chat?.ephemeral;
+    $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New conversation';
+    document.title = state.chat?.ephemeral ? `Incognito · ${state.persona.name}` : state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
   }
   function renderQueue() {
     const strip = $('queue-strip');
@@ -446,6 +449,8 @@
     const version = ++state.navigationVersion;
     const chat = await json(`/chats/${id}`);
     if (version === state.navigationVersion && !state.busy) {
+      if (state.chat?.id !== id) await discardIncognito();
+      if (version !== state.navigationVersion || state.busy) return;
       setChat(chat); background = null;
       if (chat.state && chat.state !== 'done') {
         background = id;
@@ -455,7 +460,26 @@
       }
     }
   }
-  async function newChat() { if (!state.busy) { ++state.navigationVersion; setChat(null); $('prompt').focus(); } }
+  async function discardIncognito() {
+    if (state.chat?.ephemeral) {
+      await json(`/chats/${state.chat.id}`, {method: 'DELETE'});
+      // Never carry an unsent private draft into a saved conversation.
+      $('prompt').value = ''; resize();
+    }
+  }
+  async function newChat() { if (!state.busy) { ++state.navigationVersion; const wasIncognito = !!state.chat?.ephemeral; await discardIncognito(); setChat(null); $('prompt').value = ''; $('prompt').focus(); if (wasIncognito) await refreshChats(); } }
+  async function newIncognito() {
+    if (state.busy || !state.connected) return;
+    ++state.navigationVersion;
+    await discardIncognito();
+    setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false})));
+    $('prompt').value = ''; $('prompt').focus(); await refreshChats();
+  }
+  // No transcript or draft goes into browser storage. A normal tab close or
+  // reload discards the server's RAM-only chat as well.
+  window.addEventListener('pagehide', () => {
+    if (state.chat?.ephemeral) fetch(`/chats/${state.chat.id}`, {method: 'DELETE', keepalive: true}).catch(() => {});
+  });
   async function editChat(chat, remove) {
     if (state.busy) return;
     const dialog = $('chat-dialog');
@@ -834,7 +858,7 @@
   }
   // One catalog drives discovery, help and dispatch. Unknown paths remain messages.
   const commands = {
-    new: '/new', fork: '/fork [n]', compact: '/compact', mode: '/mode chat|work',
+    incognito: '/incognito', new: '/new', fork: '/fork [n]', compact: '/compact', mode: '/mode chat|work',
     web: '/web on|off', model: '/model <name>', memory: '/memory [list]', help: '/help',
     resume: '/resume [n]', permissions: '/permissions [mode|rules]', think: '/think',
     diff: '/diff [n]', restore: '/restore <n>', changes: '/changes', cd: '/cd <folder>',
@@ -847,6 +871,7 @@
     return match && Object.hasOwn(commands, match[1]) ? {name: match[1], args: match[2] || ''} : null;
   }
   async function forkChat(id = state.chat?.id) {
+    if (state.chat?.ephemeral && id === state.chat.id) throw new Error('Incognito chats cannot be forked or exported.');
     if (!id) throw new Error('Open a conversation to fork first.');
     if (state.busy) throw new Error('Wait for the current reply before forking.');
     const chat = await json(`/chats/${id}/fork`, {method: 'POST'});
@@ -869,7 +894,8 @@
       empty(false);
       const card = message('assistant', '', 'Kova commands');
       card.append(el('pre', '', Object.values(commands).join('\n') + '\nTerminal-only commands open in kova.'));
-    } else if (name === 'new' && !args) await newChat();
+    } else if (name === 'incognito' && !args) await newIncognito();
+    else if (name === 'new' && !args) await newChat();
     else if (name === 'fork') {
       const chats = args ? await json('/chats') : null;
       const n = Number(args);
@@ -996,6 +1022,7 @@
   // from the installed PWA go through the same upload API as the paperclip;
   // the server fallback has already saved them and hands back ready rows.
   async function applyShare(draft) {
+    await discardIncognito();
     pendingAttachments.length = 0;
     if (draft.chat) {
       const accepted = [];
@@ -1039,6 +1066,7 @@
     $('attachment-note').hidden = !pendingAttachments.some(a => a.chat_id === state.chat?.id);
   }
   async function attachFiles(files) {
+    if (state.chat?.ephemeral) return toast('Attachments are disabled in incognito.');
     if (readingAttachments || state.busy || !state.connected) return;
     const accepted = [];
     for (const file of files) {
@@ -1081,7 +1109,7 @@
     $('composer').classList.toggle('options-open', open); $('options').setAttribute('aria-expanded', String(open));
   }
   $('options').onclick = () => options(!$('composer').classList.contains('options-open'));
-  $('stop').onclick = stop; $('new-chat').onclick = newChat;
+  $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
   $('menu').onclick = () => toggleSidebar();
@@ -1098,6 +1126,7 @@
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
+    if (mod && event.shiftKey && key === 'n') { event.preventDefault(); safe(newIncognito); return; }
     if (mod && !event.shiftKey && key === 'k') { if (state.connected) safe(newChat); }
     else if (mod && !event.shiftKey && key === 'b') toggleSidebar();
     else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
@@ -1204,7 +1233,7 @@
   }
   $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
   try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
-  $('disconnect').onclick = () => safe(async () => { await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
+  $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   document.querySelectorAll('[data-prompt]').forEach(button => { button.onclick = () => { $('prompt').value = button.dataset.prompt; resize(); $('prompt').focus(); }; });
   async function setupIdentity() {
     state.persona = await json('/persona');

@@ -75,6 +75,7 @@ MODE_DETAILS = {"chat": "conversation only, web search at most",
 # name -> (usage, description); every chat command, in /help order.
 COMMANDS = {
     "help": ("/help", "Show commands and keyboard shortcuts"),
+    "incognito": ("/incognito", "Start an in-memory conversation; no tools or memories"),
     "new": ("/new", "Start a fresh conversation"),
     "resume": ("/resume [n]", "Open an earlier conversation"),
     "fork": ("/fork [n]", "Copy a conversation and switch to the fork"),
@@ -207,7 +208,7 @@ class ChatApp:
 
     def __init__(self, client: KovaClient, chat_id: str | None, *, no_think: bool = False,
                  out=None, color: bool | None = None, clear: bool = True,
-                 history_path: Path | None = None, memory_path: str = ""):
+                 history_path: Path | None = None, memory_path: str = "", incognito: bool = False):
         self.client = client
         self.chat_id = chat_id
         self.out = out or sys.stdout
@@ -224,8 +225,9 @@ class ChatApp:
         except ValueError as exc:
             raise ValueError(f"Invalid [tui.keys] in config.toml: {exc}") from exc
         self.p = self.renderer.p
-        self.history_path = history_path
-        self.editor = Editor(load_history(history_path) if history_path else [])
+        self.incognito = incognito
+        self.history_path = None if incognito else history_path
+        self.editor = Editor(load_history(history_path) if history_path and not incognito else [])
         self.memory_path = memory_path
         self.clear_on_start = clear
         self.placeholder = pick_placeholder()
@@ -323,6 +325,7 @@ class ChatApp:
         if self.job is not None:
             self._stop()
             self.job.thread.join(2)
+        self._drop_incognito()
         if self.history_path is not None:
             save_history(self.history_path, self.editor.history)
         if self.welcome_started is not None:
@@ -365,7 +368,12 @@ class ChatApp:
         """Take the server's view of the chat and its rough token size."""
         self.plan = list(chat.get("plan") or [])
         self.conversation_state = chat.get("state", "done")
-        self.title = str(chat.get("title") or "")
+        self.incognito = bool(chat.get("ephemeral"))
+        if self.incognito:
+            # Once private input enters this editor, never save its history,
+            # including after /new or /resume switches back to a saved chat.
+            self.history_path = None
+        self.title = "Incognito" if self.incognito else str(chat.get("title") or "")
         self.mode = chat.get("mode") or "work"
         self.web = chat.get("web", True)
         self.permission = chat.get("permission")
@@ -379,7 +387,8 @@ class ChatApp:
             return self.chat_id
         try:
             chat = self.client.create_chat(mode=self.mode, web=self.web,
-                                           permission=self.permission, cwd=self.cwd)
+                                           permission=self.permission, cwd=self.cwd,
+                                           **({"ephemeral": True} if self.incognito else {}))
         except KovaError as exc:
             self.renderer.error(exc.message)
             return None
@@ -426,6 +435,8 @@ class ChatApp:
 
     def offers(self, capability: str) -> bool:
         """Whether the contract lets this chat use ``capability`` right now."""
+        if self.incognito and capability in {"tools", "approvals", "vision"}:
+            return False
         if self.offered is None:
             return True
         return capability in self.offered.get(self.mode, set())
@@ -824,6 +835,9 @@ class ChatApp:
         self.job = Job("reply", reply, label=text)
 
     def _shell(self, command: str) -> None:
+        if self.incognito:
+            self._done("Shell commands are disabled in incognito.")
+            return
         if not command:
             return
         self.renderer.shell(command)
@@ -836,6 +850,9 @@ class ChatApp:
                        label=command)
 
     def _remember(self, note: str) -> None:
+        if self.incognito:
+            self._done("Memory writes are disabled in incognito.")
+            return
         if not note:
             return
         self.renderer.remember(note)
@@ -1082,7 +1099,10 @@ class ChatApp:
     def command(self, line: str) -> None:
         name, _, rest = line[1:].partition(" ")
         name, rest = name.lower(), rest.strip()
-        plugin_commands = self._plugin_commands()
+        if self.incognito and name in {"memory", "remember", "plugin", "skills", "skill", "permissions", "cd"}:
+            self._done("Persistent actions are disabled in incognito.")
+            return
+        plugin_commands = {} if self.incognito else self._plugin_commands()
         if name in plugin_commands:
             self.submit(plugin_commands[name].prompt)
             return
@@ -1311,7 +1331,27 @@ class ChatApp:
 
     _cmd_quit = _cmd_exit
 
+    def _drop_incognito(self) -> None:
+        if self.incognito and self.chat_id is not None:
+            try:
+                self.client.delete_chat(self.chat_id)
+            except KovaError:
+                self.renderer.error("Could not contact the server to discard incognito. It remains RAM-only until server stop.")
+        if self.incognito:
+            self.editor = Editor()
+        self.incognito = False
+
+    def _cmd_incognito(self, _rest: str) -> None:
+        self._drop_incognito()
+        self.chat_id = None
+        self.incognito = True
+        self.history_path = None
+        self.editor = Editor()
+        self.refresh_chat()
+        self._done("Incognito: not saved on this PC. Your provider still receives messages.")
+
     def _cmd_new(self, _rest: str) -> None:
+        self._drop_incognito()
         # No row until something is typed; mode, web, permission and cwd stay
         # as they are and go to the new chat when it is created (#100).
         self.chat_id = None
@@ -1475,6 +1515,7 @@ class ChatApp:
         except KovaError as exc:
             self.renderer.error(f"Could not fork: {exc.message}")
             return
+        self._drop_incognito()
         self.chat_id = chat["id"]
         self.plan = []
         self.refresh_chat()
@@ -1485,7 +1526,7 @@ class ChatApp:
         self.replay()
 
     def _cmd_resume(self, rest: str) -> None:
-        chats = self.client.list_chats()[:30]
+        chats = [c for c in self.client.list_chats() if not c.get("ephemeral")][:30]
         self._chats = chats
         if not rest:
             if not chats:
@@ -1506,6 +1547,7 @@ class ChatApp:
         if chat is None:
             self.renderer.error(f"No chat matches {rest!r}. Type /resume to pick one.")
             return
+        self._drop_incognito()
         self.chat_id = chat["id"]
         self.plan = []
         self.refresh_chat()
@@ -1614,7 +1656,7 @@ class ChatApp:
                        mode=self.mode, cwd=_home_short(self.cwd),
                        memory=_home_short(self.memory_path) if self.memory_path else "",
                        notes=self.notes, web=self.web, offline=not self.model_ok, phase=phase,
-                       title=self.title, permission=self.permission,
+                       title="Incognito" if self.incognito else self.title, permission=self.permission,
                        assistant_name=self.renderer.name)
         if tips:
             tips_list = [f"{self.keys.pretty('palette')}: find commands and chats",
@@ -1626,6 +1668,8 @@ class ChatApp:
             except (OSError, ValueError):
                 index = 0
             lines += ["", "  " + self.p.dim(fit("Tip: " + tips_list[index % len(tips_list)], width - 3))]
+        if self.incognito:
+            lines += ["", "  " + self.p.dim("Incognito: not saved on this PC. Your provider still receives messages.")]
         return lines
 
     def _commit_welcome(self, tips: bool = True) -> None:
@@ -1735,7 +1779,7 @@ class ChatApp:
             done = sum(item.get("status") == "done" for item in self.plan)
             plan = f"{done}/{len(self.plan)}"
         return status_bar(self.p, width, mode=self.mode, model=self.model or "?",
-                          title=self.title,
+                          title="Incognito" if self.incognito else self.title,
                           permission=self.permission if self.offers("approvals") else None,
                           web=self.web, plan=plan,
                           stats=self._turn_stats(), offline=not self.model_ok,

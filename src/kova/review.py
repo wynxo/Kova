@@ -323,6 +323,8 @@ class MemoryReview:
     async def review(self, chat_id: str, memory: Memory,
                      client: ModelClient) -> list[ReviewedFact]:
         """Fork the conversation and store the facts the fork can point at."""
+        if self.store.is_ephemeral(chat_id):
+            return []
         messages = self.store.get_messages(chat_id)
         quotes = user_statements(messages)
         if not quotes:
@@ -354,7 +356,7 @@ class MemoryReview:
     async def after_turn(self, *, chat_id: str, mode: str, memory: Memory,
                          client: ModelClient, now: datetime) -> list[dict]:
         """Run whichever opt-in passes are due, as notice events to show the user."""
-        if mode == "chat" or not self.enabled:
+        if self.store.is_ephemeral(chat_id) or mode == "chat" or not self.enabled:
             return []
         notices: list[dict] = []
         if self.settings.review and self.review_due(chat_id, self.store.get_messages(chat_id)):

@@ -107,6 +107,8 @@ def _config_bytes(cfg: Config) -> bytes:
 
 def render_chat_markdown(chat: dict) -> str:
     """One chat as readable Markdown, for backups and ``kova chats export --md``."""
+    if chat.get("ephemeral"):
+        raise BackupError("Incognito chats cannot be exported.")
     title = chat.get("title") or "Untitled chat"
     lines = [f"# {title}", ""]
     meta = [f"Chat `{chat.get('id', '')}`"]
