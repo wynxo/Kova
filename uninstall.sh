@@ -63,6 +63,18 @@ main() {
     else
         say 'uv was not found; no uv tool can be removed.'
     fi
+    rm -f -- "$HOME/.local/share/applications/kova.desktop" \
+        "$HOME/.local/share/icons/hicolor/512x512/apps/kova.png"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$HOME/.local/share/applications" || :
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || :
+    fi
+    bundle="$HOME/Applications/Kova.app"
+    if [ -f "$bundle/Contents/Info.plist" ] && [ ! -L "$bundle" ]; then
+        rm -rf -- "$bundle"
+    fi
     desktop="$data/desktop"
     if [ -f "$desktop/package.json" ] && [ ! -L "$desktop" ]; then
         # Staged desktop app files are reinstalled by install.sh, unlike data.

@@ -202,3 +202,38 @@ def test_windows_uninstall_schedules_helper_without_running_uv(lifecycle, monkey
     lifecycle.uninstall(purge=purge, keep_data=not purge, confirm=lambda _: False, emit=lambda _: None)
     scheduled.assert_called_once_with('/test/uv', home.absolute(), purge)
     assert home.exists()
+
+
+def test_cli_uninstall_removes_linux_menu_entry(lifecycle, monkeypatch, tmp_path):
+    entry = tmp_path / ".local/share/applications/kova.desktop"
+    icon = tmp_path / ".local/share/icons/hicolor/512x512/apps/kova.png"
+    for item in (entry, icon):
+        item.parent.mkdir(parents=True, exist_ok=True)
+        item.write_text("installed")
+    monkeypatch.setattr(lifecycle.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0)))
+    lifecycle.uninstall(purge=False, keep_data=True, confirm=lambda _: False)
+    assert not entry.exists()
+    assert not icon.exists()
+
+
+def test_cli_uninstall_removes_macos_launcher(lifecycle, monkeypatch, tmp_path):
+    bundle = tmp_path / "Applications/Kova.app"
+    (bundle / "Contents/MacOS").mkdir(parents=True)
+    (bundle / "Contents/Info.plist").write_text("launcher")
+    monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(platform="darwin", stdin=sys.stdin))
+    monkeypatch.setattr(lifecycle.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0)))
+    lifecycle.uninstall(purge=False, keep_data=True, confirm=lambda _: False)
+    assert not bundle.exists()
+
+
+def test_windows_cli_uninstall_helper_removes_start_menu_shortcut(lifecycle, monkeypatch, tmp_path):
+    import base64
+
+    launch = Mock()
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", launch)
+    monkeypatch.setattr(lifecycle.subprocess, "CREATE_NEW_PROCESS_GROUP", 0, raising=False)
+    lifecycle._windows_uninstall("uv.exe", tmp_path / ".kova", False)
+    encoded = launch.call_args.args[0][-1]
+    script = base64.b64decode(encoded).decode("utf-16le")
+    assert "Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Kova.lnk'" in script
+    assert "Remove-Item -LiteralPath" in script

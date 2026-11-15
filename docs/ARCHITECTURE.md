@@ -294,7 +294,9 @@ prints reminder pop-ups while you chat.
 
 `src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
 `desktop/` — the checkout it runs from, or the copy the installers stage under
-`KOVA_HOME/desktop` — and installs the Electron dependencies with `npm ci` while
+`KOVA_HOME/desktop`. Installers prepare Electron and register a normal OS launcher
+by default (opt out with `--no-desktop`); those launch the binary directly.
+The developer/terminal launcher can still run `npm ci` while
 `node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
 the browser; for any other failure it exits non-zero. The Electron shell starts
 (or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use

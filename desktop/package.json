@@ -49,6 +49,15 @@
       ],
       "icon": "assets/icon.png",
       "category": "public.app-category.productivity"
+    },
+    "artifactName": "Kova-${version}-${os}-${arch}.${ext}",
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "createStartMenuShortcut": true,
+      "createDesktopShortcut": false,
+      "shortcutName": "Kova",
+      "artifactName": "Kova-Setup-${version}-${arch}.${ext}"
     }
   },
   "homepage": "https://github.com/wynxo/Kova",

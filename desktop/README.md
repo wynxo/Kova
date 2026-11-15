@@ -31,14 +31,41 @@ exits and terminates only a server this shell spawned. A pre-existing server
 is left running. Ctrl/Cmd+W hides, Ctrl/Cmd+R reconnects, F11 toggles fullscreen.
 Startup failures show Retry and the exact server log path.
 
-Linux: `./install.sh --desktop` installs the Python CLI and registers
-`kova-app` in the application menu; `./install.sh --dev --desktop` stages this
-checkout instead. The installers copy `desktop/` to `$KOVA_HOME/desktop`, which
-is what the installed `kova-app` runs — it installs the Electron dependencies
-there on first use, so npm must be on PATH. electron-builder supplies
-desktop integration for packaged Linux builds; kova.desktop is the reference.
-`kova-web` (or `./desktop-app --browser`) opens the same UI in your browser.
+The one-line installers register Kova by default: a Linux menu entry and icon
+(with cache refresh), a Windows Start-menu shortcut, or a per-user macOS
+`~/Applications/Kova.app` launcher registered with Launch Services for Spotlight.
+They run `npm ci --include=dev` during installation and launch the prepared
+Electron binary directly, without a terminal or npm on first click. Node.js 22+
+with npm must be installed first; errors point to https://nodejs.org and explain
+how to rerun. `--no-desktop` installs only the backend, without Node/npm.
+Uninstallers remove this integration and staged app even with `--keep-data`.
+
+## Release downloads
+
+`.github/workflows/desktop-release.yml` runs on version tags (`vX.Y.Z`, optionally
+with a prerelease suffix). It tests and builds on each target OS, then attaches
+Linux x64 AppImage/deb, Windows x64 NSIS exe, and macOS arm64/x64 DMG assets to
+the tag's GitHub Release. Artifact versions come from the tag. No tag is created
+by the workflow. Release upload waits for **all** platform builds to succeed.
+See electron-builder's [publishing options](https://www.electron.build/v26/docs/publish/).
+
+Download from https://github.com/wynxo/Kova/releases. Install the backend first
+using the README's one-line installer with `--no-desktop` (it supplies uv and
+Python 3.12). The shell bundles Electron, **not Python, uv, the backend, or a
+model**; Node/npm are unnecessary for downloads. It finds `kova` on PATH or in
+`~/.local/bin`, starts `kova serve` or reuses the authenticated running server,
+just like `kova-app`. Only checkout launches fall back to `uv run kova serve`.
+Missing-backend errors link to the installation instructions and offer Retry.
+
+Use the .deb or NSIS .exe for app/Start-menu integration. Open the .dmg and drag
+Kova to Applications for Finder/Spotlight. With AppImage, mark executable and
+open from the file manager; AppImage alone does not register a menu entry.
+These builds are unsigned and not notarized; no signing secrets are required
+by CI. Platform verification prompts are expected until signing is configured.
+The OS uninstaller removes downloaded shells; `kova uninstall` independently
+removes the Python backend. Both keep chats unless explicitly purged.
 
 Build notes: electron-builder's Linux deb helper needs libcrypt.so.1
 (on Fedora, provided by libxcrypt-compat). AppImage builds do not need it.
-Windows/macOS installers must be built and smoke-tested on their platforms.
+Windows/macOS installers are built on native CI runners; local validation on one
+platform is not evidence of interactive launch on the others.

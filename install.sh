@@ -7,13 +7,14 @@ main() {
     die() { say "Error: $*" >&2; exit 1; }
     ref=${KOVA_REF-main}
     dev=0
-    register_desktop=0
+    register_desktop=1
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --ref) [ "$#" -ge 2 ] || die '--ref needs a value'; ref=$2; shift 2 ;;
             --dev) dev=1; shift ;;
-            --desktop) register_desktop=1; shift ;;
-            -h|--help) say 'Usage: install.sh [--ref REF] [--dev] [--desktop]'; return 0 ;;
+            --desktop) register_desktop=1; shift ;; # compatibility alias
+            --no-desktop) register_desktop=0; shift ;;
+            -h|--help) say 'Usage: install.sh [--ref REF] [--dev] [--no-desktop]'; return 0 ;;
             *) die "Unknown option: $1" ;;
         esac
     done
@@ -70,52 +71,74 @@ main() {
         "$uv" tool install --force --refresh --python 3.12 "$source"
     fi
 
-    # The Electron app is not part of the Python wheel, so keep a copy of
-    # desktop/ under the data dir: kova-app runs it (and npm ci) from there.
-    data=${KOVA_HOME:-$HOME/.kova}
-    dest=$data/desktop
-    desktop_src=''
-    if [ -n "${KOVA_SOURCE-}" ] && [ -f "$KOVA_SOURCE/desktop/package.json" ]; then
-        desktop_src=$KOVA_SOURCE/desktop
-    elif [ -n "$here" ] && [ -f "$here/desktop/package.json" ]; then
-        desktop_src=$here/desktop
-    elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 &&
-         command -v mktemp >/dev/null 2>&1; then
-        tree=$(mktemp -d "${TMPDIR:-/tmp}/kova-desktop.XXXXXX")
-        trap 'rm -rf -- "$tree"' 0
-        url="https://github.com/wynxo/Kova/archive/$ref.tar.gz"
-        say "Downloading the desktop app from $url ..."
-        if curl -fsSL "$url" -o "$tree/kova.tar.gz" && mkdir -p "$tree/tree" &&
-           tar -xzf "$tree/kova.tar.gz" -C "$tree/tree"; then
-            for candidate in "$tree/tree"/Kova-*/desktop; do
-                if [ -f "$candidate/package.json" ]; then desktop_src=$candidate; break; fi
-            done
+    # CLI-only installs need neither Node nor desktop files.
+    if [ "$register_desktop" -eq 1 ]; then
+        if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
+           ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
+            die 'Install Node.js 22+ (including npm) from https://nodejs.org, reopen your terminal and rerun this installer. For CLI only, use --no-desktop.'
         fi
-        rm -rf -- "$tree"
-        trap - 0
-    fi
-    if [ -n "$desktop_src" ]; then
-        mkdir -p "$dest"
-        for item in "$desktop_src"/*; do
-            [ -e "$item" ] || continue
-            name=$(basename -- "$item")
-            # node_modules and dist are rebuilt by kova-app and electron-builder.
-            case $name in node_modules|dist) continue ;; esac
-            rm -rf -- "$dest/$name"
-            cp -R -- "$item" "$dest/$name"
-        done
-        say "Desktop app files: $dest"
-    else
-        say 'Note: the desktop app files were not installed; kova-web works now.'
-        say 'Rerun this installer (curl and tar are required) to add kova-app.'
+        # Keep desktop/ outside the Python wheel, with Electron ready before registration.
+        data=${KOVA_HOME:-$HOME/.kova}
+        dest=$data/desktop
+        desktop_src=''
+        if [ -n "${KOVA_SOURCE-}" ] && [ -f "$KOVA_SOURCE/desktop/package.json" ]; then
+            desktop_src=$KOVA_SOURCE/desktop
+        elif [ -n "$here" ] && [ -f "$here/desktop/package.json" ]; then
+            desktop_src=$here/desktop
+        elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 &&
+             command -v mktemp >/dev/null 2>&1; then
+            tree=$(mktemp -d "${TMPDIR:-/tmp}/kova-desktop.XXXXXX")
+            trap 'rm -rf -- "$tree"' 0
+            url="https://github.com/wynxo/Kova/archive/$ref.tar.gz"
+            say "Downloading the desktop app from $url ..."
+            if curl -fsSL "$url" -o "$tree/kova.tar.gz" && mkdir -p "$tree/tree" &&
+               tar -xzf "$tree/kova.tar.gz" -C "$tree/tree"; then
+                for candidate in "$tree/tree"/Kova-*/desktop; do
+                    if [ -f "$candidate/package.json" ]; then desktop_src=$candidate; break; fi
+                done
+            fi
+        fi
+        if [ -n "$desktop_src" ]; then
+            mkdir -p "$dest"
+            for item in "$desktop_src"/*; do
+                [ -e "$item" ] || continue
+                name=$(basename -- "$item")
+                # Install dependencies here, never copy checkout build artifacts.
+                case $name in node_modules|dist) continue ;; esac
+                rm -rf -- "${dest:?}/${name:?}"
+                cp -R -- "$item" "$dest/$name"
+            done
+            say 'Preparing Electron (this may take a few minutes) ...'
+            (cd -- "$dest" && npm ci --include=dev) ||
+                die 'npm ci failed. Check your connection to the npm registry and rerun this installer; use --no-desktop for CLI only.'
+            if [ "$(uname -s)" = Darwin ]; then
+                electron="$dest/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+            else
+                electron="$dest/node_modules/electron/dist/electron"
+            fi
+            [ -x "$electron" ] || die 'Electron is missing after npm ci. Rerun the installer with Electron downloads enabled.'
+            # Exec and the generated shell launcher must not interpret path metacharacters.
+            case "$dest$electron" in *[!a-zA-Z0-9_./\ -]*) die 'Unsupported path for desktop registration.' ;; esac
+            {
+                say '#!/bin/sh'
+                say 'unset ELECTRON_RUN_AS_NODE'
+                printf 'export KOVA_HOME="%s"\n' "$data"
+                printf 'exec "%s" "%s" --ozone-platform-hint=auto "$@"\n' "$electron" "$dest"
+            } > "$dest/launch"
+            chmod +x "$dest/launch"
+            say "Desktop app files: $dest"
+            if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
+        else
+            die 'Desktop files could not be installed. Install curl and tar, then rerun; use --no-desktop for CLI only.'
+        fi
     fi
 
     say 'To use kova in this terminal, run (or add to your shell profile):'
     # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
     say '  export PATH="$HOME/.local/bin:$PATH"'
     if [ "$register_desktop" -eq 1 ]; then
-        [ "$(uname -s)" = Linux ] || die '--desktop registration is Linux-only.'
-        [ -f "$dest/package.json" ] || die 'The desktop app files are missing; rerun without --desktop first.'
+        case "$(uname -s)" in
+        Linux)
         [ -f "$dest/assets/icon.png" ] || die 'The desktop app files are incomplete: assets/icon.png is missing.'
         # Desktop Exec has its own quoting rules; reject unusual install paths.
         case "$UV_TOOL_BIN_DIR" in *[!a-zA-Z0-9_./\ -]*) die 'Unsupported launcher path for the desktop entry.' ;; esac
@@ -129,16 +152,50 @@ main() {
             say 'Name=Kova'
             say 'Comment=Private local AI assistant'
             # The session's PATH may miss ~/.local/bin, so point at the launcher.
-            printf 'Exec="%s/kova-app"\n' "$UV_TOOL_BIN_DIR"
+            printf 'Exec="%s/launch"\n' "$dest"
             say 'Icon=kova'
             say 'Terminal=false'
             say 'Categories=Utility;'
             say 'StartupWMClass=Kova'
         } > "$apps/kova.desktop"
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database "$apps" || say 'Note: launcher cache refresh failed; sign out and back in if Kova is missing.'
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || say 'Note: icon cache refresh failed.'
+        fi
         say 'Registered Kova in your application menu.'
+        ;;
+        Darwin)
+        bundle="$HOME/Applications/Kova.app/Contents"
+        mkdir -p "$bundle/MacOS" "$bundle/Resources"
+        cp "$dest/launch" "$bundle/MacOS/Kova"
+        cp "$dest/node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns" "$bundle/Resources/kova.icns"
+        cat > "$bundle/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>io.github.wynxo.kova.launcher</string>
+<key>CFBundleName</key><string>Kova</string>
+<key>CFBundleDisplayName</key><string>Kova</string>
+<key>CFBundleExecutable</key><string>Kova</string>
+<key>CFBundleIconFile</key><string>kova.icns</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+PLIST
+        lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+        if [ -x "$lsregister" ]; then "$lsregister" -f "$HOME/Applications/Kova.app" || :; fi
+        say 'Registered Kova in Applications and Spotlight.'
+        ;;
+        *) die 'Unsupported desktop platform. Use --no-desktop for CLI only.' ;;
+        esac
     fi
-    say 'Done. Run: kova setup'
-    say 'Then: kova'
+    if [ "$register_desktop" -eq 1 ]; then
+        say 'Done. Open Kova from your app menu (or Applications / Spotlight) and choose Add provider.'
+    else
+        say 'CLI-only install. Done. Run: kova setup'
+    fi
+    say 'Terminal chat: kova setup, then kova'
     say 'Desktop app: kova-app    Web UI in your browser: kova-web'
 }
 main "$@"
