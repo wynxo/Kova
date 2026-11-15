@@ -133,6 +133,14 @@ class AttachmentBodyLimit:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        # Reject before multipart parsing: UploadFile may spool large bodies to
+        # disk before the route handler ever gets to inspect the chat.
+        if (scope.get('method') == 'POST'
+                and re.fullmatch(r'/chats/incognito-[^/]+/attachments', scope.get('path', ''))):
+            from starlette.responses import JSONResponse
+            return await JSONResponse(
+                {'detail': 'Attachments are disabled in incognito chats.'}, status_code=409
+            )(scope, receive, send)
         oversized = False
         for key, value in scope.get('headers', []):
             if key.lower() == b'content-length':
@@ -262,6 +270,8 @@ def read_text(path: Path, start: int = 1, end: int | None = None, *, row: dict |
 
 def save(home: Path, store, chat_id: str, name: str, data: bytes, *,
          now: Callable[[], datetime] | datetime | None = None) -> dict:
+    if chat_id.startswith('incognito-'):
+        raise AttachmentError('Attachments are disabled in incognito chats.')
     if len(data) > MAX_BYTES:
         raise AttachmentError('Each attachment must be 25 MB or smaller.')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', chat_id):

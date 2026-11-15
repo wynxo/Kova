@@ -24,6 +24,7 @@
       <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
+    <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd>Ctrl Shift N</kbd></button>
     <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl K</kbd></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <div class="section-label"><span>Conversations</span><span id="chat-count"></span></div>
@@ -53,6 +54,7 @@
       <details class="chat-menu"><summary aria-label="Conversation actions">•••</summary><button id="compact-now" type="button" class="btn">Compact now</button></details>
       <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
     </header>
+    <div id="incognito-note" class="banner" role="status" hidden>Incognito · Not saved on this PC. Your provider still receives messages. Tools and attachments are disabled. Leaving this chat discards it.</div>
     <div id="banner" class="banner" role="status" hidden></div>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">

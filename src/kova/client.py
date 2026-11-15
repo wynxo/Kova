@@ -122,8 +122,10 @@ class KovaClient:
 
     def create_chat(self, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None) -> dict:
+                    cwd: str | None = None, ephemeral: bool = False) -> dict:
         body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
+        if ephemeral:
+            body["ephemeral"] = True
         body = {field: value for field, value in body.items() if value is not None}
         return self._request("POST", "/chats", **({"json": body} if body else {})).json()
 
