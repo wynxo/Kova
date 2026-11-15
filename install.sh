@@ -71,11 +71,17 @@ main() {
         "$uv" tool install --force --refresh --python 3.12 "$source"
     fi
 
-    # CLI-only installs need neither Node nor desktop files.
-    if [ "$register_desktop" -eq 1 ]; then
+    # The desktop app is optional: if it cannot be prepared, finish the CLI
+    # install anyway and say how to add the app later.
+    skip_desktop() {
+        say "Note: $* Kova itself is installed; open it in your browser with kova-web."
+        if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
+        register_desktop=0
+    }
+    prepare_desktop() {
         if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
            ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
-            die 'Install Node.js 22+ (including npm) from https://nodejs.org, reopen your terminal and rerun this installer. For CLI only, use --no-desktop.'
+            skip_desktop 'The desktop app needs Node.js 22+ (including npm). Install it from https://nodejs.org and rerun this installer to add Kova to your app menu.'; return
         fi
         # Keep desktop/ outside the Python wheel, with Electron ready before registration.
         data=${KOVA_HOME:-$HOME/.kova}
@@ -110,15 +116,15 @@ main() {
             done
             say 'Preparing Electron (this may take a few minutes) ...'
             (cd -- "$dest" && npm ci --include=dev) ||
-                die 'npm ci failed. Check your connection to the npm registry and rerun this installer; use --no-desktop for CLI only.'
+                { skip_desktop 'Preparing the desktop app (npm ci) failed. Check your connection and rerun this installer.'; return; }
             if [ "$(uname -s)" = Darwin ]; then
                 electron="$dest/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
             else
                 electron="$dest/node_modules/electron/dist/electron"
             fi
-            [ -x "$electron" ] || die 'Electron is missing after npm ci. Rerun the installer with Electron downloads enabled.'
+            [ -x "$electron" ] || { skip_desktop 'Electron is missing after npm ci. Rerun this installer with Electron downloads enabled.'; return; }
             # Exec and the generated shell launcher must not interpret path metacharacters.
-            case "$dest$electron" in *[!a-zA-Z0-9_./\ -]*) die 'Unsupported path for desktop registration.' ;; esac
+            case "$dest$electron" in *[!a-zA-Z0-9_./\ -]*) skip_desktop 'The desktop app cannot be registered from a path with unusual characters.'; return ;; esac
             {
                 say '#!/bin/sh'
                 say 'unset ELECTRON_RUN_AS_NODE'
@@ -129,9 +135,10 @@ main() {
             say "Desktop app files: $dest"
             if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
         else
-            die 'Desktop files could not be installed. Install curl and tar, then rerun; use --no-desktop for CLI only.'
+            skip_desktop 'The desktop app files could not be downloaded (curl and tar are needed). Rerun this installer to add it.'
         fi
-    fi
+    }
+    if [ "$register_desktop" -eq 1 ]; then prepare_desktop; fi
 
     say 'To use kova in this terminal, run (or add to your shell profile):'
     # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
@@ -140,8 +147,6 @@ main() {
         case "$(uname -s)" in
         Linux)
         [ -f "$dest/assets/icon.png" ] || die 'The desktop app files are incomplete: assets/icon.png is missing.'
-        # Desktop Exec has its own quoting rules; reject unusual install paths.
-        case "$UV_TOOL_BIN_DIR" in *[!a-zA-Z0-9_./\ -]*) die 'Unsupported launcher path for the desktop entry.' ;; esac
         apps="$HOME/.local/share/applications"
         icons="$HOME/.local/share/icons/hicolor/512x512/apps"
         mkdir -p "$apps" "$icons"
@@ -187,13 +192,13 @@ PLIST
         if [ -x "$lsregister" ]; then "$lsregister" -f "$HOME/Applications/Kova.app" || :; fi
         say 'Registered Kova in Applications and Spotlight.'
         ;;
-        *) die 'Unsupported desktop platform. Use --no-desktop for CLI only.' ;;
+        *) say 'Note: this platform has no app-menu integration; use kova-app or kova-web.'; register_desktop=0 ;;
         esac
     fi
     if [ "$register_desktop" -eq 1 ]; then
         say 'Done. Open Kova from your app menu (or Applications / Spotlight) and choose Add provider.'
     else
-        say 'CLI-only install. Done. Run: kova setup'
+        say 'Done (without the desktop app). Run: kova setup'
     fi
     say 'Terminal chat: kova setup, then kova'
     say 'Desktop app: kova-app    Web UI in your browser: kova-web'

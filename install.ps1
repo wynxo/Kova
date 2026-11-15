@@ -72,9 +72,10 @@ function Install-Kova {
     & $Uv @UvArgs $Source
     if ($LASTEXITCODE -ne 0) { throw "uv tool install failed ($LASTEXITCODE)." }
 
-    if ($RegisterDesktop) {
+    # The desktop app is optional: if it cannot be prepared, finish the CLI install anyway.
+    if ($RegisterDesktop) { try {
         if (-not (Get-Command node -ErrorAction SilentlyContinue) -or -not (Get-Command npm -ErrorAction SilentlyContinue)) {
-            throw 'Install Node.js 22+ (including npm) from https://nodejs.org, reopen PowerShell and rerun this installer. Use --no-desktop for CLI only.'
+            throw 'The desktop app needs Node.js 22+ (including npm). Install it from https://nodejs.org and rerun this installer to add Kova to the Start menu.'
         }
         & node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'
         if ($LASTEXITCODE -ne 0) { throw 'Install Node.js 22+ from https://nodejs.org and rerun this installer.' }
@@ -139,10 +140,12 @@ function Install-Kova {
             Write-Host "Desktop app files: $DesktopDest"
         } else {
             if ($Tree) { Remove-Item -LiteralPath $Tree -Recurse -Force -ErrorAction SilentlyContinue }
-            throw 'Desktop files could not be installed. Check your connection and rerun, or use --no-desktop for CLI only.'
+            throw 'Desktop files could not be installed. Check your connection and rerun this installer to add it.'
         }
-
-    }
+    } catch {
+        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova-web."
+        $RegisterDesktop = $false
+    } }
 
     # Persist only a user PATH entry; never modify system PATH or shell profiles.
     $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -180,7 +183,7 @@ function Install-Kova {
     foreach ($Name in 'NoModify', 'NoRepair') { New-ItemProperty -Path $Key -Name $Name -Value 1 -PropertyType DWord -Force | Out-Null }
     Write-Host 'Registered Kova in Settings > Apps (current user only).'
     if ($RegisterDesktop) { Write-Host 'Done. Open Kova from the Start menu and choose Add provider.' }
-    else { Write-Host 'CLI-only install. Done. Run: kova setup' }
+    else { Write-Host 'Done (without the desktop app). Run: kova setup' }
     Write-Host 'Terminal chat: kova setup, then kova'
     Write-Host 'Desktop app: kova-app    Web UI in your browser: kova-web'
 }

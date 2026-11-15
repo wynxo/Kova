@@ -118,7 +118,7 @@ def test_cli_only_piped_install_needs_no_download_tools(installer, tmp_path):
     result = run("install.sh", content=(REPO / "install.sh").read_text().replace('main "$@"', 'main --no-desktop'), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert not (home / ".kova/desktop").exists()
-    assert "CLI-only" in result.stdout
+    assert "without the desktop app" in result.stdout
     assert "Web UI in your browser: kova-web" in result.stdout
 
 
@@ -521,7 +521,7 @@ def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_install
 
 @requires_posix
 @pytest.mark.parametrize("missing", ["node", "npm", "old-node", "npm-failure"])
-def test_desktop_install_reports_actionable_failure(installer, missing):
+def test_desktop_failure_still_finishes_the_cli_install(installer, missing):
     home, path, env, run = installer
     if missing in ("node", "npm"):
         (path / missing).unlink()
@@ -530,10 +530,12 @@ def test_desktop_install_reports_actionable_failure(installer, missing):
     else:
         env["FAKE_NPM_EXIT"] = "1"
     result = run("install.sh")
-    assert result.returncode != 0
-    assert "Done." not in result.stdout
+    # The desktop app is optional: the CLI install finishes with a clear note.
+    assert result.returncode == 0, result.stderr
+    assert "Done (without the desktop app)" in result.stdout
     expected = "npm ci" if missing == "npm-failure" else "nodejs.org"
-    assert expected in result.stderr
+    assert expected in result.stdout
+    assert "kova-web" in result.stdout
     assert not (home / ".local/share/applications/kova.desktop").exists()
 
 
@@ -629,15 +631,15 @@ def test_piped_install_keeps_downloaded_source_until_staging_finishes(installer,
 
 @requires_windows
 @pytest.mark.parametrize("failure", ["old-node", "npm-failure"])
-def test_windows_desktop_dependencies_fail_without_success(windows_installer, failure):
+def test_windows_desktop_failure_still_finishes_the_cli_install(windows_installer, failure):
     home, stub, env, run = windows_installer
     if failure == "old-node":
         (stub / "node.cmd").write_text('@exit /b 1\n')
     else:
         (stub / "npm.cmd").write_text('@exit /b 1\n')
     result = run("install.ps1")
-    assert result.returncode != 0
-    assert "Done." not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Done (without the desktop app)" in result.stdout
     expected = "nodejs.org" if failure == "old-node" else "npm ci failed"
     assert expected in result.stdout + result.stderr
     assert not (home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk").exists()
