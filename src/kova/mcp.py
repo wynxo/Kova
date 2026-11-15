@@ -694,6 +694,7 @@ class McpManager:
                     "target": server.url or " ".join([server.command, *server.args]),
                     "enabled": server.enabled,
                     "sandbox": server.sandbox,
+                    "plugin": server.plugin,
                     "state": state,
                     "error": self._errors.get(server.name),
                     "server_info": client.info if client else {},
