@@ -13,6 +13,7 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from kova import plugins
 from kova.config import Config, McpServerEntry, save_config
 from kova.mcp import McpManager, tool_name, validate_server
 from kova.pairing import require_local
@@ -56,7 +57,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     async def reload(restart: tuple[str, ...] = ()) -> None:
         async with lock:
             manager: McpManager = app.state.mcp
-            await asyncio.to_thread(manager.reload, list(config.mcp), restart=restart)
+            servers = list(config.mcp)
+            servers += plugins.plugin_mcp_entries(config.home)
+            await asyncio.to_thread(manager.reload, servers, restart=restart)
             # No await between rebuilding and assigning: a turn sees the old
             # registry or the new one, never half of each.
             app.state.agent.tools = build_tools(app.state.tool_context)
@@ -100,6 +103,12 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         await reload()
         return row(server.name)
 
+    @router.post("/mcp/reload")
+    async def mcp_reload() -> dict:
+        """Reconnect every MCP server now, including any from plugins."""
+        await reload()
+        return {"ok": True}
+
     @router.patch("/mcp/{name}")
     async def mcp_update(name: str, body: McpPatch) -> dict:
         server = entry(name)
@@ -111,6 +120,8 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
 
     @router.delete("/mcp/{name}")
     async def mcp_remove(name: str) -> dict:
+        if row(name).get("plugin"):
+            return {"ok": True, "plugin": row(name)["plugin"]}
         server = entry(name)
         config.mcp.remove(server)
         save_config(config)
