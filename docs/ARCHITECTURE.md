@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 72 endpoints: 71 route handlers plus the static asset mount.
+The app exposes 73 endpoints: 72 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -178,6 +178,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/DELETE /providers/auth/{key}` | token or session | poll / cancel that sign-in |
 | `GET/POST /reminders` | token or session | list / add reminders |
 | `DELETE /reminders/{rid}` | token or session | delete a reminder |
+| `GET /usage` | token or session | tokens, estimated spend and speed per day and model (`?days=`), plus the monthly budget |
 
 **Phone routes** (`src/kova/pairing.py`). These also carry `require_local`, so
 they are refused on the LAN listener: a paired phone can chat, but never manage
@@ -210,7 +211,9 @@ Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `privacy`,
 `tool_call_delta`, `tool_call`, `tool_result`, `approval`, `approval_resolved`,
 `question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `stopped`,
 `done` and `error`. The stream stays open across tool calls and approvals; `done` closes a
-successful turn with the stored message id and model name, `stopped` closes a
+successful turn with the stored message id, model name and `usage` (see
+[Usage and cost](#usage-and-cost)), plus `budget_warning` at most once a day when
+this month's estimated spend passes 80% of `[usage] monthly_budget_usd`; `stopped` closes a
 turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
 cancels it server-side.
@@ -260,7 +263,7 @@ restarts. See [remote-access.md](remote-access.md).
 ### CLI (`src/kova/cli.py`)
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
-`status`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
+`status`, `usage`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `plugin`, `catalog`, `skills` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
@@ -378,7 +381,8 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
 - `chats` — id, title, created, mode, web
-- `messages` — role, content, tool_calls (JSON), tool_call_id, created
+- `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
+  nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`) so older
@@ -388,6 +392,30 @@ indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
 split into at most 12 de-duplicated words, and each chat contributes only its
 best hit, with a short snippet.
+
+### Usage and cost
+
+`src/kova/usage.py` measures each answer; nothing in it touches the network.
+`ModelClient` asks OpenAI-compatible servers for `stream_options.include_usage`
+(dropping the option once if a server rejects it), reads the Anthropic
+`message_start`/`message_delta` and Responses `response.completed` usage in
+`model_adapters.py`, and emits one `usage` model event before `done`.
+`Agent.run_turn` feeds every model round of a turn into a `TurnMeter`: tokens
+are summed, a round without a usage block is estimated at four characters a
+token and flagged, `ms_first_token` counts from the start of the turn, and
+`ms_generation` only counts time while a model streams, so tokens per second
+excludes tool runs. The total is stored on the final assistant message with
+`Store.record_usage` and sent in the `done` event. Forks copy no usage, so spend
+is never counted twice.
+
+Prices are USD per million tokens. `price_for` checks `[pricing]` overrides
+first (by model name, `kind/model-id` or model id), then treats a `local`
+provider, a managed engine or a loopback address as free, then the built-in
+`PRICING` table for exact ids and their dated snapshots. Anything else stays
+unpriced: the UI shows tokens and speed, never a guess. `GET /usage` and
+`kova usage` aggregate `Store.usage_rows` by local day and by model in
+`summarize`, which also reports this month against the optional budget. A
+budget only warns; it never blocks a turn.
 
 ### Incognito conversations
 

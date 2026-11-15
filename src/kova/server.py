@@ -499,6 +499,13 @@ def create_app(
             raise HTTPException(400, "Choose on or off.")
         return autostart_result(action)
 
+    @api.get("/usage")
+    async def usage(days: int = Query(30, ge=1, le=366)) -> dict:
+        """Tokens, estimated spend and speed: today, this month and the last ``days`` days."""
+        from kova.usage import summarize, window_start
+        rows = await asyncio.to_thread(app.state.store.usage_rows, window_start(days))
+        return summarize(rows, days=days, budget_usd=config.usage_monthly_budget_usd)
+
     @api.get("/persona")
     async def persona() -> dict:
         current = load_config(config.home)
@@ -553,7 +560,7 @@ def create_app(
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
-        chat = app.state.store.get_chat(chat_id)
+        chat = app.state.store.get_chat(chat_id, include_usage=True)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         return {**chat, "state": app.state.conversation_states.get(chat_id)}

@@ -186,7 +186,8 @@ async def test_openai_payload_is_exactly_the_redacted_copy():
          "kinds": ["openai_key", "github_token", "env_assignment"],
          "incomplete": False}]
     assert seen[0]["payload"] == {
-        "model": "model", "messages": redacted_messages(), "stream": True}
+        "model": "model", "messages": redacted_messages(), "stream": True,
+        "stream_options": {"include_usage": True}}
     assert seen[0]["authorization"] == "Bearer provider-auth-key"
     # The tool-call arguments are execution instructions, not prose.
     assert seen[0]["payload"]["messages"][2]["tool_calls"] == before[2]["tool_calls"]

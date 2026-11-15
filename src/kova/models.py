@@ -11,6 +11,7 @@ import httpx
 
 from kova.config import Config, ModelEntry
 from kova.privacy import is_loopback_url, protect_messages
+from kova.usage import normalize_usage
 
 
 class ModelError(Exception):
@@ -23,6 +24,8 @@ class ModelEvent:
     text: str = ""
     tool_call: dict | None = None
     privacy: dict | None = None
+    #: ``{"prompt_tokens", "completion_tokens"}`` as the server reported them.
+    usage: dict | None = None
 
 
 class ThinkSplitter:
@@ -64,6 +67,10 @@ class ThinkSplitter:
 class ModelClient:
     """Send messages and stream model events."""
 
+    #: (base URL, model) pairs whose server rejected ``stream_options``. Clients
+    #: are made per turn, so this remembers it for the life of the process.
+    _rejects_usage_option: set[tuple[str, str]] = set()
+
     def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
                  timeout: float = 300, privacy: str = "off", config: Config | None = None):
         self.entry = entry
@@ -71,6 +78,8 @@ class ModelClient:
         self.timeout = timeout
         self.privacy = privacy
         self.config = config
+        # Ask for token usage unless this server said it does not understand the option.
+        self.include_usage = (entry.base_url, entry.model) not in self._rejects_usage_option
 
     def _url(self, path: str) -> str:
         return f"{self.entry.base_url.rstrip('/')}/{path}"
@@ -132,10 +141,13 @@ class ModelClient:
                 raise ModelError('Could not connect to the provider. Check your connection.') from None
             return
         payload = {"model": self.entry.model, "messages": request_messages, "stream": True}
+        if self.include_usage:
+            payload["stream_options"] = {"include_usage": True}
         if tools is not None:
             payload["tools"] = tools
         splitter = ThinkSplitter()
         calls: dict[int, dict] = {}
+        usage = None
         received_text = False
         complete = False
         error = f"Can't reach model '{self.entry.name}' at {self.entry.base_url}"
@@ -146,6 +158,13 @@ class ModelClient:
                         await response.aread()
                         # Retry only an explicit capability rejection, before any output.
                         body = response.text.lower()
+                        # An older server that rejects the usage option still chats.
+                        if self.include_usage and response.status_code in (400, 422) and 'stream_options' in body:
+                            self.include_usage = False
+                            self._rejects_usage_option.add((self.entry.base_url, self.entry.model))
+                            async for event in self.stream(request_messages, tools):
+                                yield event
+                            return
                         if tools and response.status_code in (400, 422) and 'tool' in body and any(
                             word in body for word in ('not supported', 'unsupported', 'does not support')
                         ):
@@ -175,6 +194,8 @@ class ModelClient:
                             frame = json.loads(data)
                             if isinstance(frame, dict) and frame.get('error'):
                                 raise ModelError('Provider could not complete the response. Check access and usage limits, then retry.')
+                            # The usage frame comes last, often with no choices at all.
+                            usage = normalize_usage(frame.get("usage")) or usage
                             choices = frame.get("choices") or []
                         except (json.JSONDecodeError, AttributeError):
                             continue  # skip a garbled stream line instead of killing the turn
@@ -226,6 +247,8 @@ class ModelClient:
             if not call["id"]:
                 call["id"] = f"call_{index}"
             yield ModelEvent("tool_call", tool_call=call)
+        if usage:
+            yield ModelEvent("usage", usage=usage)
         yield ModelEvent("done")
 
     async def ping(self) -> bool:

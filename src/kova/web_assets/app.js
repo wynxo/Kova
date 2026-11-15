@@ -195,8 +195,45 @@
     try { await navigator.clipboard.writeText(text); copied?.(); }
     catch (_) { toast('Clipboard unavailable. Select the text to copy it.'); }
   }
+  // What an answer cost and how fast it was: "1.2k in · 340 out · ~$0.004 · 38 tok/s".
+  function shortTokens(count) {
+    count = Number(count) || 0;
+    if (count < 1000) return String(count);
+    if (count < 10000) return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+    if (count < 1e6) return `${Math.round(count / 1000)}k`;
+    return `${(count / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  function money(value) {
+    if (!value) return '$0.00';
+    return value < 0.01 ? `$${value.toFixed(4).replace(/0+$/, '')}` : `$${value.toFixed(2)}`;
+  }
+  function usageLine(usage) {
+    const mark = usage.estimated ? '~' : '';
+    const parts = [`${mark}${shortTokens(usage.prompt_tokens)} in`, `${mark}${shortTokens(usage.completion_tokens)} out`];
+    if (usage.local) parts.push('$0.00 local');
+    else if (usage.cost_usd != null) parts.push(`~${money(usage.cost_usd)}`);
+    if (usage.tokens_per_second) parts.push(`${usage.tokens_per_second} tok/s`);
+    return parts.join(' · ');
+  }
+  function usageDetails(usage) {
+    const seconds = ms => `${(ms / 1000).toFixed(1)} s`;
+    const lines = [];
+    if (usage.ms_first_token != null) lines.push(`First token after ${seconds(usage.ms_first_token)}`);
+    if (usage.ms_total != null) lines.push(`${seconds(usage.ms_total)} in total`);
+    if (usage.model) lines.push(`Model: ${usage.model}`);
+    if (usage.estimated) lines.push('Token counts estimated: the server sent none');
+    if (!usage.local && usage.cost_usd == null) lines.push('Price unknown: add it under [pricing] in config.toml');
+    else if (!usage.local) lines.push('Cost is an estimate from list prices');
+    return lines.join('\n');
+  }
+  function usageMeter(usage) {
+    const meter = el('span', 'usage-meter', usageLine(usage));
+    meter.title = usageDetails(usage);
+    meter.setAttribute('aria-label', `${usageLine(usage)}. ${usageDetails(usage).replaceAll('\n', '. ')}`);
+    return meter;
+  }
   // Quiet actions under a message: copy it, or bring your own words back to edit.
-  function messageActions(article, read, role) {
+  function messageActions(article, read, role, usage = null) {
     const bar = el('div', 'message-actions');
     const glyph = icon('copy'), copy = el('button', 'message-action');
     copy.type = 'button'; copy.title = 'Copy'; copy.setAttribute('aria-label', role === 'user' ? 'Copy your message' : 'Copy reply');
@@ -211,6 +248,7 @@
       edit.onclick = () => { $('prompt').value = read(); resize(); $('prompt').focus(); };
       bar.append(edit);
     }
+    if (usage) bar.append(usageMeter(usage));
     article.append(bar);
   }
   // Tool rows speak plainly: what ran, on what, and the gist of what came back.
@@ -383,13 +421,14 @@
       else if (msg.role === 'assistant') {
         if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
         if (msg.content) { const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
+        if (msg.usage) turn.usage = msg.usage;
         if (msg.tool_calls?.length) for (const call of msg.tool_calls) {
           turn.body.append(toolRow(call.function?.name, call.function?.arguments, icon('check')).node);
         }
       }
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
-    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant');
+    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
@@ -735,7 +774,7 @@
       finish() { buttons.forEach(b => b.disabled = true); input.disabled = true; if (!status.textContent) status.textContent = 'No longer pending'; }};
   }
   function turnView(body) {
-    let current = null, scheduled = false, finished = false;
+    let current = null, scheduled = false, finished = false, usage = null;
     const blocks = [], pendingTools = [], approvals = new Map();
     let plan = null;
     const activityText = el('span', 'shimmer', 'Thinking…');
@@ -842,6 +881,9 @@
           announce('Stopped.');
         } else if (kind === 'done') {
           announce('Reply finished.');
+          usage = event.usage || null;
+          const budget = event.budget_warning;
+          if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget');
         }
         schedule();
       },
@@ -852,7 +894,7 @@
         for (const block of blocks) block.dirty = true;
         paint();
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
-        if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant');
+        if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage);
       }
     };
   }

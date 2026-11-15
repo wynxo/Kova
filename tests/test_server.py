@@ -154,9 +154,13 @@ def test_chat_stream_events(server):
     assert isinstance(events[-1]["message_id"], int)
     assert all(event["type"] == "text" for event in events[:-1])
     assert "".join(event.get("text", "") for event in events[:-1]) == "Hello there!"
+    assert events[-1]["usage"]["completion_tokens"] > 0
     messages = client.get(f"/chats/{chat_id}", headers=headers).json()["messages"]
+    usage = messages[1].pop("usage")
     assert messages == [{"role": "user", "content": "hello"},
                          {"role": "assistant", "content": "Hello there!"}]
+    # The fake server sends no usage block, so the counts are marked as estimates.
+    assert usage == events[-1]["usage"] and usage["estimated"] is True
 
 
 def test_disconnect_does_not_lose_the_turn(server):

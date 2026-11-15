@@ -103,9 +103,11 @@ def responses_request(model, messages, tools):
 
 async def stream_native(client, url, payload, adapter):
     from kova.models import ModelError, ModelEvent
+    from kova.usage import normalize_usage
     calls = {}
     complete = False
     has_text = False
+    usage: dict = {}
     async with client.stream('POST', url, json=payload) as response:
         if response.status_code >= 400:
             raise ModelError(f'Provider refused the request: HTTP {response.status_code}')
@@ -124,6 +126,15 @@ async def stream_native(client, url, payload, adapter):
             if kind in ('message_stop', 'response.completed'):
                 complete = True
             if adapter == 'anthropic':
+                # message_start carries the prompt count; message_delta the running output count.
+                message = event.get('message')
+                raw = message.get('usage') if kind == 'message_start' and isinstance(message, dict) else event.get('usage')
+                found = normalize_usage(raw)
+                if found:
+                    if raw.get('input_tokens') is not None:
+                        usage['prompt_tokens'] = found['prompt_tokens']
+                    if raw.get('output_tokens') is not None:
+                        usage['completion_tokens'] = found['completion_tokens']
                 index = event.get('index', 0)
                 block = event.get('content_block') or {}
                 delta = event.get('delta') or {}
@@ -138,6 +149,8 @@ async def stream_native(client, url, payload, adapter):
                 if delta.get('type') == 'thinking_delta':
                     yield ModelEvent('reasoning', delta.get('thinking', ''))
             else:
+                if kind == 'response.completed' and isinstance(event.get('response'), dict):
+                    usage = normalize_usage(event['response'].get('usage')) or usage
                 index = event.get('output_index', 0)
                 item = event.get('item') or {}
                 if kind == 'response.output_item.added' and item.get('type') == 'function_call':
@@ -161,4 +174,7 @@ async def stream_native(client, url, payload, adapter):
         if not call['arguments']:
             call['arguments'] = json.dumps(initial)
         yield ModelEvent('tool_call', tool_call=call)
+    if usage:
+        yield ModelEvent('usage', usage={'prompt_tokens': usage.get('prompt_tokens', 0),
+                                         'completion_tokens': usage.get('completion_tokens', 0)})
     yield ModelEvent('done')
