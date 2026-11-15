@@ -409,6 +409,9 @@ class KovaClient:
     def mcp_update(self, name: str, *, enabled: bool) -> dict:
         return self._request("PATCH", f"/mcp/{name}", json={"enabled": enabled}, timeout=90).json()
 
+    def mcp_reload(self) -> dict:
+        return self._request("POST", "/mcp/reload", timeout=90).json()
+
 
 def _spawn_server(cfg: Config) -> int:
     """Start ``kova serve`` detached and record its pid; return the pid."""

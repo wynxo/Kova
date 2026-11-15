@@ -13,6 +13,7 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from kova import plugins
 from kova.config import Config, McpServerEntry, save_config
 from kova.mcp import McpManager, tool_name, validate_server
 from kova.pairing import require_local
@@ -56,7 +57,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     async def reload(restart: tuple[str, ...] = ()) -> None:
         async with lock:
             manager: McpManager = app.state.mcp
-            await asyncio.to_thread(manager.reload, list(config.mcp), restart=restart)
+            servers = list(config.mcp)
+            servers += plugins.plugin_mcp_entries(config.home)
+            await asyncio.to_thread(manager.reload, servers, restart=restart)
             # No await between rebuilding and assigning: a turn sees the old
             # registry or the new one, never half of each.
             app.state.agent.tools = build_tools(app.state.tool_context)
@@ -75,7 +78,8 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         return next(item for item in rows() if item["name"] == name)
 
     def entry(name: str) -> McpServerEntry:
-        found = next((server for server in config.mcp if server.name == name), None)
+        found = next((server for server in [*config.mcp, *plugins.plugin_mcp_entries(config.home)]
+                      if server.name == name), None)
         if found is None:
             raise HTTPException(404, f"No MCP server named {name!r}. List them with: kova mcp list")
         return found
@@ -100,9 +104,18 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         await reload()
         return row(server.name)
 
+    @router.post("/mcp/reload")
+    async def mcp_reload() -> dict:
+        """Reconnect every MCP server now, including any from plugins."""
+        await reload()
+        return {"ok": True}
+
     @router.patch("/mcp/{name}")
     async def mcp_update(name: str, body: McpPatch) -> dict:
         server = entry(name)
+        if server.plugin:
+            raise HTTPException(409, f"{name} comes from the {server.plugin} plugin. "
+                                f"Manage it with: kova plugin disable {server.plugin}")
         if body.enabled is not None:
             config.mcp[config.mcp.index(server)] = replace(server, enabled=body.enabled)
             save_config(config)
@@ -112,6 +125,8 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     @router.delete("/mcp/{name}")
     async def mcp_remove(name: str) -> dict:
         server = entry(name)
+        if server.plugin:
+            return {"ok": True, "plugin": server.plugin}
         config.mcp.remove(server)
         save_config(config)
         # A later server with the same name must not inherit this one's grants.
@@ -132,6 +147,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         known = {item["name"] for item in status["tools"]}
         if tool not in known and tool not in server.disabled_tools:
             raise HTTPException(404, f"{name} has no tool named {tool!r}")
+        if body.enabled is not None and server.plugin:
+            raise HTTPException(409, f"{name} comes from the {server.plugin} plugin. "
+                                f"Manage it with: kova plugin disable {server.plugin}")
         if body.enabled is not None:
             disabled = [item for item in server.disabled_tools if item != tool]
             if not body.enabled:

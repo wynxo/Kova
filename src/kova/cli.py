@@ -312,6 +312,23 @@ def get_client() -> KovaClient:
     return ensure_server(load_config())
 
 
+def _reload_mcp() -> None:
+    """Reload the running MCP manager if the server is up, without starting it.
+
+    A plugin enable/disable/install/remove only needs the manager to rebuild its
+    tool list; when the server is down the plugin servers load there on the next
+    start instead, so a reload is not needed here.
+    """
+    cfg = load_config()
+    client = KovaClient(f"http://127.0.0.1:{cfg.port}", ensure_token(cfg.home))
+    try:
+        client.mcp_reload()
+    except KovaError:
+        pass
+    finally:
+        client.http.close()
+
+
 def _check_mode(mode: str | None) -> None:
     """Reject an unknown --mode value as a usage error."""
     if mode is not None and mode not in MODES:
@@ -914,11 +931,13 @@ def mcp_list():
     table.add_column("Status", no_wrap=True)
     table.add_column("Tools", justify="right", no_wrap=True)
     table.add_column("Runs", style=theme.MUTED, overflow="fold")
+    table.add_column("Source", style=theme.MUTED, no_wrap=True)
     for row in rows:
         enabled = sum(1 for tool in row["tools"] if tool["enabled"])
         tools = f"{enabled}/{len(row['tools'])}" if row["tools"] else "-"
         table.add_row(row["name"], Text(row["state"], style=_MCP_STATE.get(row["state"], "")), tools,
-                      f"{row['transport']} · {_clip(row['target'], 70)}")
+                      f"{row['transport']} · {_clip(row['target'], 70)}",
+                      f"plugin: {row['plugin']}" if row.get("plugin") else "")
     console.print(table)
     for row in rows:
         if row["error"]:
@@ -961,11 +980,14 @@ def mcp_add(
 def mcp_remove(name: str):
     """Stop an MCP server and forget it (and its always-allow rules)."""
     try:
-        get_client().mcp_remove(name)
+        result = get_client().mcp_remove(name)
     except KovaError as exc:
         if exc.status == 404:
             _fail(f'No MCP server named "{name}".', hint="See them with: kova mcp list")
         raise
+    if result.get("plugin"):
+        _fail(f'{name} comes from the {result["plugin"]} plugin, so it cannot be removed here.',
+              hint=f"Use: kova plugin disable {result['plugin']} (or kova plugin remove {result['plugin']})")
     _ok(f"Removed {name}.")
 
 
@@ -1443,8 +1465,9 @@ def plugin_install(
         _muted("Cancelled.")
         return
     _ok(f"Installed {plugin.name} {plugin.version}.")
+    _reload_mcp()
     if plugin.mcp:
-        _muted("  MCP servers connect once the MCP client lands (issue #135).")
+        _muted("  Its MCP servers connect once they are reachable.")
 
 
 @_plugins.command("list")
@@ -1478,6 +1501,7 @@ def plugin_enable(name: str):
     except plugins.PluginError as exc:
         _fail(str(exc))
     _ok(f"Enabled {name}.")
+    _reload_mcp()
 
 
 @_plugins.command("disable")
@@ -1490,6 +1514,7 @@ def plugin_disable(name: str):
     except plugins.PluginError as exc:
         _fail(str(exc))
     _ok(f"Disabled {name}.")
+    _reload_mcp()
 
 
 @_plugins.command("remove")
@@ -1502,6 +1527,7 @@ def plugin_remove(name: str):
     except plugins.PluginError as exc:
         _fail(str(exc))
     _ok(f"Removed {name}.")
+    _reload_mcp()
 
 
 @_plugins.command("update")
@@ -1614,8 +1640,8 @@ def _catalog_install(spec: str, *, yes: bool, kind: str | None = None, upgrade: 
         _muted("Cancelled.")
         return
     _ok(f"Installed {result}.")
-    _muted("Its skills apply from your next message. A plugin's MCP servers and rules "
-           "reach a running server after: kova stop")
+    _muted("Its skills apply from your next message.")
+    _reload_mcp()
 
 
 @_catalog.command("search")

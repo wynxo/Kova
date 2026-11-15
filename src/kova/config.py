@@ -160,6 +160,8 @@ class McpServerEntry:
     disabled_tools: list[str] = field(default_factory=list)
     #: Confine a stdio server's writes to its own folder (Linux Landlock).
     sandbox: bool = False
+    #: Runtime only: the plugin a server came from (never persisted). None for user servers.
+    plugin: str | None = None
 
     @property
     def transport(self) -> str:
