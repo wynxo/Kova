@@ -149,6 +149,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /models/active` | token or session | choose the active model |
 | `GET /mcp` | token or session | list MCP servers with their tools and state |
 | `POST /mcp` | token or session, local only | add an MCP server and connect it (never from a paired phone) |
+| `POST /mcp/reload` | token or session | reconnect every MCP server now, including any from plugins |
 | `PATCH/DELETE /mcp/{name}` | token or session | switch an MCP server on or off / remove it and its grants |
 | `POST /mcp/{name}/test` | token or session | reconnect one MCP server now and report its tools |
 | `PATCH /mcp/{name}/tools/{tool:path}` | token or session | switch one MCP tool on or off, or always allow it |

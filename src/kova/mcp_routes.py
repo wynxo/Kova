@@ -120,9 +120,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
 
     @router.delete("/mcp/{name}")
     async def mcp_remove(name: str) -> dict:
-        if row(name).get("plugin"):
-            return {"ok": True, "plugin": row(name)["plugin"]}
         server = entry(name)
+        if server.plugin:
+            return {"ok": True, "plugin": server.plugin}
         config.mcp.remove(server)
         save_config(config)
         # A later server with the same name must not inherit this one's grants.
