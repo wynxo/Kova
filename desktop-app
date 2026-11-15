@@ -7,7 +7,7 @@ set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd -- "$here"
 
-export PATH="$HOME/.openclaw/tools/node/bin:$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 find_uv() {
     if command -v uv >/dev/null 2>&1; then

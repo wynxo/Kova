@@ -62,6 +62,8 @@ function Uninstall-Kova {
     } else {
         Write-Host 'uv was not found; no uv tool can be removed.'
     }
+    $Shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Kova.lnk'
+    Remove-Item -LiteralPath $Shortcut -Force -ErrorAction SilentlyContinue
     # Staged desktop app files are reinstalled by install.ps1, unlike data.
     $Desktop = Join-Path $Data 'desktop'
     if (Test-Path -LiteralPath (Join-Path $Desktop 'package.json')) {

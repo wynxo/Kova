@@ -37,8 +37,26 @@ def installer(tmp_path):
     fake_id.write_text('#!/bin/sh\nprintf "%s\\n" "${FAKE_UID:-1000}"\n')
     fake_id.chmod(0o755)
     # Only the commands the scripts need; no git, curl or uv leaks from the real PATH.
-    for command in ("rm", "dirname", "mkdir", "cp", "basename", "uname"):
+    for command in ("rm", "dirname", "mkdir", "cp", "basename", "uname", "chmod", "cat"):
         (path / command).symlink_to(shutil.which(command))
+    node = path / "node"
+    node.write_text('#!/bin/sh\nexit "${FAKE_NODE_EXIT:-0}"\n')
+    node.chmod(0o755)
+    npm = path / "npm"
+    npm.write_text("""#!/bin/sh
+printf '%s\\n' "$@" > "$HOME/npm-args"
+mkdir -p node_modules/electron/dist
+cat > node_modules/electron/dist/electron <<'ELECTRON'
+#!/bin/sh
+printf '%s\\n' "$KOVA_HOME" > "$HOME/launched"
+ELECTRON
+chmod +x node_modules/electron/dist/electron
+mkdir -p node_modules/electron/dist/Electron.app/Contents/MacOS node_modules/electron/dist/Electron.app/Contents/Resources
+cp node_modules/electron/dist/electron node_modules/electron/dist/Electron.app/Contents/MacOS/Electron
+printf icon > node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns
+exit "${FAKE_NPM_EXIT:-0}"
+""")
+    npm.chmod(0o755)
     env = {**os.environ, "HOME": str(home), "PATH": str(path)}
     for key in ("SUDO_USER", "SUDO_UID", "KOVA_SOURCE", "KOVA_REF", "KOVA_HOME"):
         env.pop(key, None)
@@ -67,7 +85,7 @@ def test_installer_ref_and_no_git_archive(installer, git):
     assert (home / "uv-paths").read_text().splitlines() == [
         str(home / ".local/bin"), str(home / ".local/share/uv/tools"),
     ]
-    assert "Done. Run: kova setup" in result.stdout
+    assert "Done. Open Kova" in result.stdout
 
 
 @requires_posix
@@ -87,19 +105,20 @@ def test_installer_stages_the_desktop_app_and_names_both_clients(installer):
     staged = home / ".kova/desktop"
     assert (staged / "package.json").is_file()
     assert (staged / "main.js").is_file()
-    assert not (staged / "node_modules").exists()  # kova-app installs these itself
+    assert (staged / "node_modules/electron/dist/electron").is_file()
+    assert (home / "npm-args").read_text().splitlines() == ["ci", "--include=dev"]
     assert "Desktop app: kova-app" in result.stdout
     assert "Web UI in your browser: kova-web" in result.stdout
 
 
 @requires_posix
-def test_installer_skips_the_desktop_app_without_download_tools(installer, tmp_path):
+def test_cli_only_piped_install_needs_no_download_tools(installer, tmp_path):
     home, path, env, run = installer
     # Piped from a directory that is not a checkout, with no curl/tar/mktemp on PATH.
-    result = run("install.sh", content=(REPO / "install.sh").read_text(), cwd=tmp_path)
+    result = run("install.sh", content=(REPO / "install.sh").read_text().replace('main "$@"', 'main --no-desktop'), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert not (home / ".kova/desktop").exists()
-    assert "desktop app files were not installed" in result.stdout
+    assert "without the desktop app" in result.stdout
     assert "Web UI in your browser: kova-web" in result.stdout
 
 
@@ -107,10 +126,13 @@ def test_installer_skips_the_desktop_app_without_download_tools(installer, tmp_p
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop registration")
 def test_installer_registers_the_installed_desktop_command(installer):
     home, path, env, run = installer
-    result = run("install.sh", "--desktop")
+    result = run("install.sh")
     assert result.returncode == 0, result.stderr
     entry = (home / ".local/share/applications/kova.desktop").read_text()
-    assert f'Exec="{home}/.local/bin/kova-app"' in entry
+    assert f'Exec="{home}/.kova/desktop/launch"' in entry
+    launched = subprocess.run([str(home / ".kova/desktop/launch")], env={**env, "PATH": "/usr/bin:/bin"})
+    assert launched.returncode == 0
+    assert (home / "launched").read_text().strip() == str(home / ".kova")
     assert (home / ".local/share/icons/hicolor/512x512/apps/kova.png").is_file()
 
 
@@ -331,9 +353,18 @@ def windows_installer(tmp_path):
     _write_console_stub(home / ".local" / "bin" / "kova.exe")
     _write_uv_stub(stub)
     _write_git_stub(stub)
+    (stub / "node.cmd").write_text('@exit /b 0\n')
+    (stub / "npm.cmd").write_text(
+        '@echo off\n'
+        'echo %* > "%USERPROFILE%\\npm-args"\n'
+        'mkdir node_modules\\electron\\dist 2>nul\n'
+        'copy /y "%USERPROFILE%\\.local\\bin\\kova.exe" node_modules\\electron\\dist\\electron.exe >nul\n'
+        'exit /b 0\n'
+    )
     env = {
         **os.environ,
         # The installer reads USERPROFILE; HOME is set too so the test mirrors the POSIX one.
+        "APPDATA": str(home / "AppData/Roaming"),
         "USERPROFILE": str(home),
         "HOME": str(home),
         "KOVA_SOURCE": str(REPO),
@@ -373,14 +404,17 @@ def test_windows_installer_stages_the_desktop_app_path_and_uninstall_entry(windo
     home, stub, env, run = windows_installer
     result = run("install.ps1")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Done. Run: kova setup" in result.stdout
+    assert "Done. Open Kova" in result.stdout
     assert "Downloading" not in result.stdout  # KOVA_SOURCE and a stub git: no network
     assert "Desktop app: kova-app    Web UI in your browser: kova-web" in result.stdout
 
     staged = home / ".kova" / "desktop"
     assert (staged / "package.json").is_file()
     assert (staged / "main.js").is_file()
-    assert not (staged / "node_modules").exists()  # kova-app installs these itself
+    assert (staged / "node_modules/electron/dist/electron.exe").is_file()
+    shortcut = home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk"
+    assert shortcut.is_file()
+    assert (home / "npm-args").read_text().strip() == "ci --include=dev"
     assert (home / ".local" / "share" / "kova" / "uninstall.ps1").is_file()
 
     args = (home / "uv-args").read_text(encoding="utf-8").splitlines()
@@ -483,3 +517,129 @@ def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_install
     )
     assert result.returncode != 0
     assert not (home / ".local" / "share" / "kova" / "uninstall.ps1").exists()
+
+
+@requires_posix
+@pytest.mark.parametrize("missing", ["node", "npm", "old-node", "npm-failure"])
+def test_desktop_failure_still_finishes_the_cli_install(installer, missing):
+    home, path, env, run = installer
+    if missing in ("node", "npm"):
+        (path / missing).unlink()
+    elif missing == "old-node":
+        env["FAKE_NODE_EXIT"] = "1"
+    else:
+        env["FAKE_NPM_EXIT"] = "1"
+    result = run("install.sh")
+    # The desktop app is optional: the CLI install finishes with a clear note.
+    assert result.returncode == 0, result.stderr
+    assert "Done (without the desktop app)" in result.stdout
+    expected = "npm ci" if missing == "npm-failure" else "nodejs.org"
+    assert expected in result.stdout
+    assert "kova-web" in result.stdout
+    assert not (home / ".local/share/applications/kova.desktop").exists()
+
+
+@requires_posix
+def test_cli_only_install_needs_no_node_or_menu_entry(installer):
+    home, path, env, run = installer
+    (path / "node").unlink()
+    (path / "npm").unlink()
+    result = run("install.sh", "--no-desktop")
+    assert result.returncode == 0, result.stderr
+    assert not (home / ".local/share/applications/kova.desktop").exists()
+    assert not (home / "npm-args").exists()
+
+
+@requires_posix
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux launcher caches")
+def test_installer_refreshes_caches_and_uninstaller_removes_registration(installer):
+    home, path, env, run = installer
+    for name in ("update-desktop-database", "gtk-update-icon-cache"):
+        tool = path / name
+        tool.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$HOME/' + name + '"\n')
+        tool.chmod(0o755)
+    assert run("install.sh").returncode == 0
+    assert (home / "update-desktop-database").exists()
+    assert (home / "gtk-update-icon-cache").exists()
+    assert run("uninstall.sh", "--keep-data").returncode == 0
+    assert not (home / ".local/share/applications/kova.desktop").exists()
+    assert not (home / ".local/share/icons/hicolor/512x512/apps/kova.png").exists()
+
+
+@requires_windows
+def test_windows_cli_only_skips_dependencies_and_shortcut(windows_installer):
+    home, stub, env, run = windows_installer
+    result = run("install.ps1", "--no-desktop")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (home / "npm-args").exists()
+    assert not (home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk").exists()
+
+
+@requires_windows
+def test_windows_uninstall_removes_start_menu_shortcut(windows_installer):
+    home, stub, env, run = windows_installer
+    shortcut = home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk"
+    shortcut.parent.mkdir(parents=True)
+    shortcut.write_text("shortcut")
+    result = run("uninstall.ps1", "--keep-data")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not shortcut.exists()
+
+
+@requires_posix
+def test_macos_installer_registers_and_removes_spotlight_app(installer):
+    import plistlib
+
+    home, path, env, run = installer
+    (path / "uname").unlink()
+    (path / "uname").write_text('#!/bin/sh\nprintf Darwin\n')
+    (path / "uname").chmod(0o755)
+    result = run("install.sh")
+    assert result.returncode == 0, result.stderr
+    bundle = home / "Applications/Kova.app/Contents"
+    info = plistlib.loads((bundle / "Info.plist").read_bytes())
+    assert info["CFBundleExecutable"] == "Kova"
+    assert (bundle / "MacOS/Kova").stat().st_mode & 0o111
+    launched = subprocess.run([str(bundle / "MacOS/Kova")], env=env)
+    assert launched.returncode == 0
+    assert (home / "launched").read_text().strip() == str(home / ".kova")
+    result = run("uninstall.sh", "--keep-data")
+    assert result.returncode == 0, result.stderr
+    assert not bundle.exists()
+
+
+@requires_posix
+def test_piped_install_keeps_downloaded_source_until_staging_finishes(installer, tmp_path):
+    import tarfile
+
+    home, path, env, run = installer
+    archive = tmp_path / "source.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for name in ("package.json", "package-lock.json", "main.js", "assets/icon.png"):
+            tar.add(REPO / "desktop" / name, arcname="Kova-main/desktop/" + name)
+    env["KOVA_TEST_ARCHIVE"] = str(archive)
+    for command in ("tar", "gzip", "mktemp"):
+        (path / command).symlink_to(shutil.which(command))
+    curl = path / "curl"
+    curl.write_text('#!/bin/sh\ncp "$KOVA_TEST_ARCHIVE" "$4"\n')
+    curl.chmod(0o755)
+    result = run("install.sh", content=(REPO / "install.sh").read_text(), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert (home / ".kova/desktop/main.js").is_file()
+    assert (home / "npm-args").is_file()
+
+
+@requires_windows
+@pytest.mark.parametrize("failure", ["old-node", "npm-failure"])
+def test_windows_desktop_failure_still_finishes_the_cli_install(windows_installer, failure):
+    home, stub, env, run = windows_installer
+    if failure == "old-node":
+        (stub / "node.cmd").write_text('@exit /b 1\n')
+    else:
+        (stub / "npm.cmd").write_text('@exit /b 1\n')
+    result = run("install.ps1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Done (without the desktop app)" in result.stdout
+    expected = "nodejs.org" if failure == "old-node" else "npm ci failed"
+    assert expected in result.stdout + result.stderr
+    assert not (home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk").exists()
