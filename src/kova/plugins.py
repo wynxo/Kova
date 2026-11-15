@@ -602,6 +602,7 @@ def disable(name: str, home: Path | None = None) -> Path:
     plugin, root = _find(home, name)
     _write_state(root, enabled=False, source=plugin.source, version=plugin.version)
     _sync_rules(home, name, [])  # disabling fully removes the plugin's rules
+    _drop_tool_grants(home, plugin)
     return root
 
 
@@ -610,8 +611,27 @@ def remove(name: str, home: Path | None = None) -> str:
     home = Path(home) if home else kova_home()
     plugin, root = _find(home, name)
     _sync_rules(home, name, [])
+    _drop_tool_grants(home, plugin)
     shutil.rmtree(root)
     return name
+
+
+def _drop_tool_grants(home: Path, plugin: Plugin) -> None:
+    """Delete saved rules (e.g. always-allow) for the tools of a plugin's MCP servers."""
+    path = Path(home) / RULES_FILE
+    if not path.is_file():
+        return
+    try:
+        loaded = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(loaded, list):
+        return
+    prefixes = tuple(f"{_plugin_server_name(plugin.name, server.name)}__" for server in plugin.mcp)
+    kept = [entry for entry in loaded
+            if not (isinstance(entry, dict) and str(entry.get("tool", "")).startswith(prefixes))]
+    if len(kept) != len(loaded):
+        _atomic_json(path, kept)
 
 
 def _sync_rules(home: Path, name: str, rules: list[Rule]) -> None:

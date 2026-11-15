@@ -986,9 +986,8 @@ def mcp_remove(name: str):
             _fail(f'No MCP server named "{name}".', hint="See them with: kova mcp list")
         raise
     if result.get("plugin"):
-        _muted(f'{name} comes from the {result["plugin"]} plugin. Manage it with '
-               f"kova plugin disable {result['plugin']}.")
-        return
+        _fail(f'{name} comes from the {result["plugin"]} plugin, so it cannot be removed here.',
+              hint=f"Use: kova plugin disable {result['plugin']} (or kova plugin remove {result['plugin']})")
     _ok(f"Removed {name}.")
 
 

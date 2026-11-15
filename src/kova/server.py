@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, 
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing
+from kova import __version__, checkpoints, pairing, plugins
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -349,7 +349,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mcp = mcp
     # MCP servers connect in the background (npx may download first), so the
     # server answers at once; their tools join the registry when ready.
-    mcp_connect = asyncio.create_task(app.state.mcp_reload()) if config.mcp else None
+    mcp_connect = asyncio.create_task(app.state.mcp_reload()) if (config.mcp or plugins.plugin_mcp_entries(config.home)) else None
     app.state.bus = bus
     app.state.conversation_states = ConversationStates(bus)
 

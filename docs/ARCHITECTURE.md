@@ -643,8 +643,14 @@ What a plugin contributes, and how it is wired in:
   chat (both the simple loop and the full-screen app) lists and dispatches them
   like built-in commands. A plugin command runs nothing by itself.
 - **MCP servers** are declared with the `{name, command, args, env, url,
-  enabled}` shape and exposed by `plugin_mcp_servers()` for the MCP client to
-  consume once that lands. Kova does not start them yet.
+  enabled}` shape. `plugin_mcp_entries()` turns the enabled plugins' servers into
+  manager entries named `<plugin>_<server>` (lowercase letters, digits, `-`, `_`),
+  so they cannot collide with the user's own servers and their `<server>__<tool>`
+  names stay valid. The MCP manager loads them with the user's servers at start
+  and on `POST /mcp/reload`; `kova plugin enable|disable|install|remove` calls
+  that route when the server is running. `kova mcp list` marks them, and
+  `kova mcp remove` refuses them and points to `kova plugin`. Disabling or
+  removing a plugin also drops any saved always-allow rules for its tools.
 - **Default permission rules** are merged into `permission-rules.json`, tagged
   with `source = "plugin:<name>"`, and go through the exact same permission
   policy and sandbox as built-in tools. Disabling or removing a plugin deletes

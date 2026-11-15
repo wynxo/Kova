@@ -78,7 +78,8 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         return next(item for item in rows() if item["name"] == name)
 
     def entry(name: str) -> McpServerEntry:
-        found = next((server for server in config.mcp if server.name == name), None)
+        found = next((server for server in [*config.mcp, *plugins.plugin_mcp_entries(config.home)]
+                      if server.name == name), None)
         if found is None:
             raise HTTPException(404, f"No MCP server named {name!r}. List them with: kova mcp list")
         return found
@@ -112,6 +113,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     @router.patch("/mcp/{name}")
     async def mcp_update(name: str, body: McpPatch) -> dict:
         server = entry(name)
+        if server.plugin:
+            raise HTTPException(409, f"{name} comes from the {server.plugin} plugin. "
+                                f"Manage it with: kova plugin disable {server.plugin}")
         if body.enabled is not None:
             config.mcp[config.mcp.index(server)] = replace(server, enabled=body.enabled)
             save_config(config)
@@ -143,6 +147,9 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         known = {item["name"] for item in status["tools"]}
         if tool not in known and tool not in server.disabled_tools:
             raise HTTPException(404, f"{name} has no tool named {tool!r}")
+        if body.enabled is not None and server.plugin:
+            raise HTTPException(409, f"{name} comes from the {server.plugin} plugin. "
+                                f"Manage it with: kova plugin disable {server.plugin}")
         if body.enabled is not None:
             disabled = [item for item in server.disabled_tools if item != tool]
             if not body.enabled:
