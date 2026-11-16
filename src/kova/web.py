@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -22,6 +23,8 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
 COOKIE = "kova_session"
+#: The component gallery is a development tool, never part of a normal install.
+GALLERY_FLAG = "KOVA_GALLERY"
 SESSION_SECONDS = 12 * 3600
 TICKET_SECONDS = 60
 SHARE_SECONDS = 300
@@ -30,6 +33,8 @@ SHARE_MAX_BYTES = 2 * 1024 * 1024
 # more files than the composer can ingest.
 SHARE_MAX_FILES = 3
 ASSETS = Path(__file__).with_name("web_assets")
+#: Pages served only by a gated handler. Never put them under ASSETS: that tree is mounted publicly.
+PAGES = Path(__file__).with_name("web_pages")
 
 
 class LoginBody(BaseModel):
@@ -48,6 +53,11 @@ def require_same_origin(request: Request) -> None:
         raise HTTPException(403, "cross-origin request rejected")
     if request.headers.get("sec-fetch-site", "none") not in {"same-origin", "none"}:
         raise HTTPException(403, "cross-origin request rejected")
+
+
+def gallery_enabled() -> bool:
+    """Whether KOVA_GALLERY=1 asks the server to expose the component gallery."""
+    return os.environ.get(GALLERY_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _prune(entries: dict[str, float]) -> None:
@@ -133,6 +143,12 @@ def install_web(app, require_bearer) -> None:
     @app.get("/app/sw.js", include_in_schema=False)
     async def worker():
         return FileResponse(ASSETS / "sw.js", media_type="application/javascript")
+
+    @app.get("/app/gallery", include_in_schema=False)
+    async def gallery():
+        if not gallery_enabled():
+            raise HTTPException(404, "Not found")
+        return FileResponse(PAGES / "gallery.html")
 
     @app.post("/app/share", dependencies=[Depends(require_browser_session)])
     async def share(request: Request):

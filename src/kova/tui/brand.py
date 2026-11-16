@@ -13,7 +13,7 @@ from rich.text import Text
 
 from kova import theme
 
-from .style import blend
+from .style import blend, colour
 from .widgets import LOGO
 
 TAGLINE = "your private AI"
@@ -37,8 +37,8 @@ def gradient_text(text: str, *, bold: bool = True, stops=theme.GRADIENT) -> Text
     order = {index: position for position, index in enumerate(visible)}
     for index, char in enumerate(text):
         if index in order:
-            colour = blend(stops, order[index] / last)
-            out.append(char, style=f"{'bold ' if bold else ''}{colour}")
+            shade = colour(blend(stops, order[index] / last))
+            out.append(char, style=f"{'bold ' if bold else ''}{shade}")
         else:
             out.append(char)
     return out
@@ -48,27 +48,27 @@ def wordmark(version: str | None = None) -> Group:
     """The two-row half-block KOVA, a tagline and the version beside it."""
     top = Text(" ") + gradient_text(LOGO[0])
     bottom = Text(" ") + gradient_text(LOGO[1])
-    bottom.append("   " + TAGLINE, style=theme.MUTED)
+    bottom.append("   " + TAGLINE, style=colour('MUTED'))
     if version:
-        bottom.append(f"  v{version}", style=theme.FAINT)
+        bottom.append(f"  v{version}", style=colour('FAINT'))
     return Group(top, bottom)
 
 
 def heading(text: str, detail: str = "") -> Text:
     """A section heading: a violet diamond, the title and a quiet detail."""
-    line = Text.assemble((" ◆ ", f"bold {theme.ACCENT}"), (text, "bold"))
+    line = Text.assemble((" ◆ ", f"bold {colour('ACCENT')}"), (text, "bold"))
     if detail:
-        line.append("  " + detail, style=theme.MUTED)
+        line.append("  " + detail, style=colour('MUTED'))
     return line
 
 
 def card(body: RenderableType, title: str, *, subtitle: str = "", tone: str = theme.ACCENT) -> Panel:
     """A rounded card with a Kova-coloured title in its top edge."""
     name, _, rest = title.partition(" ")
-    heading_text = gradient_text(name) + Text(" " + rest if rest else "", style=f"bold {theme.MUTED}")
+    heading_text = gradient_text(name) + Text(" " + rest if rest else "", style=f"bold {colour('MUTED')}")
     return Panel(body, title=heading_text, title_align="left",
-                 subtitle=Text(subtitle, style=theme.MUTED) if subtitle else None,
-                 subtitle_align="right", border_style=tone, box=box.ROUNDED,
+                 subtitle=Text(subtitle, style=colour('MUTED')) if subtitle else None,
+                 subtitle_align="right", border_style=colour(tone), box=box.ROUNDED,
                  padding=(1, 2), expand=False)
 
 
@@ -77,25 +77,25 @@ def style_help(group) -> None:
     commands into panels (``HELP_PANELS``)."""
     from typer import rich_utils
 
-    rich_utils.STYLE_OPTION = f"bold {theme.ACCENT_SOFT}"
-    rich_utils.STYLE_SWITCH = f"bold {theme.USER}"
-    rich_utils.STYLE_NEGATIVE_OPTION = f"bold {theme.WARNING}"
-    rich_utils.STYLE_NEGATIVE_SWITCH = f"bold {theme.WARNING}"
-    rich_utils.STYLE_METAVAR = f"{theme.FAINT}"
-    rich_utils.STYLE_TYPES = theme.FAINT
-    rich_utils.STYLE_TYPES_SEPARATOR = theme.FAINT
-    rich_utils.STYLE_USAGE = f"bold {theme.ACCENT}"
+    rich_utils.STYLE_OPTION = f"bold {colour('ACCENT_SOFT')}"
+    rich_utils.STYLE_SWITCH = f"bold {colour('USER')}"
+    rich_utils.STYLE_NEGATIVE_OPTION = f"bold {colour('WARNING')}"
+    rich_utils.STYLE_NEGATIVE_SWITCH = f"bold {colour('WARNING')}"
+    rich_utils.STYLE_METAVAR = f"{colour('FAINT')}"
+    rich_utils.STYLE_TYPES = colour('FAINT')
+    rich_utils.STYLE_TYPES_SEPARATOR = colour('FAINT')
+    rich_utils.STYLE_USAGE = f"bold {colour('ACCENT')}"
     rich_utils.STYLE_USAGE_COMMAND = "bold"
     rich_utils.STYLE_HELPTEXT_FIRST_LINE = ""
-    rich_utils.STYLE_HELPTEXT = theme.MUTED
+    rich_utils.STYLE_HELPTEXT = colour('MUTED')
     rich_utils.STYLE_OPTION_HELP = ""
-    rich_utils.STYLE_OPTION_DEFAULT = theme.MUTED
-    rich_utils.STYLE_REQUIRED_SHORT = theme.ERROR
-    rich_utils.STYLE_REQUIRED_LONG = theme.ERROR
-    rich_utils.STYLE_OPTIONS_PANEL_BORDER = theme.BORDER
-    rich_utils.STYLE_COMMANDS_PANEL_BORDER = theme.BORDER
-    rich_utils.STYLE_ERRORS_PANEL_BORDER = theme.ERROR
-    rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {theme.ACCENT_SOFT}"
+    rich_utils.STYLE_OPTION_DEFAULT = colour('MUTED')
+    rich_utils.STYLE_REQUIRED_SHORT = colour('ERROR')
+    rich_utils.STYLE_REQUIRED_LONG = colour('ERROR')
+    rich_utils.STYLE_OPTIONS_PANEL_BORDER = colour('BORDER')
+    rich_utils.STYLE_COMMANDS_PANEL_BORDER = colour('BORDER')
+    rich_utils.STYLE_ERRORS_PANEL_BORDER = colour('ERROR')
+    rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {colour('ACCENT_SOFT')}"
     commands = getattr(group, "commands", None)
     if not isinstance(commands, dict):
         return
@@ -133,7 +133,7 @@ def setup_banner(console, version: str) -> None:
         ("  Let's connect a model. ", "bold"),
         ((f"{assistant_name()} talks to a model server on your machine or your network,\n"
           "  or to a provider you have an account with. Nothing is sent until you chat."),
-         theme.MUTED)))
+         colour('MUTED'))))
 
 
 __all__ = ["HELP_PANELS", "TAGLINE", "assistant_name", "card", "gradient_text", "heading",
