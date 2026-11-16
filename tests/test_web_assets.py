@@ -40,7 +40,7 @@ def test_popover_search_has_a_visible_keyboard_focus_ring() -> None:
     focus = re.search(r"\.popover-search:focus-visible\s*\{([^}]+)\}", css)
     assert focus is not None, "the popover search must show keyboard focus"
     declarations = dict(re.findall(r"([\w-]+)\s*:\s*([^;]+);", focus[1]))
-    assert declarations.get("outline") == "2px solid var(--accent)"
+    assert declarations.get("outline") == "2px solid var(--accent-default)"
     assert declarations.get("outline-offset") == "1px"
 
 # Attributes that make the browser fetch something.
