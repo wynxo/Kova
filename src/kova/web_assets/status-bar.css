@@ -1,0 +1,91 @@
+/* Optional status bar for issue #204, first slice: model + context meter.
+ *
+ * Hidden by default (the `hidden` attribute in index.html): Kova stays quiet
+ * until the user opts in via the settings toggle. Idle colours are muted text
+ * and borders only; the accent token never appears here. The warning token
+ * appears only past 80% context, next to the Compact action.
+ *
+ * Colours are semantic tokens from design/tokens.json (via tokens.css), never
+ * hard-coded values. Layout numbers follow the 4px grid and the 12px minimum
+ * from docs/DESIGN.md. This file styles elements, so it keeps the audit's
+ * focus-visible ring and reduced-motion block (see scripts/audit_ui.py).
+ */
+
+#status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px; /* space-2 */
+  min-height: 24px;
+  padding: 4px 6px 0; /* space-1 */
+  color: var(--fg-muted);
+  font-size: 12px; /* type-size-label, the minimum */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#status-bar[hidden] {
+  display: none;
+}
+
+.status-bar-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+  max-width: 40%;
+}
+
+.status-bar-meter {
+  flex: 1 1 72px;
+  min-width: 48px;
+  max-width: 160px;
+  height: 3px;
+  border-radius: 999px; /* radius-pill */
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.status-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--fg-faint);
+  transition: width 120ms ease-out; /* motion-fast */
+}
+
+#status-bar.is-high .status-bar-fill {
+  background: var(--status-warning);
+}
+
+.status-bar-context {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.status-bar-compact {
+  flex: none;
+  padding: 2px 8px; /* space-0-5 + space-2 */
+  border: 1px solid var(--border-strong);
+  border-radius: 999px; /* radius-pill */
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-bar-compact:hover {
+  color: var(--fg-default);
+}
+
+.status-bar-compact:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #status-bar *,
+  #status-bar {
+    transition: none;
+  }
+}

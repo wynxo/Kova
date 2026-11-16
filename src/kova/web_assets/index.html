@@ -13,9 +13,11 @@
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/status-bar.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
+  <script defer src="/app/assets/status-bar.js"></script>
   <script defer src="/app/assets/app.js"></script>
 </head>
 <body class="is-empty">
@@ -102,6 +104,7 @@
         </div>
       </form>
       <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line <span class="hint-dot">·</span> <kbd data-mod>Ctrl</kbd> + <kbd>/</kbd> for shortcuts</span></div>
+      <div id="status-bar" class="status-bar" role="note" hidden><span id="status-bar-model" class="status-bar-model"></span><span class="status-bar-meter" aria-hidden="true"><span id="status-bar-fill" class="status-bar-fill"></span></span><span id="status-bar-context" class="status-bar-context"></span><button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button></div>
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
@@ -172,6 +175,7 @@
   <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
     <summary>Settings</summary>
     <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+    <label><input id="status-bar-toggle" type="checkbox"> Show the status bar under the composer</label>
     <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
     <button id="autostart-refresh" type="button">Refresh</button>
   </details>
