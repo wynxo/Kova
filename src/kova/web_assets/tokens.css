@@ -3,6 +3,39 @@
  * Selectors match the web app's attribute values (data-theme="dark" / "light").
  * See docs/DESIGN.md. */
 
+:root {
+  --space-0: 0px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --motion-instant: 0ms;
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 280ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --type-size-body: 14px;
+  --type-size-body-comfortable: 16px;
+  --type-size-label: 12px;
+  --type-size-title: 18px;
+  --type-size-heading: 24px;
+  --type-leading-body: 1.55;
+  --type-leading-tight: 1.3;
+  --type-measure-prose: 66ch;
+  --type-measure-chat: 80ch;
+}
+
 :root, [data-theme="dark"] {
   color-scheme:dark;
   --bg-base: #14121c;
