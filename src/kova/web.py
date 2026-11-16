@@ -33,6 +33,8 @@ SHARE_MAX_BYTES = 2 * 1024 * 1024
 # more files than the composer can ingest.
 SHARE_MAX_FILES = 3
 ASSETS = Path(__file__).with_name("web_assets")
+#: Pages served only by a gated handler. Never put them under ASSETS: that tree is mounted publicly.
+PAGES = Path(__file__).with_name("web_pages")
 
 
 class LoginBody(BaseModel):
@@ -146,7 +148,7 @@ def install_web(app, require_bearer) -> None:
     async def gallery():
         if not gallery_enabled():
             raise HTTPException(404, "Not found")
-        return FileResponse(ASSETS / "gallery.html")
+        return FileResponse(PAGES / "gallery.html")
 
     @app.post("/app/share", dependencies=[Depends(require_browser_session)])
     async def share(request: Request):

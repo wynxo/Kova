@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from kova.config import load_config
 from kova.server import create_app
 
-GALLERY = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets" / "gallery.html"
+GALLERY = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_pages" / "gallery.html"
 # Colours must come from app.css tokens, never a literal in the page.
 LITERAL_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
 
@@ -43,3 +43,8 @@ def test_gallery_serves_the_components_with_the_flag(client, monkeypatch):
 
 def test_gallery_uses_tokens_instead_of_literal_colours():
     assert LITERAL_COLOUR.findall(GALLERY.read_text(encoding="utf-8")) == []
+
+
+def test_gallery_is_not_reachable_through_the_public_asset_mount(client, monkeypatch):
+    monkeypatch.setenv("KOVA_GALLERY", "0")
+    assert client.get("/app/assets/gallery.html").status_code == 404
