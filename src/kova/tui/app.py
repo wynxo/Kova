@@ -38,7 +38,7 @@ from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save
 from .keymap import Keymap
 from .markdown import ACCENT, BASH, MEMORY, display_width
 from .render import Renderer, compact_number, duration, shorten
-from .style import ACCENT_SOFT, FAINT, colour_level
+from .style import ACCENT_SOFT, FAINT, active_theme, colour_level
 from .terminal import KeyReader, RawMode, Screen
 from .widgets import (
     MODE_COLOURS,
@@ -219,7 +219,7 @@ class ChatApp:
         self.renderer.no_think = no_think
         cfg = load_config(history_path.parent) if history_path else None
         self.renderer.name = cfg.persona_name if cfg else "Kova"
-        self.renderer.p.theme_name = (cfg.tui_theme if cfg else os.environ.get("KOVA_THEME", "dark"))
+        self.renderer.p.theme_name = active_theme(cfg.tui_theme if cfg else None)
         try:
             self.keys = Keymap(cfg.tui_keys if cfg else {})
         except ValueError as exc:
