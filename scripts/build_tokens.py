@@ -44,6 +44,10 @@ THEME_SELECTORS = {
 }
 THEME_SCHEMES = {"kova-dark": "dark", "kova-light": "light"}
 
+# Theme-independent groups in tokens.json, emitted once on :root as
+# --space-*, --radius-*, --motion-* and --type-*.
+SCALES = ("space", "radius", "motion", "type")
+
 ALIAS = re.compile(r"^\{([a-z0-9_.]+)\}$", re.IGNORECASE)
 
 # Contrast pairs that must hold, per WCAG 2.2 SC 1.4.3 (text) and SC 1.4.11 (non-text).
@@ -192,6 +196,26 @@ def _css_name(token: str) -> str:
     return "--" + token.replace(".", "-").replace("_", "-")
 
 
+def _css_value(value: Any) -> str:
+    """A token value as CSS: cubic-bezier lists become `cubic-bezier(...)`."""
+    if isinstance(value, list):
+        return "cubic-bezier(" + ", ".join(f"{number:g}" for number in value) + ")"
+    return str(value)
+
+
+def scale_tokens(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The theme-independent scales (space, radius, motion, type), flattened.
+
+    These are the same in every theme, so they are emitted once on `:root`. A theme
+    file cannot override them; density and type settings will swap them later.
+    """
+    data = data if data is not None else load_tokens()
+    out: dict[str, Any] = {}
+    for group in SCALES:
+        out.update(flatten(data.get(group, {}), data, group))
+    return out
+
+
 def render_css(data: dict[str, Any] | None = None) -> str:
     data = data if data is not None else load_tokens()
     lines = [
@@ -200,6 +224,13 @@ def render_css(data: dict[str, Any] | None = None) -> str:
         ' * Selectors match the web app\'s attribute values (data-theme="dark" / "light").',
         " * See docs/DESIGN.md. */",
     ]
+    scales = scale_tokens(data)
+    if scales:
+        lines.append("")
+        lines.append(":root {")
+        for token, value in scales.items():
+            lines.append(f"  {_css_name(token)}: {_css_value(value)};")
+        lines.append("}")
     for theme in THEMES:
         tokens = theme_tokens(theme, data)
         lines.append("")

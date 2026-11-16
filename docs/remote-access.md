@@ -109,6 +109,10 @@ same thing for the phone, so the limits follow the phone into the agent:
   no record of who wrote them, so after upgrading they are treated as a phone's
   with only `chat`.
 - **Restoring a checkpoint** outside Kova Files needs `host:exec`.
+- **Compare** (`POST /compare`) runs one prompt on several configured models. It
+  is a chat-level route: it needs only `chat`, runs no tools, reads no history
+  and writes nothing, so it gives a phone no power that chatting with the
+  active model does not already give it.
 
 Requests from the computer itself (the CLI, the desktop app, a local browser
 session) are never limited by capabilities. Phones paired before capabilities
