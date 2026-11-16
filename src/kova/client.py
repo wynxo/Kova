@@ -111,6 +111,14 @@ class KovaClient:
         """Merge validated preference changes; returns the saved values."""
         return self._request('PUT', '/preferences', json=preferences).json()
 
+    def themes(self) -> list[dict]:
+        """Every theme the server can offer: the built-ins, then the user's files."""
+        return self._request('GET', '/themes').json()
+
+    def theme(self, theme_id: str) -> dict:
+        """One theme with its tokens resolved over the base it extends."""
+        return self._request('GET', f'/themes/{theme_id}').json()
+
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:

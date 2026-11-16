@@ -31,9 +31,13 @@ file. That directory is what `src/kova/web.py` mounts at `/app/assets`, and
 `app.css`'s shipped palette wins the cascade for the two names they share.
 
 ```bash
-python scripts/build_tokens.py           # regenerate src/kova/web_assets/tokens.css
+python scripts/build_tokens.py           # regenerate tokens.css and tokens.json
 python scripts/build_tokens.py --check   # contrast + shape + freshness, exits 1 on failure
 ```
+
+Both generated files are checked for freshness: `src/kova/web_assets/tokens.css` for the
+browser, and `src/kova/tokens.json` for the server, which needs the same values as data so a
+user theme can be merged over its base ([`src/kova/themes.py`](../src/kova/themes.py)).
 
 Three layers, and components may only use the third:
 
