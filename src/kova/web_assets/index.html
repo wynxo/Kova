@@ -9,10 +9,12 @@
   <title>Kova</title>
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/app/assets/icon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/app/assets/icon-16.png" type="image/png" sizes="16x16">
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/logo.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
@@ -22,7 +24,7 @@
   <button id="backdrop" aria-label="Close sidebar" hidden></button>
   <aside id="sidebar" aria-label="Conversations">
     <div class="sidebar-head">
-      <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
+      <a class="brand" href="/app" aria-label="Kova home"><span class="logo-mark" aria-hidden="true"></span><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
     <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd>Ctrl Shift N</kbd></button>
@@ -61,7 +63,7 @@
     <div id="banner" class="banner" role="status" hidden></div>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
-        <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="44" height="44">
+        <span class="logo-mark welcome-mark" aria-hidden="true"></span>
         <h1>Make room for <span>your next idea.</span></h1>
         <p><span>A question, a plan, a half-formed thought.</span> <span>Bring it here.</span></p>
       </div>

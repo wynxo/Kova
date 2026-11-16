@@ -385,6 +385,9 @@ const article = new Element('article'), liveBody = new Element(); article.append
 const live = turnView(liveBody);
 const activityRow = byClass(liveBody, 'activity')[0];
 assert.equal(Boolean(activityRow.hidden), false, 'a fresh turn shows that Kova is thinking');
+assert.equal(byClass(activityRow, 'thinking-mark').length, 1, 'the thinking row carries the Kova mark');
+assert.equal(byClass(activityRow, 'thinking-bolt').length, 1, 'and the bolt that belongs to it');
+assert.equal(activityRow.textContent, 'Thinking…', 'the state is written, not only animated');
 live.accept({type: 'reasoning', text: 'Let me think.'});
 assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
 assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
@@ -407,6 +410,7 @@ const liveMeter = byClass(article, 'usage-meter')[0];
 assert.equal(liveMeter.textContent, '1.2k in · 340 out · ~$0.0041 · 38 tok/s', 'the answer says what it cost and how fast it was');
 assert.ok(liveMeter.title.includes('First token after 0.8 s') && liveMeter.title.includes('9.1 s in total'));
 assert.equal(byClass(liveBody, 'markdown')[0].classList.contains('live'), false);
+assert.equal(liveBody.children.includes(activityRow), false, 'the thinking indicator leaves when the turn is idle');
 const replyActions = byClass(article, 'message-actions')[0];
 buttons(replyActions)[0].onclick(); await tick();
 assert.deepEqual(copied, ['All done.'], 'the reply copies as the text the model wrote');

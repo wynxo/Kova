@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Kova">
+  <title>Kova</title>
+  <!-- The Kova mark: a K inside a circle. It inherits currentColor so the web UI
+       can paint it with a semantic token, and it is used as a CSS mask there. -->
+  <circle cx="60" cy="60" r="44" stroke-width="7"/>
+  <path d="M40 21v78" stroke-width="8"/>
+  <path d="M40 72l20-24 8 10 23-29" stroke-width="8"/>
+  <path d="M50 60l41 31" stroke-width="8"/>
+</svg>

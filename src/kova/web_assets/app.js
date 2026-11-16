@@ -287,7 +287,7 @@
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode(heading || 'You'));
-    else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode(heading || state.persona.name)); }
+    else { const mark = el('span', 'logo-mark avatar'); mark.setAttribute('aria-hidden', 'true'); label.append(mark, document.createTextNode(heading || state.persona.name)); }
     const body = el('div', 'message-body');
     if (role === 'user') {
       body.textContent = content || '';
@@ -860,8 +860,11 @@
     let current = null, scheduled = false, finished = false, usage = null;
     const blocks = [], pendingTools = [], approvals = new Map();
     let plan = null;
-    const activityText = el('span', 'shimmer', 'Thinking…');
-    const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), activityText); body.append(activity);
+    const activityText = el('span', 'activity-text', 'Thinking…');
+    const activityMark = el('span', 'thinking-mark');
+    activityMark.setAttribute('aria-hidden', 'true');
+    activityMark.append(el('span', 'logo-mark'), el('span', 'thinking-bolt'));
+    const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
     function paint() {
       scheduled = false;
       for (const block of blocks) {

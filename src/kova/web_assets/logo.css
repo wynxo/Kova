@@ -1,0 +1,49 @@
+/* The Kova mark and the thinking indicator.
+   The mark is a CSS mask cut from logo.svg, so it paints with a semantic text
+   token and follows the theme without a second asset. The bolt is the only
+   motion here: it shows while a turn runs, and it is off otherwise. */
+
+.logo-mark {
+  display:inline-block; flex:none;
+  background:currentColor;
+  -webkit-mask:url("/app/assets/logo.svg") center / contain no-repeat;
+          mask:url("/app/assets/logo.svg") center / contain no-repeat;
+}
+
+.brand .logo-mark { width:1.75em; height:1.75em; color:var(--fg-default); }
+.brand:focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
+
+/* The start screen keeps .welcome-mark's responsive size; the old image tile's
+   shadow and rounding go away so only the drawn mark remains. */
+.welcome-mark { display:block; background:currentColor; color:var(--fg-default); border-radius:0; box-shadow:none; }
+.avatar.logo-mark { color:var(--fg-muted); }
+
+.thinking-mark { position:relative; display:inline-block; flex:none; width:1.3em; height:1.3em; }
+.thinking-mark .logo-mark { width:100%; height:100%; color:var(--fg-faint); }
+
+/* A short strike once every ~2.5s. No glow, no gradient, no travel past a few
+   pixels: it should read as "still working", not demand attention. */
+.thinking-bolt {
+  position:absolute; left:57%; top:46%; width:.38em; height:.6em;
+  background:var(--accent-default);
+  -webkit-mask:url("/app/assets/bolt.svg") center / contain no-repeat;
+          mask:url("/app/assets/bolt.svg") center / contain no-repeat;
+  opacity:0;
+  animation:thinking-bolt calc(var(--slow, 200ms) * 12) ease-in-out infinite;
+}
+@keyframes thinking-bolt {
+  0%, 58% { opacity:0; transform:translateY(-.05em); }
+  66%     { opacity:1; transform:translateY(0); }
+  84%     { opacity:1; transform:translateY(.05em); }
+  100%    { opacity:0; transform:translateY(.1em); }
+}
+
+/* Idle turns drop the indicator from the DOM; a hidden one must not animate. */
+.activity[hidden] .thinking-bolt { animation:none; opacity:0; }
+
+/* Reduced motion keeps the still mark and the "Thinking…" label, and drops the
+   bolt. The label is visible text, not an animation, so the state is never lost. */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-bolt { animation:none; opacity:0; }
+  .thinking-mark .logo-mark { color:var(--fg-muted); }
+}
