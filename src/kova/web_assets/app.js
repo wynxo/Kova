@@ -1263,6 +1263,7 @@
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
+    if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
     const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
     if (mod && event.shiftKey && key === 'n') { event.preventDefault(); safe(newIncognito); return; }
     if (mod && !event.shiftKey && key === 'k') { if (state.connected) safe(newChat); }
@@ -1362,6 +1363,9 @@
     actions.append(cancel, save); form.append(head, intro, fields, toggle, note, actions);
     dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
   }
+  // The Settings view links here without owning the dialog; keep one stable
+  // trigger so the view never reaches into this closure.
+  $('open-model-settings').onclick = () => safe(openModelSettings);
   function theme(value) {
     document.documentElement.dataset.theme = value;
     const next = value === 'light' ? 'Dark theme' : 'Light theme';

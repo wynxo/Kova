@@ -41,7 +41,8 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
     assert app.state.token not in page.text
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     assert page.headers["referrer-policy"] == "no-referrer"
-    for name in ("app.js", "app.css", "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
+    for name in ("app.js", "app.css", "settings.js", "settings.css",
+                 "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
                  "fonts/InterVariable.woff2", "fonts/InterVariable-Italic.woff2",
                  "fonts/JetBrainsMonoVariable.woff2"):
         response = client.get(f"/app/assets/{name}")
@@ -163,7 +164,7 @@ def test_agent_core_frontend_behavior():
     if not node:
         pytest.skip('Node is optional; needed only for frontend DOM behavior checks')
     for script in ('web_core.mjs', 'web_events.mjs', 'web_pairing.mjs', 'web_privacy.mjs',
-                   'web_sounds.mjs'):
+                   'web_sounds.mjs', 'web_settings.mjs'):
         result = subprocess.run([node, str(Path(__file__).with_name(script))],
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, script + '\n' + result.stdout + result.stderr
