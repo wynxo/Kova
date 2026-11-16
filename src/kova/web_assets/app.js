@@ -337,6 +337,9 @@
     if (role === 'user' && content) messageActions(article, () => content, 'user');
     return body;
   }
+  // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
+  // working when it is missing, so every hook below guards its presence.
+  const chatAppearance = () => window.KovaChatAppearance || null;
   function history(chats) {
     const list = $('chat-list');
     list.replaceChildren(); $('chat-count').textContent = chats.length || '';
@@ -348,6 +351,7 @@
       if (group.label) list.append(el('div', 'history-group', group.label));
       for (const chat of group.chats) {
         const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
+        chatAppearance()?.decorateRow(row, chat);
         const button = el('button', 'history-open');
         const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
         const titleRow = el('span', 'history-title');
@@ -359,7 +363,10 @@
         button.onclick = () => safe(() => openChat(chat.id));
         const actions = el('details', 'history-actions');
         actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
-        for (const [symbol, name, fn] of [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
+        const items = [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)]];
+        if (chatAppearance()) items.push(['sliders-horizontal', 'Colour & icon', () => editAppearance(chat)]);
+        items.push(['trash-2', 'Delete', () => editChat(chat, true)]);
+        for (const [symbol, name, fn] of items) {
           if (chat.ephemeral && symbol === 'copy') continue;
           const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
           action.onclick = () => safe(fn); actions.append(action);
@@ -669,6 +676,14 @@
       await json(`/chats/${chat.id}`, write('PATCH', {title}));
       if (state.chat?.id === chat.id) { state.chat.title = title; pageTitle(); }
     }
+    await refreshChats();
+  }
+  async function editAppearance(chat) {
+    if (state.busy || !chatAppearance()) return;
+    const patch = await chatAppearance().openDialog(chat);
+    if (!patch) return;
+    const updated = await json(`/chats/${chat.id}`, write('PATCH', patch));
+    if (state.chat?.id === chat.id) Object.assign(state.chat, updated);
     await refreshChats();
   }
   // A cached health answer is still useful, so say when it was measured.
