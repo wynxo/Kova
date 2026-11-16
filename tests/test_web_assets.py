@@ -23,6 +23,16 @@ APP_JS = ASSETS / "app.js"
 SOUNDS_JS = ASSETS / "sounds.js"
 # Formats the app deliberately does not ship: cues are synthesized at play time.
 AUDIO_SUFFIXES = {".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus"}
+PALETTE_JS = ASSETS / "palette.js"
+PALETTE_CSS = ASSETS / "palette.css"
+
+# Any literal colour in a component stylesheet: themes own those values.
+COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
+
+
+def without_comments(text: str) -> str:
+    """Comments carry issue numbers like #183, which are not colours."""
+    return re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 
 
 def test_popover_search_has_a_visible_keyboard_focus_ring() -> None:
@@ -128,3 +138,34 @@ def test_app_js_only_looks_up_ids_that_exist_in_index(page: Page) -> None:
     assert used, "no literal $('id') lookups found; the app.js helper may have been renamed"
     missing = sorted(used - set(page.ids))
     assert missing == [], f"app.js looks up ids missing from index.html: {missing}"
+
+
+def test_index_loads_the_palette_before_the_app() -> None:
+    """The palette module must be defined before app.js constructs it,
+    and its stylesheet must win over the shared dialog rules."""
+    html = INDEX.read_text(encoding="utf-8")
+    assert html.index("palette.css") > html.index("app.css")
+    assert html.index("palette.js") < html.index("app.js")
+
+
+def test_palette_stylesheet_has_no_literal_colour() -> None:
+    text = without_comments(PALETTE_CSS.read_text(encoding="utf-8"))
+    assert COLOUR_LITERAL.findall(text) == [], "palette.css hard-codes a colour; use a token"
+    assert text.count("var(--") >= 20, "palette.css should take its look from tokens"
+
+
+def test_palette_script_is_self_contained_and_builds_text_only() -> None:
+    text = without_comments(PALETTE_JS.read_text(encoding="utf-8"))
+    for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(",
+                      "new Function", "fetch(", "http://", "https://"):
+        assert forbidden not in text, f"palette.js must not use {forbidden}"
+    for needed in ("'aria-activedescendant'", "'Escape'", "'Tab'", "'role', 'listbox'",
+                   "textContent"):
+        assert needed in text, f"palette.js lost {needed}"
+
+
+def test_app_js_wires_the_palette_registry() -> None:
+    text = APP_JS.read_text(encoding="utf-8")
+    assert "KovaPalette?.create" in text, "app.js does not create the palette"
+    assert "safe(openPalette)" in text, "the palette has no keyboard or button entry point"
+    assert "paletteItems" in text, "the command registry is missing"

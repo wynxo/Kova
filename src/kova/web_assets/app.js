@@ -117,6 +117,7 @@
     const busy = state.busy;
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
+    $('open-palette').disabled = !state.connected;
     for (const id of ['mode', 'web', 'permission', 'cwd']) $(id).disabled ||= !!state.chat?.ephemeral;
     $('web').disabled ||= state.localOnly;
     $('permission').disabled ||= !offers('approvals');
@@ -1245,18 +1246,107 @@
   menuState(); wide?.addEventListener?.('change', () => { sidebar(false); });
   $('backdrop').onclick = () => sidebar(false); $('sidebar-close').onclick = () => sidebar(false);
   if (/Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '')) {
-    $('new-chat-key').textContent = '⌘K';
-    document.querySelectorAll('kbd[data-mod]').forEach(key => { key.textContent = '⌘'; });
+    $('new-chat-key').textContent = '⌘⇧K';
+    $('palette-key').textContent = '⌘K';
+    document.querySelectorAll('[data-mod]').forEach(key => { key.textContent = '⌘'; });
+    document.querySelectorAll('[data-shift]').forEach(key => { key.textContent = '⇧'; });
   }
   $('open-shortcuts').onclick = () => { sidebar(false); $('shortcuts-dialog').showModal(); };
   $('shortcuts-close').onclick = () => $('shortcuts-dialog').close();
+  // Command palette (#183). palette.js owns the dialog; this is only the registry,
+  // so every menu action below stays reachable from the keyboard too.
+  const paletteMac = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '');
+  const shortcutKey = (...keys) => [paletteMac ? '⌘' : 'Ctrl',
+    ...keys.map(key => key === 'Shift' ? (paletteMac ? '⇧' : 'Shift') : key)];
+  let paletteChats = [];
+  function paletteItems() {
+    const items = [];
+    const add = (group, item) => items.push({group, ...item});
+    const current = state.chat && !state.chat.ephemeral ? state.chat : null;
+    const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
+    add('Actions', {title:'New conversation', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKey('Shift', 'K'), run:() => safe(newChat)});
+    add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKey('Shift', 'N'), run:() => safe(newIncognito)});
+    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKey('Shift', 'F'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
+    add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKey('/'), run:() => $('shortcuts-dialog').showModal()});
+    add('Actions', {title:'Show or hide the sidebar', hint:'Give the conversation more room', keywords:'drawer panel collapse', shortcut:shortcutKey('B'), run:() => toggleSidebar()});
+    if (state.busy) add('Actions', {title:'Stop the reply', hint:'Cancel the turn that is running now', keywords:'cancel halt interrupt', shortcut:['Esc'], run:() => safe(stop)});
+    add('Actions', {title:'Disconnect this window', hint:'Sign out of this browser session', keywords:'logout sign out leave', run:() => $('disconnect').onclick?.()});
+
+    add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKey('Shift', 'L'), run:() => $('theme').onclick?.()});
+
+    if (current) {
+      add('This conversation', {title:'Compact now', hint:'Summarise older turns to free context', keywords:'summarise summarize shorten context', run:() => safe(compactChat)});
+      add('This conversation', {title:'Fork this conversation', hint:'Continue in an independent copy', keywords:'copy duplicate branch', run:() => safe(() => forkChat(current.id))});
+      add('This conversation', {title:'Rename this conversation', hint:current.title || 'New conversation', keywords:'title name edit', run:() => safe(() => editChat(current, false))});
+      add('This conversation', {title:'Delete this conversation', hint:'Remove it from this computer', keywords:'remove trash discard', run:() => safe(() => editChat(current, true))});
+      if (!state.busy && !$('mode').disabled) {
+        const nextMode = $('mode').value === 'chat' ? 'work' : 'chat';
+        add('This conversation', {title:`Switch to ${nextMode} mode`, hint:nextMode === 'work' ? 'Tools, files and memory' : 'Conversation only', keywords:'mode chat work tools', run:() => setMode(nextMode)});
+      }
+      if (!$('web').disabled) {
+        const on = $('web').getAttribute('aria-pressed') === 'true';
+        add('This conversation', {title:`Turn web search ${on ? 'off' : 'on'}`, hint:'For this conversation', keywords:'internet browse search web', run:() => $('web').onclick?.()});
+      }
+      if (offers('approvals') && !$('permission').disabled) {
+        for (const [mode, hint] of [['manual', 'Ask before commands and file changes'], ['auto', 'Ask only before destructive commands'], ['full', 'Never ask. Use with care.']]) {
+          add('Permissions', {title:`Permission: ${mode === 'full' ? 'Full access' : mode[0].toUpperCase() + mode.slice(1)}`, hint, keywords:`permission approvals ${mode}`, run:() => { $('permission').value = mode; $('permission').onchange?.(); }});
+        }
+      }
+    }
+
+    for (const [button, title, hint, keywords] of [
+      ['open-memory', 'Memory', 'Browse and search remembered notes', 'notes recall remember'],
+      ['open-reminders', 'Reminders', 'Everything scheduled to remind you', 'alarms schedule'],
+      ['open-extensions', 'Extensions', 'Installed plugins and skills', 'plugins skills add-ons'],
+      ['open-privacy', 'Privacy', 'What left this computer, and Local only', 'report local only network'],
+      ['open-mcp', 'MCP servers', 'Tools from Model Context Protocol servers', 'mcp tools servers'],
+      ['open-sounds', 'Sounds', 'Quiet cues for replies and reminders', 'sound audio cue volume chime'],
+      ['add-provider', 'Add provider', 'Connect another model provider', 'model server api key'],
+      ['connect-phone', 'Connect your phone', 'Pair a phone on the same Wi-Fi', 'pair qr device mobile'],
+    ]) add('Settings', panel(button, title, hint, keywords));
+    add('Settings', {title:'Install & notifications', hint:'Add Kova to your device and choose alerts', keywords:'pwa install notifications alerts', run:() => $('install-settings').onclick?.()});
+    add('Settings', {title:'Startup settings', hint:'Keep reminders running after you log out', keywords:'start at sign in autostart login boot', run:() => { $('settings').open = true; $('settings').scrollIntoView?.({block:'nearest'}); }});
+    add('Settings', {title:'Model settings…', hint:'Vision and the active model', keywords:'model vision context', run:() => safe(openModelSettings)});
+    add('Settings', {title:'Permission rules…', hint:'Pre-approve tools with patterns', keywords:'rules allow deny approvals', run:() => safe(openRules)});
+
+    for (const model of state.models) {
+      if (state.busy) break;
+      add('Models', {title:`Use ${model.model || model.name}`, hint:model.provider_name || 'Custom provider', keywords:`model provider ${model.name}`, run:() => { $('model').value = model.name; $('model').onchange?.(); }});
+    }
+    for (const chat of paletteChats.slice(0, 50)) {
+      if (state.busy) break;
+      add('Conversations', {
+        title: chat.ephemeral ? 'Incognito conversation' : chat.title || 'New conversation',
+        hint: chat.ephemeral ? 'Incognito · not saved on this PC'
+          : [chat.mode === 'chat' ? 'Chat' : 'Work', chat.state && chat.state !== 'idle' ? String(chat.state).replaceAll('-', ' ') : ''].filter(Boolean).join(' · '),
+        keywords: 'chat conversation history',
+        run: () => safe(() => openChat(chat.id)),
+      });
+    }
+    return items;
+  }
+  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onError: error => toast(error.message)}) || null;
+  async function openPalette() {
+    if (!state.connected || !commandPalette) return;
+    closeMenu();
+    commandPalette.open();
+    try {
+      const chats = await json('/chats');
+      if (Array.isArray(chats)) paletteChats = chats;
+    } catch (_) { /* the palette still offers commands if history cannot load */ }
+    commandPalette.refresh();
+  }
+  $('open-palette').onclick = () => safe(openPalette);
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
     if (mod && event.shiftKey && key === 'n') { event.preventDefault(); safe(newIncognito); return; }
-    if (mod && !event.shiftKey && key === 'k') { if (state.connected) safe(newChat); }
-    else if (mod && !event.shiftKey && key === 'b') toggleSidebar();
+    // Ctrl/Cmd+K is the palette now; new conversation moved to Ctrl/Cmd+Shift+K
+    // so the two never fight over the same chord (docs/SHORTCUTS.md).
+    if (mod && !event.shiftKey && key === 'k') { event.preventDefault(); safe(openPalette); return; }
+    if (mod && event.shiftKey && key === 'k') { event.preventDefault(); if (state.connected) safe(newChat); return; }
+    if (mod && !event.shiftKey && key === 'b') toggleSidebar();
     else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
     else if (mod && event.shiftKey && key === 'l') $('theme').onclick();
     else if (mod && key === '/') $('shortcuts-dialog').showModal();

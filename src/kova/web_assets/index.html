@@ -13,12 +13,14 @@
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/palette.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
   <link rel="stylesheet" href="/app/assets/diff.css">
   <script defer src="/app/assets/diff.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
+  <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/app.js"></script>
 </head>
 <body class="is-empty">
@@ -28,8 +30,9 @@
       <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
-    <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd>Ctrl Shift N</kbd></button>
-    <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl K</kbd></button>
+    <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd><span data-mod>Ctrl</span> <span data-shift>Shift</span> N</kbd></button>
+    <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl Shift K</kbd></button>
+    <button id="open-palette" type="button" class="palette-launch" aria-keyshortcuts="Control+K Meta+K" title="Search commands and conversations"><span class="icon i-search" aria-hidden="true"></span><span>Search or run a command</span><kbd id="palette-key">Ctrl K</kbd></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <div class="section-label"><span>Conversations</span><span id="chat-count"></span></div>
     <nav id="chat-list" aria-label="Chat history"></nav>
@@ -133,8 +136,10 @@
       <div><dt>Bring back your last message</dt><dd><kbd>↑</kbd> <span>in an empty box</span></dd></div>
       <div><dt>Stop the reply</dt><dd><kbd>Esc</kbd></dd></div>
       <div><dt>Jump to the message box</dt><dd><kbd>/</kbd></dd></div>
-      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
-      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd></div>
+      <div><dt>Command palette</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
+      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>K</kbd></dd></div>
+      <div><dt>New incognito chat</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>N</kbd></dd></div>
+      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>F</kbd></dd></div>
       <div><dt>Show or hide the sidebar</dt><dd><kbd data-mod>Ctrl</kbd><kbd>B</kbd></dd></div>
       <div><dt>Switch light and dark</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd></dd></div>
       <div><dt>This list</dt><dd><kbd data-mod>Ctrl</kbd><kbd>/</kbd></dd></div>
