@@ -883,7 +883,11 @@
     const blocks = [], pendingTools = [], approvals = new Map();
     let plan = null;
     const activityText = el('span', 'shimmer', 'Thinking…');
-    const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), activityText); body.append(activity);
+    // The Kova mark with a small bolt that strikes now and then: still "working", never a loud spinner.
+    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo');
+    activityMark.setAttribute('aria-hidden', 'true'); activityLogo.src = '/app/assets/icon.svg'; activityLogo.alt = '';
+    activityMark.append(activityLogo, el('span', 'thinking-bolt'));
+    const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
     function paint() {
       scheduled = false;
       for (const block of blocks) {
@@ -1366,6 +1370,7 @@
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
+    if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
     const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
     if (mod && event.shiftKey && key === 'n') { event.preventDefault(); safe(newIncognito); return; }
     // Ctrl/Cmd+K is the palette now; new conversation moved to Ctrl/Cmd+Shift+K
@@ -1468,6 +1473,9 @@
     actions.append(cancel, save); form.append(head, intro, fields, toggle, note, actions);
     dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
   }
+  // The Settings view links here without owning the dialog; keep one stable
+  // trigger so the view never reaches into this closure.
+  $('open-model-settings').onclick = () => safe(openModelSettings);
   function theme(value) {
     document.documentElement.dataset.theme = value;
     const next = value === 'light' ? 'Dark theme' : 'Light theme';

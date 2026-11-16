@@ -327,10 +327,10 @@ the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
 and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
 over `uv run kova-app`.
 
-The UI itself is `src/kova/web_assets/`: `index.html`, `app.css`, `app.js`,
-`palette.css`, `palette.js`, vendored copies of marked, DOMPurify and
-highlight.js, and the variable fonts Inter and JetBrains Mono under `fonts/`.
-Nothing is fetched at runtime — the
+The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
+`palette.css`, `palette.js`, `settings.css`, `settings.js`, vendored copies of marked, DOMPurify and
+highlight.js, and the variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at
+runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
@@ -339,7 +339,10 @@ shows collapsible reasoning and live tool rows, and listens to `/events` with
 stored in `localStorage`. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
-finished reply only chimes while the window is unfocused.
+finished reply only chimes while the window is unfocused. `settings.js` layers
+one Settings view over the dialogs `app.js` still owns: a section nav, a search
+box that filters individual settings, and links that activate the existing
+controls by id rather than reimplementing them.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
