@@ -91,6 +91,15 @@ same thing for the phone, so the limits follow the phone into the agent:
   phone's limits. The terminal and web apps never read it as local input: no
   `!` shell command, slash command, `#` memory note, `@file` expansion or
   attachment is applied to it.
+- **Project instructions:** `KOVA.md` and `AGENTS.md` are read into the system
+  prompt of every chat working in or under their folder, so writing or
+  restoring one (any letter case) needs `host:exec`, even inside Kova Files.
+- **Recall:** searching past chats never returns a chat a phone wrote in to a
+  turn that can do more than that phone.
+- **Backups** keep each chat's limits; a restored chat stays limited.
+- **Older queued messages:** messages queued before capabilities existed have
+  no record of who wrote them, so after upgrading they are treated as a phone's
+  with only `chat`.
 - **Restoring a checkpoint** outside Kova Files needs `host:exec`.
 
 Requests from the computer itself (the CLI, the desktop app, a local browser

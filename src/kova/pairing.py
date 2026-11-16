@@ -446,16 +446,31 @@ def within(limit: frozenset[str] | None, allowed: frozenset[str] | None) -> bool
     return allowed is None or (limit is not None and limit <= allowed)
 
 
+def instruction_file(path) -> bool:
+    """Whether ``path`` is named like a project-instruction file (KOVA.md, AGENTS.md).
+
+    Those are read into the system prompt of every chat working in or under
+    their folder, so writing one is like writing a prompt for the computer.
+    Case-insensitive, since some file systems are.
+    """
+    from kova.project_instructions import FILE_NAMES
+    return Path(str(path)).name.casefold() in {name.casefold() for name in FILE_NAMES}
+
+
 def action_capabilities(name: str, *, external: bool = False, cwd=None, files_path=None,
-                        home=None) -> frozenset[str]:
+                        home=None, args: dict | None = None) -> frozenset[str]:
     """The capabilities an agent tool call needs beyond ``chat``.
 
     Commands, scheduled jobs and tools Kova cannot see into (MCP) can reach
     anything on the computer, so they need ``host:exec``; so do file tools whose
     working folder is outside Kova Files or holds the Kova home (config, tokens,
-    devices.json).
+    devices.json). With ``args``, writing a project-instruction file (KOVA.md,
+    AGENTS.md) also needs ``host:exec``: a chat on the computer would read it as
+    guidance with every tool available.
     """
-    from kova.tools.code_files import FILE_TOOLS
+    from kova.tools.code_files import FILE_TOOLS, WRITE_TOOLS
+    if name in WRITE_TOOLS and isinstance(args, dict) and _writes_instructions(args.get("path"), cwd):
+        return frozenset({"host:exec"})
     if name in COMMAND_TOOLS or external or "__" in name:
         return frozenset({"host:exec"})
     if name in EXTENSION_TOOLS:
@@ -466,6 +481,20 @@ def action_capabilities(name: str, *, external: bool = False, cwd=None, files_pa
             and not folder_is_shared(cwd, files_path, home):
         return frozenset({"host:exec"})
     return frozenset()
+
+
+def _writes_instructions(path, cwd) -> bool:
+    if not isinstance(path, str):
+        return False
+    if instruction_file(path):
+        return True
+    try:  # a link named otherwise that points at one
+        target = Path(path).expanduser()
+        if not target.is_absolute() and cwd is not None:
+            target = Path(cwd) / target
+        return instruction_file(target.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return True  # cannot tell: fail closed
 
 
 def require_capability(capability: str):

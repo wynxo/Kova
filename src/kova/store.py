@@ -343,6 +343,10 @@ class Store:
         queued_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(queued_messages)")}
         if "capabilities" not in queued_columns:
             self._conn.execute("ALTER TABLE queued_messages ADD COLUMN capabilities TEXT")
+            # Rows queued before this column existed may come from a phone, and
+            # nothing records which. Treat them as a phone's with the least
+            # authority, so no client ever runs them as local input.
+            self._conn.execute("UPDATE queued_messages SET capabilities = ?", (json.dumps(["chat"]),))
         # A chat a paired phone wrote in keeps that phone's limits for every
         # later turn, whoever sends it (#229); NULL means no limit.
         chat_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
@@ -553,7 +557,7 @@ class Store:
                  include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web, permission, cwd, plan FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -566,6 +570,8 @@ class Store:
             "permission": row["permission"],
             "cwd": row["cwd"],
             "plan": json.loads(row["plan"]),
+            **({"capabilities": sorted(json.loads(row["capabilities"]))}
+               if row["capabilities"] is not None else {}),
             **({"ephemeral": True} if self._memory_only else {}),
             "messages": self.get_messages(chat_id, include_created=include_created,
                                           include_usage=include_usage),
@@ -776,13 +782,21 @@ class Store:
                 mode = DEFAULT_MODE
             web = chat.get("web")
             web = 1 if web is None else int(bool(web))
+            # A chat a paired phone wrote in keeps that phone's limits across a
+            # backup (#229). Unknown names are dropped, which only narrows it.
+            limit = chat.get("capabilities")
+            if limit is not None:
+                from kova.pairing import CAPABILITIES
+                if not isinstance(limit, list) or not all(isinstance(c, str) for c in limit):
+                    raise ValueError("chat capabilities must be a list of names")
+                limit = json.dumps(sorted({"chat", *(c for c in limit if c in CAPABILITIES)}))
             # A restored chat starts at Manual; backup data cannot silently
             # grant unattended command access on this machine.
             try:
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
-                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files")),
+                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):

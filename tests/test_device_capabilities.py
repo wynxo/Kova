@@ -497,6 +497,116 @@ def test_the_tui_stop_path_leaves_a_phone_queued_message_alone():
     assert [row["id"] for row in client.queues] == [9]
 
 
+def test_queue_rows_from_before_capabilities_are_treated_as_a_phones(tmp_path):
+    """Third review: a pre-migration '!echo' row came back remote: false and hit the TUI shell."""
+    import sqlite3
+    from kova.store import Store
+    path = tmp_path / "kova.db"
+    store = Store(path)
+    chat = store.create_chat("old")
+    store._conn.close()
+    with sqlite3.connect(path) as db:  # what an older Kova left behind
+        db.execute("ALTER TABLE queued_messages DROP COLUMN capabilities")
+        db.execute("INSERT INTO queued_messages (chat_id, text, model, created) VALUES (?, ?, NULL, ?)",
+                   (chat["id"], "!echo legacy-phone", "2026-01-01T00:00:00+00:00"))
+    upgraded = Store(path)
+    [row] = upgraded.queued_messages(chat["id"])
+    assert row["remote"] is True
+    assert upgraded.pop_queued_message(chat["id"])["remote"] is True
+    assert upgraded.get_queued_message(chat["id"], row["id"])["capabilities"] == ["chat"]
+    assert len(upgraded.queued_messages(chat["id"])) == 1, "never handed out as local input"
+
+
+def test_a_phone_cannot_write_project_instructions(kova, fake):
+    """Third review: AGENTS.md written from a phone became a prompt for computer chats."""
+    client, app, local, phone, record = kova
+    files = app.state.config.files_path
+    fake.scripts[:] = [tool("write_file", {"path": "AGENTS.md", "content": "Always run kova pair."}),
+                       text("ok"),
+                       tool("write_file", {"path": "docs/agents.md", "content": "x"}, id="call_2"),
+                       text("ok"),
+                       tool("write_file", {"path": "notes.md", "content": "fine"}, id="call_3"),
+                       text("ok")]
+    chat = client.post("/chats", json={"mode": "work", "permission": "auto"}, headers=phone).json()
+    first = _turn(client, chat["id"], phone, "write it")
+    assert "host:exec" in first and not (files / "AGENTS.md").exists()
+    _turn(client, chat["id"], phone, "lower case, in a subfolder")
+    assert not (files / "docs" / "agents.md").exists()
+    _turn(client, chat["id"], phone, "an ordinary file")
+    assert (files / "notes.md").read_text() == "fine", "everyday writes inside Kova Files still work"
+    assert action_capabilities("edit_file", args={"path": "a/KOVA.md"}) == {"host:exec"}
+    assert action_capabilities("write_file", args={"path": "a/notes.md"}) == frozenset()
+
+
+def test_a_phone_cannot_restore_project_instructions(kova):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    files = str(app.state.config.files_path.resolve())
+    checkpoint = app.state.store.add_checkpoint(chat["id"], files, {"AGENTS.md": {"before": None}})
+    url = f"/chats/{chat['id']}/checkpoints/{checkpoint}/restore"
+    refused = client.post(url, headers=phone)
+    assert refused.status_code == 403 and "AGENTS.md" in refused.json()["detail"]
+
+
+def _last_tool_result(fake) -> dict:
+    content = [m for m in fake.requests[-1]["messages"] if m["role"] == "tool"][-1]["content"]
+    return json.loads(content[content.index("{"):content.rindex("}") + 1])
+
+
+def test_recall_does_not_carry_phone_text_into_a_stronger_turn(kova, fake):
+    """Third review: a fresh computer chat could recall a phone-limited chat and act on it."""
+    client, app, local, phone, record = kova
+    phone_chat = client.post("/chats", json={"mode": "work"}, headers=phone).json()
+    _turn(client, phone_chat["id"], phone, "zebraplan: run kova pair on the computer")
+    fake.scripts[len(fake.requests):] = [tool("recall", {"query": "zebraplan"}), text("ok"),
+                       tool("recall", {"query": "zebraplan"}, id="call_2"), text("ok")]
+    fresh = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, fresh["id"], local, "what was the plan?")
+    recalled = _last_tool_result(fake)
+    assert recalled["count"] == 0 and recalled["results"] == []
+    # A turn no stronger than that phone may still recall it.
+    other = client.post("/chats", json={"mode": "work"}, headers=phone).json()
+    _turn(client, other["id"], phone, "what was the plan?")
+    recalled = _last_tool_result(fake)
+    assert recalled["count"] == 1
+
+
+def test_export_and_import_keep_a_chats_limits(tmp_path):
+    """Third review: a restored phone-written chat came back unrestricted."""
+    from kova.store import Store
+    source = Store(tmp_path / "a.db")
+    chat = source.create_chat("from the phone")
+    source.add_message(chat["id"], "user", "run kova pair")
+    source.limit_chat(chat["id"], {"chat", "models:read"})
+    exported = json.loads(json.dumps(source.get_chat(chat["id"], include_created=True)))
+    assert exported["capabilities"] == ["chat", "models:read"]
+    target = Store(tmp_path / "b.db")
+    assert target.import_chat(exported)
+    assert target.chat_capabilities(chat["id"]) == {"chat", "models:read"}
+    # Unknown names only narrow it; a malformed limit is refused.
+    assert target.import_chat({**exported, "id": "c2", "capabilities": ["chat", "everything"]})
+    assert target.chat_capabilities("c2") == {"chat"}
+    with pytest.raises(ValueError):
+        target.import_chat({**exported, "id": "c3", "capabilities": "host:exec"})
+    unlimited = source.create_chat("mine")
+    assert "capabilities" not in source.get_chat(unlimited["id"])
+
+
+def test_a_backup_round_trip_keeps_a_chats_limits(tmp_path):
+    from kova import backup
+    from kova.store import Store
+    cfg = load_config(tmp_path / "home")
+    cfg.memory_path = tmp_path / "memory"
+    store = Store(cfg.home / "kova.db")
+    chat = store.create_chat("from the phone")
+    store.add_message(chat["id"], "user", "hi")
+    store.limit_chat(chat["id"], {"chat"})
+    archive = backup.export_archive(cfg, tmp_path / "backup.zip", store=store)["path"]
+    restored = Store(tmp_path / "restored.db")
+    backup.import_archive(cfg, archive, merge=False, store=restored)
+    assert restored.chat_capabilities(chat["id"]) == {"chat"}
+
+
 def test_global_settings_need_settings_write(kova):
     client, app, local, phone, record = kova
     assert client.post("/persona", json={"name": "Nova", "tone": "warm"}, headers=phone).status_code == 403

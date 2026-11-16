@@ -361,7 +361,7 @@ class Agent:
             # Keep the file names attached to this message for reloaded chats.
             # The link carries no extracted text and is not part of model history.
             self.store.link_message_attachments(user_message_id, attached)
-        set_current_chat(chat_id)
+        set_current_chat(chat_id, capabilities)
         chat = self.store.get_chat(chat_id)
         incognito = self.store.is_ephemeral(chat_id)
         mode = 'chat' if incognito else (chat or {}).get('mode') or DEFAULT_MODE
@@ -375,9 +375,10 @@ class Agent:
         # Incognito cannot execute arbitrary plugins or tools that persist data.
         tools = {} if incognito else select_tools(mode, web, self.tools, local_only=self.config.privacy_local_only)
 
-        def needs(name: str, tool) -> frozenset[str]:
+        def needs(name: str, tool, args: dict | None = None) -> frozenset[str]:
             return action_capabilities(name, external=tool.external, cwd=cwd,
-                                       files_path=self.config.files_path, home=self.config.home)
+                                       files_path=self.config.files_path, home=self.config.home,
+                                       args=args)
 
         if capabilities is not None:
             tools = {name: tool for name, tool in tools.items() if needs(name, tool) <= capabilities}
@@ -628,6 +629,13 @@ class Agent:
                                 prepared = None
                                 if name in FILE_TOOLS:
                                     prepared = await asyncio.to_thread(files.prepare, name, args)
+                                missing = (needs(name, tools[name], args) - capabilities
+                                           if capabilities is not None else frozenset())
+                                if missing:
+                                    # Tools are filtered by name above; this catches what only
+                                    # the arguments reveal, such as writing AGENTS.md.
+                                    raise ToolError('This needs ' + ', '.join(sorted(missing)) +
+                                                    ', which the paired phone behind this chat does not have.')
                                 policy, reason = self.approvals.policy(chat_id, name, args, cwd)
                                 if policy == 'deny':
                                     raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
@@ -635,7 +643,7 @@ class Agent:
                                         name, args, permission, cwd, self.config.files_path,
                                         False, sandboxed=confined, external=tools[name].external)):
                                     approval = self.approvals.create(chat_id, name, args, cwd=cwd,
-                                                                     needs=needs(name, tools[name]),
+                                                                     needs=needs(name, tools[name], args),
                                                                      authority=capabilities)
                                     approved_binding = approval["binding"]
                                     try:

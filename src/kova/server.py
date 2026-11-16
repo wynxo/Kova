@@ -1075,6 +1075,10 @@ def create_app(
             raise HTTPException(status_code=409, detail="Stop the active turn before restoring files")
         rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
         plan = checkpoints.revert_plan(rows, checkpoint_id)
+        if allowed is not None and "host:exec" not in allowed and \
+                any(pairing.instruction_file(path) for path, _ in plan):
+            raise HTTPException(403, "This phone may not restore KOVA.md or AGENTS.md. "
+                                     "Restore this on your computer.")
         result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
                                          app.state.agent.blobs)
         return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
