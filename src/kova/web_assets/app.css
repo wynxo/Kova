@@ -570,6 +570,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
   outline:0; background:none; color:var(--text); font-size:13.5px;
 }
 .popover-list { flex:1; min-height:0; overflow-y:auto; outline:0; }
+.popover-search:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .option-group + .option-group, .option + .option-group { margin-top:4px; padding-top:4px; border-top:1px solid var(--border); }
 .option-group-label { padding:6px 9px 3px; color:var(--text-3); font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
 .option { display:flex; align-items:center; gap:10px; padding:7px 9px; border-radius:var(--r-sm); cursor:pointer; }

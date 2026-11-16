@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kova.dev/schema/theme-1.json",
+  "title": "Kova theme",
+  "description": "A Kova theme is data, never code: no CSS, no JavaScript, no URLs. Unknown keys are rejected so a theme cannot smuggle in anything the renderer does not expect. See docs/THEMES.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "version", "appearance"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,39}$",
+      "description": "Stable identifier used by settings and exports. Lowercase, hyphenated."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver. Bumped when the theme's values change."
+    },
+    "author": { "type": "string", "maxLength": 80 },
+    "description": { "type": "string", "maxLength": 280 },
+    "appearance": { "type": "string", "enum": ["light", "dark"] },
+    "extends": {
+      "type": "string",
+      "enum": ["kova-dark", "kova-light"],
+      "description": "Base theme to inherit from. Override only what you change."
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Semantic overrides only. A primitive or component token here is rejected.",
+      "properties": {
+        "bg": { "$ref": "#/$defs/colorGroup" },
+        "fg": { "$ref": "#/$defs/colorGroup" },
+        "border": { "$ref": "#/$defs/colorGroup" },
+        "accent": { "$ref": "#/$defs/colorGroup" },
+        "status": { "$ref": "#/$defs/colorGroup" },
+        "syntax": { "$ref": "#/$defs/colorGroup" }
+      }
+    },
+    "terminal": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/color" },
+      "description": "Optional 16-role ANSI palette, in order 0-15. Without it the TUI uses the inherited base palette."
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^(#[0-9a-fA-F]{3,8}|rgba?\\([0-9.,%\\s/]+\\))$",
+      "description": "Hex or rgb()/rgba(). No named colours, no CSS functions beyond rgb/rgba, and never a url()."
+    },
+    "colorGroup": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/color" },
+      "propertyNames": { "pattern": "^[a-zA-Z0-9-]+$" },
+      "description": "A flat group of colour tokens, e.g. { \"default\": \"#ff7a1a\", \"hover\": \"#ff9a52\" }."
+    }
+  }
+}
