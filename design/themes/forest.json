@@ -1,0 +1,18 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "forest",
+  "name": "Forest",
+  "version": "1.0.0",
+  "description": "Dark theme with a green accent, for people who read the accent as \"go\" rather than \"alert\". Status colours keep their own meanings.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "accent": {
+      "default": "#5fd787",
+      "hover": "#79e39c",
+      "pressed": "#46b56e",
+      "on": "#04201c",
+      "soft": "rgba(95, 215, 135, 0.14)"
+    }
+  }
+}
