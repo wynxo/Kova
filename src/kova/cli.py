@@ -43,6 +43,7 @@ from kova.privacy import status_text as privacy_status_text
 from kova.tools.reminders import format_relative, format_when
 from kova.tui import brand
 from kova.tui.keymap import DEFAULT_KEYS, Keymap
+from kova.tui.style import colour
 from kova.ui import _run_chat
 
 
@@ -116,7 +117,7 @@ def _ok(message: str) -> None:
 
 
 def _muted(message: str) -> None:
-    console.print(Text(message, style=theme.MUTED))
+    console.print(Text(message, style=colour('MUTED')))
 
 
 def _table(*, title: str | None = None, caption: str | None = None) -> Table:
@@ -147,6 +148,11 @@ def _clip(value: str, limit: int = 60) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+_HELP_EPILOG = ("Start a chat with [bold]kova[/bold]. "
+                "Add [bold]--help[/bold] to any command for its flags.\n"
+                "Configuration keys: [bold]docs/CONFIG.md[/bold]")
+
+
 class _KovaGroup(TyperGroup):
     def main(self, *args, **kwargs):
         from typer import rich_utils
@@ -161,13 +167,14 @@ class _KovaGroup(TyperGroup):
         previous = rich_utils.FORCE_TERMINAL
         rich_utils.FORCE_TERMINAL = console.is_terminal
         try:
+            brand.style_help(self)
             return super().main(*args, **kwargs)
         finally:
             rich_utils.FORCE_TERMINAL = previous
 
     def format_help(self, ctx, formatter):
-        brand.style_help(self)
         if ctx.parent is None:
+            self.epilog = f"[{colour('MUTED')}]{_HELP_EPILOG}[/]"
             console.print()
             console.print(brand.wordmark(__version__))
         return super().format_help(ctx, formatter)
@@ -183,9 +190,7 @@ class _KovaGroup(TyperGroup):
 
 app = typer.Typer(
     help="Kova: your own private AI that lives on your computer.",
-    epilog=f"[{theme.MUTED}]Start a chat with [bold]kova[/bold]. "
-           "Add [bold]--help[/bold] to any command for its flags.\n"
-           "Configuration keys: [bold]docs/CONFIG.md[/bold][/]",
+    epilog=_HELP_EPILOG,
     no_args_is_help=False,
     cls=_KovaGroup,
 )
@@ -613,27 +618,27 @@ def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | 
         return Text("●", style=style)
 
     if info is None:
-        server = Text.assemble(dot(theme.ERROR), ("  down", ""), ("  ·  is the server running?", theme.MUTED))
-        model = Text(cfg.active or "none", style=theme.MUTED)
+        server = Text.assemble(dot(colour('ERROR')), ("  down", ""), ("  ·  is the server running?", colour('MUTED')))
+        model = Text(cfg.active or "none", style=colour('MUTED'))
     else:
-        server = Text.assemble(dot(theme.SUCCESS), ("  up", ""), (f"  ·  v{info['version']}", theme.MUTED))
+        server = Text.assemble(dot(colour('SUCCESS')), ("  up", ""), (f"  ·  v{info['version']}", colour('MUTED')))
         entry = next((m for m in info.get("models", []) if m.get("name") == info.get("model")), None)
         name = f"{info['model']}" + (f" · {entry['model']}" if entry and entry.get("model") else "")
         model = Text.assemble(
-            dot(theme.SUCCESS if info.get("model_ok") else theme.WARNING),
+            dot(colour('SUCCESS') if info.get("model_ok") else colour('WARNING')),
             ("  " + name, ""),
-            ("  ·  reachable" if info.get("model_ok") else "  ·  not reachable", theme.SUCCESS if info.get("model_ok") else theme.WARNING),
+            ("  ·  reachable" if info.get("model_ok") else "  ·  not reachable", colour('SUCCESS') if info.get("model_ok") else colour('WARNING')),
         )
     note_word = "note" if notes == 1 else "notes"
-    memory = Text(f"{notes} {note_word}" if notes is not None else "—", style=theme.MUTED)
-    upcoming = Text(f"{reminders} upcoming" if reminders is not None else "—", style=theme.MUTED)
+    memory = Text(f"{notes} {note_word}" if notes is not None else "—", style=colour('MUTED'))
+    upcoming = Text(f"{reminders} upcoming" if reminders is not None else "—", style=colour('MUTED'))
     rows = [("Server", server), ("Model", model), ("Memory", memory), ("Reminders", upcoming)]
     if spend is not None:
-        rows.append(("Today", Text(spend, style=theme.MUTED)))
+        rows.append(("Today", Text(spend, style=colour('MUTED'))))
     for label, value in rows:
-        grid.add_row(Text(label, style=theme.MUTED), value)
+        grid.add_row(Text(label, style=colour('MUTED')), value)
     if (info or {}).get('local_only', cfg.privacy_local_only):
-        grid.add_row(Text('Privacy', style=theme.MUTED), Text('Local only · loopback connections only', style=theme.SUCCESS))
+        grid.add_row(Text('Privacy', style=colour('MUTED')), Text('Local only · loopback connections only', style=colour('SUCCESS')))
     return grid
 
 
