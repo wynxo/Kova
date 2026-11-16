@@ -191,6 +191,7 @@ devices or pairing.
 | `GET /devices` | token or session, local only | phones paired with this server |
 | `DELETE /devices` | token or session, local only | unpair every phone |
 | `DELETE /devices/{device_id}` | token or session, local only | unpair one phone |
+| `PATCH /devices/{device_id}` | token or session, local only | replace what one phone may do (its capabilities) |
 | `GET/POST /phone` | token or session, local only | read / turn the phone listener on or off |
 | `POST /phone/pair` | token or session, local only | start a pairing code |
 | `GET/DELETE /phone/pair/{code_id}` | token or session, local only | poll / cancel a pairing code |
@@ -258,7 +259,11 @@ anything without a paired device's cookie. On those requests the bearer token,
 browser sessions and the local-only routes (`/phone`, `/phone/pair`,
 `/devices`) are refused. Pairing secrets are one-use and live for two minutes in
 memory; device tokens are stored as SHA-256 hashes in `devices.json` and survive
-restarts. See [remote-access.md](remote-access.md).
+restarts. Each device record also holds its capabilities (`pairing.CAPABILITIES`,
+default `chat` and `models:read`); expensive or configuration-changing routes
+declare `Depends(require_capability("models:write"))` and friends, which refuse
+a LAN request whose device lacks it and never limit the computer itself. The
+matrix is in [remote-access.md](remote-access.md#what-a-paired-phone-may-do).
 
 ## Clients
 

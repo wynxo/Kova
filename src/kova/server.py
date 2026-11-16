@@ -511,6 +511,9 @@ def create_app(
         return {"version": __version__, "model": config.active, "local_only": config.privacy_local_only, **status}
 
     api = APIRouter(dependencies=[Depends(_require_token)])
+    # A paired phone needs these on top of chat (pairing.CAPABILITIES).
+    settings_write = [Depends(pairing.require_capability("settings:write"))]
+    providers_write = [Depends(pairing.require_capability("providers:write"))]
 
     @api.get('/privacy')
     async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
@@ -519,7 +522,7 @@ def create_app(
 
     privacy_lock = asyncio.Lock()
 
-    @api.patch('/privacy')
+    @api.patch('/privacy', dependencies=settings_write)
     async def privacy_update(body: PrivacyBody) -> dict:
         async with privacy_lock:
             previous = config.privacy_local_only
@@ -568,7 +571,7 @@ def create_app(
     def autostart_status() -> dict:
         return autostart_result("status")
 
-    @api.post("/autostart/{action}")
+    @api.post("/autostart/{action}", dependencies=settings_write)
     def autostart_update(action: str) -> dict:
         if action not in {"on", "off"}:
             raise HTTPException(400, "Choose on or off.")
@@ -745,7 +748,7 @@ def create_app(
         from dataclasses import asdict
         return [asdict(r) for r in app.state.agent.approvals.rules]
 
-    @api.put("/permission-rules")
+    @api.put("/permission-rules", dependencies=settings_write)
     async def replace_permission_rules(body: list[dict]) -> dict:
         from kova.permissions import Rule
         try:
@@ -992,7 +995,7 @@ def create_app(
         return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
 
 
-    @api.post("/memory/location")
+    @api.post("/memory/location", dependencies=settings_write)
     async def memory_use(body: MemoryLocationBody) -> dict:
         memory = Memory(memory_folder(body.path), "Kova" if body.obsidian else None, config.memory_budget)
         config.memory_path = memory.root
@@ -1165,7 +1168,7 @@ def create_app(
         config.bind_providers()
         return [_model_dict(entry) for entry in config.models]
 
-    @api.post("/models")
+    @api.post("/models", dependencies=providers_write)
     async def model_add(body: ModelBody) -> dict:
         entry = ModelEntry(name=body.name, base_url=body.base_url, model=body.model,
                            api_key=body.api_key, context=body.context, vision=body.vision)
@@ -1174,7 +1177,7 @@ def create_app(
         save_config(config)
         return _model_dict(entry)
 
-    @api.patch("/models")
+    @api.patch("/models", dependencies=providers_write)
     async def model_update(body: ModelPatch) -> dict:
         """Change one model's per-model settings, such as image support."""
         entry = next((m for m in config.models if m.name == body.name), None)

@@ -271,6 +271,11 @@ class KovaClient:
     def devices_list(self) -> list[dict]:
         return self._request("GET", "/devices", timeout=10).json()
 
+    def device_set_capabilities(self, device_id: str, capabilities: list[str]) -> dict:
+        """Replace what a paired device may do; returns its updated record."""
+        return self._request("PATCH", f"/devices/{device_id}",
+                             json={"capabilities": capabilities}, timeout=10).json()
+
     def device_revoke(self, device_id: str | None = None) -> int:
         """Unpair one device, or every device when ``device_id`` is None; returns how many."""
         path = "/devices" if device_id is None else f"/devices/{device_id}"

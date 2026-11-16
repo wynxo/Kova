@@ -17,6 +17,12 @@ How it fits together:
   local ones: a private-range client, the exact LAN ``Host``, a paired
   device's cookie, and no bearer token or local-only routes (pairing, devices,
   turning phone access on or off).
+* Each paired device also carries a capability set (``CAPABILITIES``). New
+  phones get ``DEFAULT_CAPABILITIES``, enough to chat; expensive or
+  configuration-changing routes ask for more with ``require_capability`` and
+  are granted from the computer with ``kova devices allow``. Requests from the
+  computer itself are never limited by capabilities. The full matrix is in
+  docs/remote-access.md.
 """
 
 from __future__ import annotations
@@ -47,6 +53,19 @@ MAX_OPEN_CODES = 4
 FAILED_LIMIT = 10          # failed claims per client address ...
 FAILED_WINDOW = 300.0      # ... within this many seconds
 LAST_SEEN_EVERY = 300.0    # write a device's last_seen at most this often
+
+#: What a paired device may do, by name. ``chat`` is the baseline every device
+#: has: chats, messages, approvals, memory, reminders and reading settings.
+CAPABILITIES = {
+    "chat": "chat, use tools, and manage chats, memory and reminders",
+    "models:read": "see local models and how they fit this computer",
+    "models:write": "download or delete local models",
+    "providers:write": "add, remove or sign in to model providers and servers",
+    "extensions:write": "change MCP servers, plugins and skills",
+    "settings:write": "change approval rules, privacy, the memory folder and start at login",
+}
+#: What a newly paired phone may do: a chat client, not a remote control.
+DEFAULT_CAPABILITIES = ("chat", "models:read")
 
 
 def _now_iso() -> str:
@@ -118,7 +137,7 @@ class Devices:
         if os.name != "nt":
             os.chmod(self.path, 0o600)
 
-    def add(self, name: str) -> tuple[dict, str]:
+    def add(self, name: str, capabilities=DEFAULT_CAPABILITIES) -> tuple[dict, str]:
         """Register a device; returns its public record and its one-time token."""
         token = secrets.token_urlsafe(32)
         taken = {d["name"] for d in self.items}
@@ -126,7 +145,8 @@ class Devices:
         while unique in taken:
             unique, n = f"{name} {n}", n + 1
         device = {"id": secrets.token_hex(4), "name": unique, "token_sha256": _hash(token),
-                  "created": _now_iso(), "last_seen": _now_iso()}
+                  "created": _now_iso(), "last_seen": _now_iso(),
+                  "capabilities": normalize_capabilities(capabilities)}
         self.items.append(device)
         self._save()
         return self.public(device), token
@@ -161,12 +181,43 @@ class Devices:
             self._save()
         return removed
 
+    def set_capabilities(self, device_id: str, capabilities) -> dict | None:
+        """Replace what one device may do; its public record, or None for an unknown id."""
+        for device in self.items:
+            if device["id"] == device_id:
+                device["capabilities"] = normalize_capabilities(capabilities)
+                self._save()
+                return self.public(device)
+        return None
+
     @staticmethod
     def public(device: dict) -> dict:
-        return {key: device[key] for key in ("id", "name", "created", "last_seen")}
+        record = {key: device[key] for key in ("id", "name", "created", "last_seen")}
+        return {**record, "capabilities": sorted(device_capabilities(device))}
 
     def list(self) -> list[dict]:
         return [self.public(d) for d in self.items]
+
+
+def normalize_capabilities(capabilities) -> list[str]:
+    """A sorted, known capability list that always includes ``chat``."""
+    unknown = sorted(set(capabilities) - set(CAPABILITIES))
+    if unknown:
+        raise ValueError(f"Unknown capability: {', '.join(unknown)}. "
+                         f"Choose from: {', '.join(CAPABILITIES)}.")
+    return sorted({"chat", *capabilities})
+
+
+def device_capabilities(device: dict) -> set[str]:
+    """What a stored device may do.
+
+    A record paired before capabilities existed has none stored and gets the
+    defaults, not full access; unknown names in the file are ignored.
+    """
+    stored = device.get("capabilities")
+    if not isinstance(stored, list):
+        stored = DEFAULT_CAPABILITIES
+    return {"chat", *(c for c in stored if c in CAPABILITIES)}
 
 
 @dataclass
@@ -348,6 +399,27 @@ def require_local(request: Request) -> None:
         raise HTTPException(403, "Do this on the computer Kova runs on.")
 
 
+def require_capability(capability: str):
+    """A route dependency: a paired phone needs ``capability``; the computer itself always passes."""
+    if capability not in CAPABILITIES:
+        raise ValueError(f"unknown capability {capability!r}")
+
+    def check(request: Request) -> None:
+        from fastapi import HTTPException
+        if not is_lan_request(request):
+            return
+        device = request.app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+        if device is None:
+            raise HTTPException(401, NOT_PAIRED)
+        if capability not in device_capabilities(device):
+            raise HTTPException(403, f"This phone is not allowed to {CAPABILITIES[capability]}. "
+                                     f"To allow it, on your computer run: "
+                                     f"kova devices allow {device['id']} {capability}")
+
+    check.capability = capability
+    return check
+
+
 # ------------------------------------------------------------ lifecycle
 async def start_lan(app) -> None:
     """Start the LAN listener if phone access is on; record why when it cannot."""
@@ -383,6 +455,10 @@ def phone_status(app) -> dict:
 # ---------------------------------------------------------------- routes
 class PhoneBody(BaseModel):
     enabled: bool
+
+
+class CapabilitiesBody(BaseModel):
+    capabilities: list[str] = Field(max_length=len(CAPABILITIES))
 
 
 class ClaimBody(BaseModel):
@@ -445,6 +521,16 @@ def install_phone(app, require_token) -> None:
     @local.get("/devices")
     async def devices() -> list[dict]:
         return app.state.devices.list()
+
+    @local.patch("/devices/{device_id}")
+    async def set_capabilities(device_id: str, body: CapabilitiesBody) -> dict:
+        try:
+            device = app.state.devices.set_capabilities(device_id, body.capabilities)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if device is None:
+            raise HTTPException(404, "No paired device with that id.")
+        return device
 
     @local.delete("/devices/{device_id}")
     async def revoke(device_id: str) -> dict:

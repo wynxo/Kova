@@ -23,8 +23,42 @@ sidebar.
 | `kova pair --off` | Stop listening on the network. Paired phones stay paired but cannot connect |
 | `kova devices` | List paired phones, when they were last seen, and whether access is on |
 | `kova devices revoke ID` / `--all` | Unpair one phone, or all of them, immediately |
+| `kova devices allow ID CAPABILITY…` | Let one phone do more, such as `models:write` |
+| `kova devices deny ID CAPABILITY…` | Take a capability away again; `chat` always stays |
 
 On the phone, the log-out button in the sidebar unpairs that phone.
+
+## What a paired phone may do
+
+A paired phone is a chat client by default, not a full remote control. Each
+paired device has a set of capabilities, stored with it in `devices.json`. A new
+phone gets `chat` and `models:read`; anything expensive or that changes how Kova
+is set up needs a capability you grant from the computer:
+
+```console
+$ kova devices
+$ kova devices allow 3f9a1c2e models:write
+```
+
+| Capability | Default | What it allows | Routes |
+| --- | --- | --- | --- |
+| `chat` | always | chat and use tools (approvals still apply), manage chats, attachments, memory, reminders and scheduled jobs, switch the active model, read settings | every route not listed below |
+| `models:read` | yes | see local models and how they fit this computer | GET /local-models |
+| `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
+| `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
+| `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
+| `settings:write` | no | change approval rules, privacy, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /memory/location, POST /autostart/… |
+
+A phone without the capability gets `403` with the exact `kova devices allow`
+command to run. Some things no capability unlocks, because they choose programs
+to run on this computer or manage access itself: adding an MCP server
+(`POST /mcp`), previewing and installing extensions, turning a plugin on,
+pairing, listing or revoking devices, changing capabilities, and turning phone
+access on or off. Those are for the computer only.
+
+Requests from the computer itself (the CLI, the desktop app, a local browser
+session) are never limited by capabilities. Phones paired before capabilities
+existed get the defaults.
 
 ## How it works
 
@@ -60,8 +94,9 @@ On the phone, the log-out button in the sidebar unpairs that phone.
 ## Threat model
 
 - **Who can get in:** only a browser holding a paired device's cookie, on your
-  local network. A paired phone is you: it can chat, use tools and change
-  chat settings. Destructive actions still stop for your approval as usual.
+  local network. A paired phone can chat, use tools and change chat
+  settings; everything else needs a capability you grant (see above).
+  Destructive actions still stop for your approval as usual.
 - **Plain HTTP on the LAN.** Kova does not serve TLS, because a self-signed
   certificate would mean scary browser warnings. Someone who can sniff your
   Wi-Fi traffic, such as an untrusted guest network or an open hotspot, could

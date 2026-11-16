@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from kova import local_models, managed_engine, egress
+from kova.pairing import require_capability
 
 
 class InstallBody(BaseModel):
@@ -24,7 +25,10 @@ def install_local_model_routes(app, config, require_token):
     router = APIRouter(dependencies=[Depends(require_token)])
     operation = asyncio.Lock()
 
-    @router.get('/local-models')
+    read = [Depends(require_capability('models:read'))]
+    write = [Depends(require_capability('models:write'))]
+
+    @router.get('/local-models', dependencies=read)
     async def listing(cpu: bool = False):
         hardware = await local_models.inspect(home=config.home)
         backend = 'ollama' if 'Ollama' in hardware['backends'] else 'managed'
@@ -44,7 +48,7 @@ def install_local_model_routes(app, config, require_token):
                               *[{'provider': p.id, 'name': p.name, 'backend': 'ollama'} for p in config.providers
                                 if p.id in managed_ids and p.kind == 'local' and p.base_url == local_models.OLLAMA_URL + '/v1']]}
 
-    @router.post('/local-models/install')
+    @router.post('/local-models/install', dependencies=write)
     async def install(body: InstallBody):
         egress.check_external_process()
         if operation.locked():
@@ -93,7 +97,7 @@ def install_local_model_routes(app, config, require_token):
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
-    @router.delete('/local-models/{provider_id}')
+    @router.delete('/local-models/{provider_id}', dependencies=write)
     async def remove(provider_id: str):
         if operation.locked():
             raise HTTPException(409, 'A local-model operation is already running. Retry when it finishes.')
