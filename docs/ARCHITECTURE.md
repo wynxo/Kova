@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 108 endpoints: 107 route handlers plus the static asset mount.
+The app exposes 109 endpoints: 108 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -150,6 +150,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
+| `POST /compare` | token or session | run one prompt on several models at once, side by side |
 | `GET /mcp` | token or session | list MCP servers with their tools and state |
 | `POST /mcp` | token or session, local only | add an MCP server and connect it (never from a paired phone) |
 | `POST /mcp/reload` | token or session | reconnect every MCP server now, including any from plugins |
@@ -265,7 +266,7 @@ restarts. See [remote-access.md](remote-access.md).
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `plugin`, `catalog`, `skills` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
