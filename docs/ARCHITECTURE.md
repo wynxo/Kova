@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 107 endpoints: 106 route handlers plus the static asset mount.
+The app exposes 108 endpoints: 107 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -92,6 +92,7 @@ same commit as the route.
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
 | `GET /app/sw.js` | public | app-shell-only service worker |
+| `GET /app/gallery` | public | dev-only component gallery, served only with `KOVA_GALLERY=1` |
 | `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |
 | `POST /app/share/{token}` | browser session | consume an owner-bound share once |
 
@@ -597,13 +598,16 @@ which is what the clients read (see *The capability contract* below).
 `src/kova/theme.py` is the single palette: `ACCENT`, `ACCENT_SOFT`, `USER`,
 `MUTED`, `FAINT`, `BORDER`, `SUCCESS`, `WARNING`, `ERROR`, `BASH`, `MEMORY`,
 `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code blocks. The
-CLI and setup wizard use these constants directly with Rich (the wordmark,
-`--help` styling and the status card live in `src/kova/tui/brand.py`). The
+plain chat, branding, help and status resolve their hex colours through
+`tui.style.colour` (the wordmark, `--help` styling and the status card live in
+`src/kova/tui/brand.py`). `KOVA_THEME` overrides `[tui] theme`, with dark as
+the default. The shared light translation darkens text and pales backgrounds;
+reading the theme for styling never creates or migrates configuration. The
 full-screen chat paints with raw escapes through `src/kova/tui/style.py`, which
 builds each role from the theme's hex value and converts it for the terminal:
 24-bit, the nearest of 256 colours, a hand-picked one of the 16 basic colours,
 or none at all (`NO_COLOR`, `TERM=dumb`). `KOVA_COLORS=truecolor|256|16|none`
-overrides the detection. `ui._CHAT_STYLE` mirrors them for prompt_toolkit, and the
+overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit, and the
 web app mirrors them again as CSS variables in `web_assets/app.css` (`:root`
 for dark, `:root[data-theme=light]` for light). Change a colour in both places
 to keep the terminal and the app in step.
