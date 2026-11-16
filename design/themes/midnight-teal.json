@@ -1,0 +1,18 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "midnight-teal",
+  "name": "Midnight Teal",
+  "version": "1.0.0",
+  "description": "Example theme: same structure as the built-in dark theme, one accent swapped from orange to teal. Copy it as a starting point.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "accent": {
+      "default": "#2dd4bf",
+      "hover": "#5eead4",
+      "pressed": "#14b8a6",
+      "on": "#04201c",
+      "soft": "rgba(45, 212, 191, 0.14)"
+    }
+  }
+}
