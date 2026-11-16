@@ -89,8 +89,11 @@ def test_setup_banner_and_gradient_follow_light_theme(monkeypatch):
 @pytest.mark.parametrize("args", [["--help"], ["model", "--help"]])
 @pytest.mark.parametrize("source", ["config", "env"])
 def test_help_resolves_theme_at_invocation(args, source, terminal_home, monkeypatch):
-    monkeypatch.setenv("COLORTERM", "truecolor")
-    monkeypatch.setenv("TERM", "xterm-256color")
+    from typer import rich_utils
+
+    # Typer constructs its own console for help. Pin its colour depth too:
+    # Windows auto-detection may downsample despite COLORTERM/TERM overrides.
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "truecolor")
     monkeypatch.setattr(cli, "console", Console(force_terminal=True, color_system="truecolor", width=120))
     for name, expected in [("light", "38;2;28;29;33"), ("dark", "38;2;58;61;69")]:
         if source == "env":
