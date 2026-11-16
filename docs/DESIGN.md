@@ -22,6 +22,10 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 7. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is not
    shipped — including themes from the gallery.
 
+Shell decisions that are agreed but not built yet live in
+[redesign-backlog.md](redesign-backlog.md). Each section there is one issue: the layout
+question, why it is a question, what done looks like.
+
 ## Tokens
 
 Source of truth: [`design/tokens.json`](../design/tokens.json). Generated output:
