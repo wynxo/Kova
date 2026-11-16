@@ -74,6 +74,11 @@ so `additionalProperties: false` everywhere is deliberate. The **semantic checks
 merge the theme over its base and measure the WCAG pairs, reporting the ratio it got and
 the ratio it needed.
 
+If you have a theme file but not a checkout - one you downloaded, say - `kova themes check
+path/to/theme.json` runs the structural checks on it and prints the tokens it resolves to,
+without starting the server. Contrast stays the build-time gate in `build_tokens.py
+--check` and `validate_theme.py`.
+
 > There is no browser and no JavaScript in this path. A theme is a JSON document,
 > validated on the server before it is ever offered to the frontend, so a broken theme
 > cannot reach `app.css`.

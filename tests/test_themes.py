@@ -209,3 +209,27 @@ def test_the_cli_says_what_is_wrong_with_a_broken_file(runner, home):
 
     assert result.exit_code == 0, result.output
     assert "not valid JSON" in result.output
+
+
+def test_the_cli_checks_a_file_before_it_is_installed(runner, home, tmp_path):
+    source = tmp_path / "midnight-teal.json"
+    source.write_text(json.dumps({
+        "id": "midnight-teal", "name": "Midnight Teal", "version": "1.0.0",
+        "appearance": "dark", "tokens": {"accent": {"default": "#2dd4bf"}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["themes", "check", str(source)])
+
+    assert result.exit_code == 0, result.output
+    assert "is valid" in result.output
+    assert "accent.default" in result.output
+
+
+def test_the_cli_says_why_a_file_is_refused(runner, tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"id": "broken"}), encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["themes", "check", str(broken)])
+
+    assert result.exit_code == 1
+    assert "Missing required key" in result.output
