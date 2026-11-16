@@ -487,7 +487,8 @@
     const row = await json(`/chats/${state.chat.id}/queue/next`, {method: 'POST'});
     if (!row?.text) return;
     state.queued = state.queued.filter(item => item.id !== row.id); renderQueue();
-    await sendText(row.text);
+    // A paired phone's message is sent exactly as queued, bound to that phone's limits.
+    await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
     state.chat = chat;
@@ -1077,18 +1078,18 @@
     if (state.busy) return safe(() => queueMessage(text));
     await sendText(text || 'Please read the attached files.');
   }
-  async function sendText(text) {
+  async function sendText(text, sendOptions = {}) {
     if (!text || state.busy || !state.connected) return;
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: $('web').getAttribute('aria-pressed') === 'true', permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
-      const outgoing = pendingAttachments.filter(a => a.chat_id === state.chat.id);
+      const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: outgoing.map(a => a.id)}));
-      for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments();
+      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
+      if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
       await readEvents(response, data => {

@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, egress
+from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, egress, ui_prefs
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -304,6 +304,9 @@ app.add_typer(_skills, name="skills")
 
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
+
+_prefs = typer.Typer(no_args_is_help=True, help="Export and import UI preferences.")
+app.add_typer(_prefs, name="prefs")
 
 
 @_chats.callback(invoke_without_command=True)
@@ -896,6 +899,36 @@ def import_archive(
     else:
         _muted("Chats, memory and reminders are read live from disk; "
                "restart a foreground server if you changed its config.")
+
+
+@_prefs.command("export")
+def prefs_export(path: str | None = typer.Argument(
+        None, help="JSON path (default: ~/Kova-ui-preferences-YYYY-MM-DD.json).")):
+    """Save every UI preference to one validated JSON file."""
+    try:
+        target = ui_prefs.write_file(get_client().preferences(), path)
+    except (ui_prefs.UiPrefsError, OSError) as exc:
+        _fail(str(exc))
+    _ok(f"UI preferences written to {target}")
+    _muted(f"  Move them with: kova prefs import {target.name}")
+
+
+@_prefs.command("import")
+def prefs_import(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+                                help="A preferences JSON file from `kova prefs export`."),
+):
+    """Restore UI preferences, refusing a file that does not validate."""
+    try:
+        values = ui_prefs.read_file(path)
+    except (ui_prefs.UiPrefsError, OSError) as exc:
+        _fail(str(exc))
+    try:
+        saved = get_client().set_preferences(values)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f"Restored {len(saved)} UI preferences")
+    _muted("  " + " · ".join(f"{name} {value}" for name, value in sorted(saved.items())))
 
 
 # ---------------------------------------------------------------------------
@@ -2735,10 +2768,56 @@ def devices_list():
     table.add_column("Device")
     table.add_column("Paired", style=theme.MUTED, no_wrap=True)
     table.add_column("Last seen", style=theme.MUTED, no_wrap=True)
+    table.add_column("May")
     for device in devices:
         table.add_row(device["id"], device["name"], device["created"][:16].replace("T", " "),
-                      device["last_seen"][:16].replace("T", " "))
+                      device["last_seen"][:16].replace("T", " "),
+                      ", ".join(device.get("capabilities", [])))
     console.print(table)
+
+
+def _change_capabilities(device_id: str, names: list[str], grant: bool) -> None:
+    from kova.pairing import CAPABILITIES
+    unknown = [name for name in names if name not in CAPABILITIES]
+    if unknown:
+        _fail(f"Unknown capability: {', '.join(unknown)}.", f"Choose from: {', '.join(CAPABILITIES)}")
+    if not grant and "chat" in names:
+        _fail("Every paired device can chat.", f"To cut a device off, run: kova devices revoke {device_id}")
+    client = get_client()
+    device = next((d for d in client.devices_list() if d["id"] == device_id), None)
+    if device is None:
+        _fail(f"No paired device {device_id}.", "See the IDs with: kova devices")
+    current = set(device.get("capabilities", []))
+    wanted = current | set(names) if grant else current - set(names)
+    try:
+        updated = client.device_set_capabilities(device_id, sorted(wanted))
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f"No paired device {device_id}.", "See the IDs with: kova devices")
+        raise
+    _ok(f"{updated['name']} may now: {', '.join(updated['capabilities'])}.")
+
+
+@_devices.command("allow")
+def devices_allow(
+    device_id: str = typer.Argument(..., help="The device ID from: kova devices"),
+    capabilities: list[str] = typer.Argument(..., help="What to allow, such as models:write."),
+):
+    """Let a paired device do more, such as models:write to install local models.
+
+    Capabilities: chat, models:read, models:write, providers:write,
+    extensions:write, settings:write. A new phone gets chat and models:read.
+    """
+    _change_capabilities(device_id, capabilities, grant=True)
+
+
+@_devices.command("deny")
+def devices_deny(
+    device_id: str = typer.Argument(..., help="The device ID from: kova devices"),
+    capabilities: list[str] = typer.Argument(..., help="What to take away, such as models:write."),
+):
+    """Take capabilities away from a paired device; chat always stays."""
+    _change_capabilities(device_id, capabilities, grant=False)
 
 
 @_devices.command("revoke")

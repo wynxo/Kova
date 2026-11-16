@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins, egress
+from kova import __version__, checkpoints, pairing, plugins, egress, ui_prefs
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -42,6 +42,8 @@ class TurnBody(BaseModel):
     text: str
     model: str | None = None
     attachments: list[str] = Field(default_factory=list, max_length=3)
+    #: Send this queued message (its id), bound to the limits of whoever queued it.
+    queued: int | None = None
 
 
 class ChatBody(BaseModel):
@@ -480,6 +482,7 @@ def create_app(
     app.state.now = now
     app.state.model_health = _ModelHealth(config, transport, now)
     app.state.token = ensure_token(config.home)
+    app.state.preferences = ui_prefs.Preferences(config.home)
     app.state.turns = set()
     app.state.chat_locks = {}
     app.state.chat_turns = {}
@@ -511,6 +514,31 @@ def create_app(
         return {"version": __version__, "model": config.active, "local_only": config.privacy_local_only, **status}
 
     api = APIRouter(dependencies=[Depends(_require_token)])
+    # A paired phone needs these on top of chat (pairing.CAPABILITIES).
+    settings_write = [Depends(pairing.require_capability("settings:write"))]
+    providers_write = [Depends(pairing.require_capability("providers:write"))]
+    host_exec = [Depends(pairing.require_capability("host:exec"))]
+    memory_write = [Depends(pairing.require_capability("memory:write"))]
+
+    def wrote_in(chat_id: str, request: Request) -> frozenset[str] | None:
+        """Record that the caller put text or files into a chat; return its limits.
+
+        A chat a phone wrote in keeps that phone's limits for every later turn,
+        whoever sends it, because the model reads the whole history.
+        """
+        allowed = pairing.request_capabilities(request)
+        app.state.store.limit_chat(chat_id, allowed)
+        return allowed
+
+    def limit_chat_settings(request: Request, permission: str | None, cwd: str | None) -> None:
+        """A phone without host:exec cannot pick Full access or a folder outside Kova Files."""
+        allowed = pairing.request_capabilities(request)
+        if allowed is None or "host:exec" in allowed:
+            return
+        if permission == "full" or (cwd is not None and not pairing.folder_is_shared(
+                cwd, config.files_path, config.home, config.memory_path)):
+            raise HTTPException(403, "This phone is not allowed to choose Full access or a working "
+                                     "folder outside Kova Files. Do this on your computer.")
 
     @api.get('/privacy')
     async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
@@ -519,7 +547,7 @@ def create_app(
 
     privacy_lock = asyncio.Lock()
 
-    @api.patch('/privacy')
+    @api.patch('/privacy', dependencies=settings_write)
     async def privacy_update(body: PrivacyBody) -> dict:
         async with privacy_lock:
             previous = config.privacy_local_only
@@ -568,7 +596,7 @@ def create_app(
     def autostart_status() -> dict:
         return autostart_result("status")
 
-    @api.post("/autostart/{action}")
+    @api.post("/autostart/{action}", dependencies=settings_write)
     def autostart_update(action: str) -> dict:
         if action not in {"on", "off"}:
             raise HTTPException(400, "Choose on or off.")
@@ -587,7 +615,7 @@ def create_app(
         return {"name": current.persona_name, "tone": current.persona_tone,
                 "configured": current.persona_configured}
 
-    @api.post("/persona")
+    @api.post("/persona", dependencies=settings_write)
     async def set_persona(body: PersonaBody) -> dict:
         from kova.persona import Persona
         try:
@@ -599,23 +627,44 @@ def create_app(
         save_config(current)
         return {"name": identity.name, "tone": identity.tone, "configured": True}
 
+    @api.get("/preferences")
+    async def preferences() -> dict:
+        """Every UI preference the clients share, with defaults filled in."""
+        try:
+            return app.state.preferences.read()
+        except ui_prefs.UiPrefsError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @api.put("/preferences")
+    async def set_preferences(body: dict = Body(...)) -> dict:
+        """Merge validated preference changes and save them for every client."""
+        try:
+            return app.state.preferences.update(body)
+        except ui_prefs.UiPrefsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @api.get("/chats")
     async def list_chats() -> list[dict]:
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
 
     @api.post("/chats")
-    async def create_chat(body: ChatBody | None = None) -> dict:
+    async def create_chat(request: Request, body: ChatBody | None = None) -> dict:
         mode = body.mode if body else None
         if mode is not None and mode not in MODES:
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
-        return app.state.store.create_chat(
+        cwd = working_folder(body.cwd) if body and body.cwd is not None else None
+        limit_chat_settings(request, body.permission if body else None, cwd)
+        chat = app.state.store.create_chat(
             body.title if body else None,
             ephemeral=bool(body and body.ephemeral),
             mode=mode or DEFAULT_MODE,
             web=body.web if body is not None and body.web is not None else True,
             permission=body.permission if body and body.permission else "manual",
-            cwd=working_folder(body.cwd) if body and body.cwd is not None else str(config.files_path.resolve()),
+            cwd=cwd if cwd is not None else str(config.files_path.resolve()),
         )
+        # A phone chose its title and settings: the chat keeps that phone's limits.
+        wrote_in(chat["id"], request)
+        return chat
 
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
@@ -641,7 +690,7 @@ def create_app(
         return {**chat, "state": app.state.conversation_states.get(chat_id)}
 
     @api.patch("/chats/{chat_id}")
-    async def update_chat(chat_id: str, body: ChatBody) -> dict:
+    async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         changes: dict[str, str | bool] = {}
@@ -662,10 +711,14 @@ def create_app(
             changes["cwd"] = working_folder(body.cwd)
         if not changes:
             raise HTTPException(status_code=422, detail="nothing to update")
+        limit_chat_settings(request, body.permission, changes.get("cwd"))
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
+        # A phone's title, mode or permission is the phone writing in the chat, so
+        # it keeps that phone's limits; no setting a phone picks can widen a turn.
+        wrote_in(chat_id, request)
         app.state.store.update_chat(chat_id, **changes)
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
@@ -673,11 +726,12 @@ def create_app(
         return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
 
     @api.post("/chats/{chat_id}/attachments")
-    async def upload_attachment(chat_id: str, file: UploadFile = File(...)) -> dict:
+    async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:
         from kova import attachments
         async with chat_lock(chat_id):
             if app.state.store.get_chat(chat_id) is None:
                 raise HTTPException(404, "Chat not found.")
+            wrote_in(chat_id, request)
             try:
                 data = await file.read(attachments.MAX_BYTES + 1)
                 await asyncio.to_thread(attachments.reap, app.state.store,
@@ -745,7 +799,7 @@ def create_app(
         from dataclasses import asdict
         return [asdict(r) for r in app.state.agent.approvals.rules]
 
-    @api.put("/permission-rules")
+    @api.put("/permission-rules", dependencies=settings_write)
     async def replace_permission_rules(body: list[dict]) -> dict:
         from kova.permissions import Rule
         try:
@@ -774,10 +828,32 @@ def create_app(
         return app.state.agent.approvals.pending_for(chat_id)
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
-    async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+    async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody,
+                              request: Request) -> dict:
         chat = app.state.store.get_chat(chat_id)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        allowed = pairing.request_capabilities(request)
+        waiting = app.state.agent.approvals.pending.get(approval_id)
+        if allowed is not None and waiting is not None and waiting.chat_id == chat_id:
+            # A phone may always refuse without a message. It may allow only what it
+            # could have run itself, and put words (an answer, a reason) only into a
+            # turn that can do no more than it may.
+            if body.decision != "deny" and not waiting.needs <= allowed:
+                missing = ", ".join(sorted(waiting.needs - allowed))
+                raise HTTPException(403, f"This phone is not allowed to approve this ({missing}). "
+                                         "Answer it on your computer.")
+            if body.decision in {"allow_session", "allow_always"} and not (
+                    "settings:write" in allowed and pairing.within(waiting.authority, allowed)):
+                raise HTTPException(403, "This phone can allow one action at a time. "
+                                         "Grant more on your computer.")
+            words = (body.message or "").strip() or (waiting.tool == "ask_user" and body.decision != "deny")
+            if words and not pairing.within(waiting.authority, allowed):
+                raise HTTPException(403, "This reply can do more than this phone may, so it cannot take "
+                                         "an answer or reason from it. Answer on your computer, or "
+                                         "decline without a message.")
+            if words:
+                app.state.store.limit_chat(chat_id, allowed)
         if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
             raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
         pending = app.state.agent.approvals.pending.get(approval_id)
@@ -811,9 +887,16 @@ def create_app(
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
     @api.post("/chats/{chat_id}/messages")
-    async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
+    async def post_message(chat_id: str, body: TurnBody, request: Request) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        queued = None
+        if body.queued is not None:
+            queued = app.state.store.get_queued_message(chat_id, body.queued)
+            if queued is None:
+                raise HTTPException(404, "That queued message was already sent or removed.")
+            if body.text != queued["text"] or (queued["remote"] and body.attachments):
+                raise HTTPException(409, "Send a queued message as it was queued.")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
         rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
@@ -827,11 +910,21 @@ def create_app(
         if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
             if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
                 raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
+        # Validation is over: only now take the queued row (once) and record who wrote.
+        if queued is not None:
+            if not app.state.store.take_queued_message(chat_id, queued["id"]):
+                raise HTTPException(404, "That queued message was already sent or removed.")
+            app.state.store.limit_chat(chat_id, queued.get("capabilities"))
+        wrote_in(chat_id, request)
+        # The caller's limits, the chat's (anyone limited who wrote in it, including
+        # whoever queued this message) and nothing else.
+        capabilities = pairing.narrow(pairing.request_capabilities(request),
+                                      app.state.store.chat_capabilities(chat_id))
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
             """Drive the turn to completion even if the client disconnects."""
-            steering = Steering()
+            steering = Steering(capabilities)
             records = []
             with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
                 try:
@@ -843,7 +936,8 @@ def create_app(
                         app.state.steering[chat_id] = steering
                         try:
                             async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                      steering=steering, attachment_ids=body.attachments):
+                                                                      steering=steering, attachment_ids=body.attachments,
+                                                                      capabilities=capabilities):
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
@@ -861,7 +955,7 @@ def create_app(
                     # A steer that arrived after the last model round must not be
                     # lost: it becomes the next message in the chat's queue.
                     for message in steering.take():
-                        app.state.store.queue_message(chat_id, message)
+                        app.state.store.queue_message(chat_id, message, capabilities=steering.capabilities)
                     queue.put_nowait(None)
 
         task = asyncio.create_task(run_turn())
@@ -896,13 +990,14 @@ def create_app(
         return app.state.store.queued_messages(chat_id)
 
     @api.post("/chats/{chat_id}/queue")
-    async def queue_message(chat_id: str, body: QueuedBody) -> dict:
+    async def queue_message(chat_id: str, body: QueuedBody, request: Request) -> dict:
         """Queue a message; it survives restarts until a client runs it."""
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
-        row = app.state.store.queue_message(chat_id, body.text, body.model)
+        row = app.state.store.queue_message(chat_id, body.text, body.model,
+                                            capabilities=wrote_in(chat_id, request))
         message = next(entry for entry in app.state.store.queued_messages(chat_id)
                        if entry["id"] == row)
         return message
@@ -915,13 +1010,19 @@ def create_app(
 
     @api.post("/chats/{chat_id}/queue/next")
     async def next_queued(chat_id: str) -> dict:
-        """Take the oldest queued message, for a client to send as its next turn."""
+        """Take the oldest queued message, for a client to send as its next turn.
+
+        A message a phone queued comes back with ``remote: true`` and stays
+        queued: the client sends it as-is with ``queued: <id>`` on
+        ``POST /chats/{id}/messages``, which takes it and runs it under that
+        phone's limits. Clients never treat its text as their own input.
+        """
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         return app.state.store.pop_queued_message(chat_id) or {"message": None}
 
     @api.post("/chats/{chat_id}/steer")
-    async def steer(chat_id: str, body: QueuedBody) -> dict:
+    async def steer(chat_id: str, body: QueuedBody, request: Request) -> dict:
         """Put a message into the turn that is running now, not the queue."""
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
@@ -929,6 +1030,11 @@ def create_app(
         if steering is None:
             raise HTTPException(status_code=409,
                                 detail="No reply is running. Queue the message or send it as a new one.")
+        allowed = pairing.request_capabilities(request)
+        if allowed is not None and (steering.capabilities is None or not steering.capabilities <= allowed):
+            raise HTTPException(403, "This reply can do more than this phone may. "
+                                     "Queue the message instead; it runs after the reply.")
+        wrote_in(chat_id, request)
         steering.add(body.text)
         return {"ok": True, "text": body.text}
 
@@ -976,23 +1082,33 @@ def create_app(
         return await asyncio.to_thread(checkpoints.preview, app.state.agent.blobs, path, entry)
 
     @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/restore")
-    async def restore_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+    async def restore_checkpoint(chat_id: str, checkpoint_id: int, request: Request) -> dict:
         """Put the working folder back to this checkpoint.
 
         Only the paths the reverted turns changed are touched; the user's git
         repository is never read or written.
         """
         row = checkpoint_or_404(chat_id, checkpoint_id)
+        allowed = pairing.request_capabilities(request)
+        if allowed is not None and "host:exec" not in allowed and \
+                not pairing.folder_is_shared(row["root"], config.files_path, config.home,
+                                             config.memory_path):
+            raise HTTPException(403, "This phone may restore files only inside Kova Files. "
+                                     "Restore this on your computer.")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before restoring files")
         rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
         plan = checkpoints.revert_plan(rows, checkpoint_id)
+        if allowed is not None and "host:exec" not in allowed and \
+                any(pairing.protected_path(path) for path, _ in plan):
+            raise HTTPException(403, "This phone may not restore KOVA.md, AGENTS.md or git data. "
+                                     "Restore this on your computer.")
         result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
                                          app.state.agent.blobs)
         return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
 
 
-    @api.post("/memory/location")
+    @api.post("/memory/location", dependencies=settings_write)
     async def memory_use(body: MemoryLocationBody) -> dict:
         memory = Memory(memory_folder(body.path), "Kova" if body.obsidian else None, config.memory_budget)
         config.memory_path = memory.root
@@ -1012,7 +1128,7 @@ def create_app(
             else await asyncio.to_thread(mem.list)
         return [_note_dict(note) for note in notes]
 
-    @api.post("/memory")
+    @api.post("/memory", dependencies=memory_write)
     async def memory_add(body: NoteBody) -> dict:
         try:
             note = await asyncio.to_thread(app.state.memory.save, body.title, body.body, body.tags)
@@ -1027,7 +1143,7 @@ def create_app(
         """The opt-in switches and gates of the background memory passes."""
         return _memory_settings(config)
 
-    @api.patch("/memory/settings")
+    @api.patch("/memory/settings", dependencies=settings_write)
     async def memory_settings_set(body: MemorySettingsBody) -> dict:
         """Turn the background memory passes on or off and tune their gates."""
         updates = body.model_dump(exclude_unset=True)
@@ -1044,13 +1160,13 @@ def create_app(
         app.state.agent.memory_review = _refresh_review(app.state.store, config)
         return _memory_settings(config)
 
-    @api.delete("/memory/{slug}")
+    @api.delete("/memory/{slug}", dependencies=memory_write)
     async def memory_delete(slug: str) -> dict:
         if not app.state.memory.delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
 
-    @api.patch("/memory/{slug}")
+    @api.patch("/memory/{slug}", dependencies=memory_write)
     async def memory_edit(slug: str, body: MemoryEditBody) -> dict:
         """Rewrite one note in place, keeping its slug, provenance and creation date."""
         if body.title is None and body.body is None and body.tags is None:
@@ -1073,7 +1189,7 @@ def create_app(
         """Recent background memory changes, newest first, with their undo state."""
         return app.state.store.memory_revisions(limit=limit)
 
-    @api.post("/memory/undo")
+    @api.post("/memory/undo", dependencies=memory_write)
     async def memory_undo(body: MemoryUndoBody | None = None) -> dict:
         """Reverse recorded review/consolidation writes from their preimages."""
         from kova.review import undo
@@ -1081,7 +1197,7 @@ def create_app(
                                          revision_id=body.revision_id if body else None)
         return {"undone": undone}
 
-    @api.post("/memory/consolidate")
+    @api.post("/memory/consolidate", dependencies=memory_write)
     async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
         """Plan one consolidation run and, unless asked to dry-run, apply it."""
         from kova.review import gate_operations, plan_consolidation, apply_operations
@@ -1138,7 +1254,7 @@ def create_app(
     async def jobs_list() -> list[dict]:
         return app.state.store.list_jobs()
 
-    @api.post("/jobs")
+    @api.post("/jobs", dependencies=host_exec)
     async def job_add(body: JobBody) -> dict:
         if not body.text.strip():
             raise HTTPException(status_code=422, detail="a job needs a short description")
@@ -1154,7 +1270,7 @@ def create_app(
                                       prompt=prompt or None, idle_only=body.idle_only)
         return next(job for job in app.state.store.list_jobs(include_done=True) if job["id"] == jid)
 
-    @api.delete("/jobs/{jid}")
+    @api.delete("/jobs/{jid}", dependencies=host_exec)
     async def job_delete(jid: int) -> dict:
         if not app.state.store.delete_job(jid):
             raise HTTPException(status_code=404, detail="job not found")
@@ -1165,7 +1281,7 @@ def create_app(
         config.bind_providers()
         return [_model_dict(entry) for entry in config.models]
 
-    @api.post("/models")
+    @api.post("/models", dependencies=providers_write)
     async def model_add(body: ModelBody) -> dict:
         entry = ModelEntry(name=body.name, base_url=body.base_url, model=body.model,
                            api_key=body.api_key, context=body.context, vision=body.vision)
@@ -1174,7 +1290,7 @@ def create_app(
         save_config(config)
         return _model_dict(entry)
 
-    @api.patch("/models")
+    @api.patch("/models", dependencies=providers_write)
     async def model_update(body: ModelPatch) -> dict:
         """Change one model's per-model settings, such as image support."""
         entry = next((m for m in config.models if m.name == body.name), None)
