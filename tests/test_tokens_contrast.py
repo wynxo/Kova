@@ -76,8 +76,10 @@ def test_translucent_values_are_unmeasurable_not_silently_passed() -> None:
 
 def test_css_is_generated_and_theme_agnostic() -> None:
     css = build.render_css(tokens)
-    assert '[data-theme="kova-dark"]' in css
-    assert '[data-theme="kova-light"]' in css
+    # The web app sets data-theme="dark" / "light"; anything else defines nothing.
+    assert ':root, [data-theme="dark"]' in css
+    assert '[data-theme="light"]' in css
+    assert "kova-dark" not in css and "kova-light" not in css
     # The whole point of the semantic layer: identical property names in every theme.
     for name in ("--fg-default", "--bg-base", "--accent-default"):
         assert css.count(f"{name}:") >= 2, f"{name} missing from a theme block"
@@ -90,6 +92,14 @@ def test_tui_palettes_are_sixteen_roles() -> None:
         assert isinstance(palette, list), f"{theme} has no terminal palette"
         assert len(palette) == 16, f"{theme} terminal palette has {len(palette)} roles"
         assert all(str(c).startswith("#") for c in palette)
+
+
+def test_stylesheet_lands_where_the_web_app_serves_it() -> None:
+    # src/kova/web_assets is mounted at /app/assets by src/kova/web.py, so the file has
+    # to live there; a stylesheet at the repository root would never be served.
+    assert build.CSS_PATH.parts[-2:] == ("web_assets", "tokens.css")
+    assert build.CSS_PATH.parts[-4:-1] == ("src", "kova", "web_assets")
+    assert "src" in build.CSS_PATH.parts and "kova" in build.CSS_PATH.parts
 
 
 def _approx(value: float | None, expected: float, abs_tol: float = 1e-6) -> bool:
