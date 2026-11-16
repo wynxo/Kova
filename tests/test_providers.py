@@ -316,7 +316,7 @@ def test_oauth_pkce_state_and_verified_identity(tmp_path, monkeypatch):
             if request.url.path.endswith('openid-configuration'):
                 return httpx.Response(200, json={'jwks_uri':provider_auth.ISSUER+'/jwks'})
             return httpx.Response(200, json={'keys':[public]})
-        monkeypatch.setattr(provider_auth.httpx, 'Client', lambda **kw: real_client(transport=httpx.MockTransport(handle)))
+        monkeypatch.setattr(provider_auth.egress, 'Client', lambda **kw: real_client(transport=httpx.MockTransport(handle)))
         attempt.complete({'code':'code','client_id':'issued'})
         assert attempt.result['subject'] == 'user' and attempt.result['client_id'] == 'issued'
         attempt.nonce = 'wrong-nonce'

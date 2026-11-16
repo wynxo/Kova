@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from kova import egress
 from kova.config import Config, ModelEntry
 from kova.privacy import is_loopback_url, protect_messages
 
@@ -82,6 +83,17 @@ class ModelClient:
         return {"Authorization": f"Bearer {self.entry.api_key}"} if self.entry.api_key else {}
 
     async def stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
+        from kova.egress import LocalOnlyError
+        try:
+            with egress.scope(config=self.config, provider=self.entry.provider or self.entry.name,
+                              model=self.entry.model, kind='model'):
+                egress.check_url(self.entry.base_url)
+                async for event in self._managed_stream(messages, tools):
+                    yield event
+        except LocalOnlyError as exc:
+            raise ModelError(str(exc)) from None
+
+    async def _managed_stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[ModelEvent]:
         if self.config is not None and (self.entry.provider or '').startswith('managed-'):
             from kova.managed_engine import manager
             from kova.local_models import LocalModelError
@@ -125,7 +137,7 @@ class ModelClient:
             build = anthropic_request if adapter == 'anthropic' else responses_request
             path, payload = build(self.entry.model, request_messages, tools)
             try:
-                async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
+                async with egress.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
                     async for event in stream_native(client, self._url(path), payload, adapter):
                         yield event
             except httpx.RequestError:
@@ -140,7 +152,7 @@ class ModelClient:
         complete = False
         error = f"Can't reach model '{self.entry.name}' at {self.entry.base_url}"
         try:
-            async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
+            async with egress.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
                 async with client.stream("POST", self._url("chat/completions"), json=payload) as response:
                     if response.status_code >= 400:
                         await response.aread()
@@ -230,12 +242,18 @@ class ModelClient:
 
     async def ping(self) -> bool:
         """Check whether the model server responds successfully."""
+        with egress.scope(config=self.config, provider=self.entry.provider or self.entry.name,
+                          model=self.entry.model, kind='probe'):
+            return await self._ping()
+
+    async def _ping(self) -> bool:
         from kova.providers import ProviderError
         try:
+            egress.check_url(self.entry.base_url, self.config)
             headers = await asyncio.to_thread(self._headers)
-            async with httpx.AsyncClient(transport=self.transport, timeout=min(self.timeout, 3), headers=headers, trust_env=False) as client:
+            async with egress.AsyncClient(transport=self.transport, timeout=min(self.timeout, 3), headers=headers, trust_env=False) as client:
                 path = "models?client_version=0.0.0" if self.entry._provider and self.entry._provider.kind == "codex" else "models"
                 response = await client.get(self._url(path))
                 return response.status_code == 200
-        except (httpx.HTTPError, ProviderError):
+        except (httpx.HTTPError, ProviderError, egress.LocalOnlyError):
             return False

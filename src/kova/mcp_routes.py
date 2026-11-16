@@ -13,7 +13,7 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from kova import plugins
+from kova import plugins, egress
 from kova.config import Config, McpServerEntry, save_config
 from kova.mcp import McpManager, tool_name, validate_server
 from kova.pairing import require_local
@@ -55,6 +55,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     lock = asyncio.Lock()
 
     async def reload(restart: tuple[str, ...] = ()) -> None:
+        egress.check_external_process()
         async with lock:
             manager: McpManager = app.state.mcp
             servers = list(config.mcp)
@@ -91,6 +92,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     # Adding a server chooses a program to run on this computer: never from a phone.
     @router.post("/mcp", dependencies=[Depends(require_local)])
     async def mcp_add(body: McpBody) -> dict:
+        egress.check_external_process()
         server = McpServerEntry(**body.model_dump())
         try:
             validate_server(server)
@@ -112,6 +114,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
 
     @router.patch("/mcp/{name}")
     async def mcp_update(name: str, body: McpPatch) -> dict:
+        egress.check_external_process()
         server = entry(name)
         if server.plugin:
             raise HTTPException(409, f"{name} comes from the {server.plugin} plugin. "
@@ -124,6 +127,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
 
     @router.delete("/mcp/{name}")
     async def mcp_remove(name: str) -> dict:
+        egress.check_external_process()
         server = entry(name)
         if server.plugin:
             return {"ok": True, "plugin": server.plugin}
@@ -142,6 +146,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     # ``:path`` because MCP tool names may contain "/".
     @router.patch("/mcp/{name}/tools/{tool:path}")
     async def mcp_tool_update(name: str, tool: str, body: McpToolPatch) -> dict:
+        egress.check_external_process()
         server = entry(name)
         status = row(name)
         known = {item["name"] for item in status["tools"]}

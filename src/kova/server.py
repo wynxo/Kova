@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, 
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins
+from kova import __version__, checkpoints, pairing, plugins, egress
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -30,6 +30,10 @@ from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
 from kova.web import install_web, require_browser_session
+
+
+class PrivacyBody(BaseModel):
+    local_only: bool = Field(strict=True)
 
 
 class TurnBody(BaseModel):
@@ -287,7 +291,7 @@ class _ModelHealth:
             if not force and self._fresh(entry):
                 return
             try:
-                ok = await ModelClient(entry, transport=self._transport).ping()
+                ok = await ModelClient(entry, transport=self._transport, config=self._config).ping()
             except Exception:  # a broken probe must never kill the health route
                 ok = False
             self._key, self._ok = key, ok
@@ -326,11 +330,19 @@ async def _require_token(request: Request) -> None:
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def _lifespan(app):
+    with egress.scope(config=app.state.config):
+        async with _scoped_lifespan(app):
+            yield
+
+
+@asynccontextmanager
+async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build the app's singletons and run the reminder loop for its lifetime."""
     config: Config = app.state.config
     now: Callable[[], datetime] = app.state.now
     store = Store(config.home / "kova.db", default_cwd=str(config.files_path.resolve()))
+    config._egress_store = store
     memory = Memory(config.memory_path, config.memory_write_subdir, config.memory_budget)
     from kova.mcp import McpManager
     mcp = McpManager(config.home)
@@ -349,7 +361,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mcp = mcp
     # MCP servers connect in the background (npx may download first), so the
     # server answers at once; their tools join the registry when ready.
-    mcp_connect = asyncio.create_task(app.state.mcp_reload()) if (config.mcp or plugins.plugin_mcp_entries(config.home)) else None
+    mcp_connect = asyncio.create_task(app.state.mcp_reload()) if not config.privacy_local_only and (config.mcp or plugins.plugin_mcp_entries(config.home)) else None
     app.state.bus = bus
     app.state.conversation_states = ConversationStates(bus)
 
@@ -443,6 +455,13 @@ def create_app(
     app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     from kova.attachments import AttachmentBodyLimit
     app.add_middleware(AttachmentBodyLimit)
+    app.add_middleware(egress.PolicyMiddleware, config=config)
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(egress.LocalOnlyError)
+    async def local_only_error(request, exc):
+        return JSONResponse(status_code=409, content={'detail': str(exc)})
+
     app.state.config = config
     app.state.transport = transport
     app.state.now = now
@@ -472,9 +491,52 @@ def create_app(
     @app.get("/health")
     async def health(probe: bool | None = Query(None)) -> dict:
         status = await app.state.model_health.get(force=probe is True, wait=probe is not False)
-        return {"version": __version__, "model": config.active, **status}
+        if config.privacy_local_only:
+            with suppress(KeyError):
+                if not egress.is_loopback_url(config.active_model().base_url):
+                    status = {**status, 'model_ok': False}
+        return {"version": __version__, "model": config.active, "local_only": config.privacy_local_only, **status}
 
     api = APIRouter(dependencies=[Depends(_require_token)])
+
+    @api.get('/privacy')
+    async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
+        report = app.state.store.egress_report(days, chat_id)
+        return {**report, 'local_only': config.privacy_local_only}
+
+    privacy_lock = asyncio.Lock()
+
+    @api.patch('/privacy')
+    async def privacy_update(body: PrivacyBody) -> dict:
+        async with privacy_lock:
+            previous = config.privacy_local_only
+            config.privacy_local_only = body.local_only
+            from filelock import FileLock, Timeout
+            def persist():
+                # A refresh started before this toggle may still be saving its
+                # old config in a worker thread. Serialize so the policy wins
+                # without discarding newly rotated credentials.
+                with FileLock(str(config.home / '.provider-auth.lock'), timeout=30):
+                    save_config(config)
+            try:
+                await asyncio.to_thread(persist)
+            except (OSError, Timeout):
+                config.privacy_local_only = previous
+                raise HTTPException(503, 'Could not save Privacy settings. Please retry.') from None
+            if body.local_only:
+                # Stop in-flight turns and external workers; no new request can pass
+                # the shared dynamic policy while cancellation unwinds.
+                turns = list(app.state.turns)
+                for turn in turns:
+                    turn.cancel()
+                await asyncio.gather(*turns, return_exceptions=True)
+                await app.state.scheduler.shutdown()
+                await asyncio.to_thread(app.state.mcp.close)
+                from kova.mcp import McpManager
+                app.state.mcp = McpManager(config.home)
+                app.state.tool_context.mcp = app.state.mcp
+                app.state.agent.tools = build_tools(app.state.tool_context)
+            return {'local_only': config.privacy_local_only}
 
     def autostart_result(action: str) -> dict:
         from kova import autostart
@@ -719,6 +781,8 @@ def create_app(
         config.bind_providers()
         entry = next((m for m in config.models if m.name == (body.model or config.active)), None)
         from kova import providers
+        if entry is not None:
+            egress.check_url(entry.base_url, config)
         if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
             if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
                 raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
@@ -727,33 +791,37 @@ def create_app(
         async def run_turn() -> None:
             """Drive the turn to completion even if the client disconnects."""
             steering = Steering()
-            try:
-                async with chat_lock(chat_id):
-                    if app.state.store.get_chat(chat_id) is None:
-                        queue.put_nowait({"type": "error", "message": "chat was deleted"})
-                        return
-                    app.state.conversation_states.transition(chat_id, "turn_start")
-                    app.state.steering[chat_id] = steering
-                    try:
-                        async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                  steering=steering, attachment_ids=body.attachments):
-                            app.state.conversation_states.transition(chat_id, event.get("type", ""))
-                            queue.put_nowait(event)
-                    finally:
-                        app.state.conversation_states.transition(chat_id, "turn_end")
-            except asyncio.CancelledError:
-                queue.put_nowait({"type": "stopped"})
-                raise
-            except Exception as exc:  # never leave the stream without an ending
-                queue.put_nowait({"type": "error", "message": str(exc)})
-            finally:
-                if app.state.steering.get(chat_id) is steering:
-                    app.state.steering.pop(chat_id, None)
-                # A steer that arrived after the last model round must not be
-                # lost: it becomes the next message in the chat's queue.
-                for message in steering.take():
-                    app.state.store.queue_message(chat_id, message)
-                queue.put_nowait(None)
+            records = []
+            with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
+                try:
+                    async with chat_lock(chat_id):
+                        if app.state.store.get_chat(chat_id) is None:
+                            queue.put_nowait({"type": "error", "message": "chat was deleted"})
+                            return
+                        app.state.conversation_states.transition(chat_id, "turn_start")
+                        app.state.steering[chat_id] = steering
+                        try:
+                            async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
+                                                                      steering=steering, attachment_ids=body.attachments):
+                                app.state.conversation_states.transition(chat_id, event.get("type", ""))
+                                if event.get('type') in {'done', 'error'} and records:
+                                    queue.put_nowait({'type': 'egress', 'items': list(records)})
+                                queue.put_nowait(event)
+                        finally:
+                            app.state.conversation_states.transition(chat_id, "turn_end")
+                except asyncio.CancelledError:
+                    queue.put_nowait({"type": "stopped"})
+                    raise
+                except Exception as exc:  # never leave the stream without an ending
+                    queue.put_nowait({"type": "error", "message": str(exc)})
+                finally:
+                    if app.state.steering.get(chat_id) is steering:
+                        app.state.steering.pop(chat_id, None)
+                    # A steer that arrived after the last model round must not be
+                    # lost: it becomes the next message in the chat's queue.
+                    for message in steering.take():
+                        app.state.store.queue_message(chat_id, message)
+                    queue.put_nowait(None)
 
         task = asyncio.create_task(run_turn())
         app.state.turns.add(task)

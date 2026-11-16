@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from kova import local_models, managed_engine
+from kova import local_models, managed_engine, egress
 
 
 class InstallBody(BaseModel):
@@ -46,6 +46,7 @@ def install_local_model_routes(app, config, require_token):
 
     @router.post('/local-models/install')
     async def install(body: InstallBody):
+        egress.check_external_process()
         if operation.locked():
             raise HTTPException(409, 'A local-model operation is already running. Wait for it to finish or cancel it.')
         # Validate before starting the SSE response, with a freshly measured fit.

@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from kova import egress
+
 OLLAMA_PORT = 11434
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 ALIASES = {"openrouter": OPENROUTER_URL, "openrouter.ai": OPENROUTER_URL}
@@ -231,7 +233,7 @@ def probe(
         return Found(url, kind=kind, error="not a server address", reason="invalid")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        with httpx.Client(
+        with egress.Client(
             transport=transport,
             trust_env=False,
             follow_redirects=False,
@@ -270,10 +272,12 @@ def connect(
     sentence in ``error``.
     """
     candidates = expand(text)
+    for candidate in candidates:
+        egress.check_url(candidate)
     with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
         results = list(
             pool.map(
-                lambda url: probe(url, api_key=api_key, timeout=timeout, transport=transport),
+                egress.bind_context(lambda url: probe(url, api_key=api_key, timeout=timeout, transport=transport)),
                 candidates,
             )
         )
@@ -445,6 +449,7 @@ def discover(
     usual server ports is asked whether it is a model server; an injected
     ``transport`` (tests) stands in for the network, so no TCP pre-scan runs.
     """
+    egress.check_external_process()
     ports = list(ports or SCAN_PORTS)
     if networks is None:
         networks = local_networks()
@@ -478,7 +483,7 @@ def discover(
         return None
 
     with ThreadPoolExecutor(max_workers=16) as pool:
-        found = [result for result in pool.map(identify, listening) if result is not None]
+        found = [result for result in pool.map(egress.bind_context(identify), listening) if result is not None]
     order = {host: index for index, host in enumerate(hosts)}
     found.sort(key=lambda item: (order.get(_host_of(item.base_url), len(order)), item.base_url))
     return found

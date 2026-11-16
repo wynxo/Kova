@@ -52,6 +52,8 @@ from typing import Any, Callable, Iterable, Iterator
 
 import httpx
 
+from kova import egress
+
 from kova import __version__, sandbox
 from kova.config import Config, McpServerEntry
 from kova.tools import Tool, ToolError
@@ -297,7 +299,7 @@ class _Http:
         self.on_message = on_message
         self.session: str | None = None
         self.version: str | None = None
-        self.http = httpx.Client(timeout=httpx.Timeout(CALL_TIMEOUT, connect=10), transport=transport,
+        self.http = egress.Client(timeout=httpx.Timeout(CALL_TIMEOUT, connect=10), transport=transport,
                                  follow_redirects=False)
 
     def _headers(self) -> dict[str, str]:
@@ -355,7 +357,7 @@ class _Http:
         if self.session:
             try:
                 self.http.delete(self.server.url, headers=self._headers(), timeout=5)
-            except httpx.HTTPError:
+            except (httpx.HTTPError, egress.LocalOnlyError):
                 pass
         self.http.close()
 
@@ -379,6 +381,7 @@ class McpClient:
 
     # -- connection ---------------------------------------------------------------
     def _connect(self, timeout: float) -> _Stdio | _Http:
+        egress.check_external_process()
         with self._lock:
             if self._closed:
                 raise McpError(f"{self.server.name} is closed")
@@ -629,7 +632,7 @@ class McpManager:
                     self._connecting.discard(client)
 
         with ThreadPoolExecutor(max_workers=min(8, len(pending)), thread_name_prefix="mcp-connect") as pool:
-            results = list(pool.map(connect, pending))
+            results = list(pool.map(egress.bind_context(connect), pending))
         with self._lock:
             for server, client, tools, error in results:
                 if self._closed or server.name in self._clients:
