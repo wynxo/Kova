@@ -265,9 +265,10 @@ def tokens_per_second(completion_tokens: int, ms_generation: int | None) -> floa
     return round(completion_tokens / (ms_generation / 1000), 1) if ms_generation else None
 
 
-def _local_day(created: str) -> str:
+def _local_day(created: str, tz=None) -> str:
+    """The calendar day of a stored time in ``tz`` (the machine's zone when None)."""
     try:
-        return datetime.fromisoformat(created).astimezone().date().isoformat()
+        return datetime.fromisoformat(created).astimezone(tz).date().isoformat()
     except (TypeError, ValueError):
         return ""
 
@@ -304,7 +305,7 @@ def summarize(rows: list[Mapping], *, days: int, now: datetime | None = None,
     cover at least the start of this month and the start of the window. Days
     are the user's local calendar days.
     """
-    now = (now or datetime.now().astimezone()).astimezone()
+    now = now or datetime.now().astimezone()
     today = now.date()
     first = (today - timedelta(days=max(1, days) - 1)).isoformat()
     month = today.replace(day=1).isoformat()
@@ -312,7 +313,7 @@ def summarize(rows: list[Mapping], *, days: int, now: datetime | None = None,
     by_day: dict[str, dict] = {}
     by_model: dict[str, dict] = {}
     for row in rows:
-        day = _local_day(row["created"])
+        day = _local_day(row["created"], now.tzinfo)
         if not day:
             continue
         if day >= month:
@@ -345,7 +346,7 @@ def summarize(rows: list[Mapping], *, days: int, now: datetime | None = None,
 
 def window_start(days: int, now: datetime | None = None) -> str:
     """The UTC ISO time to read stored answers from: the earlier of the window and the month."""
-    now = (now or datetime.now().astimezone()).astimezone()
+    now = now or datetime.now().astimezone()
     first = now.date() - timedelta(days=max(1, days) - 1)
     first = min(first, now.date().replace(day=1)) - timedelta(days=1)  # a day of slack for time zones
     # Stored timestamps are UTC ISO strings, so compare against one.
