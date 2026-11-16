@@ -25,10 +25,13 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 ## Tokens
 
 Source of truth: [`design/tokens.json`](../design/tokens.json). Generated output:
-[`web_assets/tokens.css`](../web_assets/tokens.css) — do not edit the generated file.
+[`src/kova/web_assets/tokens.css`](../src/kova/web_assets/tokens.css) — do not edit the generated
+file. That directory is what `src/kova/web.py` mounts at `/app/assets`, and
+`src/kova/web_assets/index.html` links the stylesheet before `app.css`; the order matters, because
+`app.css`'s shipped palette wins the cascade for the two names they share.
 
 ```bash
-python scripts/build_tokens.py           # regenerate web_assets/tokens.css
+python scripts/build_tokens.py           # regenerate src/kova/web_assets/tokens.css
 python scripts/build_tokens.py --check   # contrast + shape gate, exits 1 on failure
 ```
 
