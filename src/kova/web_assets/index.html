@@ -17,7 +17,10 @@
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
+  <link rel="stylesheet" href="/app/assets/diff.css">
   <script defer src="/app/assets/chat_list.js"></script>
+  <script defer src="/app/assets/diff.js"></script>
+  <script defer src="/app/assets/sounds.js"></script>
   <script defer src="/app/assets/app.js"></script>
 </head>
 <body class="is-empty">
@@ -41,10 +44,18 @@
         <button id="open-privacy" type="button" class="nav-row"><span class="icon i-lock" aria-hidden="true"></span>Privacy</button>
         <button id="open-mcp" type="button" class="nav-row"><span class="icon i-sliders-horizontal" aria-hidden="true"></span>MCP servers</button>
         <button id="install-settings" type="button" class="nav-row">Install &amp; notifications</button>
+        <button id="open-sounds" type="button" class="nav-row">Sounds</button>
         <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
+        <details id="settings" class="footer-settings">
+          <summary class="nav-row"><span class="icon i-power" aria-hidden="true"></span>Startup</summary>
+          <div class="footer-settings-body">
+            <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+            <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
+            <button id="autostart-refresh" type="button" class="btn small quiet">Refresh</button>
+          </div>
+        </details>
       </nav>
       <div class="footer-bar">
-        <div class="local-note"><span class="icon i-lock" aria-hidden="true"></span><div><strong>On your computer</strong><small>Your chats stay yours.</small></div></div>
         <button id="theme" type="button" class="icon-button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span class="sr-only">Light theme</span></button>
         <button id="open-shortcuts" type="button" class="icon-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><span class="icon i-keyboard" aria-hidden="true"></span></button>
         <button id="disconnect" type="button" class="icon-button" title="Disconnect this window" aria-label="Disconnect this window"><span class="icon i-log-out" aria-hidden="true"></span></button>
@@ -55,9 +66,9 @@
     <header class="topbar">
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New conversation</strong>
-      <details class="chat-menu"><summary aria-label="Conversation actions">•••</summary><button id="compact-now" type="button" class="btn">Compact now</button></details>
-      <span id="local-only-status" class="local-only-status" role="status" hidden><span class="icon i-lock" aria-hidden="true"></span> Local only</span>
-      <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
+      <details class="chat-menu"><summary class="icon-button" aria-label="Conversation actions" title="Conversation actions"><span class="icon i-ellipsis" aria-hidden="true"></span></summary><div class="chat-menu-list"><button id="compact-now" type="button" class="nav-row">Compact now</button></div></details>
+      <span id="local-only-status" class="local-only-status" role="status" hidden><span class="icon i-lock" aria-hidden="true"></span>Local only</span>
+      <div id="connection" class="connection" role="status" hidden><i></i><span>Connecting</span></div>
     </header>
     <div id="incognito-note" class="banner" role="status" hidden>Incognito · Not saved on this PC. Your provider still receives messages. Tools and attachments are disabled. Leaving this chat discards it.</div>
     <div id="banner" class="banner" role="status" hidden></div>
@@ -103,7 +114,6 @@
           <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
-      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line <span class="hint-dot">·</span> <kbd data-mod>Ctrl</kbd> + <kbd>/</kbd> for shortcuts</span></div>
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
@@ -171,12 +181,6 @@
       <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
     </form>
   </dialog>
-  <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
-    <summary>Settings</summary>
-    <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
-    <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
-    <button id="autostart-refresh" type="button">Refresh</button>
-  </details>
   <noscript>Kova needs JavaScript enabled. Open kova-web to connect.</noscript>
 </body>
 </html>

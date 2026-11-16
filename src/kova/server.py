@@ -182,6 +182,12 @@ class ActiveBody(BaseModel):
     name: str
 
 
+class CompareBody(BaseModel):
+    """One prompt to run against several models at once (issue #96)."""
+    text: str = Field(min_length=1, max_length=100_000)
+    models: list[str] | None = None
+
+
 def _note_dict(note: Note) -> dict:
     """The JSON shape of a memory note, including where the fact came from."""
     return {"slug": note.slug, "title": note.title, "body": note.body,
@@ -1316,6 +1322,38 @@ def create_app(
         config.active = body.name
         save_config(config)
         return {"active": body.name}
+
+    @api.post("/compare")
+    async def compare(body: CompareBody) -> dict:
+        """Run one prompt on several models concurrently (issue #96).
+
+        Side-effect free: no chat is written and no tools run. Each model
+        gets the same single user message; one failure never breaks the
+        others. ``models`` names configured models; omitted means all of them.
+        """
+        from kova.compare import MAX_COMPARE_MODELS, compare_prompts
+        config.bind_providers()
+        names = list(body.models) if body.models is not None else [m.name for m in config.models]
+        seen: list[str] = []
+        for name in names:
+            if name not in seen:
+                seen.append(name)
+        names = seen
+        if not names:
+            raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
+        if len(names) > MAX_COMPARE_MODELS:
+            raise HTTPException(status_code=422,
+                                detail=f"Choose at most {MAX_COMPARE_MODELS} models to compare")
+        entries = []
+        for name in names:
+            entry = next((m for m in config.models if m.name == name), None)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"unknown model '{name}'")
+            entries.append(entry)
+        results = await compare_prompts(entries, body.text,
+                                        transport=app.state.agent.transport,
+                                        privacy=config.privacy_secrets, config=config)
+        return {"results": results}
 
     @api.get("/events")
     async def events() -> StreamingResponse:

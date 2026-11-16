@@ -119,7 +119,8 @@ function load({hostname, hash = '', routes}) {
   assert.ok(requests.indexOf(claim) < requests.findIndex(r => r.path === '/chats'), 'pair before loading chats');
   assert.equal($('connect-phone').hidden, true, 'a phone cannot pair other phones');
   assert.equal($('disconnect').title, 'Unpair this phone');
-  assert.ok(note.textContent.includes('Connected over Wi-Fi'));
+  assert.equal(note.textContent, '', 'no permanent "connected" note on the phone');
+  assert.equal($('connection').hidden, true, 'a healthy phone shows no connection indicator');
   assert.ok($('toasts').textContent.includes('now paired'));
   console.log('Phone claims its pairing code passed');
 }
@@ -132,5 +133,6 @@ function load({hostname, hash = '', routes}) {
   await tick();
   assert.ok(page.$('banner').textContent.includes('expired or was already used'), page.$('banner').textContent);
   assert.equal(page.$('connection').lastElementChild.textContent, 'Disconnected');
+  assert.equal(page.$('connection').hidden, false, 'a broken link is shown');
   console.log('Expired pairing code message passed');
 }

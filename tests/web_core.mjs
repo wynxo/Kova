@@ -103,8 +103,10 @@ const sandbox = {
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
 source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, history, togglePin};');
-vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8'), sandbox);
-vm.runInNewContext(source, sandbox);
+vm.runInNewContext(
+  readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source,
+  sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
@@ -358,7 +360,7 @@ assert.ok(changes.textContent.includes('+1 −1'));
 const file = byClass(changes, 'change-file')[0];
 file.open = true; file.listeners.toggle(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/diff?path=notes.txt'));
-assert.equal(byClass(file, 'diff').length, 1);
+assert.equal(byClass(file, 'file-diff').length, 1);
 buttons(changes)[0].onclick(); await tick(); await tick();
 const restore = byClass(sandbox.document.body, 'restore-dialog').at(-1);
 assert.ok(restore.textContent.includes('Restore to change set 7?'));
@@ -795,3 +797,23 @@ console.log('Incognito entry, marking, upload prevention, fork refusal and clean
   sandbox.test.pendingAttachments.splice(0);
   console.log('Sending a message and a phone-queued message passed');
 }
+
+// Hunk counters distinguish source lines beginning +++/--- from file headers.
+const diffComponent = vm.runInNewContext('KovaDiff', sandbox);
+const numbered = diffComponent.rows('--- a/f\n+++ b/f\n@@ -5,2 +8,2 @@\n---old\n+++new\n same');
+assert.equal(numbered[3].kind, 'del');
+assert.equal(numbered[3].old, 5);
+assert.equal(numbered[4].kind, 'add');
+assert.equal(numbered[4].next, 8);
+assert.equal(numbered[5].old, 6);
+assert.equal(numbered[5].next, 9);
+const unsafe = '<img src=x onerror=alert(1)>';
+const renderedDiff = diffComponent.file({path: unsafe, status: 'added', diff: '@@ -0,0 +1 @@\n+' + unsafe});
+assert.equal(renderedDiff.tagName, 'details');
+assert.ok(renderedDiff.textContent.includes(unsafe));
+assert.equal(renderedDiff.children[1].children[1].children[2].tagName, 'code');
+const fileToolBody = new Element(), fileToolView = turnView(fileToolBody);
+fileToolView.accept({type: 'tool_call', name: 'write_file', args: {path: 'demo.txt'}});
+fileToolView.accept({type: 'tool_result', name: 'write_file', ok: true, output: 'Written', file_change: {path: 'demo.txt', status: 'added', diff: '@@ -0,0 +1 @@\n+hello'}});
+assert.equal(byClass(fileToolBody, 'file-diff-file').length, 1);
+assert.ok(fileToolBody.textContent.includes('+hello'));

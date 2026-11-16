@@ -1,0 +1,21 @@
+/* Component aliases inherit the active semantic palette. */
+.file-diff {
+  --diff-add-fg: var(--status-success);
+  --diff-del-fg: var(--status-danger);
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  font-family: var(--mono);
+}
+.file-diff-row { display: flex; align-items: baseline; }
+.file-diff-number { flex: 0 0 4ch; text-align: right; padding-inline-end: 1ch; color: var(--fg-muted); user-select: none; }
+.file-diff-source { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.file-diff-add { color: var(--diff-add-fg); }
+.file-diff-del { color: var(--diff-del-fg); }
+.file-diff-meta, .file-diff-hunk { color: var(--fg-muted); }
+.file-diff-file { min-width: 0; max-width: 100%; }
+.file-diff-file summary { overflow-wrap: anywhere; cursor: pointer; padding: 1ch; }
+.file-diff:focus-visible, .file-diff-file summary:focus-visible { outline: thin solid var(--border-strong); }
+@media (prefers-reduced-motion: reduce) { .file-diff { scroll-behavior: auto; } }

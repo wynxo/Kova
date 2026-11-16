@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 110 endpoints: 109 route handlers plus the static asset mount.
+The app exposes 111 endpoints: 110 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -150,6 +150,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
+| `POST /compare` | token or session | run one prompt on several models at once, side by side |
 | `GET /mcp` | token or session | list MCP servers with their tools and state |
 | `POST /mcp` | token or session, local only | add an MCP server and connect it (never from a paired phone) |
 | `POST /mcp/reload` | token or session | reconnect every MCP server now, including any from plugins |
@@ -279,7 +280,7 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `plugin`, `catalog`, `skills`, `prefs` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
@@ -337,7 +338,11 @@ shows collapsible reasoning and live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
 stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
-`pinned` lives on the chat, so every client shows the same order.
+`pinned` lives on the chat, so every client shows the same order. Optional
+sound cues (`web_assets/sounds.js`, off by default, with a volume and
+per-event switches in the *Sounds* panel) are synthesized with WebAudio, so no
+audio file ships and nothing is fetched; a finished reply only chimes while
+the window is unfocused.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
@@ -1030,3 +1035,19 @@ Installed extensions stay on disk; reconnect MCP explicitly after turning the po
 off. This is a policy for Kova-owned traffic, not an OS firewall. Shell/stdio-plugin
 traffic from before enabling it is not observable and is not included in the ledger;
 other applications are outside its scope. Historical traffic is never reconstructed.
+
+### Inline file diffs
+
+Successful `write_file` and `edit_file` SSE tool results may carry `file_change`:
+a bounded checkpoint preview (`path`, `status`, `before`, `after`, `diff`,
+`truncated`). It compares the first pre-write checkpoint image to the current
+contents, so repeated writes show changes **so far this turn**, not just the
+last operation. It is presentation metadata, not model context or a new file
+read endpoint. Existing tool and phone capability checks still apply. No new
+route or restore permission is introduced.
+
+The web client renders this in a collapsed per-file tool card with old/new line
+numbers; saved change sets reuse the same `diff.js` renderer through the existing
+checkpoint diff route above. `diff.css` uses semantic status colours. Source and
+paths are inserted only as text. Per-hunk accept/undo, word highlights and a
+side-panel review are deferred; existing whole-checkpoint restore is unchanged.

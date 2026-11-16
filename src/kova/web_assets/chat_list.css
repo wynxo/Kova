@@ -1,9 +1,8 @@
 /* Sidebar date groups and the pinned-chat marker (#195).
  *
  * New component rules live here rather than in app.css, which is being moved
- * onto the design tokens. Colours come from tokens.css only; spacing, radii and
- * motion fall back to the current app.css variables until those tokens are
- * emitted, so this sheet works on both sides of that move.
+ * onto the design tokens. Every value below is a semantic token from
+ * tokens.css; no literal colour or spacing scale lives here.
  */
 
 /* Lucide "pin" (ISC; see vendor/lucide.LICENSE). The mask paints in currentColor. */
@@ -11,23 +10,23 @@
 
 .history-group {
   flex:none;
-  margin:var(--space-3, 12px) var(--space-2, 8px) var(--space-1, 4px);
+  margin:var(--space-3) var(--space-2) var(--space-1);
   color:var(--fg-muted);
-  font-size:.82em;
+  font-size:var(--type-size-label);
   font-weight:600;
   letter-spacing:.04em;
-  line-height:var(--type-leading-tight, 1.3);
+  line-height:var(--type-leading-tight);
   text-transform:uppercase;
 }
-.history-group:first-child { margin-top:var(--space-1, 4px); }
+.history-group:first-child { margin-top:var(--space-1); }
 
 .history-title .i-pin {
   width:.86em;
   height:.86em;
-  margin-right:var(--space-1, 4px);
+  margin-right:var(--space-1);
   color:var(--fg-muted);
   vertical-align:-.1em;
-  animation:chat-pin-in var(--motion-fast, var(--fast, 120ms)) var(--motion-ease-standard, var(--ease, ease-out));
+  animation:chat-pin-in var(--motion-fast) var(--motion-ease-standard);
 }
 
 @keyframes chat-pin-in {
@@ -37,8 +36,8 @@
 /* The row already shows focus through the global ring; keep it inside the row
    so the pin marker and actions stay visually attached to it. */
 .history-open:focus-visible {
-  outline:2px solid var(--accent-default);
-  outline-offset:-2px;
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(-1 * var(--space-0-5));
 }
 
 @media (prefers-reduced-motion: reduce) {

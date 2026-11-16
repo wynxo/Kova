@@ -432,6 +432,13 @@ class KovaClient:
     def model_use(self, name: str) -> dict:
         return self._request("POST", "/models/active", json={"name": name}).json()
 
+    def compare(self, text: str, models: list[str] | None = None) -> dict:
+        """Run one prompt on several models at once; never picks a new active model."""
+        payload: dict = {"text": text}
+        if models is not None:
+            payload["models"] = models
+        return self._request("POST", "/compare", json=payload, timeout=330).json()
+
     # MCP servers connect while these requests wait; give them time to start.
     def mcp_list(self) -> list[dict]:
         return self._request("GET", "/mcp").json()
