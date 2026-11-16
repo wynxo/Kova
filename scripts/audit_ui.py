@@ -75,6 +75,19 @@ def check_html(text: str, name: str = "<html>") -> list[str]:
     return problems
 
 
+TOKEN_SELECTOR = re.compile(r"^(:root|\[data-theme=[^\]]*\])(\s*,\s*(:root|\[data-theme=[^\]]*\]))*$")
+
+
+def _declares_only_tokens(text: str) -> bool:
+    """A generated token sheet holds only custom properties on :root / [data-theme].
+
+    It styles nothing, so a focus ring or a reduced-motion block belongs to the
+    stylesheet that does (app.css), not to it.
+    """
+    selectors = [m.group(1).strip() for m in RULE.finditer(re.sub(r"/\*.*?\*/", "", text, flags=re.S))]
+    return bool(selectors) and all(TOKEN_SELECTOR.match(sel) for sel in selectors)
+
+
 def check_css(text: str, name: str = "<style>") -> list[str]:
     """Every problem in one stylesheet.
 
@@ -84,10 +97,11 @@ def check_css(text: str, name: str = "<style>") -> list[str]:
     the same rule means the focus state is invisible.
     """
     problems: list[str] = []
-    if ":focus-visible" not in text:
-        problems.append(f"{name}: no :focus-visible rule, so keyboard focus is invisible")
-    if "prefers-reduced-motion" not in text:
-        problems.append(f"{name}: no @media (prefers-reduced-motion: reduce) block")
+    if not _declares_only_tokens(text):
+        if ":focus-visible" not in text:
+            problems.append(f"{name}: no :focus-visible rule, so keyboard focus is invisible")
+        if "prefers-reduced-motion" not in text:
+            problems.append(f"{name}: no @media (prefers-reduced-motion: reduce) block")
     for match in RULE.finditer(text):
         selector, body = match.group(1).strip(), match.group(2)
         if ":focus" not in selector:

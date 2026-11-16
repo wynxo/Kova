@@ -87,3 +87,12 @@ def test_stylesheet_without_focus_ring_is_reported() -> None:
 
 def test_stylesheet_without_reduced_motion_is_reported() -> None:
     assert any("reduced-motion" in p for p in audit_ui.check_css(":focus-visible { outline: 1px }", "x.css"))
+
+
+def test_a_token_only_sheet_needs_no_focus_ring_or_motion_block():
+    sheet = ':root, [data-theme="dark"] { --bg: #000; }\n[data-theme="light"] { --bg: #fff; }\n'
+    assert audit_ui.check_css(sheet, "tokens.css") == []
+
+
+def test_a_sheet_that_styles_elements_still_needs_them():
+    assert audit_ui.check_css(":root { --a: 1; }\nbutton { color: red; }\n", "x.css")
