@@ -328,11 +328,39 @@ def test_rename_chat(server):
     client, headers, cfg, fake = server
     chat_id = client.post("/chats", headers=headers).json()["id"]
     response = client.patch(f"/chats/{chat_id}", json={"title": "  Groceries  "}, headers=headers)
-    assert response.json() == {"id": chat_id, "title": "Groceries", "mode": "work", "web": True, "permission": "manual", "cwd": str(cfg.files_path), "colour": None, "icon": None}
+    assert response.json() == {"id": chat_id, "title": "Groceries", "mode": "work", "web": True, "permission": "manual", "cwd": str(cfg.files_path), "pinned": False, "colour": None, "icon": None}
     assert client.get("/chats", headers=headers).json()[0]["title"] == "Groceries"
 
     assert client.patch("/chats/abc", json={"title": "x"}, headers=headers).status_code == 404
     assert client.patch(f"/chats/{chat_id}", json={"title": "  "}, headers=headers).status_code == 422
+
+
+def test_pin_and_unpin_chat(server):
+    client, headers, cfg, fake = server
+    older = client.post("/chats", headers=headers).json()["id"]
+    newer = client.post("/chats", headers=headers).json()["id"]
+
+    pinned = client.patch(f"/chats/{older}", json={"pinned": True}, headers=headers)
+    assert pinned.json()["pinned"] is True
+    assert client.get(f"/chats/{older}", headers=headers).json()["pinned"] is True
+    listed = client.get("/chats", headers=headers).json()
+    assert [chat["id"] for chat in listed] == [older, newer]
+    assert [chat["pinned"] for chat in listed] == [True, False]
+
+    # A pin is its own change; no other setting has to travel with it.
+    unpinned = client.patch(f"/chats/{older}", json={"pinned": False}, headers=headers)
+    assert unpinned.json()["pinned"] is False
+    assert [chat["id"] for chat in client.get("/chats", headers=headers).json()] == [newer, older]
+    assert client.patch("/chats/missing", json={"pinned": True}, headers=headers).status_code == 404
+
+
+def test_incognito_chat_can_be_pinned_in_ram(server):
+    client, headers, cfg, fake = server
+    chat = client.post("/chats", json={"ephemeral": True, "title": "Incognito"}, headers=headers).json()
+    assert client.patch(f"/chats/{chat['id']}", json={"pinned": True}, headers=headers).json()["pinned"] is True
+    assert client.get(f"/chats/{chat['id']}", headers=headers).json()["pinned"] is True
+    assert any(item["id"] == chat["id"] and item["pinned"]
+               for item in client.get("/chats", headers=headers).json())
 
 
 def test_create_chat_with_mode_and_web(server):

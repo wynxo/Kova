@@ -53,6 +53,7 @@ class ChatBody(BaseModel):
     web: bool | None = None
     permission: Literal["manual", "auto", "full"] | None = None
     cwd: str | None = None
+    pinned: bool | None = None
     ephemeral: bool | None = None
     colour: str | None = None
     icon: str | None = None
@@ -732,24 +733,29 @@ def create_app(
                 changes["icon"] = normalize_icon(body.icon)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        if not changes:
+        # A pin is cosmetic: it only reorders one sidebar. It never widens or
+        # narrows a chat, so it needs no capability, no stopped turn and does
+        # not count as a phone writing in the chat (#195).
+        pinned = body.pinned
+        if not changes and pinned is None:
             raise HTTPException(status_code=422, detail="nothing to update")
         limit_chat_settings(request, body.permission, changes.get("cwd"))
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+        if changes and any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
         # A phone's title, mode or permission is the phone writing in the chat, so
         # it keeps that phone's limits; no setting a phone picks can widen a turn.
-        # A colour or icon on its own is cosmetic: it carries no text or file the
-        # model could read, so picking one is not writing in and limits nothing.
+        # A colour, icon or pin on its own is cosmetic: it carries no text or file
+        # the model could read, so picking one is not writing in and limits nothing.
         if set(changes) - {"colour", "icon"}:
             wrote_in(chat_id, request)
-        app.state.store.update_chat(chat_id, **changes)
+        app.state.store.update_chat(chat_id, pinned=pinned, **changes)
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
         chat = app.state.store.get_chat(chat_id)
-        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd", "colour", "icon")}
+        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission",
+                                           "cwd", "colour", "icon", "pinned")}
 
     @api.post("/chats/{chat_id}/attachments")
     async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:

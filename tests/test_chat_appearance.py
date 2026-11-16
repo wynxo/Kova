@@ -8,6 +8,7 @@ changes never mark a chat as written in by a phone.
 """
 
 import sqlite3
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,6 +71,43 @@ def test_legacy_database_without_appearance_columns_still_opens(tmp_path):
     assert store.get_chat("abc")["colour"] is None
     store.update_chat("abc", colour="accent", icon="folder")
     assert (store.get_chat("abc")["colour"], store.get_chat("abc")["icon"]) == ("accent", "folder")
+
+
+def test_legacy_database_gains_pin_and_appearance_together(tmp_path):
+    """One migration adds the pin and the appearance columns to an old file."""
+    path = tmp_path / "kova.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE chats (id TEXT PRIMARY KEY, title TEXT, created TEXT NOT NULL);")
+    conn.execute("INSERT INTO chats (id, title, created) VALUES ('abc', 'Old', '2026-01-01T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+
+    store = Store(path, default_cwd=str(tmp_path))
+    row = store.list_chats()[0]
+    assert (row["pinned"], row["colour"], row["icon"]) == (False, None, None)
+    assert (store.get_chat("abc")["pinned"], store.get_chat("abc")["colour"]) == (False, None)
+
+    store.update_chat("abc", pinned=True, colour="danger", icon="bell")
+    reopened = Store(path, default_cwd=str(tmp_path))
+    chat = reopened.get_chat("abc")
+    assert (chat["pinned"], chat["colour"], chat["icon"]) == (True, "danger", "bell")
+    assert [c["id"] for c in reopened.list_chats()] == ["abc"]
+
+
+def test_pinned_chat_sorts_first_and_keeps_its_appearance(tmp_path):
+    store = Store(tmp_path / "kova.db", default_cwd=str(tmp_path))
+    first = store.create_chat("Styled")
+    time.sleep(0.001)
+    second = store.create_chat("Newer")
+    store.update_chat(first["id"], pinned=True, colour="info", icon="globe")
+
+    listed = store.list_chats()
+    assert [row["id"] for row in listed] == [first["id"], second["id"]]
+    assert (listed[0]["pinned"], listed[0]["colour"], listed[0]["icon"]) == (True, "info", "globe")
+
+    store.update_chat(first["id"], pinned=False)
+    assert [row["id"] for row in store.list_chats()] == [second["id"], first["id"]]
+    assert (store.get_chat(first["id"])["colour"], store.get_chat(first["id"])["icon"]) == ("info", "globe")
 
 
 def test_store_update_validates_and_clears(tmp_path):
@@ -135,6 +173,32 @@ def test_patch_sets_clears_and_validates_appearance(server):
                         headers=headers).status_code == 404
 
 
+def test_patch_combines_pin_colour_and_icon(server):
+    """One PATCH accepts any combination, and each field leaves the others alone."""
+    client, headers, _, _ = server
+    chat_id = client.post("/chats", headers=headers).json()["id"]
+
+    patched = client.patch(f"/chats/{chat_id}", json={"pinned": True, "colour": "info", "icon": "globe"},
+                           headers=headers)
+    assert patched.status_code == 200
+    assert (patched.json()["pinned"], patched.json()["colour"], patched.json()["icon"]) == (True, "info", "globe")
+
+    unpinned = client.patch(f"/chats/{chat_id}", json={"pinned": False}, headers=headers).json()
+    assert (unpinned["pinned"], unpinned["colour"], unpinned["icon"]) == (False, "info", "globe")
+
+    recoloured = client.patch(f"/chats/{chat_id}", json={"colour": "accent"}, headers=headers).json()
+    assert (recoloured["pinned"], recoloured["colour"], recoloured["icon"]) == (False, "accent", "globe")
+
+    relabelled = client.patch(f"/chats/{chat_id}", json={"icon": "folder"}, headers=headers).json()
+    assert (relabelled["pinned"], relabelled["colour"], relabelled["icon"]) == (False, "accent", "folder")
+
+    client.patch(f"/chats/{chat_id}", json={"pinned": True}, headers=headers)
+    listed = client.get("/chats", headers=headers).json()[0]
+    assert (listed["pinned"], listed["colour"], listed["icon"]) == (True, "accent", "folder")
+    fetched = client.get(f"/chats/{chat_id}", headers=headers).json()
+    assert (fetched["pinned"], fetched["colour"], fetched["icon"]) == (True, "accent", "folder")
+
+
 def test_create_accepts_appearance(server):
     client, headers, _, _ = server
     created = client.post("/chats", json={"colour": "info", "icon": "globe"}, headers=headers).json()
@@ -169,8 +233,10 @@ def test_a_phone_setting_only_colour_or_icon_limits_nothing(kova):
     assert app.state.store.chat_capabilities(chat["id"]) is None
 
     response = client.patch(f"/chats/{chat['id']}",
-                            json={"colour": "accent", "icon": "folder"}, headers=phone)
+                            json={"colour": "accent", "icon": "folder", "pinned": True}, headers=phone)
     assert response.status_code == 200
+    assert (response.json()["colour"], response.json()["icon"], response.json()["pinned"]) == \
+        ("accent", "folder", True)
     assert app.state.store.chat_capabilities(chat["id"]) is None
 
     assert client.patch(f"/chats/{chat['id']}", json={"title": "phone title"},

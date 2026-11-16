@@ -120,7 +120,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd, delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -328,15 +328,18 @@ and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
 over `uv run kova-app`.
 
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
-`palette.css`, `palette.js`, `settings.css`, `settings.js`, vendored copies of marked, DOMPurify and
-highlight.js, and the variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at
-runtime — the
+`palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
+(the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`
+(per-chat colour and icon), vendored copies of marked, DOMPurify and highlight.js, and the
+variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows collapsible reasoning and live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`. Optional sound cues (`web_assets/sounds.js`, off by
+stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
+rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
+`pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
 finished reply only chimes while the window is unfocused. `settings.js` layers
@@ -405,15 +408,16 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
-- `chats` — id, title, created, mode, web
+- `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
   nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
 - `reminders` — reminder_at, text, done
 
-Startup applies small migrations (message timestamps, `mode`, `web`) so older
-databases keep working. Search uses an FTS5 virtual table `messages_fts`, kept
-in sync by triggers and back-filled once; only `user` and `assistant` text is
-indexed, so tool output never pollutes results. If the local SQLite lacks
+Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
+`colour`, `icon`)
+so older databases keep working. Search uses an FTS5 virtual table
+`messages_fts`, kept in sync by triggers and back-filled once; only `user` and
+`assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
 split into at most 12 de-duplicated words, and each chat contributes only its
 best hit, with a short snippet.
