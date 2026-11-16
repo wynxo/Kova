@@ -12,6 +12,8 @@ from pathlib import Path
 
 import httpx
 
+from kova import egress
+
 from kova import sandbox
 from kova.config import CONFIG_SCHEMA, TOP_LEVEL_CONFIG_KEYS, load_config, unknown_config_keys
 from kova.providers import ProviderError, list_models, supports
@@ -47,7 +49,7 @@ def diagnose() -> list[Check]:
     checks = [Check('config', True, 'Configuration loaded.')]
     health = None
     try:
-        with httpx.Client(timeout=4, trust_env=False) as client:
+        with egress.Client(timeout=4, trust_env=False) as client:
             response = client.get(f'http://127.0.0.1:{cfg.port}/health?probe=1')
             data = response.json()
             valid = response.status_code == 200 and isinstance(data, dict) and 'version' in data and 'model_ok' in data
@@ -122,7 +124,7 @@ def _port_owner(cfg, health: dict | None) -> Check:
             'Stop the other server or choose another port',
         )
     try:
-        with httpx.Client(timeout=4, trust_env=False) as client:
+        with egress.Client(timeout=4, trust_env=False) as client:
             response = client.get(f'http://127.0.0.1:{cfg.port}/models',
                                   headers={'Authorization': f'Bearer {token}'})
     except httpx.HTTPError:

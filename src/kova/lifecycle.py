@@ -16,6 +16,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+
+from kova import egress
 import psutil
 
 from kova import __version__, autostart
@@ -87,13 +89,13 @@ def installed_info() -> tuple[str, str | None]:
 def check_update(ref: str) -> str:
     """Read-only comparison; same version alone cannot prove a branch is current."""
     try:
-        response = httpx.get(
+        response = egress.get(
             f"https://api.github.com/repos/wynxo/Kova/commits/{quote(ref, safe='')}",
             timeout=15, follow_redirects=True,
         )
         response.raise_for_status()
         target = response.json()["sha"]
-        response = httpx.get(
+        response = egress.get(
             f"https://raw.githubusercontent.com/wynxo/Kova/{target}/pyproject.toml",
             timeout=15, follow_redirects=True,
         )
@@ -112,6 +114,7 @@ def check_update(ref: str) -> str:
 
 
 def update(ref: str, emit=print) -> None:
+    egress.check_external_process()
     source = source_spec(ref)
     command = [find_uv(), "tool", "install", "--force", "--refresh", "--python", "3.12", source]
     where = source if os.environ.get("KOVA_SOURCE") else ref

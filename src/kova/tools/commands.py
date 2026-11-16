@@ -49,6 +49,8 @@ async def _kill_tree(process: asyncio.subprocess.Process) -> None:
 
 async def run_command(command: str, cwd: Path, timeout: float = 60,
                       sandboxed: bool = False) -> dict:
+    from kova.egress import check_external_process
+    check_external_process()
     if sandboxed:
         with tempfile.TemporaryFile() as status:
             return await _run_command(command, cwd, timeout, sandboxed, status)

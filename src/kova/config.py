@@ -38,7 +38,7 @@ CONFIG_SECTION_KEYS = {
     }),
     'tui': frozenset({'theme', 'keys'}),
     'persona': frozenset({'name', 'tone', 'configured'}),
-    'privacy': frozenset({'secrets'}),
+    'privacy': frozenset({'secrets', 'local_only'}),
     'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
     'usage': frozenset({'monthly_budget_usd'}),
@@ -224,6 +224,7 @@ class Config:
     #: Outbound secret handling: "off" (compatible default), "redact" or "block".
     local_idle_unload_minutes: int = 5
     privacy_secrets: str = "off"
+    privacy_local_only: bool = False
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
     #: Warn (never block) once a day when this month's estimated spend passes 80%.
@@ -331,6 +332,7 @@ def load_config(home: Path | None = None) -> Config:
                  mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
                       if entry is not None] if isinstance(data.get('mcp'), list) else [],
                  privacy_secrets=privacy_secrets,
+                 privacy_local_only=(privacy.get('local_only', False) is not False) if isinstance(privacy, Mapping) else False,
                  local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
                  catalog_url=_catalog_url(data.get('catalog')),
                  usage_monthly_budget_usd=_budget(data.get('usage')),
@@ -531,6 +533,7 @@ def save_config(cfg: Config) -> None:
     _put(memory, 'consolidate_max_loss', cfg.memory_consolidate_max_loss)
     _put(memory, 'write_subdir', cfg.memory_write_subdir or _UNSET)
     _put(_section(doc, 'privacy'), 'secrets', normalize_mode(cfg.privacy_secrets))
+    _put(_section(doc, 'privacy'), 'local_only', cfg.privacy_local_only)
     _put(_section(doc, 'local'), 'idle_unload_minutes', max(0, cfg.local_idle_unload_minutes))
     tui = _section(doc, 'tui')
     _put(tui, 'theme', cfg.tui_theme)

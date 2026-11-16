@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 
 import httpx
 
+from kova import egress
+
 from kova import providers
 from kova.config import Config
 from kova.tools.system_info import hardware_profile
@@ -123,7 +125,7 @@ async def inspect(*, transport=None, home=None) -> dict:
     # OLLAMA_MODELS is a hint only: a separately launched daemon may use another
     # account, volume or environment. Never expose that path to clients.
     profile = await asyncio.to_thread(measure_hardware)
-    async with httpx.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
+    async with egress.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
         async def check(name, url, key):
             try:
                 response = await client.get(url)
@@ -178,7 +180,7 @@ async def install(cfg: Config, identifier: str, profile: dict, *, cpu: bool = Fa
         raise LocalModelError('This model connection already exists. Select it in the model picker, or remove it before reinstalling.')
     stage = 'download'
     try:
-        async with httpx.AsyncClient(base_url=OLLAMA_URL, transport=transport,
+        async with egress.AsyncClient(base_url=OLLAMA_URL, transport=transport,
                                      timeout=httpx.Timeout(180, connect=3), trust_env=False) as client:
             yield {'type': 'progress', 'stage': 'download', 'message': 'Downloading with Ollama; retry resumes interrupted layers.'}
             success = False
@@ -257,7 +259,7 @@ async def remove(cfg: Config, provider_id: str, *, transport=None) -> None:
         raise LocalModelError('This connection contains other models. Remove it through provider settings instead.')
     previous = None
     try:
-        async with httpx.AsyncClient(base_url=OLLAMA_URL, transport=transport, timeout=30, trust_env=False) as client:
+        async with egress.AsyncClient(base_url=OLLAMA_URL, transport=transport, timeout=30, trust_env=False) as client:
             response = await client.post('/api/generate', json={'model': runtime, 'keep_alive': 0, 'stream': False})
             if response.status_code != 404:
                 _object(response)

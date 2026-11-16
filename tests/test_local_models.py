@@ -199,7 +199,7 @@ def test_local_routes_require_auth_and_stream_real_install(tmp_path, monkeypatch
         if request.method == 'GET' and request.url.path != '/api/ps':
             return httpx.Response(200, json={'version': 'demo'}) if request.url.port == 11434 else httpx.Response(404)
         return ollama_handler(request)
-    monkeypatch.setattr(local_models.httpx, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': httpx.MockTransport(handle)}))
+    monkeypatch.setattr(local_models.egress, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': httpx.MockTransport(handle)}))
     with TestClient(create_app(cfg)) as client:
         assert client.get('/local-models').status_code == 401
         assert client.post('/local-models/install', json={'model': 'qwen3:4b'}).status_code == 401
@@ -361,7 +361,7 @@ def test_http_install_failure_is_terminal_sse_not_false_success(tmp_path, monkey
         if request.url.path == '/api/pull':
             return httpx.Response(200, text='{"error":"private-upstream-body"}\n')
         pytest.fail('pull failure must not run any later lifecycle step')
-    monkeypatch.setattr(local_models.httpx, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': httpx.MockTransport(handle)}))
+    monkeypatch.setattr(local_models.egress, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': httpx.MockTransport(handle)}))
     with TestClient(create_app(config.load_config(tmp_path))) as client:
         headers = {'Authorization': 'Bearer ' + config.ensure_token(tmp_path)}
         response = client.post('/local-models/install', json={'model': 'qwen3:4b'}, headers=headers)

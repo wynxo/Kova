@@ -454,6 +454,12 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+ // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey.
+ let spaceFocused = 0, spacePrevented = 0;
+ $('prompt').focus = () => { spaceFocused++; };
+ keys({key: ' ', metaKey: true, preventDefault() { spacePrevented++; }});
+ assert.equal(spaceFocused, 1, 'Ctrl/Cmd+Space focuses the composer');
+ assert.equal(spacePrevented, 1, 'and prevents the space char from being typed');
 
 // Known commands are intercepted, including invalid arguments; paths and multiline text are not.
 for (const name of Object.keys(sandbox.test.commands)) {

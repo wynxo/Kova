@@ -13,7 +13,7 @@ import shutil
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from uuid import uuid4
@@ -107,7 +107,7 @@ def _chat_scoped(method):
     """
     @wraps(method)
     def routed(self, chat_id, *args, **kwargs):
-        if self.is_ephemeral(chat_id) and not self._memory_only:
+        if chat_id and self.is_ephemeral(chat_id) and not self._memory_only:
             return method(self._temporary_store(), chat_id, *args, **kwargs)
         return method(self, chat_id, *args, **kwargs)
     return routed
@@ -181,10 +181,55 @@ class Store:
                 self._temporary._conn.close()
                 self._temporary = None
 
+    @_chat_scoped
+    def record_egress(self, chat_id: str | None = None, **metadata) -> dict:
+        """Persist an allowlisted metadata row, never a request or response body."""
+        fields = ('kind', 'host', 'provider', 'model', 'local', 'resolved_ip',
+                  'bytes_in', 'bytes_out', 'tokens_in', 'tokens_out', 'status')
+        row = {key: metadata[key] for key in fields}
+        row.update(chat_id=chat_id, created=_utc_now_iso())
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                'INSERT INTO egress (' + ','.join(row) + ') VALUES (' +
+                ','.join('?' for _ in row) + ')', tuple(row.values()))
+            row['id'] = cursor.lastrowid
+        return row
+
+    def egress_report(self, days: int = 30, chat_id: str | None = None) -> dict:
+        """Bounded timeline and complete grouped totals for the requested interval."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        where, values = 'created >= ?', [cutoff]
+        if chat_id is not None:
+            where += ' AND chat_id = ?'
+            values.append(chat_id)
+        with self._lock:
+            rows = [dict(row) for row in self._conn.execute(
+                f'SELECT * FROM egress WHERE {where} ORDER BY id DESC LIMIT 1000', values)]
+            groups = [dict(row) for row in self._conn.execute(
+                'SELECT substr(created,1,10) AS day, provider, host, kind, local, '
+                'COUNT(*) AS requests, SUM(bytes_in) AS bytes_in, SUM(bytes_out) AS bytes_out, '
+                'SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out '
+                f'FROM egress WHERE {where} GROUP BY day, provider, host, kind, local '
+                'ORDER BY day DESC, provider, host, kind', values)]
+            count = self._conn.execute(f'SELECT COUNT(*) FROM egress WHERE {where}', values).fetchone()[0]
+        for row in [*rows, *groups]:
+            row['local'] = bool(row['local'])
+        return {'days': days, 'items': rows, 'groups': groups, 'requests': count,
+                'truncated': count > len(rows), 'bytes_out': sum(g['bytes_out'] for g in groups),
+                'bytes_in': sum(g['bytes_in'] for g in groups)}
+
     # -- schema -----------------------------------------------------------
     def _create_tables(self) -> None:
         self._conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS egress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL,
+                chat_id TEXT, kind TEXT NOT NULL, host TEXT NOT NULL,
+                provider TEXT NOT NULL, model TEXT NOT NULL, local INTEGER NOT NULL,
+                resolved_ip TEXT NOT NULL, bytes_in INTEGER NOT NULL, bytes_out INTEGER NOT NULL,
+                tokens_in INTEGER, tokens_out INTEGER, status TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS egress_created ON egress(created);
             CREATE TABLE IF NOT EXISTS attachments (
                 id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL,
                 mime TEXT NOT NULL, size INTEGER NOT NULL, pages INTEGER,

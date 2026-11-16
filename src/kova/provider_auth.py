@@ -13,14 +13,17 @@ import threading
 import time
 import uuid
 import webbrowser
+from contextvars import copy_context
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
+
 import jwt
 from filelock import FileLock
 
+from kova import egress
 from kova.config import ProviderEntry, load_config, save_config
 from kova.providers import ProviderError
 
@@ -90,9 +93,10 @@ def credentials(provider: ProviderEntry, *, transport=None) -> dict:
     return provider.auth
 
 
+@egress.attributed('auth')
 def _exchange(payload: dict, transport=None) -> dict:
     try:
-        with httpx.Client(timeout=20, transport=transport, trust_env=False) as client:
+        with egress.Client(timeout=20, transport=transport, trust_env=False) as client:
             response = client.post(TOKEN_URL, data=payload)
         if response.status_code != 200:
             raise ProviderError('Could not renew or complete sign-in. Please sign in again.')
@@ -109,6 +113,7 @@ class LoginAttempt:
     """One bounded loopback callback, opened before returning a browser URL."""
 
     def __init__(self, provider: ProviderEntry):
+        egress.check_url(ISSUER)
         self.provider = provider
         self.state, self.nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         self.verifier = secrets.token_urlsafe(48)
@@ -157,7 +162,7 @@ class LoginAttempt:
         if self.client_id == 'dynamic_agent_client':
             params['agent_name_hint'] = 'Kova'
         self.url = ISSUER + '/api/accounts/authorize?' + urlencode(params)
-        threading.Thread(target=self._listen, daemon=True).start()
+        threading.Thread(target=copy_context().run, args=(self._listen,), daemon=True).start()
 
     def _listen(self):
         try:
@@ -172,6 +177,7 @@ class LoginAttempt:
     def cancel(self):
         self.done.set()
 
+    @egress.attributed('auth')
     def complete(self, params: dict):
         if params.get('error') or not params.get('code'):
             raise ProviderError('Sign-in declined.')
@@ -181,7 +187,7 @@ class LoginAttempt:
         tokens = _exchange({'grant_type': 'authorization_code', 'client_id': client_id, 'code': params['code'],
                             'code_verifier': self.verifier, 'redirect_uri': self.redirect_uri, 'resource': RESOURCE})
         # Validate signature, issuer, audience, expiry and nonce before saving any token.
-        with httpx.Client(timeout=10, trust_env=False) as client:
+        with egress.Client(timeout=10, trust_env=False) as client:
             discovery = client.get(ISSUER + '/.well-known/openid-configuration')
             discovery.raise_for_status()
             jwks_uri = discovery.json()['jwks_uri']
@@ -222,12 +228,13 @@ def login(provider: ProviderEntry) -> None:
         attempt.cancel()
 
 
+@egress.attributed('auth')
 def logout(provider: ProviderEntry) -> bool:
     """Forget local access; borrowed sessions must never be revoked."""
     confirmed = True
     if provider.kind == 'chatgpt' and provider.auth.get('refresh_token'):
         try:
-            with httpx.Client(timeout=10, trust_env=False) as client:
+            with egress.Client(timeout=10, trust_env=False) as client:
                 discovery = client.get(ISSUER + '/.well-known/openid-configuration')
                 endpoint = discovery.json()['revocation_endpoint']
                 if not endpoint.startswith(ISSUER + '/'):

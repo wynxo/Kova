@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 73 endpoints: 72 route handlers plus the static asset mount.
+The app exposes 75 endpoints: 74 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -113,6 +113,7 @@ cookie, so a route added to the router is authenticated by construction.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
+| `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
@@ -263,7 +264,7 @@ restarts. See [remote-access.md](remote-access.md).
 ### CLI (`src/kova/cli.py`)
 
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
-`status`, `usage`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
+`status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `plugin`, `catalog`, `skills` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
@@ -967,3 +968,37 @@ Both paths share the existing authenticated SSE and lifecycle-operation lock.
 All download and process tests are offline, using tiny synthetic artifacts,
 HTTP transports and mocked process boundaries; real inference is not verified
 by those tests.
+
+### Privacy ledger and Local only
+
+`egress.py` provides shared synchronous/asynchronous HTTP clients. Every Kova-owned
+HTTP client (model adapters, web tools, provider catalog/auth, MCP HTTP, extensions,
+engine/model downloads and diagnostics) checks each request and redirect before the
+underlying transport can resolve or connect. Environment proxies are disabled.
+Context-local attribution follows async tasks and copied worker threads; no global
+HTTP monkeypatch is used. Provider credentials are resolved only after the model's
+initial destination check. OAuth callbacks retain the same policy context.
+
+The SQLite `egress` table contains only hosts, resolved public fetch IPs, kind,
+provider/model identifiers, chat IDs, timestamps, HTTP body sizes, completion status
+and provider-reported token counts (null when unknown). No paths, queries, headers,
+message bodies, results or auth values are recorded. Outgoing bytes describe prepared
+HTTP bodies, not proof of delivery on a failed request; incoming bytes count consumed
+body data. Headers, query strings and TLS overhead are not counted. Incognito rows
+route to the existing RAM store and are excluded from persistent reports.
+`GET /privacy?days=30&chat_id=…` gives complete grouped totals and the newest 1000
+requests; the sidebar Privacy panel and `kova privacy --days 30 --json` share it.
+An `egress` SSE event before `done` summarizes the current turn's requests.
+
+`PATCH /privacy` and `kova privacy --local-only on|off` persist the boolean
+`[privacy] local_only` immediately. Only literal loopback IPs and the exact hostname
+`localhost` are trusted, never DNS resolution or a LAN name. Cloud turns return 409
+before saving the user's message, probes cannot contact cloud endpoints, and browser
+provider sign-in is disabled. Enabling stops active turns/jobs, disconnects MCP and
+withholds web, shell and MCP tools. Scheduled shell jobs are refused at execution; model downloads (including pulls delegated to
+Ollama) and the self-update installer are refused too. Policy saves share the auth
+refresh lock, so a refresh already in flight cannot undo the persisted switch.
+Installed extensions stay on disk; reconnect MCP explicitly after turning the policy
+off. This is a policy for Kova-owned traffic, not an OS firewall. Shell/stdio-plugin
+traffic from before enabling it is not observable and is not included in the ledger;
+other applications are outside its scope. Historical traffic is never reconstructed.

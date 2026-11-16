@@ -6,21 +6,68 @@ import ipaddress
 import json
 import socket
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
-from ddgs import DDGS
+from kova import egress
 
 from . import Tool, ToolError
 
 _transport: httpx.BaseTransport | None = None
 
 
+class _SearchParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.results = []
+        self.current = None
+        self.capture = None
+        self.depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = attrs.get('class', '').split()
+        if tag == 'a' and 'result__a' in classes:
+            href = urljoin('https://html.duckduckgo.com', attrs.get('href', ''))
+            target = urlsplit(href)
+            if target.hostname and target.hostname.endswith('duckduckgo.com'):
+                href = parse_qs(target.query).get('uddg', [href])[0]
+            self.current = {'title': '', 'url': href, 'snippet': ''}
+            self.results.append(self.current)
+            self.capture, self.depth = 'title', 1
+        elif self.capture:
+            self.depth += 1
+        elif 'result__snippet' in classes and self.current is not None:
+            self.capture, self.depth = 'snippet', 1
+
+    def handle_endtag(self, tag):
+        if self.capture:
+            self.depth -= 1
+            if self.depth == 0:
+                self.capture = None
+
+    def handle_data(self, data):
+        if self.capture and self.current is not None:
+            self.current[self.capture] += data
+
+
+@egress.attributed('search')
 def search(query: str) -> list[dict]:
-    """Return up to five DuckDuckGo results."""
-    results = DDGS(timeout=15).text(query, max_results=5)
-    return [{"title": r.get("title", ""), "url": r.get("href", ""),
-             "snippet": r.get("body", "")} for r in results][:5]
+    """Fetch up to five DuckDuckGo HTML results through the audited HTTP client."""
+    url = 'https://html.duckduckgo.com/html/'
+    egress.check_url(url)
+    with egress.Client(transport=_transport, timeout=15) as client:
+        with client.stream('GET', url, params={'q': query}) as response:
+            response.raise_for_status()
+            data = bytearray()
+            for chunk in response.iter_bytes():
+                data.extend(chunk[:1024 * 1024 - len(data)])
+                if len(data) >= 1024 * 1024:
+                    break
+    parser = _SearchParser()
+    parser.feed(data.decode('utf-8', errors='replace'))
+    return [{key: ' '.join(value.split()) for key, value in row.items()}
+            for row in parser.results[:5]]
 
 
 class _TextParser(HTMLParser):
@@ -53,6 +100,7 @@ def _check_public(url: str) -> str:
     A web page could otherwise trick the model into reading the user's own
     services (router, homelab, Kova's API) and leaking them.
     """
+    egress.check_url(url)
     parts = urlsplit(url)
     if parts.scheme.lower() not in ("http", "https"):
         raise ToolError("Only HTTP and HTTPS URLs are supported")
@@ -70,9 +118,11 @@ def _check_public(url: str) -> str:
 
     return addrs[0]
 
+@egress.attributed('fetch')
 def _fetch(args: dict) -> str:
     url = args["url"]
-    with httpx.Client(transport=_transport, timeout=15, follow_redirects=False, trust_env=False) as client:
+    egress.check_url(url)
+    with egress.Client(transport=_transport, timeout=15, follow_redirects=False, trust_env=False) as client:
         for _ in range(6):  # follow up to 5 redirects, checking each hop
             address = _check_public(url)
             request = client.build_request("GET", url)
@@ -81,6 +131,8 @@ def _fetch(args: dict) -> str:
             hostname = request.url.host
             request.url = request.url.copy_with(host=address)
             request.extensions["sni_hostname"] = hostname
+            request.extensions["egress_host"] = hostname
+            request.extensions["egress_address"] = address
             response = client.send(request, stream=True)
             if response.is_redirect and "location" in response.headers:
                 response.close()

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from kova import plugins, providers, sandbox
+from kova import egress, plugins, providers, sandbox
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
@@ -51,15 +51,17 @@ Never say you are a different assistant or made by another company. You are Kova
 _WEB_TOOLS = ("web_search", "web_fetch")
 
 
-def select_tools(mode: str, web: bool, tools: dict[str, Tool]) -> dict[str, Tool]:
+def select_tools(mode: str, web: bool, tools: dict[str, Tool], *, local_only: bool = False) -> dict[str, Tool]:
     """The tools a chat may use: everything when the mode offers tools, web only otherwise.
 
     The web toggle applies to both modes; a future code mode declares its own
     capabilities in :mod:`kova.modes` instead of adding a branch here.
     """
     allowed = set(tools) if "tools" in mode_capabilities(mode) else set(_WEB_TOOLS)
-    if not web:
+    if not web or local_only:
         allowed -= set(_WEB_TOOLS)
+    if local_only:
+        allowed = {name for name in allowed if '__' not in name and name != 'run_command'}
     return {name: tool for name, tool in tools.items() if name in allowed}
 
 
@@ -310,6 +312,14 @@ class Agent:
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
+        """Persist and stream a turn under its home and chat privacy policy."""
+        with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
+            async for event in self._run_turn(chat_id, text, model, steering=steering,
+                                              attachment_ids=attachment_ids):
+                yield event
+
+    async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
+                       steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` names a configured model for this turn only; the active one otherwise.
@@ -350,7 +360,7 @@ class Agent:
         # supports one, and asks when it does not.
         confined = permission != 'full' and sandbox.available()
         # Incognito cannot execute arbitrary plugins or tools that persist data.
-        tools = {} if incognito else select_tools(mode, web, self.tools)
+        tools = {} if incognito else select_tools(mode, web, self.tools, local_only=self.config.privacy_local_only)
         if rows:
             def read_attachment(args):
                 row = rows.get(args.get('id'))
