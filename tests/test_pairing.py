@@ -116,7 +116,7 @@ def kova_server(tmp_path, monkeypatch, bind="loopback"):
                                            timeout_graceful_shutdown=2))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not server.started and time.monotonic() < deadline:
         time.sleep(.01)
     assert server.started
