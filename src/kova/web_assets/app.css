@@ -798,14 +798,7 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 .ext-edit .dialog-actions { margin-top:0; }
 
 /* ---------- Toasts ---------- */
-#toasts { position:fixed; top:12px; right:12px; z-index:70; display:grid; gap:8px; width:min(360px, calc(100vw - 24px)); pointer-events:none; }
-.toast { display:flex; align-items:flex-start; gap:10px; padding:11px 8px 11px 12px; border:1px solid var(--border-strong); border-radius:var(--r-lg); background:var(--bg-raised); box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent); pointer-events:auto; animation:toast-in var(--slow) var(--ease); }
-.toast > .icon { margin-top:2px; color:var(--fg-faint); }
-.toast.reminder > .icon { color:var(--accent-default); }
-.toast-body { flex:1; min-width:0; display:grid; gap:1px; font-size:13.5px; line-height:1.45; overflow-wrap:anywhere; }
-.toast-body strong { font-size:12px; color:var(--fg-muted); font-weight:600; }
-.toast .icon-button { width:26px; height:26px; margin:-3px 0; }
-@keyframes toast-in { from { opacity:0; transform:translateY(-6px); } }
+/* Toasts live in toast.css: one component for info, success and errors (#198). */
 
 /* ---------- Responsive ---------- */
 @media (min-width:721px) {
@@ -872,7 +865,6 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   #model-slot .menu-button { max-width:100%; }
 }
 @media (max-width:560px) {
-  #toasts { right:12px; left:12px; width:auto; }
   dialog { padding:16px; }
 }
 @media (max-height:620px) {

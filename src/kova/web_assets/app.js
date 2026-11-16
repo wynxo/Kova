@@ -61,14 +61,26 @@
     $('welcome').hidden = !flag; $('starters').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
-  function toast(message, title = 'Kova') {
-    const node = el('div', `toast${title === 'Reminder' ? ' reminder' : ''}`);
-    const body = el('div', 'toast-body'); body.append(el('strong', '', title), el('span', '', message));
+  // One toast component (toast.js, #198). These wrappers are the only way
+  // app.js posts transient messages; the severity decides politeness and how
+  // long the message waits. Errors stay until dismissed.
+  const toastComponent = globalThis.KovaToast || null;
+  function toast(message, title = 'Kova', options = {}) {
+    if (toastComponent) return toastComponent.show(message, {title, ...options});
+    // An older cached shell may not have toast.js yet: keep a plain fallback.
+    const node = el('div', `toast toast-${options.severity || 'info'}`);
+    const body = el('div', 'toast-body'); body.append(el('strong', 'toast-title', title), el('span', 'toast-message', message));
     const close = iconButton('x', 'Dismiss notification');
     node.append(icon(title === 'Reminder' ? 'bell' : 'info'));
     close.onclick = () => node.remove(); node.append(body, close); $('toasts').append(node);
     // Reminders stay until explicitly dismissed.
-    if (title !== 'Reminder') setTimeout(() => node.remove(), 9000);
+    if (title !== 'Reminder' && options.sticky !== true) setTimeout(() => node.remove(), 9000);
+  }
+  function toastSuccess(message, title = 'Kova', options = {}) {
+    return toast(message, title, {...options, severity: 'success'});
+  }
+  function toastError(message, title = 'Kova', options = {}) {
+    return toast(message, title, {...options, severity: 'error'});
   }
   function banner(message = '') { $('banner').textContent = message; $('banner').hidden = !message; }
   // Screen readers get one short sentence for what needs an answer and for how a
@@ -214,7 +226,7 @@
   }
   async function copyText(text, copied) {
     try { await navigator.clipboard.writeText(text); copied?.(); }
-    catch (_) { toast('Clipboard unavailable. Select the text to copy it.'); }
+    catch (_) { toastError('Clipboard unavailable. Select the text to copy it.'); }
   }
   // What an answer cost and how fast it was: "1.2k in · 340 out · ~$0.004 · 38 tok/s".
   function shortTokens(count) {
@@ -781,7 +793,7 @@
           const result = await json(`/chats/${chatId}/checkpoints/${checkpoint.id}/restore`, {method: 'POST'});
           dialog.close();
           const count = result.restored.length;
-          toast(`Restored ${count} file${count === 1 ? '' : 's'}${result.deleted.length ? `, removed ${result.deleted.length}` : ''}.`);
+          toastSuccess(`Restored ${count} file${count === 1 ? '' : 's'}${result.deleted.length ? `, removed ${result.deleted.length}` : ''}.`);
         } catch (error) { confirm.disabled = false; throw error; }
       });
       actions.append(cancel, confirm); dialog.append(actions);
@@ -1020,7 +1032,7 @@
           window.KovaSounds?.play('done');
           usage = event.usage || null;
           const budget = event.budget_warning;
-          if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget');
+          if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget', {severity: 'warning'});
         }
         schedule();
       },
@@ -1115,7 +1127,7 @@
     const command = text ? parseCommand(text) : null;
     if (command) {
       try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
-      catch (error) { toast(error.message); }
+      catch (error) { toastError(error.message); }
       return;
     }
     if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
@@ -1143,7 +1155,7 @@
       });
       if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
     } catch (error) {
-      if (turn) turn.accept({type: 'error', message: error.message}); else toast(error.message);
+      if (turn) turn.accept({type: 'error', message: error.message}); else toastError(error.message);
     } finally {
       const interrupted = state.stopRequested;
       turn?.finish(); state.busy = false; state.turnReady = false; state.stopRequested = false; controls();
@@ -1153,16 +1165,16 @@
           // Update title/history without replacing the live reasoning and tool rows.
           if (state.chat) { state.chat = await json(`/chats/${state.chat.id}`); pageTitle(); }
           await refreshChats(); await health();
-        } catch (error) { toast(error.message); }
+        } catch (error) { toastError(error.message); }
       }
       if (!interrupted) {
-        try { await runNextQueued(); } catch (error) { toast(error.message); }
+        try { await runNextQueued(); } catch (error) { toastError(error.message); }
       }
     }
   }
   async function cancelTurn() {
     try { await json(`/chats/${state.chat.id}/stop`, {method: 'POST'}); }
-    catch (error) { state.stopRequested = false; controls(); toast(error.message); }
+    catch (error) { state.stopRequested = false; controls(); toastError(error.message); }
   }
   async function stop() {
     if (!state.busy) return;
@@ -1170,7 +1182,7 @@
     // A click while the chat/stream is opening is applied as soon as headers arrive.
     if (state.turnReady) await cancelTurn();
   }
-  function safe(fn) { Promise.resolve().then(fn).catch(error => { toast(error.message); controls(); }); }
+  function safe(fn) { Promise.resolve().then(fn).catch(error => { toastError(error.message); controls(); }); }
   function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = `${Math.min($('prompt').scrollHeight, 180)}px`; controls(); }
   async function readWorkerShare(token) {
     if (typeof caches === 'undefined' || !location.origin) return null;
@@ -1263,7 +1275,7 @@
         const form = new FormData(); form.append('file', file);
         pendingAttachments.push(await json(`/chats/${chatId}/attachments`, {method: 'POST', body: form}));
       }
-    } catch (error) { toast(error.message); }
+    } catch (error) { toastError(error.message); }
     finally { readingAttachments = false; renderAttachments(); controls(); }
   }
   $('attach').onclick = () => $('attachment-input').click();
@@ -1375,7 +1387,7 @@
     }
     return items;
   }
-  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onError: error => toast(error.message)}) || null;
+  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onError: error => toastError(error.message)}) || null;
   async function openPalette() {
     if (!state.connected || !commandPalette) return;
     closeMenu();
@@ -1482,12 +1494,20 @@
     const save = el('button', 'btn primary', 'Save'); save.type = 'button';
     save.onclick = () => safe(async () => {
       save.disabled = true;
+      const previous = Boolean(model.vision);
       try {
         const updated = await json('/models', write('PATCH', {name, vision: vision.checked}));
         Object.assign(model, updated);
         if ($('model').value === name) await refreshCapabilities(name);
         dialog.close();
-        toast(`Vision ${updated.vision ? 'on' : 'off'} for ${model.model || model.name}.`);
+        toastSuccess(`Vision ${updated.vision ? 'on' : 'off'} for ${model.model || model.name}.`, 'Model', {
+          // Undo is one more PATCH back to the value this dialog opened with.
+          action: {label: 'Undo', onClick: async () => {
+            const reverted = await json('/models', write('PATCH', {name, vision: previous}));
+            Object.assign(model, reverted);
+            if ($('model').value === name) await refreshCapabilities(name);
+          }},
+        });
       } catch (error) { save.disabled = false; throw error; }
     });
     actions.append(cancel, save); form.append(head, intro, fields, toggle, note, actions);
@@ -1561,7 +1581,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
@@ -1606,7 +1626,7 @@
     try {
       if (ticket) await json('/app/login', write('POST', {ticket}));
       // A phone that scanned a pairing QR code trades its one-use secret for a device cookie.
-      if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toast('This phone is now paired with Kova.'); }
+      if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toastSuccess('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true;
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
@@ -1730,7 +1750,7 @@
       });
       if (version !== providerVersion) return;
       if (!complete) throw new Error('Download stream ended before completion. Retry to resume. No ready model was confirmed.');
-      await refreshLocalSelection(); closeProvider(); toast('Model ready on this PC. Start chatting.');
+      await refreshLocalSelection(); closeProvider(); toastSuccess('Model ready on this PC. Start chatting.');
     } catch (error) {
       if (version === providerVersion) $('provider-status').textContent = controller.signal.aborted
         ? 'Download cancelled. Retry to resume partial downloads. Check the model picker if setup had already finished.' : error.message;
@@ -1859,7 +1879,7 @@
         const [models, status] = await Promise.all([json('/models'), json('/health')]);
         state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
         await refreshCapabilities(selectedModel);
-        syncMenus(); await health(); toast('Provider connected. Ready when you are.'); return;
+        syncMenus(); await health(); toastSuccess('Provider connected. Ready when you are.'); return;
       }
       const kind = $('provider-kind').value, caps = providerCaps();
       const body = {kind, id: $('provider-name').value, name: $('provider-name').value,
@@ -2011,7 +2031,7 @@
         const test = el('button', 'btn quiet', 'Test'); test.type = 'button'; test.title = `Reconnect ${row.name}`;
         test.onclick = () => safe(async () => {
           test.disabled = true; test.textContent = 'Testing…';
-          try { const result = await json(`/mcp/${enc(row.name)}/test`, {method: 'POST'}); toast(result.error || `${row.name} is working.`, 'MCP'); await refresh(); }
+          try { const result = await json(`/mcp/${enc(row.name)}/test`, {method: 'POST'}); if (result.error) toastError(result.error, 'MCP'); else toastSuccess(`${row.name} is working.`, 'MCP'); await refresh(); }
           finally { test.disabled = false; test.textContent = 'Test'; }
         });
         const remove = iconButton('trash-2', `Remove ${row.name}`);
@@ -2038,7 +2058,7 @@
           : {name: name.value.trim(), command: where, args: args.value.split('\n').map(line => line.trim()).filter(Boolean)};
         try {
           const row = await json('/mcp', write('POST', body));
-          if (row.error) toast(row.error, 'MCP');
+          if (row.error) toastError(row.error, 'MCP');
           name.value = ''; target.value = ''; args.value = ''; expanded.add(row.name); await refresh();
         } finally { save.disabled = false; save.textContent = 'Add server'; }
       });
@@ -2184,7 +2204,7 @@
         no.onclick = () => { api(`/extensions/catalog/preview/${enc(preview.ticket)}`, {method: 'DELETE'}).catch(() => {}); render(); };
         yes.onclick = () => safe(async () => {
           yes.disabled = true; no.disabled = true; yes.textContent = 'Installing…';
-          try { const done = await json('/extensions/install', write('POST', {ticket: preview.ticket, upgrade})); toast(`Installed ${done.installed}.`, 'Extensions'); await refresh(); }
+          try { const done = await json('/extensions/install', write('POST', {ticket: preview.ticket, upgrade})); toastSuccess(`Installed ${done.installed}.`, 'Extensions'); await refresh(); }
           catch (error) { await refresh(); throw error; }
         });
         text.append(box); button.remove(); yes.focus();
@@ -2310,8 +2330,8 @@
       for (const text of ['Put your phone on the same Wi-Fi as this computer.', 'Point its camera at the code.', 'Tap the link that appears.']) steps.append(el('li', '', text));
       const status = el('p', 'phone-status'); status.setAttribute('role', 'status');
       const copy = button('Copy link instead', 'btn quiet', async () => {
-        try { await navigator.clipboard.writeText(pair.url); toast('Link copied. It works once, for two minutes.'); }
-        catch (_) { toast('Clipboard unavailable here.'); }
+        try { await navigator.clipboard.writeText(pair.url); toastSuccess('Link copied. It works once, for two minutes.'); }
+        catch (_) { toastError('Clipboard unavailable here.'); }
       });
       const card = el('div', 'phone-card'); card.append(img, el('small', 'phone-address', pair.address));
       const side = el('div', 'phone-side'); side.append(steps, status, copy);
