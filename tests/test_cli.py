@@ -115,11 +115,16 @@ def test_status_shows_a_compact_card(runner, monkeypatch):
         def reminders_list(self):
             return [{}]
 
+        def usage(self, days):
+            assert days == 1
+            return {"today": {"answers": 3, "prompt_tokens": 9000, "completion_tokens": 3000,
+                              "cost_usd": 0.0412, "unpriced": 0}}
+
     monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: StatusClient())
     result = cli_runner.invoke(cli.app, ["status"])
     assert result.exit_code == 0, result.output
     for expected in ("Kova status", "Server", "up", "v0.1.0", "local · qwen3:8b",
-                     "reachable", "3 notes", "1 upcoming"):
+                     "reachable", "3 notes", "1 upcoming", "Today", "3 answers · 12k tokens · ~$0.04"):
         assert expected in result.output
     assert "\x1b[" not in result.output  # plain when piped
 
@@ -155,10 +160,15 @@ def test_status_marks_an_unreachable_model(runner, monkeypatch):
         def reminders_list(self):
             return []
 
+        def usage(self, days):
+            # A server from before usage tracking has no /usage route.
+            raise cli.KovaError(404, "Not Found")
+
     monkeypatch.setattr(cli, "KovaClient", lambda *args, **kwargs: OfflineModel())
     result = cli_runner.invoke(cli.app, ["status"])
     assert result.exit_code == 0, result.output
     assert "not reachable" in result.output
+    assert "Today" not in result.output
     assert "kova setup" in result.output
 
 

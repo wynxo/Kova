@@ -330,6 +330,10 @@ class KovaClient:
     def memory_use(self, path: str, obsidian: bool) -> None:
         self._request("POST", "/memory/location", json={"path": path, "obsidian": obsidian}, timeout=5)
 
+    def usage(self, days: int = 30) -> dict:
+        """Tokens, estimated spend and speed for the last ``days`` days (see kova.usage)."""
+        return self._request("GET", "/usage", params={"days": days}).json()
+
     def reminders_list(self) -> list[dict]:
         return self._request("GET", "/reminders").json()
 

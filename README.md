@@ -322,7 +322,8 @@ Server:
 
 - `kova serve` — run the server in the foreground
 - `kova stop` — stop it
-- `kova status` — is it up, which model is active, is the model reachable
+- `kova status` — is it up, which model is active, is the model reachable, today's spend
+- `kova usage` — tokens, estimated cost and tokens per second by day and model (`--days N`, `--json`); see [docs/CONFIG.md](docs/CONFIG.md#usage-and-cost)
 - `kova autostart on` — start the server at login; no administrator rights needed
 - `kova autostart off` — remove Kova's login entry and stop its login unit
 - `kova autostart status` — report installed, enabled and running, or a stale entry

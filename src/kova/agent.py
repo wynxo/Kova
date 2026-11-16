@@ -30,6 +30,7 @@ from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
 from kova.review import MemoryReview, ReviewSettings
 from kova.skills import Skills
+from kova.usage import TurnMeter, summarize, window_start
 
 
 _IDENTITIES = {
@@ -243,6 +244,25 @@ class Agent:
 
         # File contents for per-turn checkpoints, outside every working folder.
         self.blobs = BlobStore(config.home / "checkpoints")
+        # The local day the monthly budget warning was last shown (#75).
+        self._budget_warned: str | None = None
+
+    def _budget_warning(self) -> dict | None:
+        """Once per local day, a notice when this month's spend passes 80% of the budget.
+
+        It only informs: nothing is ever refused because of a budget.
+        """
+        budget = float(getattr(self.config, 'usage_monthly_budget_usd', 0) or 0)
+        now = self.now()
+        today = now.date().isoformat()
+        if budget <= 0 or self._budget_warned == today:
+            return None
+        rows = self.store.usage_rows(window_start(1, now))
+        status = summarize(rows, days=1, now=now, budget_usd=budget)['budget']
+        if not status['warning']:
+            return None
+        self._budget_warned = today
+        return status
 
     def _skills_block(self) -> str:
         """The prompt's skills block, with plugins enabled since the server started."""
@@ -438,6 +458,8 @@ class Agent:
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
+        meter = TurnMeter()
+        pricing = getattr(self.config, 'pricing', None) or {}
         try:
             repeat_count = 0
             repeat_fp = None
@@ -477,18 +499,26 @@ class Agent:
 
                 content: list[str] = []
                 calls: list[dict] = []
-                async for event in client.stream(messages, schemas if step < 10 else None):
+                round_schemas = schemas if step < 10 else None
+                meter.start_round()
+                async for event in client.stream(messages, round_schemas):
                     if event.type in ('text', 'reasoning'):
+                        meter.output(event.text)
                         if event.type == 'text':
                             content.append(event.text)
                         yield {'type': event.type, 'text': event.text}
+                    elif event.type == 'usage':
+                        meter.usage(event.usage)
                     elif event.type == 'privacy' and event.privacy is not None:
                         # A safe summary only: counts and kinds, never a value.
                         yield {'type': 'privacy', **event.privacy}
                     elif event.type == 'tool_call_delta' and event.tool_call is not None and step < 10:
+                        meter.output()
                         yield {'type': 'tool_call_delta', **event.tool_call}
                     elif event.type == 'tool_call' and event.tool_call is not None and step < 10:
+                        meter.count(event.tool_call.get('arguments') or '')
                         calls.append(event.tool_call)
+                meter.end_round([messages, round_schemas] if round_schemas else messages)
                 if awaiting_replacement:
                     awaiting_replacement = False
                     for call in calls:
@@ -508,6 +538,8 @@ class Agent:
                         self.store.add_message(chat_id, 'assistant', answer or None)
                         continue
                     message_id = self.store.add_message(chat_id, 'assistant', answer)
+                    usage = meter.summary(entry, pricing)
+                    self.store.record_usage(chat_id, message_id, usage)
                     if needs_title:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
@@ -522,7 +554,15 @@ class Agent:
                                 chat_id=chat_id, mode=mode, memory=self.memory,
                                 client=client, now=self.now()):
                             yield notice
-                    yield {'type': 'done', 'message_id': message_id, 'model': entry.name}
+                    done = {'type': 'done', 'message_id': message_id, 'model': entry.name, 'usage': usage}
+                    if not incognito:
+                        try:
+                            warning = self._budget_warning()
+                        except Exception:  # a usage query must never break a finished reply
+                            warning = None
+                        if warning is not None:
+                            done['budget_warning'] = warning
+                    yield done
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]

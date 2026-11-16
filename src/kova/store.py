@@ -113,6 +113,36 @@ def _chat_scoped(method):
     return routed
 
 
+#: Per-answer usage columns on ``messages`` (#75), all nullable.
+USAGE_COLUMNS = {
+    "prompt_tokens": "INTEGER",
+    "completion_tokens": "INTEGER",
+    "usage_estimated": "INTEGER",
+    "ms_first_token": "INTEGER",
+    "ms_generation": "INTEGER",
+    "ms_total": "INTEGER",
+    "cost_usd": "REAL",
+    "usage_local": "INTEGER",
+    "usage_model": "TEXT",
+}
+
+
+def _usage_dict(row) -> dict:
+    from kova.usage import tokens_per_second
+    return {
+        "prompt_tokens": row["prompt_tokens"],
+        "completion_tokens": row["completion_tokens"],
+        "estimated": bool(row["usage_estimated"]),
+        "ms_first_token": row["ms_first_token"],
+        "ms_generation": row["ms_generation"],
+        "ms_total": row["ms_total"],
+        "tokens_per_second": tokens_per_second(row["completion_tokens"] or 0, row["ms_generation"]),
+        "cost_usd": row["cost_usd"],
+        "local": bool(row["usage_local"]),
+        "model": row["usage_model"],
+    }
+
+
 @dataclass
 class Store:
     path: Path
@@ -295,6 +325,10 @@ class Store:
             "(SELECT created FROM chats WHERE chats.id = messages.chat_id) "
             "WHERE created IS NULL"
         )
+        # Usage of one answer (#75): nullable, only set on a turn's final reply.
+        for name, definition in USAGE_COLUMNS.items():
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
         # Same for chat modes and the web-search toggle; existing chats keep
         # today's behaviour (work mode, web on).
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
@@ -503,7 +537,8 @@ class Store:
         return chats
 
     @_chat_scoped
-    def get_chat(self, chat_id: str, include_created: bool = False) -> dict | None:
+    def get_chat(self, chat_id: str, include_created: bool = False,
+                 include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan FROM chats WHERE id = ?", (chat_id,)
@@ -520,7 +555,8 @@ class Store:
             "cwd": row["cwd"],
             "plan": json.loads(row["plan"]),
             **({"ephemeral": True} if self._memory_only else {}),
-            "messages": self.get_messages(chat_id, include_created=include_created),
+            "messages": self.get_messages(chat_id, include_created=include_created,
+                                          include_usage=include_usage),
         }
 
     @_chat_scoped
@@ -889,11 +925,42 @@ class Store:
             )
 
     @_chat_scoped
-    def get_messages(self, chat_id: str, include_created: bool = False) -> list[dict]:
+    def record_usage(self, chat_id: str, message_id: int, usage: dict) -> None:
+        """Store what one answer cost and how fast it was (see :mod:`kova.usage`)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE messages SET prompt_tokens = ?, completion_tokens = ?, usage_estimated = ?, "
+                "ms_first_token = ?, ms_generation = ?, ms_total = ?, cost_usd = ?, usage_local = ?, "
+                "usage_model = ? WHERE id = ? AND chat_id = ?",
+                (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0),
+                 int(bool(usage.get("estimated"))), usage.get("ms_first_token"),
+                 usage.get("ms_generation"), usage.get("ms_total"), usage.get("cost_usd"),
+                 int(bool(usage.get("local"))), usage.get("model"), message_id, chat_id),
+            )
+            self._conn.commit()
+
+    def usage_rows(self, since: str) -> list[dict]:
+        """Answers with usage created at or after ``since`` (UTC ISO), oldest first.
+
+        Only the persistent database: incognito chats leave no usage behind.
+        """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, role, content, tool_calls, tool_call_id, created "
-                "FROM messages WHERE chat_id = ? ORDER BY id",
+                "SELECT chat_id, created, prompt_tokens, completion_tokens, usage_estimated, "
+                "ms_generation, cost_usd, usage_local, usage_model FROM messages "
+                "WHERE prompt_tokens IS NOT NULL AND created >= ? ORDER BY id",
+                (since,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @_chat_scoped
+    def get_messages(self, chat_id: str, include_created: bool = False,
+                     include_usage: bool = False) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, role, content, tool_calls, tool_call_id, created, "
+                + ", ".join(USAGE_COLUMNS) +
+                " FROM messages WHERE chat_id = ? ORDER BY id",
                 (chat_id,),
             ).fetchall()
             links = self._conn.execute(
@@ -908,7 +975,8 @@ class Store:
                 {"id": link["attachment_id"], "name": link["name"]}
             )
         messages: list[dict] = []
-        for message_id, role, content, tool_calls, tool_call_id, created in rows:
+        for row in rows:
+            message_id, role, content, tool_calls, tool_call_id, created = tuple(row)[:6]
             message: dict = {"role": role, "content": content}
             if tool_calls is not None:
                 message["tool_calls"] = json.loads(tool_calls)
@@ -916,6 +984,8 @@ class Store:
                 message["tool_call_id"] = tool_call_id
             if include_created:
                 message["created"] = created
+            if include_usage and row["prompt_tokens"] is not None:
+                message["usage"] = _usage_dict(row)
             if message_id in attached:
                 message["attachments"] = attached[message_id]
             messages.append(message)

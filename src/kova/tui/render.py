@@ -24,6 +24,7 @@ import time
 
 from kova import theme
 from kova.privacy import status_text as privacy_status_text
+from kova.usage import footer as usage_footer
 
 from .markdown import (
     ACCENT,
@@ -313,6 +314,7 @@ class Renderer:
         self.activity = ""
         self.verb = pick_verb()
         self.pass_chars = 0
+        self.turn_usage = None
         self.in_turn, self.headed, self.stopped, self.after_block = True, False, False, False
         self.status("Working")
 
@@ -400,6 +402,11 @@ class Renderer:
         summary = str(event.get("summary") or "")
         self.tool_history.append((name, args, ok, str(event.get("output", summary))))
         self.tool_row(name, args, ok, summary)
+
+    def _on_done(self, event) -> None:
+        """The server's own token, cost and speed numbers for this answer (#75)."""
+        usage = event.get("usage")
+        self.turn_usage = usage if isinstance(usage, dict) else None
 
     def _on_privacy(self, event) -> None:
         """A safe count of what the outbound guard changed, never the values."""
@@ -562,7 +569,10 @@ class Renderer:
             self.interrupted()
         elapsed = time.monotonic() - self.turn_started if self.turn_started else 0
         parts = [f"Worked for {duration(elapsed)}"] if elapsed else []
-        if self.pass_chars:
+        usage = getattr(self, "turn_usage", None)
+        if usage:
+            parts.append(usage_footer(usage))
+        elif self.pass_chars:
             parts.append(f"{compact_number(self.tokens)} tokens")
         self.last_tokens = self.tokens if self.pass_chars else 0
         self.last_elapsed = elapsed

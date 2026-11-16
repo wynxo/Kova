@@ -17,6 +17,7 @@ import tomlkit
 
 from kova.memory import DEFAULT_MEMORY_BUDGET
 from kova.privacy import normalize_mode
+from kova.usage import parse_pricing
 
 DEFAULT_MODEL = {"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "", "context": 32768}
 
@@ -29,7 +30,7 @@ MAX_VOICE_SECONDS = 60
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'local', 'catalog', 'voice',
+    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -42,6 +43,7 @@ CONFIG_SECTION_KEYS = {
     'privacy': frozenset({'secrets', 'local_only'}),
     'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
+    'usage': frozenset({'monthly_budget_usd'}),
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
@@ -228,6 +230,12 @@ class Config:
     privacy_local_only: bool = False
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
+    #: Warn (never block) once a day when this month's estimated spend passes 80%.
+    #: ``0`` means no budget.
+    usage_monthly_budget_usd: float = 0.0
+    #: ``[pricing]`` overrides: USD per million (input, output) tokens by model
+    #: name, model id or ``kind/model-id`` (see kova.usage). Read-only here.
+    pricing: dict[str, tuple[float, float]] = field(default_factory=dict)
     #: Voice (issue #68): speech-to-text backend ("local"|"browser"), text-to-
     #: speech backend ("espeak-ng"|"off"), the STT language, and the clip cap.
     voice_stt: str = "local"
@@ -337,6 +345,8 @@ def load_config(home: Path | None = None) -> Config:
                  privacy_local_only=(privacy.get('local_only', False) is not False) if isinstance(privacy, Mapping) else False,
                  local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
                  catalog_url=_catalog_url(data.get('catalog')),
+                 usage_monthly_budget_usd=_budget(data.get('usage')),
+                 pricing=parse_pricing(data.get('pricing')),
                  voice_stt=str(voice.get('stt') or 'local'),
                  voice_tts=str(voice.get('tts') or 'espeak-ng'),
                  voice_language=str(voice.get('language') or '') or None,
@@ -348,6 +358,16 @@ def load_config(home: Path | None = None) -> Config:
     # Tighten legacy credential files too, not only new writes.
     path.chmod(0o600)
     return cfg
+
+
+def _budget(table: Any) -> float:
+    if not isinstance(table, Mapping):
+        return 0.0
+    try:
+        value = float(table.get('monthly_budget_usd', 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if value > 0 and value != float('inf') else 0.0
 
 
 def _catalog_url(table: Any) -> str:
@@ -543,6 +563,12 @@ def save_config(cfg: Config) -> None:
         if not cfg.mcp:
             del doc['mcp']
     _put(doc, 'bind', 'lan' if cfg.bind == 'lan' else _UNSET)
+    if cfg.usage_monthly_budget_usd or 'usage' in doc:
+        usage = _section(doc, 'usage')
+        _put(usage, 'monthly_budget_usd', cfg.usage_monthly_budget_usd or _UNSET)
+        if not usage:
+            del doc['usage']
+    # ``[pricing]`` is hand-edited only; the document already keeps it.
     if cfg.catalog_url or 'catalog' in doc:
         catalog = _section(doc, 'catalog')
         _put(catalog, 'url', cfg.catalog_url.strip() or _UNSET)

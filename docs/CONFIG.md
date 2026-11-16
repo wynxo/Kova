@@ -73,6 +73,8 @@ compare. Defaults are what a fresh install writes.
 | `[local] idle_unload_minutes` | `local_idle_unload_minutes` | `5` | integer ≥ 0 | Unload the managed llama.cpp engine after this many idle minutes; `0` disables idle unload. Active model streams are protected; the next chat reloads it automatically. Restart the Kova server after changing this setting. |
 | `[privacy] local_only` | `privacy_local_only` | `false` | boolean | Refuse non-loopback Kova traffic. Use `kova privacy --local-only on` or the Privacy panel to apply immediately; direct config edits require a restart. |
 | `[privacy] secrets` | `privacy_secrets` | `off` | `off`, `redact` or `block` | Opt-in outbound secret guard at the model boundary. `off` keeps previous behaviour; `redact` replaces known credential shapes before a non-loopback request; `block` refuses the turn before any request. |
+| `[usage] monthly_budget_usd` | `usage_monthly_budget_usd` | `0` (no budget) | number ≥ 0, in US dollars | Once this month's estimated spend passes 80% of it, the next answer shows a warning, at most once a day. It never blocks a turn. `kova usage` shows the spend; see [Usage and cost](#usage-and-cost). |
+| `[pricing] "<model>"` | `pricing` | built-in table | `{ input = N, output = N }`, USD per million tokens | Your own prices, by Kova model name, model id or `kind/model-id`. Edit `config.toml` by hand; `config set` does not write it. Overrides beat the built-in table, so `0` makes a free server free. |
 | `[catalog] url` | `catalog_url` | unset (Kova's index on GitHub) | an `https://` URL, a local path, `bundled`, or empty to clear | Where `kova catalog` and the Extensions page read the extensions index. When it cannot be read, Kova uses the index bundled with it. See [EXTENSIONS.md](EXTENSIONS.md). |
 | `[memory] path` | `memory_path` | `~/.kova/memory` | non-empty path | Root folder for Markdown memory notes. An empty value falls back to the default rather than the working directory. `kova memory use PATH` changes it live when the server is up. |
 | `[memory] write_subdir` | `memory_write_subdir` | unset | one folder name, or empty to clear | In Obsidian mode, reads cover the whole vault but writes and deletes stay in this subfolder (normally `Kova`). Separators and `..` are refused. |
@@ -97,6 +99,44 @@ compare. Defaults are what a fresh install writes.
 Booleans accept `on`/`off`, `true`/`false`, `yes`/`no`, `1`/`0`, `enabled` and
 `disabled` on the command line. Path values are expanded (`~`) and resolved
 before they are saved.
+
+## Usage and cost
+
+Every answer records its tokens in and out, the time to the first token, the
+total time and the model's speed in tokens per second. The web app shows them
+under each answer (`1.2k in · 340 out · ~$0.004 · 38 tok/s`; hover for the
+timings), and `kova usage` adds them up by day and by model:
+
+```sh
+kova usage                 # the last 30 days
+kova usage --days 7 --json # for scripts
+kova status                # includes today's spend
+```
+
+Token counts come from the model server. OpenAI-compatible servers are asked
+for them with `stream_options.include_usage`; one that rejects the option is
+asked again without it. When a server sends no counts, Kova estimates about four
+characters a token and marks the numbers with `~`.
+
+Cost is an estimate, never a bill. A model on this PC, a `local` provider or a
+loopback address costs `$0.00 local`. Known cloud models use a small built-in
+table (`kova.usage.PRICING`, with the date it was checked); anything else shows
+tokens only and never a made-up price. Cached prompt tokens are counted at
+the full input price, so a provider's cache discount makes the real bill
+lower than the estimate. Prices change, so set your own:
+
+```toml
+[pricing]
+"gpt-4o" = { input = 2.5, output = 10 }        # USD per million tokens
+"my-lab-model" = { input = 0, output = 0 }     # a Kova model name works too
+
+[usage]
+monthly_budget_usd = 20
+```
+
+Usage stays in `kova.db` on this machine (see
+[ARCHITECTURE.md](ARCHITECTURE.md#usage-and-cost) for how it is measured). Incognito chats record none, and
+deleting a chat deletes its usage.
 
 ## Outbound secret protection
 

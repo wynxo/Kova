@@ -390,7 +390,13 @@ assert.equal(byClass(liveBody, 'tool-output').length, 1, 'the full result opens 
 assert.ok(activityRow.textContent.includes('Working'));
 live.accept({type: 'text', text: 'All '}); live.accept({type: 'text', text: 'done.'});
 assert.ok(byClass(liveBody, 'markdown')[0].classList.contains('live'));
+live.accept({type: 'done', message_id: 3, model: 'cloud', usage: {prompt_tokens: 1234, completion_tokens: 340,
+  estimated: false, ms_first_token: 800, ms_total: 9100, tokens_per_second: 38, cost_usd: 0.0041, local: false, model: 'cloud'},
+  budget_warning: {monthly_usd: 10, spent_usd: 8.5, ratio: 0.85, warning: true}});
 live.finish();
+const liveMeter = byClass(article, 'usage-meter')[0];
+assert.equal(liveMeter.textContent, '1.2k in · 340 out · ~$0.0041 · 38 tok/s', 'the answer says what it cost and how fast it was');
+assert.ok(liveMeter.title.includes('First token after 0.8 s') && liveMeter.title.includes('9.1 s in total'));
 assert.equal(byClass(liveBody, 'markdown')[0].classList.contains('live'), false);
 const replyActions = byClass(article, 'message-actions')[0];
 buttons(replyActions)[0].onclick(); await tick();
@@ -401,9 +407,11 @@ setChat({id: 'saved-turn', messages: [
   {role: 'user', content: 'Read my notes'},
   {role: 'assistant', content: 'Looking.', tool_calls: [{function: {name: 'read_file', arguments: '{"path": "notes.txt"}'}}]},
   {role: 'tool', content: '...'},
-  {role: 'assistant', content: 'They are short.'},
+  {role: 'assistant', content: 'They are short.', usage: {prompt_tokens: 50, completion_tokens: 9, estimated: true, local: true,
+    ms_first_token: null, ms_total: 400, tokens_per_second: null, cost_usd: 0, model: 'box'}},
 ]});
 assert.equal(byClass($('messages'), 'assistant').length, 1);
+assert.equal(byClass($('messages'), 'usage-meter')[0].textContent, '~50 in · ~9 out · $0.00 local', 'a saved answer keeps its meter');
 assert.ok(byClass($('messages'), 'tool-row')[0].textContent.includes('notes.txt'));
 const savedActions = byClass($('messages'), 'message-actions');
 assert.equal(savedActions.length, 2, 'your message and the reply each get actions');

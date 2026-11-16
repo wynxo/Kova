@@ -446,6 +446,7 @@ def ask(
         pieces: list[str] = []
         tools: list[str] = []
         used_model = model
+        usage = None
         reasoning = False
         for event in client.stream_message(chat_id, prompt, model=model):
             kind = event["type"]
@@ -477,6 +478,7 @@ def ask(
                 _ask_error(event["message"])
             elif kind == "done":
                 used_model = event.get("model", used_model)
+                usage = event.get("usage")
                 break
     except KovaError as exc:
         _ask_error(str(exc))
@@ -488,6 +490,7 @@ def ask(
     if as_json:
         print(json.dumps({"answer": "".join(pieces), "chat_id": chat_id,
                           "model": used_model, "tools": tools,
+                          **({"usage": usage} if usage else {}),
                           **({"incognito": True} if incognito else {})}, ensure_ascii=False))
     else:
         print()
@@ -599,7 +602,8 @@ def stop():
         _error_line(f"Could not stop the server: {exc}")
 
 
-def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | None) -> Table:
+def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | None,
+                 spend: str | None = None) -> Table:
     """The two-column label/value grid inside the status card."""
     grid = Table.grid(padding=(0, 2))
     grid.add_column(no_wrap=True)
@@ -623,11 +627,26 @@ def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | 
     note_word = "note" if notes == 1 else "notes"
     memory = Text(f"{notes} {note_word}" if notes is not None else "—", style=theme.MUTED)
     upcoming = Text(f"{reminders} upcoming" if reminders is not None else "—", style=theme.MUTED)
-    for label, value in (("Server", server), ("Model", model), ("Memory", memory), ("Reminders", upcoming)):
+    rows = [("Server", server), ("Model", model), ("Memory", memory), ("Reminders", upcoming)]
+    if spend is not None:
+        rows.append(("Today", Text(spend, style=theme.MUTED)))
+    for label, value in rows:
         grid.add_row(Text(label, style=theme.MUTED), value)
     if (info or {}).get('local_only', cfg.privacy_local_only):
         grid.add_row(Text('Privacy', style=theme.MUTED), Text('Local only · loopback connections only', style=theme.SUCCESS))
     return grid
+
+
+def _spend_line(bucket: dict) -> str:
+    """``3 answers · 12k tokens · ~$0.04`` for one usage bucket."""
+    from kova.usage import money, short_tokens
+    answers = bucket.get("answers", 0)
+    tokens = (bucket.get("prompt_tokens") or 0) + (bucket.get("completion_tokens") or 0)
+    parts = [f"{answers} answer{'' if answers == 1 else 's'}", f"{short_tokens(tokens)} tokens",
+             "~" + money(bucket.get("cost_usd") or 0)]
+    if bucket.get("unpriced"):
+        parts.append(f"{bucket['unpriced']} unpriced")
+    return " · ".join(parts)
 
 
 @app.command()
@@ -689,12 +708,56 @@ def status():
         reminders = len(client.reminders_list())
     except KovaError:
         reminders = None
+    try:
+        spend = _spend_line(client.usage(1)["today"])
+    except (KovaError, KeyError, TypeError, ValueError):
+        spend = None
 
-    console.print(brand.card(_status_rows(cfg, info, notes=notes, reminders=reminders),
+    console.print(brand.card(_status_rows(cfg, info, notes=notes, reminders=reminders, spend=spend),
                              "Kova status",
                              tone=theme.ACCENT if info.get("model_ok") else theme.WARNING))
     if not info.get("model_ok"):
         _muted("The model server isn't answering; run: kova setup")
+
+
+@app.command("usage")
+def usage_command(
+    days: int = typer.Option(30, "--days", min=1, max=366, help="How many days back to count."),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object for scripts."),
+):
+    """Tokens, estimated cost and speed of your answers, by day and by model."""
+    from kova.usage import money, short_tokens
+    data = get_client().usage(days)
+    if as_json:
+        print(json.dumps(data, ensure_ascii=False))
+        return
+    total = data["total"]
+    if not total["answers"]:
+        _empty(f"No answers in the last {data['days']} day(s).", "Chat with kova, then check again.")
+        return
+    table = _table(caption=f"Last {data['days']} day(s) · prices checked {data['prices_checked']}; "
+                           "set your own in [pricing] in config.toml")
+    table.add_column("Model", no_wrap=True)
+    table.add_column("Answers", justify="right")
+    table.add_column("In", justify="right")
+    table.add_column("Out", justify="right")
+    table.add_column("Cost", justify="right")
+    table.add_column("Speed", justify="right")
+    for row in data["by_model"]:
+        cost = "~" + money(row["cost_usd"]) if not row["unpriced"] else (
+            "price unknown" if row["unpriced"] == row["answers"] else "~" + money(row["cost_usd"]) + "+")
+        speed = f"{row['tokens_per_second']:g} tok/s" if row.get("tokens_per_second") else "—"
+        table.add_row(Text(row["model"], style="bold"), str(row["answers"]),
+                      short_tokens(row["prompt_tokens"]), short_tokens(row["completion_tokens"]), cost, speed)
+    console.print(table)
+    console.print(Text.assemble(("Today       ", theme.MUTED), _spend_line(data["today"])))
+    console.print(Text.assemble(("This month  ", theme.MUTED), _spend_line(data["month"])))
+    budget = data.get("budget") or {}
+    if budget.get("monthly_usd"):
+        line = f"Budget      ~{money(budget['spent_usd'])} of {money(budget['monthly_usd'])} this month"
+        console.print(Text(line, style=theme.WARNING if budget.get("warning") else theme.MUTED))
+    if total["estimated"]:
+        _muted("Some servers sent no token counts; those answers are estimated (about 4 characters a token).")
 
 
 _autostart = typer.Typer(no_args_is_help=False, help="Start Kova's server at login.")
@@ -2118,6 +2181,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("voice.max_seconds", "voice_max_seconds", "int", minimum=1),
         _ConfigField("privacy.secrets", "privacy_secrets", "choice", ("off", "redact", "block")),
         _ConfigField("tui.theme", "tui_theme", "choice", ("dark", "light")),
+        _ConfigField("usage.monthly_budget_usd", "usage_monthly_budget_usd", "float", minimum=0),
     )
 }
 

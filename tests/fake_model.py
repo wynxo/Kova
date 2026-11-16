@@ -6,8 +6,11 @@ import httpx
 
 
 class FakeModel:
-    def __init__(self, scripts: list[list[dict]]):
+    def __init__(self, scripts: list[list[dict]], usage: list[dict | None] | None = None):
         self.scripts = scripts
+        # Optional per-request usage blocks, sent as a final frame with no
+        # choices, the way OpenAI-compatible servers answer include_usage.
+        self.usage = usage or []
         self.requests: list[dict] = []
         self.transport = httpx.MockTransport(self._handle)
 
@@ -17,6 +20,9 @@ class FakeModel:
         self.requests.append(json.loads(request.content))
         script = self.scripts[len(self.requests) - 1]
         lines = [f'data: {json.dumps({"choices": [{"delta": delta}]})}\n\n' for delta in script]
+        index = len(self.requests) - 1
+        if index < len(self.usage) and self.usage[index] is not None:
+            lines.append(f'data: {json.dumps({"choices": [], "usage": self.usage[index]})}\n\n')
         return httpx.Response(200, text="".join(lines) + "data: [DONE]\n\n", headers={"content-type": "text/event-stream"})
 
 

@@ -600,6 +600,8 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .message-action:hover { background:var(--surface-2); color:var(--text); }
 .message-action .icon { width:14px; height:14px; }
 .message-action .i-check { color:var(--ok); }
+/* Tokens, cost and speed of one answer; hovering shows the timings. */
+.usage-meter { align-self:center; margin-left:6px; color:var(--text-3); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; cursor:default; }
 @media (hover:none) { .message.assistant .message-actions { opacity:1; } #open-shortcuts { display:none; } }
 
 .markdown { font-size:15px; line-height:1.65; overflow-wrap:anywhere; }
