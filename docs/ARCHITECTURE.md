@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 107 endpoints: 106 route handlers plus the static asset mount.
+The app exposes 109 endpoints: 108 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -159,6 +159,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /autostart` | token or session | inspect start-at-login availability and state |
 | `POST /autostart/{action}` | token or session | enable or disable start at login (`on` or `off`) |
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
+| `GET/PUT /preferences` | token or session | read every UI preference / merge validated changes into them |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
 | `GET /extensions/catalog` | token or session | the extensions catalog (configured index or the bundled one), with install state |
@@ -267,7 +268,7 @@ restarts. See [remote-access.md](remote-access.md).
 A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `plugin`, `catalog`, `skills` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+`chats`, `plugin`, `catalog`, `skills`, `prefs` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -643,6 +644,7 @@ context = 32768                          # token budget for history trimming
 ├── token                 bearer token for local API calls
 ├── kova.db               chats, messages, reminders, search index
 ├── memory/               Markdown notes (default location)
+├── preferences.json      the clients' UI preferences
 ├── server.pid            pid of the background server
 └── server.log            its stdout/stderr
 
