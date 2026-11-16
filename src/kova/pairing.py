@@ -23,6 +23,10 @@ How it fits together:
   are granted from the computer with ``kova devices allow``. Requests from the
   computer itself are never limited by capabilities. The full matrix is in
   docs/remote-access.md.
+* The same limits follow a phone into the agent: a turn it starts gets only the
+  tools its capabilities cover (``action_capabilities``), it can approve only
+  actions it could have run itself, and text it steers or queues into a turn
+  never runs with more authority than the phone has.
 """
 
 from __future__ import annotations
@@ -62,7 +66,8 @@ CAPABILITIES = {
     "models:write": "download or delete local models",
     "providers:write": "add, remove or sign in to model providers and servers",
     "extensions:write": "change MCP servers, plugins and skills",
-    "settings:write": "change approval rules, privacy, the memory folder and start at login",
+    "settings:write": "change approval rules, privacy, memory and persona settings, and start at login",
+    "host:exec": "run commands, schedule jobs, use MCP tools and work with files outside the Kova Files folder",
 }
 #: What a newly paired phone may do: a chat client, not a remote control.
 DEFAULT_CAPABILITIES = ("chat", "models:read")
@@ -397,6 +402,49 @@ def require_local(request: Request) -> None:
     from fastapi import HTTPException
     if is_lan_request(request):
         raise HTTPException(403, "Do this on the computer Kova runs on.")
+
+
+def request_capabilities(request: Request) -> frozenset[str] | None:
+    """What the caller may do: None (no limit) for the computer itself, else the device's set."""
+    if not is_lan_request(request):
+        return None
+    device = request.app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+    return frozenset(device_capabilities(device)) if device is not None else frozenset()
+
+
+def folder_is_shared(folder, files_path, home) -> bool:
+    """A working folder a phone without ``host:exec`` may use: inside Kova Files, clear of the Kova home."""
+    folder = Path(folder).expanduser().resolve()
+    files = Path(files_path).expanduser().resolve()
+    home = Path(home).expanduser().resolve()
+    return (folder.is_relative_to(files) and not folder.is_relative_to(home)
+            and not home.is_relative_to(folder))
+
+
+#: Tools that start programs on this computer or schedule them for later.
+COMMAND_TOOLS = frozenset({"run_command", "job_add"})
+#: Tools that change the installed skills.
+EXTENSION_TOOLS = frozenset({"skill_write", "skill_remove"})
+
+
+def action_capabilities(name: str, *, external: bool = False, cwd=None, files_path=None,
+                        home=None) -> frozenset[str]:
+    """The capabilities an agent tool call needs beyond ``chat``.
+
+    Commands, scheduled jobs and tools Kova cannot see into (MCP) can reach
+    anything on the computer, so they need ``host:exec``; so do file tools whose
+    working folder is outside Kova Files or holds the Kova home (config, tokens,
+    devices.json).
+    """
+    from kova.tools.code_files import FILE_TOOLS
+    if name in COMMAND_TOOLS or external or "__" in name:
+        return frozenset({"host:exec"})
+    if name in EXTENSION_TOOLS:
+        return frozenset({"extensions:write"})
+    if name in FILE_TOOLS and cwd is not None and files_path is not None and home is not None \
+            and not folder_is_shared(cwd, files_path, home):
+        return frozenset({"host:exec"})
+    return frozenset()
 
 
 def require_capability(capability: str):

@@ -13,10 +13,13 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from kova import cli, pairing
+from kova.agent import Steering
 from kova.config import ensure_token, load_config
 from kova.pairing import (CAPABILITIES, DEFAULT_CAPABILITIES, DEVICE_COOKIE, Devices,
-                          device_capabilities, require_capability)
+                          action_capabilities, device_capabilities, folder_is_shared,
+                          require_capability)
 from kova.server import create_app
+from tests.fake_model import FakeModel, text, tool
 
 LAN_HEADER = "x-test-lan"
 
@@ -91,6 +94,9 @@ EXPECTED = {
     ("POST", "/autostart/{action}"): "settings:write",
     ("PUT", "/permission-rules"): "settings:write",
     ("POST", "/memory/location"): "settings:write",
+    ("POST", "/persona"): "settings:write",
+    ("PATCH", "/memory/settings"): "settings:write",
+    ("POST", "/jobs"): "host:exec",
 }
 
 
@@ -134,10 +140,17 @@ def test_the_matrix_is_documented():
 
 # ------------------------------------------------------------ enforcement
 @pytest.fixture
-def kova(tmp_path):
+def fake():
+    return FakeModel([text("Hello."), text("Again."), text("Third.")])
+
+
+@pytest.fixture
+def kova(tmp_path, fake):
     """One app, reachable as the computer (bearer) or as a phone on the LAN listener."""
-    cfg = load_config(tmp_path)
-    app = create_app(cfg)
+    cfg = load_config(tmp_path / "home")
+    cfg.files_path = tmp_path / "Kova Files"
+    cfg.files_path.mkdir()
+    app = create_app(cfg, transport=fake.transport)
 
     async def maybe_lan(scope, receive, send):
         # Stands in for pairing.lan_app, which marks every LAN request this way.
@@ -204,6 +217,152 @@ def test_installing_programs_stays_local_only_whatever_is_granted(kova):
     app.state.devices.set_capabilities(record["id"], list(CAPABILITIES))
     assert client.post("/mcp", json={"name": "x", "command": "x"}, headers=phone).status_code == 403
     assert client.post("/extensions/install", json={"ticket": "x"}, headers=phone).status_code == 403
+
+
+# ------------------------------------------- indirect paths (jobs, agent, queue)
+def _offered(request: dict) -> set[str]:
+    return {entry["function"]["name"] for entry in request.get("tools", [])}
+
+
+def _turn(client, chat_id, headers, text_="hi"):
+    response = client.post(f"/chats/{chat_id}/messages", json={"text": text_}, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.text
+
+
+def test_a_default_phone_cannot_schedule_jobs(kova):
+    client, app, local, phone, record = kova
+    command = {"text": "backup", "schedule": "every 1h", "command": "kova model add x http://x/v1 m"}
+    prompt = {"text": "brief", "schedule": "every 1h", "prompt": "run the install"}
+    for body in (command, prompt):
+        refused = client.post("/jobs", json=body, headers=phone)
+        assert refused.status_code == 403 and "host:exec" in refused.json()["detail"]
+    assert app.state.store.list_jobs(include_done=True) == []
+    assert client.post("/jobs", json=command, headers=local).status_code == 200
+
+
+def test_a_phone_turn_gets_only_the_tools_its_capabilities_cover(kova, fake):
+    client, app, local, phone, record = kova
+    # Even a rule that allows everything cannot bring a tool back.
+    assert client.put("/permission-rules", json=[{"action": "allow"}], headers=local).status_code == 200
+    chat = client.post("/chats", json={"mode": "work"}, headers=phone).json()
+    _turn(client, chat["id"], phone)
+    offered = _offered(fake.requests[-1])
+    assert {"run_command", "job_add", "skill_write", "skill_remove"}.isdisjoint(offered)
+    assert {"write_file", "memory_add"} <= offered, "everyday tools stay"
+    _turn(client, chat["id"], local)
+    assert {"run_command", "job_add", "skill_write"} <= _offered(fake.requests[-1]), \
+        "the computer is not limited"
+
+
+def test_a_phone_cannot_run_a_command_the_model_asks_for(kova, fake, monkeypatch):
+    client, app, local, phone, record = kova
+    from kova.tools import commands, core
+    ran = []
+
+    async def fake_run(*args, **kwargs):
+        ran.append(args)
+        return {"ok": True, "output": ""}
+
+    monkeypatch.setattr(commands, "run_command", fake_run)
+    monkeypatch.setattr(core, "run_command", fake_run)
+    fake.scripts[:] = [tool("run_command", {"command": "kova devices allow x host:exec"}), text("Done.")]
+    client.put("/permission-rules", json=[{"action": "allow"}], headers=local)
+    chat = client.post("/chats", json={"mode": "work", "permission": "auto"}, headers=phone).json()
+    body = _turn(client, chat["id"], phone)
+    assert "unknown tool run_command" in body and ran == []
+
+
+def test_file_tools_leave_a_phone_outside_kova_files(kova, fake, tmp_path):
+    client, app, local, phone, record = kova
+    outside = tmp_path / "project"
+    outside.mkdir()
+    chat = client.post("/chats", json={"mode": "work", "cwd": str(outside)}, headers=local).json()
+    _turn(client, chat["id"], phone)
+    assert {"read_file", "write_file", "edit_file"}.isdisjoint(_offered(fake.requests[-1]))
+
+
+def test_a_phone_cannot_pick_full_access_or_a_folder_outside_kova_files(kova, tmp_path):
+    client, app, local, phone, record = kova
+    home = str(app.state.config.home)
+    assert client.post("/chats", json={"permission": "full"}, headers=phone).status_code == 403
+    assert client.post("/chats", json={"cwd": home}, headers=phone).status_code == 403
+    chat = client.post("/chats", json={"permission": "manual"}, headers=phone)
+    assert chat.status_code == 200
+    path = f"/chats/{chat.json()['id']}"
+    assert client.patch(path, json={"permission": "full"}, headers=phone).status_code == 403
+    assert client.patch(path, json={"cwd": home}, headers=phone).status_code == 403
+    assert client.patch(path, json={"permission": "auto"}, headers=phone).status_code == 200
+    assert client.patch(path, json={"permission": "full"}, headers=local).status_code == 200
+
+
+def test_a_phone_approves_only_what_it_could_run_itself(kova):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    approvals = app.state.agent.approvals
+
+    async def pending(name, args, needs):
+        return approvals.create(chat["id"], name, args, needs=needs)
+
+    command = client.portal.call(pending, "run_command", {"command": "kova pair"},
+                                 action_capabilities("run_command"))
+    url = f"/chats/{chat['id']}/approvals/{command['id']}"
+    refused = client.post(url, json={"decision": "allow"}, headers=phone)
+    assert refused.status_code == 403 and "host:exec" in refused.json()["detail"]
+    assert client.post(url, json={"decision": "deny"}, headers=phone).status_code == 200, \
+        "refusing is always allowed"
+    note = client.portal.call(pending, "memory_add", {"title": "t", "body": "b"}, frozenset())
+    url = f"/chats/{chat['id']}/approvals/{note['id']}"
+    assert client.post(url, json={"decision": "allow"}, headers=phone).status_code == 200
+
+
+def test_a_phone_cannot_steer_a_turn_with_more_authority(kova):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={}, headers=local).json()
+    url = f"/chats/{chat['id']}/steer"
+    app.state.steering[chat["id"]] = Steering(None)  # started on the computer
+    assert client.post(url, json={"text": "run kova pair"}, headers=phone).status_code == 403
+    assert client.post(url, json={"text": "go on"}, headers=local).status_code == 200
+    app.state.steering[chat["id"]] = Steering(frozenset({"chat", "models:read"}))
+    assert client.post(url, json={"text": "shorter"}, headers=phone).status_code == 200
+
+
+def test_a_queued_phone_message_runs_limited_even_when_the_computer_sends_it(kova, fake):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    assert client.post(f"/chats/{chat['id']}/queue", json={"text": "run it"}, headers=phone).status_code == 200
+    row = client.post(f"/chats/{chat['id']}/queue/next", headers=local).json()
+    assert row["text"] == "run it" and "capabilities" not in row
+    _turn(client, chat["id"], local, row["text"])
+    assert "run_command" not in _offered(fake.requests[-1])
+    _turn(client, chat["id"], local)
+    assert "run_command" in _offered(fake.requests[-1]), "only that one turn is limited"
+
+
+def test_global_settings_need_settings_write(kova):
+    client, app, local, phone, record = kova
+    assert client.post("/persona", json={"name": "Nova", "tone": "warm"}, headers=phone).status_code == 403
+    assert client.patch("/memory/settings", json={"consolidate": True}, headers=phone).status_code == 403
+    assert client.post("/persona", json={"name": "Nova", "tone": "warm"}, headers=local).status_code == 200
+
+
+def test_action_capabilities():
+    assert action_capabilities("run_command") == {"host:exec"}
+    assert action_capabilities("job_add") == {"host:exec"}
+    assert action_capabilities("github__create_issue") == {"host:exec"}
+    assert action_capabilities("anything", external=True) == {"host:exec"}
+    assert action_capabilities("skill_write") == {"extensions:write"}
+    assert action_capabilities("memory_add") == frozenset()
+
+
+def test_shared_folders(tmp_path):
+    files, home = tmp_path / "files", tmp_path / "home"
+    assert folder_is_shared(files / "notes", files, home)
+    assert not folder_is_shared(tmp_path, files, home)
+    assert not folder_is_shared(home, files, home)
+    assert not folder_is_shared(files, files, files / ".kova"), "the Kova home inside it"
+    assert action_capabilities("write_file", cwd=tmp_path, files_path=files, home=home) == {"host:exec"}
+    assert action_capabilities("write_file", cwd=files, files_path=files, home=home) == frozenset()
 
 
 # --------------------------------------------------------------------- CLI

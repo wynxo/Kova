@@ -263,7 +263,12 @@ restarts. Each device record also holds its capabilities (`pairing.CAPABILITIES`
 default `chat` and `models:read`); expensive or configuration-changing routes
 declare `Depends(require_capability("models:write"))` and friends, which refuse
 a LAN request whose device lacks it and never limit the computer itself. The
-matrix is in [remote-access.md](remote-access.md#what-a-paired-phone-may-do).
+limits also reach the agent: `Agent.run_turn(capabilities=…)` drops tools whose
+`pairing.action_capabilities` exceed the phone's set (commands, jobs and MCP
+tools need `host:exec`, as do file tools outside Kova Files), each pending
+approval records what allowing it needs, and steered or queued phone text keeps
+the phone's limits. The matrix is in
+[remote-access.md](remote-access.md#what-a-paired-phone-may-do).
 
 ## Clients
 

@@ -26,6 +26,7 @@ from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
 from kova.tools.sessions import set_current_chat
+from kova.pairing import action_capabilities
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
 from kova.review import MemoryReview, ReviewSettings
@@ -194,8 +195,10 @@ class Steering:
     so a steer changes the work in progress rather than waiting behind it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, capabilities: frozenset[str] | None = None) -> None:
         self._pending: list[str] = []
+        #: The device capabilities the turn runs with; None means the computer itself.
+        self.capabilities = capabilities
 
     def add(self, text: str) -> None:
         self._pending.append(text)
@@ -311,19 +314,24 @@ class Agent:
         return [message for _, message in entries]
 
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
-                       steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
+                       steering: Steering | None = None, attachment_ids: list[str] | None = None,
+                       capabilities: frozenset[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy."""
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
-                                              attachment_ids=attachment_ids):
+                                              attachment_ids=attachment_ids, capabilities=capabilities):
                 yield event
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
-                       steering: Steering | None = None, attachment_ids: list[str] | None = None) -> AsyncIterator[dict]:
+                       steering: Steering | None = None, attachment_ids: list[str] | None = None,
+                       capabilities: frozenset[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` names a configured model for this turn only; the active one otherwise.
         ``steering`` carries messages that arrive while the turn runs.
+        ``capabilities`` limits a turn a paired phone started (kova.pairing): tools
+        that need more are not offered at all, so no approval or rule can bring
+        them back. None means the computer itself, with no limit.
         """
         from kova import attachments
         from kova.tools import Tool
@@ -361,6 +369,13 @@ class Agent:
         confined = permission != 'full' and sandbox.available()
         # Incognito cannot execute arbitrary plugins or tools that persist data.
         tools = {} if incognito else select_tools(mode, web, self.tools, local_only=self.config.privacy_local_only)
+
+        def needs(name: str, tool) -> frozenset[str]:
+            return action_capabilities(name, external=tool.external, cwd=cwd,
+                                       files_path=self.config.files_path, home=self.config.home)
+
+        if capabilities is not None:
+            tools = {name: tool for name, tool in tools.items() if needs(name, tool) <= capabilities}
         if rows:
             def read_attachment(args):
                 row = rows.get(args.get('id'))
@@ -610,7 +625,8 @@ class Agent:
                                 if policy == 'ask' or (policy != 'allow' and needs_approval(
                                         name, args, permission, cwd, self.config.files_path,
                                         False, sandboxed=confined, external=tools[name].external)):
-                                    approval = self.approvals.create(chat_id, name, args, cwd=cwd)
+                                    approval = self.approvals.create(chat_id, name, args, cwd=cwd,
+                                                                     needs=needs(name, tools[name]))
                                     approved_binding = approval["binding"]
                                     try:
                                         yield approval

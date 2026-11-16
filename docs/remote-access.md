@@ -42,12 +42,13 @@ $ kova devices allow 3f9a1c2e models:write
 
 | Capability | Default | What it allows | Routes |
 | --- | --- | --- | --- |
-| `chat` | always | chat and use tools (approvals still apply), manage chats, attachments, memory, reminders and scheduled jobs, switch the active model, read settings | every route not listed below |
+| `chat` | always | chat and use everyday tools (web, memory, reminders, files inside Kova Files; approvals still apply), manage chats, attachments, memory notes and reminders, switch the active model, read settings | every route not listed below |
 | `models:read` | yes | see local models and how they fit this computer | GET /local-models |
 | `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
 | `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
-| `settings:write` | no | change approval rules, privacy, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /memory/location, POST /autostart/… |
+| `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/… |
+| `host:exec` | no | run commands, schedule jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
 command to run. Some things no capability unlocks, because they choose programs
@@ -55,6 +56,29 @@ to run on this computer or manage access itself: adding an MCP server
 (`POST /mcp`), previewing and installing extensions, turning a plugin on,
 pairing, listing or revoking devices, changing capabilities, and turning phone
 access on or off. Those are for the computer only.
+
+### The same limits inside a chat
+
+A capability gate on a route would mean little if the assistant could do the
+same thing for the phone, so the limits follow the phone into the agent:
+
+- **A turn a phone starts gets only the tools its capabilities cover.** Without
+  `host:exec` there is no `run_command`, no `job_add` and no MCP tool, and the
+  file tools are offered only when the chat's working folder is inside Kova
+  Files and does not hold the Kova home (config, tokens, `devices.json`).
+  Without `extensions:write` there is no `skill_write` or `skill_remove`. The
+  tools are not offered at all, so no permission rule or approval can bring them
+  back.
+- **Chat settings:** without `host:exec` a phone cannot choose Full access or a
+  working folder outside Kova Files, when creating or changing a chat.
+- **Approvals:** a phone can always deny, but it can allow only an action it
+  could have run itself. A command that a turn on the computer asks about must
+  be answered on the computer.
+- **Steering and the queue:** a phone cannot steer a reply that runs with more
+  capabilities than it has (queue the message instead). A message a phone
+  queues keeps the phone's capabilities, so it runs limited even when the
+  computer's window sends it.
+- **Restoring a checkpoint** outside Kova Files needs `host:exec`.
 
 Requests from the computer itself (the CLI, the desktop app, a local browser
 session) are never limited by capabilities. Phones paired before capabilities

@@ -338,6 +338,11 @@ class Store:
             self._conn.execute("ALTER TABLE chats ADD COLUMN web INTEGER NOT NULL DEFAULT 1")
         if "permission" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN permission TEXT NOT NULL DEFAULT 'manual'")
+        # A message a paired phone queued keeps that phone's capabilities (#229);
+        # NULL means the computer queued it.
+        queued_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(queued_messages)")}
+        if "capabilities" not in queued_columns:
+            self._conn.execute("ALTER TABLE queued_messages ADD COLUMN capabilities TEXT")
         if "cwd" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN cwd TEXT")
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
@@ -1038,12 +1043,19 @@ class Store:
 
     # -- queued messages --------------------------------------------------
     @_chat_scoped
-    def queue_message(self, chat_id: str, text: str, model: str | None = None) -> int:
-        """Persist a message to run after the chat's current turn ends."""
+    def queue_message(self, chat_id: str, text: str, model: str | None = None,
+                      capabilities=None) -> int:
+        """Persist a message to run after the chat's current turn ends.
+
+        ``capabilities`` is the paired phone's set when a phone queued it, so the
+        turn that runs it later is limited the same way; None for the computer.
+        """
+        stored = json.dumps(sorted(capabilities)) if capabilities is not None else None
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO queued_messages (chat_id, text, model, created) VALUES (?, ?, ?, ?)",
-                (chat_id, text, model, _utc_now_iso()),
+                "INSERT INTO queued_messages (chat_id, text, model, created, capabilities) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat_id, text, model, _utc_now_iso(), stored),
             )
             self._conn.commit()
             return cur.lastrowid
@@ -1082,16 +1094,22 @@ class Store:
 
     @_chat_scoped
     def pop_queued_message(self, chat_id: str) -> dict | None:
-        """Remove and return the oldest queued message for a chat."""
+        """Remove and return the oldest queued message for a chat.
+
+        ``capabilities`` is the queuing phone's set (a list), or None.
+        """
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, text, model, created FROM queued_messages "
+                "SELECT id, text, model, created, capabilities FROM queued_messages "
                 "WHERE chat_id = ? ORDER BY id LIMIT 1", (chat_id,)).fetchone()
             if row is None:
                 return None
             self._conn.execute("DELETE FROM queued_messages WHERE id = ?", (row["id"],))
             self._conn.commit()
-            return dict(row)
+        message = dict(row)
+        if message["capabilities"] is not None:
+            message["capabilities"] = json.loads(message["capabilities"])
+        return message
 
     @_chat_scoped
     def delete_queued_message(self, chat_id: str, message_id: int) -> bool:

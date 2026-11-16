@@ -514,6 +514,20 @@ def create_app(
     # A paired phone needs these on top of chat (pairing.CAPABILITIES).
     settings_write = [Depends(pairing.require_capability("settings:write"))]
     providers_write = [Depends(pairing.require_capability("providers:write"))]
+    host_exec = [Depends(pairing.require_capability("host:exec"))]
+    # The next turn in a chat after the computer took a phone's queued message
+    # runs with at most that phone's capabilities (see queue/next).
+    app.state.queue_limits = {}
+
+    def limit_chat_settings(request: Request, permission: str | None, cwd: str | None) -> None:
+        """A phone without host:exec cannot pick Full access or a folder outside Kova Files."""
+        allowed = pairing.request_capabilities(request)
+        if allowed is None or "host:exec" in allowed:
+            return
+        if permission == "full" or (cwd is not None and not pairing.folder_is_shared(
+                cwd, config.files_path, config.home)):
+            raise HTTPException(403, "This phone is not allowed to choose Full access or a working "
+                                     "folder outside Kova Files. Do this on your computer.")
 
     @api.get('/privacy')
     async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
@@ -590,7 +604,7 @@ def create_app(
         return {"name": current.persona_name, "tone": current.persona_tone,
                 "configured": current.persona_configured}
 
-    @api.post("/persona")
+    @api.post("/persona", dependencies=settings_write)
     async def set_persona(body: PersonaBody) -> dict:
         from kova.persona import Persona
         try:
@@ -607,17 +621,19 @@ def create_app(
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
 
     @api.post("/chats")
-    async def create_chat(body: ChatBody | None = None) -> dict:
+    async def create_chat(request: Request, body: ChatBody | None = None) -> dict:
         mode = body.mode if body else None
         if mode is not None and mode not in MODES:
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
+        cwd = working_folder(body.cwd) if body and body.cwd is not None else None
+        limit_chat_settings(request, body.permission if body else None, cwd)
         return app.state.store.create_chat(
             body.title if body else None,
             ephemeral=bool(body and body.ephemeral),
             mode=mode or DEFAULT_MODE,
             web=body.web if body is not None and body.web is not None else True,
             permission=body.permission if body and body.permission else "manual",
-            cwd=working_folder(body.cwd) if body and body.cwd is not None else str(config.files_path.resolve()),
+            cwd=cwd if cwd is not None else str(config.files_path.resolve()),
         )
 
     @api.get("/chats/search")
@@ -644,7 +660,7 @@ def create_app(
         return {**chat, "state": app.state.conversation_states.get(chat_id)}
 
     @api.patch("/chats/{chat_id}")
-    async def update_chat(chat_id: str, body: ChatBody) -> dict:
+    async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         changes: dict[str, str | bool] = {}
@@ -665,6 +681,7 @@ def create_app(
             changes["cwd"] = working_folder(body.cwd)
         if not changes:
             raise HTTPException(status_code=422, detail="nothing to update")
+        limit_chat_settings(request, body.permission, changes.get("cwd"))
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
@@ -777,10 +794,19 @@ def create_app(
         return app.state.agent.approvals.pending_for(chat_id)
 
     @api.post("/chats/{chat_id}/approvals/{approval_id}")
-    async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody) -> dict:
+    async def answer_approval(chat_id: str, approval_id: str, body: ApprovalBody,
+                              request: Request) -> dict:
         chat = app.state.store.get_chat(chat_id)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        allowed = pairing.request_capabilities(request)
+        waiting = app.state.agent.approvals.pending.get(approval_id)
+        if allowed is not None and body.decision != "deny" and waiting is not None \
+                and not waiting.needs <= allowed:
+            # A phone may refuse anything, but allow only what it could have run itself.
+            missing = ", ".join(sorted(waiting.needs - allowed))
+            raise HTTPException(403, f"This phone is not allowed to approve this ({missing}). "
+                                     "Answer it on your computer.")
         if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
             raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
         pending = app.state.agent.approvals.pending.get(approval_id)
@@ -814,9 +840,13 @@ def create_app(
             return event or {"type": "compact_skipped", "message": "Nothing to compact, or the summary failed."}
 
     @api.post("/chats/{chat_id}/messages")
-    async def post_message(chat_id: str, body: TurnBody) -> StreamingResponse:
+    async def post_message(chat_id: str, body: TurnBody, request: Request) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
+        capabilities = pairing.request_capabilities(request)
+        queued_limit = app.state.queue_limits.pop(chat_id, None)
+        if queued_limit is not None:
+            capabilities = queued_limit if capabilities is None else capabilities & queued_limit
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
         rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
@@ -834,7 +864,7 @@ def create_app(
 
         async def run_turn() -> None:
             """Drive the turn to completion even if the client disconnects."""
-            steering = Steering()
+            steering = Steering(capabilities)
             records = []
             with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
                 try:
@@ -846,7 +876,8 @@ def create_app(
                         app.state.steering[chat_id] = steering
                         try:
                             async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                      steering=steering, attachment_ids=body.attachments):
+                                                                      steering=steering, attachment_ids=body.attachments,
+                                                                      capabilities=capabilities):
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
@@ -864,7 +895,7 @@ def create_app(
                     # A steer that arrived after the last model round must not be
                     # lost: it becomes the next message in the chat's queue.
                     for message in steering.take():
-                        app.state.store.queue_message(chat_id, message)
+                        app.state.store.queue_message(chat_id, message, capabilities=steering.capabilities)
                     queue.put_nowait(None)
 
         task = asyncio.create_task(run_turn())
@@ -899,13 +930,14 @@ def create_app(
         return app.state.store.queued_messages(chat_id)
 
     @api.post("/chats/{chat_id}/queue")
-    async def queue_message(chat_id: str, body: QueuedBody) -> dict:
+    async def queue_message(chat_id: str, body: QueuedBody, request: Request) -> dict:
         """Queue a message; it survives restarts until a client runs it."""
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
-        row = app.state.store.queue_message(chat_id, body.text, body.model)
+        row = app.state.store.queue_message(chat_id, body.text, body.model,
+                                            capabilities=pairing.request_capabilities(request))
         message = next(entry for entry in app.state.store.queued_messages(chat_id)
                        if entry["id"] == row)
         return message
@@ -921,10 +953,19 @@ def create_app(
         """Take the oldest queued message, for a client to send as its next turn."""
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        return app.state.store.pop_queued_message(chat_id) or {"message": None}
+        row = app.state.store.pop_queued_message(chat_id)
+        if row is None:
+            return {"message": None}
+        limit = row.pop("capabilities")
+        if limit is not None:
+            # Whoever sends it next, it runs with no more than the phone that queued it.
+            limit = frozenset(limit)
+            earlier = app.state.queue_limits.get(chat_id)
+            app.state.queue_limits[chat_id] = limit if earlier is None else earlier & limit
+        return row
 
     @api.post("/chats/{chat_id}/steer")
-    async def steer(chat_id: str, body: QueuedBody) -> dict:
+    async def steer(chat_id: str, body: QueuedBody, request: Request) -> dict:
         """Put a message into the turn that is running now, not the queue."""
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
@@ -932,6 +973,10 @@ def create_app(
         if steering is None:
             raise HTTPException(status_code=409,
                                 detail="No reply is running. Queue the message or send it as a new one.")
+        allowed = pairing.request_capabilities(request)
+        if allowed is not None and (steering.capabilities is None or not steering.capabilities <= allowed):
+            raise HTTPException(403, "This reply can do more than this phone may. "
+                                     "Queue the message instead; it runs after the reply.")
         steering.add(body.text)
         return {"ok": True, "text": body.text}
 
@@ -979,13 +1024,18 @@ def create_app(
         return await asyncio.to_thread(checkpoints.preview, app.state.agent.blobs, path, entry)
 
     @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/restore")
-    async def restore_checkpoint(chat_id: str, checkpoint_id: int) -> dict:
+    async def restore_checkpoint(chat_id: str, checkpoint_id: int, request: Request) -> dict:
         """Put the working folder back to this checkpoint.
 
         Only the paths the reverted turns changed are touched; the user's git
         repository is never read or written.
         """
         row = checkpoint_or_404(chat_id, checkpoint_id)
+        allowed = pairing.request_capabilities(request)
+        if allowed is not None and "host:exec" not in allowed and \
+                not pairing.folder_is_shared(row["root"], config.files_path, config.home):
+            raise HTTPException(403, "This phone may restore files only inside Kova Files. "
+                                     "Restore this on your computer.")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before restoring files")
         rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
@@ -1030,7 +1080,7 @@ def create_app(
         """The opt-in switches and gates of the background memory passes."""
         return _memory_settings(config)
 
-    @api.patch("/memory/settings")
+    @api.patch("/memory/settings", dependencies=settings_write)
     async def memory_settings_set(body: MemorySettingsBody) -> dict:
         """Turn the background memory passes on or off and tune their gates."""
         updates = body.model_dump(exclude_unset=True)
@@ -1141,7 +1191,7 @@ def create_app(
     async def jobs_list() -> list[dict]:
         return app.state.store.list_jobs()
 
-    @api.post("/jobs")
+    @api.post("/jobs", dependencies=host_exec)
     async def job_add(body: JobBody) -> dict:
         if not body.text.strip():
             raise HTTPException(status_code=422, detail="a job needs a short description")
