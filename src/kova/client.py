@@ -173,9 +173,16 @@ class KovaClient:
     def delete_chat(self, chat_id: str) -> bool:
         return self._request("DELETE", f"/chats/{chat_id}", missing_ok=True).status_code == 200
 
-    def stream_message(self, chat_id: str, text: str, model: str | None = None) -> Iterator[dict]:
-        """Stream one turn's events; ``model`` overrides the active model for this turn only."""
+    def stream_message(self, chat_id: str, text: str, model: str | None = None, *,
+                       queued: int | None = None) -> Iterator[dict]:
+        """Stream one turn's events; ``model`` overrides the active model for this turn only.
+
+        ``queued`` sends that queued message (``text`` must be its exact text),
+        under the limits of whoever queued it.
+        """
         payload = {"text": text} if model is None else {"text": text, "model": model}
+        if queued is not None:
+            payload["queued"] = queued
         finished = False
         for event in self._stream("POST", f"/chats/{chat_id}/messages", json=payload, timeout=330):
             finished = finished or event.get('type') in ('done', 'error', 'stopped')
@@ -206,7 +213,12 @@ class KovaClient:
                              missing_ok=True).status_code == 200
 
     def next_queued_message(self, chat_id: str) -> dict | None:
-        """Take the oldest queued message (or None) so it can run next."""
+        """Take the oldest queued message (or None) so it can run next.
+
+        A paired phone's message comes back with ``remote: true`` and stays
+        queued; send it with ``stream_message(..., queued=row["id"])``, never as
+        local input.
+        """
         row = self._request("POST", f"/chats/{chat_id}/queue/next").json()
         return row if row.get("text") else None
 
@@ -270,6 +282,11 @@ class KovaClient:
 
     def devices_list(self) -> list[dict]:
         return self._request("GET", "/devices", timeout=10).json()
+
+    def device_set_capabilities(self, device_id: str, capabilities: list[str]) -> dict:
+        """Replace what a paired device may do; returns its updated record."""
+        return self._request("PATCH", f"/devices/{device_id}",
+                             json={"capabilities": capabilities}, timeout=10).json()
 
     def device_revoke(self, device_id: str | None = None) -> int:
         """Unpair one device, or every device when ``device_id`` is None; returns how many."""

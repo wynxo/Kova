@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from kova import plugins, egress
 from kova.config import Config, McpServerEntry, save_config
 from kova.mcp import McpManager, tool_name, validate_server
-from kova.pairing import require_local
+from kova.pairing import require_capability, require_local
 from kova.permissions import Rule
 from kova.tools import build_tools
 
@@ -51,6 +51,7 @@ def _is_tool_grant(rule: Rule, name: str) -> bool:
 
 def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
     router = APIRouter(dependencies=[Depends(require_token)])
+    write = [Depends(require_capability("extensions:write"))]
     # One change at a time: a reload connects servers and swaps the registry.
     lock = asyncio.Lock()
 
@@ -106,13 +107,13 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         await reload()
         return row(server.name)
 
-    @router.post("/mcp/reload")
+    @router.post("/mcp/reload", dependencies=write)
     async def mcp_reload() -> dict:
         """Reconnect every MCP server now, including any from plugins."""
         await reload()
         return {"ok": True}
 
-    @router.patch("/mcp/{name}")
+    @router.patch("/mcp/{name}", dependencies=write)
     async def mcp_update(name: str, body: McpPatch) -> dict:
         egress.check_external_process()
         server = entry(name)
@@ -125,7 +126,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
             await reload()
         return row(name)
 
-    @router.delete("/mcp/{name}")
+    @router.delete("/mcp/{name}", dependencies=write)
     async def mcp_remove(name: str) -> dict:
         egress.check_external_process()
         server = entry(name)
@@ -144,7 +145,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         return {"ok": True}
 
     # ``:path`` because MCP tool names may contain "/".
-    @router.patch("/mcp/{name}/tools/{tool:path}")
+    @router.patch("/mcp/{name}/tools/{tool:path}", dependencies=write)
     async def mcp_tool_update(name: str, tool: str, body: McpToolPatch) -> dict:
         egress.check_external_process()
         server = entry(name)
@@ -171,7 +172,7 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
         await reload()
         return row(name)
 
-    @router.post("/mcp/{name}/test")
+    @router.post("/mcp/{name}/test", dependencies=write)
     async def mcp_test(name: str) -> dict:
         """Reconnect one server now and report what it offers."""
         entry(name)

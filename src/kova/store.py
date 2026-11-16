@@ -338,6 +338,20 @@ class Store:
             self._conn.execute("ALTER TABLE chats ADD COLUMN web INTEGER NOT NULL DEFAULT 1")
         if "permission" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN permission TEXT NOT NULL DEFAULT 'manual'")
+        # A message a paired phone queued keeps that phone's capabilities (#229);
+        # NULL means the computer queued it.
+        queued_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(queued_messages)")}
+        if "capabilities" not in queued_columns:
+            self._conn.execute("ALTER TABLE queued_messages ADD COLUMN capabilities TEXT")
+            # Rows queued before this column existed may come from a phone, and
+            # nothing records which. Treat them as a phone's with the least
+            # authority, so no client ever runs them as local input.
+            self._conn.execute("UPDATE queued_messages SET capabilities = ?", (json.dumps(["chat"]),))
+        # A chat a paired phone wrote in keeps that phone's limits for every
+        # later turn, whoever sends it (#229); NULL means no limit.
+        chat_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
+        if "capabilities" not in chat_columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN capabilities TEXT")
         if "cwd" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN cwd TEXT")
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
@@ -476,9 +490,11 @@ class Store:
                     return value
 
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
-                     source['web'], source['permission'], source['cwd'], remap(source['plan'])))
+                     source['web'], source['permission'], source['cwd'], remap(source['plan']),
+                     source['capabilities']))
                 rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
@@ -541,7 +557,7 @@ class Store:
                  include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web, permission, cwd, plan FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -554,6 +570,8 @@ class Store:
             "permission": row["permission"],
             "cwd": row["cwd"],
             "plan": json.loads(row["plan"]),
+            **({"capabilities": sorted(json.loads(row["capabilities"]))}
+               if row["capabilities"] is not None else {}),
             **({"ephemeral": True} if self._memory_only else {}),
             "messages": self.get_messages(chat_id, include_created=include_created,
                                           include_usage=include_usage),
@@ -764,13 +782,21 @@ class Store:
                 mode = DEFAULT_MODE
             web = chat.get("web")
             web = 1 if web is None else int(bool(web))
+            # A chat a paired phone wrote in keeps that phone's limits across a
+            # backup (#229). Unknown names are dropped, which only narrows it.
+            limit = chat.get("capabilities")
+            if limit is not None:
+                from kova.pairing import CAPABILITIES
+                if not isinstance(limit, list) or not all(isinstance(c, str) for c in limit):
+                    raise ValueError("chat capabilities must be a list of names")
+                limit = json.dumps(sorted({"chat", *(c for c in limit if c in CAPABILITIES)}))
             # A restored chat starts at Manual; backup data cannot silently
             # grant unattended command access on this machine.
             try:
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
-                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files")),
+                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -1038,12 +1064,19 @@ class Store:
 
     # -- queued messages --------------------------------------------------
     @_chat_scoped
-    def queue_message(self, chat_id: str, text: str, model: str | None = None) -> int:
-        """Persist a message to run after the chat's current turn ends."""
+    def queue_message(self, chat_id: str, text: str, model: str | None = None,
+                      capabilities=None) -> int:
+        """Persist a message to run after the chat's current turn ends.
+
+        ``capabilities`` is the paired phone's set when a phone queued it, so the
+        turn that runs it later is limited the same way; None for the computer.
+        """
+        stored = json.dumps(sorted(capabilities)) if capabilities is not None else None
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO queued_messages (chat_id, text, model, created) VALUES (?, ?, ?, ?)",
-                (chat_id, text, model, _utc_now_iso()),
+                "INSERT INTO queued_messages (chat_id, text, model, created, capabilities) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat_id, text, model, _utc_now_iso(), stored),
             )
             self._conn.commit()
             return cur.lastrowid
@@ -1072,26 +1105,87 @@ class Store:
             return cur.lastrowid
 
     @_chat_scoped
+    def chat_capabilities(self, chat_id: str) -> frozenset[str] | None:
+        """The limit every turn in this chat runs under; None when no phone wrote in it."""
+        with self._lock:
+            row = self._conn.execute("SELECT capabilities FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if row is None or row["capabilities"] is None:
+            return None
+        return frozenset(json.loads(row["capabilities"]))
+
+    @_chat_scoped
+    def limit_chat(self, chat_id: str, capabilities) -> None:
+        """Narrow the chat's limit to ``capabilities`` (a phone wrote in it); None is a no-op."""
+        if capabilities is None:
+            return
+        with self._lock:
+            row = self._conn.execute("SELECT capabilities FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if row is None:
+                return
+            limit = set(capabilities)
+            if row["capabilities"] is not None:
+                limit &= set(json.loads(row["capabilities"]))
+            self._conn.execute("UPDATE chats SET capabilities = ? WHERE id = ?",
+                               (json.dumps(sorted(limit)), chat_id))
+            self._conn.commit()
+
+    @staticmethod
+    def _queued_row(row) -> dict:
+        message = dict(row)
+        stored = message.pop("capabilities")
+        message["remote"] = stored is not None
+        if stored is not None:
+            message["capabilities"] = json.loads(stored)
+        return message
+
+    @_chat_scoped
     def queued_messages(self, chat_id: str) -> list[dict]:
-        """The chat's queued messages, oldest first."""
+        """The chat's queued messages, oldest first; ``remote`` marks a phone's."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, text, model, created FROM queued_messages "
+                "SELECT id, text, model, created, capabilities FROM queued_messages "
                 "WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
-        return [dict(row) for row in rows]
+        return [{key: value for key, value in self._queued_row(row).items() if key != "capabilities"}
+                for row in rows]
+
+    @_chat_scoped
+    def get_queued_message(self, chat_id: str, message_id: int) -> dict | None:
+        """One queued message with its ``capabilities`` (a list) when a phone queued it."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, text, model, created, capabilities FROM queued_messages "
+                "WHERE id = ? AND chat_id = ?", (message_id, chat_id)).fetchone()
+        return self._queued_row(row) if row is not None else None
 
     @_chat_scoped
     def pop_queued_message(self, chat_id: str) -> dict | None:
-        """Remove and return the oldest queued message for a chat."""
+        """Remove and return the oldest queued message, unless a phone queued it.
+
+        A phone's message (``remote``) is returned but left in place: it runs
+        only through ``take_queued_message``, bound to its own limits, so its
+        text can never be resent as the caller's own.
+        """
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, text, model, created FROM queued_messages "
+                "SELECT id, text, model, created, capabilities FROM queued_messages "
                 "WHERE chat_id = ? ORDER BY id LIMIT 1", (chat_id,)).fetchone()
             if row is None:
                 return None
-            self._conn.execute("DELETE FROM queued_messages WHERE id = ?", (row["id"],))
+            message = self._queued_row(row)
+            if not message["remote"]:
+                self._conn.execute("DELETE FROM queued_messages WHERE id = ?", (row["id"],))
+                self._conn.commit()
+        message.pop("capabilities", None)
+        return message
+
+    @_chat_scoped
+    def take_queued_message(self, chat_id: str, message_id: int) -> bool:
+        """Remove one queued message; False when it is already gone (sent twice)."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM queued_messages WHERE id = ? AND chat_id = ?",
+                                     (message_id, chat_id))
             self._conn.commit()
-            return dict(row)
+            return cur.rowcount == 1
 
     @_chat_scoped
     def delete_queued_message(self, chat_id: str, message_id: int) -> bool:
