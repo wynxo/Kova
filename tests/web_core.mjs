@@ -102,7 +102,10 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette};');
+// palette.js and diff.js are plain scripts, like app.js: load them first so
+// app.js builds its command registry and diff hooks against the same document.
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -385,6 +388,9 @@ const article = new Element('article'), liveBody = new Element(); article.append
 const live = turnView(liveBody);
 const activityRow = byClass(liveBody, 'activity')[0];
 assert.equal(Boolean(activityRow.hidden), false, 'a fresh turn shows that Kova is thinking');
+assert.equal(byClass(activityRow, 'thinking-mark').length, 1, 'the thinking row carries the Kova mark');
+assert.equal(byClass(activityRow, 'thinking-bolt').length, 1, 'and the bolt that belongs to it');
+assert.ok(activityRow.textContent.includes('Thinking'), 'the state is written, not only animated');
 live.accept({type: 'reasoning', text: 'Let me think.'});
 assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
 assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
@@ -463,6 +469,20 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+// Ctrl/Cmd+K opens the palette; new conversation moved to Ctrl/Cmd+Shift+K.
+state.connected = true; state.busy = false; $('mode').value = 'work'; controls();
+await sandbox.test.openPalette(); await tick(); await tick();
+assert.equal(sandbox.test.commandPalette.isOpen(), true, 'the palette opens');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New conversation'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Keyboard shortcuts'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Privacy'));
+sandbox.test.commandPalette.input.value = 'thm';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Switch to light theme'),
+          'the theme command is reachable by fuzzy query');
+sandbox.test.commandPalette.close();
+assert.equal(sandbox.test.commandPalette.isOpen(), false);
+console.log('Command palette entry, registry and fuzzy filtering passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey.
  let spaceFocused = 0, spacePrevented = 0;
  $('prompt').focus = () => { spaceFocused++; };
