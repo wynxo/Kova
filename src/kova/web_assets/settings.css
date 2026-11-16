@@ -40,7 +40,7 @@ body.settings-open { overflow: hidden; }
 
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(180px, 232px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 256px) minmax(0, 1fr);
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -71,10 +71,7 @@ body.settings-open { overflow: hidden; }
   background: var(--bg-surface);
   color: var(--fg-muted);
 }
-.settings-search:focus-within {
-  border-color: var(--accent-default);
-  box-shadow: 0 0 0 1px var(--accent-default);
-}
+.settings-search:focus-within { border-color: var(--fg-muted); }
 .settings-search input {
   flex: 1;
   min-width: 0;
@@ -119,34 +116,31 @@ body.settings-open { overflow: hidden; }
               color var(--motion-fast) var(--motion-ease-standard);
 }
 .settings-tab:hover { background: var(--bg-raised); color: var(--fg-default); }
-.settings-tab[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-default); }
+.settings-tab[aria-selected="true"] { background:var(--bg-raised); color:var(--fg-default); }
 .settings-tab .icon { flex: none; }
 
-.settings-section { display: grid; gap: var(--space-4); }
-.settings-section-title { margin: 0; font-size: var(--type-size-title); font-weight: 620; }
-.settings-rows { display: grid; gap: var(--space-2); }
+.settings-section { display: grid; gap: var(--space-2); max-width: 680px; }
+.settings-section-title { margin: 0 0 var(--space-2); font-size: var(--type-size-title); font-weight: 600; }
+/* A plain list: hairlines between rows, no cards. */
+.settings-rows { display: grid; }
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-base);
-  transition: background var(--motion-fast) var(--motion-ease-standard),
-              border-color var(--motion-fast) var(--motion-ease-standard);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
 }
-.settings-row:hover { background: var(--bg-raised); border-color: var(--border-strong); }
-.settings-copy { display: grid; gap: var(--space-1); min-width: 0; }
-.settings-row-title { color: var(--fg-default); font-size: var(--type-size-body); font-weight: 550; }
+.settings-row:first-child { border-top: 0; padding-top: var(--space-2); }
+.settings-copy { display: grid; gap: var(--space-0-5); min-width: 0; }
+.settings-row-title { color: var(--fg-default); font-size: var(--type-size-body); font-weight: 500; }
 .settings-row-help {
   margin: 0;
   color: var(--fg-muted);
   font-size: var(--type-size-body);
   line-height: var(--type-leading-body);
 }
-.settings-open { flex: none; }
+.settings-action { flex: none; min-width: 84px; }
 .settings-page mark {
   padding: 0 .1em;
   border-radius: var(--radius-sm);
@@ -154,38 +148,55 @@ body.settings-open { overflow: hidden; }
   color: var(--accent-default);
 }
 
-.settings-host { display: grid; gap: var(--space-3); }
-/* The old footer card keeps its ids and handlers; only its chrome is replaced
-   so it reads as one row of the Startup section. */
-.settings-autostart {
-  position: static !important;
-  inset: auto !important;
-  z-index: auto !important;
-  margin: 0;
-  padding: var(--space-4) !important;
-  border: 1px solid var(--border-subtle);
+.settings-segmented {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-0-5);
+  padding: var(--space-0-5);
   border-radius: var(--radius-md);
-  background: var(--bg-base) !important;
+  background: var(--bg-base);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
-.settings-autostart > summary { display: none; }
-.settings-autostart .footer-settings-body {
-  padding: 0;
+.settings-segment {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-2);
-}
-.settings-autostart p {
-  margin: var(--space-2) 0 0;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--fg-muted);
-  font-size: var(--type-size-label);
-  line-height: var(--type-leading-body);
+  font: inherit;
+  font-size: var(--type-size-body);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
 }
-.settings-autostart label {
+.settings-segment .icon { width: 14px; height: 14px; }
+.settings-segment:hover { color: var(--fg-default); }
+.settings-segment[aria-checked="true"] { background: var(--bg-raised); color: var(--fg-default); }
+
+/* Startup keeps its ids and app.js handlers; it is laid out as the row's body. */
+.settings-row-hosted { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.settings-hosted { margin: 0; }
+.settings-hosted > summary { display: none; }
+.startup-settings-body { display: grid; justify-items: start; gap: var(--space-2); }
+.settings-hosted label {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   color: var(--fg-default);
   font-size: var(--type-size-body);
+  cursor: pointer;
 }
-.settings-autostart button { margin-top: var(--space-2); }
+.settings-hosted p {
+  margin: 0 0 0 calc(16px + var(--space-2));
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  line-height: var(--type-leading-body);
+}
+.settings-hosted .btn { margin-left: calc(16px + var(--space-1)); }
 
 .settings-page :focus-visible { outline: 2px solid var(--accent-default); outline-offset: 2px; }
 
@@ -200,10 +211,11 @@ body.settings-open { overflow: hidden; }
     overflow-x: auto;
   }
   .settings-tab { width: auto; white-space: nowrap; }
-  .settings-row { flex-direction: column; align-items: flex-start; }
+  .settings-row { flex-wrap: wrap; }
+  .settings-content { padding: var(--space-4); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .settings-page { animation: none; }
-  .settings-tab, .settings-row { transition: none; }
+  .settings-tab, .settings-segment { transition: none; }
 }

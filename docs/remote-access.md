@@ -14,8 +14,8 @@ Scan this with your phone's camera (same Wi-Fi as this computer).
 ✓ Paired iPhone. Add Kova to its home screen for one-tap access.
 ```
 
-The web and desktop apps have the same flow under **Connect your phone** in the
-sidebar.
+The web and desktop apps have the same flow under **Settings → Phone → Connect**
+(or *Connect your phone* in the command palette).
 
 | Command | What it does |
 | --- | --- |
@@ -26,7 +26,7 @@ sidebar.
 | `kova devices allow ID CAPABILITY…` | Let one phone do more, such as `models:write` |
 | `kova devices deny ID CAPABILITY…` | Take a capability away again; `chat` always stays |
 
-On the phone, the log-out button in the sidebar unpairs that phone.
+On the phone, **Settings → General → Sign out** unpairs that phone.
 
 ## What a paired phone may do
 

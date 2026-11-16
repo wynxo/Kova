@@ -342,10 +342,27 @@ rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
-finished reply only chimes while the window is unfocused. `settings.js` layers
-one Settings view over the dialogs `app.js` still owns: a section nav, a search
-box that filters individual settings, and links that activate the existing
-controls by id rather than reimplementing them.
+finished reply only chimes while the window is unfocused.
+
+The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
+search field that filters chats, the chat list and a single **Settings** row.
+The message box shows **+** (attach files, slash commands, and an incognito chat
+on the start screen), the text, one chip naming the model, and Send; the chip
+opens one popover with the model, Work/Chat mode, permission mode, working
+folder and web search. The header is the sidebar toggle, the chat title and,
+once a chat is open, its actions menu. A healthy connection shows nothing:
+reconnecting the event stream and polling `/health` are silent, the model's
+state is a detail of the chip, and only an action that actually failed (Kova
+unreachable, signed out, a used pairing code) shows one quiet line above the
+message box with **Retry**.
+
+`settings.js` layers one Settings view over the dialogs `app.js` still owns:
+General (theme, sounds, shortcuts, startup, sign out), Models and providers,
+Memory, Reminders, Extensions and MCP, Privacy, Phone, and Install and
+notifications. A section nav and a search box filter individual settings; rows
+activate the existing controls by id (kept, undrawn, in `index.html`'s
+`#settings-actions`) rather than reimplementing them, so every dialog is also
+reachable from the command palette.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
@@ -465,8 +482,8 @@ No transcript, reasoning, tool arguments or provider error bodies are logged by
 these paths. A normal chat is unaffected.
 
 Entry points are `kova --incognito`, `kova ask --incognito`, `/incognito` in the
-terminal or web composer, and **New incognito chat** / **Ctrl+Shift+N** in the
-web/desktop client. Each shows an Incognito marker and explains that the provider
+terminal or web composer, and the **+** menu's **Incognito chat** (on a new chat),
+the palette's **New incognito chat** or **Ctrl+Shift+N** in the web/desktop client. Each shows an Incognito marker and explains that the provider
 still receives messages. Terminal input history is not saved once a session has
 entered incognito, even after switching back to a saved chat. One-shot `ask`
 discards its chat in `finally`, including on failure. Leaving an incognito chat
@@ -942,7 +959,7 @@ estimate for the current account or `OLLAMA_MODELS` volume; a separately run
 Ollama daemon may use another account/volume, which the UI explicitly notes.
 
 Setup offers **Use a model on this PC** (also `kova providers add this-pc`).
-The desktop offers the same step under **Add provider**. Only choosing that
+The desktop offers the same step under **Settings → Models and providers**. Only choosing that
 step probes the usual loopback Ollama, LM Studio and llama.cpp endpoints;
 there is no LAN scan or automatic model download. Without measurable VRAM,
 the user can explicitly choose the small 3B CPU model, with a speed warning.
@@ -1024,7 +1041,7 @@ HTTP bodies, not proof of delivery on a failed request; incoming bytes count con
 body data. Headers, query strings and TLS overhead are not counted. Incognito rows
 route to the existing RAM store and are excluded from persistent reports.
 `GET /privacy?days=30&chat_id=…` gives complete grouped totals and the newest 1000
-requests; the sidebar Privacy panel and `kova privacy --days 30 --json` share it.
+requests; the app's Privacy panel (Settings → Privacy) and `kova privacy --days 30 --json` share it.
 An `egress` SSE event before `done` summarizes the current turn's requests.
 
 `PATCH /privacy` and `kova privacy --local-only on|off` persist the boolean

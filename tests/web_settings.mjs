@@ -53,7 +53,7 @@ const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').inc
 const nodes = new Map();
 const body = new Element('body');
 const document = {
-  body, activeElement: null,
+  body, activeElement: null, documentElement: {dataset: {theme: 'dark'}},
   createElement: tag => new Element(tag),
   createTextNode: text => { const node = new Element('#text'); node.textContent = text; return node; },
   getElementById(id) { return nodes.get(id) || walk(body).find(n => n.id === id) || null; },
@@ -62,14 +62,17 @@ function launch(id, tag = 'button') {
   const node = new Element(tag); node.id = id; nodes.set(id, node); body.append(node); return node;
 }
 
-// The controls app.js owns, and the old autostart card settings.js moves.
+// The action targets app.js owns (index.html #settings-actions), and the
+// startup card settings.js hosts. The sidebar keeps only #open-settings.
 const triggers = ['open-settings', 'theme', 'open-shortcuts', 'install-settings', 'open-sounds', 'connect-phone',
-  'add-provider', 'open-model-settings', 'open-privacy', 'open-memory', 'open-extensions', 'open-mcp'];
+  'add-provider', 'open-model-settings', 'open-privacy', 'open-memory', 'open-reminders', 'open-extensions',
+  'open-mcp', 'disconnect'];
 for (const id of triggers) launch(id);
 const autostart = launch('settings', 'details');
 autostart.append(new Element('summary'), new Element('input'), new Element('p'), new Element('button'));
 
-const sandbox = {document, console, URLSearchParams};
+const window = {};
+const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
 const view = $('settings-page');
@@ -88,8 +91,9 @@ assert.equal(view.getAttribute('aria-describedby'), 'settings-description');
 
 const tabs = byClass(view, 'settings-tab');
 const panels = byClass(view, 'settings-section');
-assert.deepEqual(tabs.map(tab => tab.textContent.trim()),
-  ['General', 'Models and providers', 'Privacy', 'Memory', 'Extensions', 'Startup']);
+const SECTIONS = ['General', 'Models and providers', 'Memory', 'Reminders', 'Extensions and MCP',
+  'Privacy', 'Phone', 'Install and notifications'];
+assert.deepEqual(tabs.map(tab => tab.textContent.trim()), SECTIONS);
 assert.equal(panels.length, tabs.length);
 assert.equal(byClass(view, 'settings-nav')[0].getAttribute('role'), 'tablist');
 for (const [index, tab] of tabs.entries()) {
@@ -112,7 +116,7 @@ assert.equal(panels[2].hidden, false);
 assert.equal(panels[1].hidden, true);
 document.activeElement = tabs[0];
 nav.dispatch('keydown', {key: 'End', preventDefault() {}});
-assert.equal(document.activeElement, tabs[5], 'End moves to the last section');
+assert.equal(document.activeElement, tabs[7], 'End moves to the last section');
 nav.dispatch('keydown', {key: 'Home', preventDefault() {}});
 assert.equal(document.activeElement, tabs[0], 'Home moves to the first section');
 
@@ -143,9 +147,19 @@ search.dispatch('input', {});
 search.value = 'privacy';
 search.dispatch('input', {});
 assert.equal(tabs.filter(tab => !tab.hidden).length, 1);
-assert.equal(tabs[2].hidden, false);
-assert.equal(panels[2].hidden, false, 'the matching section becomes active');
-assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
+assert.equal(tabs[5].hidden, false);
+assert.equal(panels[5].hidden, false, 'the matching section becomes active');
+assert.equal(tabs[5].getAttribute('aria-selected'), 'true');
+
+// Every row that left the sidebar is findable by the word people would type.
+for (const [word, section] of [['sounds', 'General'], ['sign out', 'General'], ['startup', 'General'],
+  ['provider', 'Models and providers'], ['remember', 'Memory'], ['reminders', 'Reminders'],
+  ['mcp', 'Extensions and MCP'], ['plugins', 'Extensions and MCP'], ['local only', 'Privacy'],
+  ['phone', 'Phone'], ['notifications', 'Install and notifications']]) {
+  search.value = word; search.dispatch('input', {});
+  const shownTabs = tabs.filter(tab => !tab.hidden).map(tab => tab.textContent.trim());
+  assert.ok(shownTabs.includes(section), `'${word}' should find ${section}, found ${shownTabs}`);
+}
 
 search.value = 'zzz';
 search.dispatch('input', {});
@@ -156,24 +170,52 @@ assert.ok(panels.every(panel => panel.hidden), 'no section is left open');
 
 search.value = '';
 search.dispatch('input', {});
-assert.equal(tabs.filter(tab => !tab.hidden).length, 6, 'clearing restores every section');
+assert.equal(tabs.filter(tab => !tab.hidden).length, 8, 'clearing restores every section');
 assert.equal($('settings-no-results').hidden, true);
 assert.equal($('settings-search-status').textContent, '');
 
 // A row runs the control app.js already bound; nothing is reimplemented here.
-tabs[3].click();
-const memoryRow = byClass(panels[3], 'settings-row').find(row => row.textContent.includes('Memory notes'));
-const openMemory = byClass(memoryRow, 'settings-open')[0];
+tabs[2].click();
+const memoryRow = byClass(panels[2], 'settings-row').find(row => row.textContent.includes('Memory notes'));
+const openMemory = byClass(memoryRow, 'settings-action')[0];
 assert.ok(openMemory, 'the Memory row has an action');
 openMemory.click();
 assert.equal($('open-memory').clicked, 1);
 
-// The existing autostart card is hosted, open, and keeps its own ids.
+// Each moved sidebar row runs its own target from its section.
+for (const [index, target] of [[3, 'open-reminders'], [4, 'open-extensions'], [4, 'open-mcp'], [5, 'open-privacy'],
+  [6, 'connect-phone'], [7, 'install-settings'], [1, 'add-provider'], [0, 'open-sounds'], [0, 'disconnect']]) {
+  const before = $(target).clicked;
+  const actions = byClass(panels[index], 'settings-action');
+  assert.ok(actions.length, `section ${SECTIONS[index]} has actions`);
+  for (const button of actions) button.click();
+  assert.equal($(target).clicked, before + 1, `${target} is reachable from ${SECTIONS[index]}`);
+}
+
+// Theme is a real Dark/Light radio group that flips app.js's theme control.
+const radios = byClass(panels[0], 'settings-segment');
+assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio']);
+assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'dark is current');
+const themeClicks = $('theme').clicked;
+radios[0].click();
+assert.equal($('theme').clicked, themeClicks, 'choosing the current theme does nothing');
+radios[1].click();
+assert.equal($('theme').clicked, themeClicks + 1, 'choosing Light asks app.js to switch');
+
+// Startup is hosted in General: open, keeping its own ids and handlers.
 const hosted = $('settings');
 assert.equal(hosted.open, true);
-assert.ok(hosted.classList.contains('settings-autostart'));
-assert.ok(byClass(panels[5], 'settings-host')[0].children.includes(hosted));
-assert.ok(panels[5].textContent.includes('Start Kova when I sign in'));
+assert.ok(hosted.classList.contains('settings-hosted'));
+assert.ok(walk(panels[0]).includes(hosted), 'startup lives in General');
+assert.ok(panels[0].textContent.includes('Startup'));
+
+// A target another script hides (Connect your phone, on a phone) hides its row.
+view.dispatch('keydown', {key: 'Escape', preventDefault() {}});
+$('connect-phone').hidden = true;
+window.KovaSettings.open('general');
+assert.equal(tabs[6].hidden, true, 'no Phone section on the phone itself');
+$('connect-phone').hidden = false;
+assert.equal(view.hidden, false, 'the palette can open Settings at a section');
 
 // Escape closes the view and returns focus to the sidebar trigger.
 view.dispatch('keydown', {key: 'Escape', preventDefault() {}});

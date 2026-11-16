@@ -31,9 +31,8 @@ const tick = async () => { for (let i = 0; i < 30; i++) await new Promise(resolv
 function load({hostname, hash = '', routes}) {
   const elements = new Map(), requests = [], timers = [], body = new Element('body'), note = new Element();
   const $ = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
-  for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'));
+  for (const id of ['theme', 'web']) $(id).append(new Element('span'));
   $('mode').value = 'work';
-  new Element().append($('connection'));
   const sandbox = {
     document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag),
       createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
@@ -120,7 +119,7 @@ function load({hostname, hash = '', routes}) {
   assert.equal($('connect-phone').hidden, true, 'a phone cannot pair other phones');
   assert.equal($('disconnect').title, 'Unpair this phone');
   assert.equal(note.textContent, '', 'no permanent "connected" note on the phone');
-  assert.equal($('connection').hidden, true, 'a healthy phone shows no connection indicator');
+  assert.equal($('notice').hidden, true, 'a healthy phone shows no connection notice');
   assert.ok($('toasts').textContent.includes('now paired'));
   console.log('Phone claims its pairing code passed');
 }
@@ -131,8 +130,7 @@ function load({hostname, hash = '', routes}) {
     'POST /app/pair': () => ({ok: false, status: 401, json: async () => ({detail: 'This pairing code expired or was already used. Make a new one on your computer and scan it again.'})}),
   }});
   await tick();
-  assert.ok(page.$('banner').textContent.includes('expired or was already used'), page.$('banner').textContent);
-  assert.equal(page.$('connection').lastElementChild.textContent, 'Disconnected');
-  assert.equal(page.$('connection').hidden, false, 'a broken link is shown');
+  assert.ok(page.$('notice-text').textContent.includes('expired or was already used'), page.$('notice-text').textContent);
+  assert.equal(page.$('notice').hidden, false, 'a failed pairing is said once, above the message box');
   console.log('Expired pairing code message passed');
 }
