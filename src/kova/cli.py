@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, egress
+from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, egress, ui_prefs
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -304,6 +304,9 @@ app.add_typer(_skills, name="skills")
 
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
+
+_prefs = typer.Typer(no_args_is_help=True, help="Export and import UI preferences.")
+app.add_typer(_prefs, name="prefs")
 
 
 @_chats.callback(invoke_without_command=True)
@@ -896,6 +899,36 @@ def import_archive(
     else:
         _muted("Chats, memory and reminders are read live from disk; "
                "restart a foreground server if you changed its config.")
+
+
+@_prefs.command("export")
+def prefs_export(path: str | None = typer.Argument(
+        None, help="JSON path (default: ~/Kova-ui-preferences-YYYY-MM-DD.json).")):
+    """Save every UI preference to one validated JSON file."""
+    try:
+        target = ui_prefs.write_file(get_client().preferences(), path)
+    except (ui_prefs.UiPrefsError, OSError) as exc:
+        _fail(str(exc))
+    _ok(f"UI preferences written to {target}")
+    _muted(f"  Move them with: kova prefs import {target.name}")
+
+
+@_prefs.command("import")
+def prefs_import(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+                                help="A preferences JSON file from `kova prefs export`."),
+):
+    """Restore UI preferences, refusing a file that does not validate."""
+    try:
+        values = ui_prefs.read_file(path)
+    except (ui_prefs.UiPrefsError, OSError) as exc:
+        _fail(str(exc))
+    try:
+        saved = get_client().set_preferences(values)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f"Restored {len(saved)} UI preferences")
+    _muted("  " + " · ".join(f"{name} {value}" for name, value in sorted(saved.items())))
 
 
 # ---------------------------------------------------------------------------
