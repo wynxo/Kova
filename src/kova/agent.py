@@ -709,7 +709,16 @@ class Agent:
                                'summary': warning[:200], 'output': warning}
                     else:
                         self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
-                        yield {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                        event = {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                        if ok and tracker is not None and name in {'write_file', 'edit_file'}:
+                            # A presentation failure must never fail a successful write.
+                            try:
+                                change = await asyncio.to_thread(tracker.diff_for, args.get('path', ''))
+                                if change is not None:
+                                    event['file_change'] = change
+                            except Exception:
+                                pass
+                        yield event
         except ModelError as exc:
             review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
             if review is not None:
