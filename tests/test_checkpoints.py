@@ -53,6 +53,10 @@ def test_turn_edits_are_reviewable(server):
         text("Done"),
     ])
 
+    change = next(event for event in events if event["type"] == "tool_result")["file_change"]
+    assert change["path"] == "notes.txt"
+    assert "-one" in change["diff"] and "+ONE" in change["diff"]
+
     review = next(event for event in events if event["type"] == "review")
     assert review["checkpoint_id"]
     assert review["root"] == str(project)
@@ -251,3 +255,24 @@ def test_preview_returns_a_unified_diff(tmp_path):
     assert "-one" in result["diff"] and "+ONE" in result["diff"]
     assert result["before"] == "one\n" and result["after"] == "ONE\n"
     assert result["truncated"] is False
+
+
+def test_live_diff_is_tracked_and_turn_to_date(tmp_path):
+    blobs = BlobStore(tmp_path / "blobs")
+    root = tmp_path / "project"
+    root.mkdir()
+    target = root / "example.txt"
+    target.write_text("original\n")
+    tracker = ChangeTracker(blobs, root)
+    assert tracker.diff_for("example.txt") is None
+    tracker.note(target)
+    target.write_text("intermediate\n")
+    tracker.note(target)
+    target.write_text("<script>alert(1)</script>\n")
+    change = tracker.diff_for("example.txt")
+    assert "-original" in change["diff"]
+    assert "+<script>" in change["diff"]
+    assert "intermediate" not in change["diff"]
+    assert tracker.diff_for("../outside.txt") is None
+    target.unlink()
+    assert tracker.diff_for("example.txt")["status"] == "deleted"

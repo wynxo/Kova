@@ -134,6 +134,23 @@ class ChangeTracker:
                                "additions": additions, "deletions": deletions}
         return files, list(self.skipped)
 
+    def diff_for(self, path: str) -> dict | None:
+        """Bounded turn-to-date diff for a successfully written, tracked path.
+
+        Uses the checkpoint preimage, never a second arbitrary file read API.
+        """
+        try:
+            relative = str((self.root / path).resolve().relative_to(self.root))
+        except (OSError, ValueError):
+            return None
+        if relative not in self.before:
+            return None
+        after = self._capture(self.root / relative)
+        before = self.before[relative]
+        if before == after:
+            return None
+        return preview(self.blobs, relative, {"before": before, "after": after})
+
     def _capture(self, target: Path) -> str | None:
         data = read_bytes(target)
         if data is None:
