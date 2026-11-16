@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from kova import egress
+
 from kova.config import Config, ModelEntry, ProviderEntry, save_config
 
 
@@ -184,12 +186,14 @@ def headers_for(provider: ProviderEntry, *, transport=None) -> dict[str, str]:
     return headers
 
 
+@egress.attributed('probe')
 def list_models(provider: ProviderEntry, *, transport: httpx.BaseTransport | None = None, timeout: float = 10) -> list[str]:
     """Validate by listing, never inference. Follow Anthropic catalog pagination."""
     path = '/models?client_version=0.0.0' if provider.kind == 'codex' else '/models'
     result = []
+    egress.check_url(provider.base_url)
     try:
-        with httpx.Client(transport=transport, timeout=timeout, trust_env=False, headers=headers_for(provider, transport=transport)) as client:
+        with egress.Client(transport=transport, timeout=timeout, trust_env=False, headers=headers_for(provider, transport=transport)) as client:
             if provider.kind == 'openrouter':
                 # Its model catalog is public, so it cannot validate a key by itself.
                 check = client.get(provider.base_url.rstrip('/') + '/key')

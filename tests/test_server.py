@@ -153,7 +153,9 @@ def test_chat_stream_events(server):
     events = _parse_sse(response.text)
     assert events[-1]["type"] == "done"
     assert isinstance(events[-1]["message_id"], int)
-    assert all(event["type"] == "text" for event in events[:-1])
+    assert events[-2]['type'] == 'egress'
+    assert events[-2]['items'][0]['kind'] == 'model'
+    assert all(event["type"] == "text" for event in events[:-2])
     assert "".join(event.get("text", "") for event in events[:-1]) == "Hello there!"
     messages = client.get(f"/chats/{chat_id}", headers=headers).json()["messages"]
     assert messages == [{"role": "user", "content": "hello"},

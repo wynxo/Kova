@@ -18,6 +18,8 @@ from filelock import FileLock, Timeout
 
 import httpx
 
+from kova import egress
+
 from kova import engine_downloads as downloads, providers
 from kova.config import Config, save_config
 from kova.local_models import LocalModelError, _model, rate
@@ -176,7 +178,7 @@ class EngineManager:
             if state.get('provider') == provider.id:
                 # Check authenticated readiness too: a live PID may be hung,
                 # unloading, or have credentials from an interrupted install.
-                async with httpx.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
+                async with egress.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
                     if await self._ready(client, state['base_url'], provider.api_key, record['model']):
                         self.current = provider.id
                         provider.base_url = state['base_url']
@@ -230,7 +232,7 @@ class EngineManager:
             pid_path.write_text(str(process.pid))
             pid_path.chmod(0o600)
             deadline = time.monotonic() + START_TIMEOUT
-            async with httpx.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
+            async with egress.AsyncClient(transport=transport, timeout=2, trust_env=False) as client:
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
                         raise LocalModelError('The managed engine exited while loading. Check GPU drivers (Vulkan/Metal), or choose the small CPU model. See engine.log for local diagnostics. No ready model was added.')
@@ -349,7 +351,7 @@ async def install(cfg: Config, model_id: str, profile: dict, *, cpu=False, trans
         records = _manifest(cfg.home)
         original_records = dict(records)
         try:
-            async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(180, connect=10), trust_env=False) as client:
+            async with egress.AsyncClient(transport=transport, timeout=httpx.Timeout(180, connect=10), trust_env=False) as client:
                 yield {'type': 'progress', 'message': 'Downloading the pinned llama.cpp engine…'}
                 async for event in downloads.install_engine(client, engine, cfg.home):
                     yield event

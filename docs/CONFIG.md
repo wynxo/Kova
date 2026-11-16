@@ -71,6 +71,7 @@ compare. Defaults are what a fresh install writes.
 | `files_path` | `files_path` | `~/Kova Files` | non-empty path | Root for the file tools. Relative paths are resolved when set; every resolved path must stay inside this folder. |
 | `bind` | `bind` | `loopback` | `loopback` or `lan` | `loopback` listens only on `127.0.0.1`. `lan` also starts the private-network listener used by paired phones; it never opens the public internet. `kova pair` toggles this too. |
 | `[local] idle_unload_minutes` | `local_idle_unload_minutes` | `5` | integer ≥ 0 | Unload the managed llama.cpp engine after this many idle minutes; `0` disables idle unload. Active model streams are protected; the next chat reloads it automatically. Restart the Kova server after changing this setting. |
+| `[privacy] local_only` | `privacy_local_only` | `false` | boolean | Refuse non-loopback Kova traffic. Use `kova privacy --local-only on` or the Privacy panel to apply immediately; direct config edits require a restart. |
 | `[privacy] secrets` | `privacy_secrets` | `off` | `off`, `redact` or `block` | Opt-in outbound secret guard at the model boundary. `off` keeps previous behaviour; `redact` replaces known credential shapes before a non-loopback request; `block` refuses the turn before any request. |
 | `[catalog] url` | `catalog_url` | unset (Kova's index on GitHub) | an `https://` URL, a local path, `bundled`, or empty to clear | Where `kova catalog` and the Extensions page read the extensions index. When it cannot be read, Kova uses the index bundled with it. See [EXTENSIONS.md](EXTENSIONS.md). |
 | `[memory] path` | `memory_path` | `~/.kova/memory` | non-empty path | Root folder for Markdown memory notes. An empty value falls back to the default rather than the working directory. `kova memory use PATH` changes it live when the server is up. |
@@ -292,6 +293,7 @@ consolidate_max_loss = 0.25
 
 [privacy]
 secrets = "off"
+local_only = false
 
 [tui]
 theme = "dark"

@@ -76,7 +76,7 @@ def _install(monkeypatch, tmp_path, *, make_response, active_model="", available
         raise AssertionError(url)
 
     monkeypatch.setattr(diag, "load_config", lambda: _cfg(tmp_path, model=active_model))
-    monkeypatch.setattr(diag, "httpx", _fake_httpx(respond))
+    monkeypatch.setattr(diag, "egress", _fake_httpx(respond))
     monkeypatch.setattr(diag, "list_models", lambda provider, timeout=None: available)
 
 
@@ -121,7 +121,7 @@ def test_reports_stopped_server_on_connect_error(monkeypatch, tmp_path):
     def boom():
         raise httpx.ConnectError("refused")
     monkeypatch.setattr(diag, "load_config", lambda: _cfg(tmp_path, model="llama3"))
-    monkeypatch.setattr(diag, "httpx", _fake_httpx(lambda url, **kwargs: boom()))
+    monkeypatch.setattr(diag, "egress", _fake_httpx(lambda url, **kwargs: boom()))
     monkeypatch.setattr(diag, "list_models", lambda provider, timeout=None: ["llama3"])
     checks = diag.diagnose()
     assert diag.Check("server", True, "Server is stopped; kova starts it automatically.") in checks
@@ -131,7 +131,7 @@ def test_reports_not_responding_on_http_error(monkeypatch, tmp_path):
     def boom():
         raise httpx.TimeoutException("timed out")
     monkeypatch.setattr(diag, "load_config", lambda: _cfg(tmp_path, model="llama3"))
-    monkeypatch.setattr(diag, "httpx", _fake_httpx(lambda url, **kwargs: boom()))
+    monkeypatch.setattr(diag, "egress", _fake_httpx(lambda url, **kwargs: boom()))
     monkeypatch.setattr(diag, "list_models", lambda provider, timeout=None: ["llama3"])
     checks = diag.diagnose()
     assert diag.Check("server", False,
@@ -166,7 +166,7 @@ def test_reports_provider_error(monkeypatch, tmp_path):
     def boom(provider, timeout=None):
         raise ProviderError("Bad API key")
     monkeypatch.setattr(diag, "load_config", lambda: _cfg(tmp_path, model="llama3"))
-    monkeypatch.setattr(diag, "httpx", _fake_httpx(
+    monkeypatch.setattr(diag, "egress", _fake_httpx(
         lambda url, **kwargs: _Resp(200, {"version": "0.1.0", "model_ok": True})))
     monkeypatch.setattr(diag, "list_models", boom)
     checks = diag.diagnose()

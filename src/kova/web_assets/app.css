@@ -1000,3 +1000,12 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 #local-model-choice { width: 100%; padding: 10px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 #local-progress { width: 100%; accent-color: var(--accent); }
 .local-installed-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+
+/* Metadata-only Privacy report. */
+.local-only-status { color: var(--accent); font-size: .75rem; white-space: nowrap; }
+.privacy-dialog { max-width: 760px; width: min(760px, 94vw); }
+.privacy-dialog p { overflow-wrap: anywhere; }
+.privacy-switch, .privacy-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-block: 14px; }
+.privacy-switch input { width: auto; }
+.privacy-report { max-height: 45vh; overflow: auto; }
+.privacy-row { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }

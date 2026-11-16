@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme
+from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, egress
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -175,7 +175,7 @@ class _KovaGroup(TyperGroup):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except (KovaError, onboarding.SetupError) as exc:
+        except (KovaError, onboarding.SetupError, egress.LocalOnlyError) as exc:
             _fail(str(exc))
         except (ValueError, TypeError, KeyError, OSError):
             _fail('Cannot read configuration or local files. Check config.toml and directory permissions, then run kova doctor.')
@@ -216,6 +216,7 @@ def root(
     incognito: bool = typer.Option(False, "--incognito", help="Keep this chat in memory only; no tools or memories."),
 ):
     """Chat with Kova; replies stream live. Type /exit to leave."""
+    ctx.with_resource(egress.scope(config_loader=load_config))
     if ctx.invoked_subcommand is None:
         _start_chat(new, chat, resume, no_think, mode, no_web, **({"incognito": True} if incognito else {}))
 
@@ -624,7 +625,40 @@ def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | 
     upcoming = Text(f"{reminders} upcoming" if reminders is not None else "—", style=theme.MUTED)
     for label, value in (("Server", server), ("Model", model), ("Memory", memory), ("Reminders", upcoming)):
         grid.add_row(Text(label, style=theme.MUTED), value)
+    if (info or {}).get('local_only', cfg.privacy_local_only):
+        grid.add_row(Text('Privacy', style=theme.MUTED), Text('Local only · loopback connections only', style=theme.SUCCESS))
     return grid
+
+
+@app.command()
+def privacy(
+    days: int = typer.Option(30, '--days', min=1, max=365, help='Report the last N days.'),
+    as_json: bool = typer.Option(False, '--json', help='Export metadata as JSON.'),
+    chat_id: str | None = typer.Option(None, '--chat', help='Filter by chat ID.'),
+    local_only: str | None = typer.Option(None, '--local-only', help='Set on or off, immediately.'),
+):
+    """See which destinations Kova contacted and control Local only."""
+    if local_only not in (None, 'on', 'off'):
+        _fail('Choose --local-only on or off.')
+    client = get_client()
+    if local_only is not None:
+        client.privacy_update(local_only == 'on')
+    report = client.privacy_report(days, chat_id)
+    if as_json:
+        sys.stdout.write(json.dumps(report, indent=2, ensure_ascii=False) + '\n')
+        return
+    _muted('Local only: ' + ('on' if report['local_only'] else 'off'))
+    _muted(f"{report['requests']} requests · {report['bytes_out']} body bytes prepared · {report['bytes_in']} received")
+    table = _table(caption='HTTP body sizes; failed requests may not send. Tokens are provider-reported, not estimates.')
+    for heading in ('Day', 'Provider', 'Host', 'Kind', 'Calls', 'Out', 'In', 'Tokens in/out'):
+        table.add_column(heading)
+    for row in report['groups']:
+        tokens = f"{row['tokens_in'] if row['tokens_in'] is not None else '?'} / {row['tokens_out'] if row['tokens_out'] is not None else '?'}"
+        table.add_row(row['day'], row['provider'] or '—', row['host'], row['kind'],
+                      str(row['requests']), str(row['bytes_out']), str(row['bytes_in']), tokens)
+    console.print(table)
+    if not report['requests']:
+        _muted('No recorded requests in this period. Older traffic is not reconstructed.')
 
 
 @app.command()
@@ -2077,6 +2111,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("persona.name", "persona_name", "persona"),
         _ConfigField("persona.tone", "persona_tone", "choice", tuple(TONES)),
         _ConfigField("port", "port", "int", minimum=1, maximum=65535),
+        _ConfigField("privacy.local_only", "privacy_local_only", "bool"),
         _ConfigField("voice.stt", "voice_stt", "choice", ("local", "browser")),
         _ConfigField("voice.tts", "voice_tts", "choice", ("espeak-ng", "off")),
         _ConfigField("voice.language", "voice_language", "str"),
@@ -2288,7 +2323,7 @@ def _config_snapshot(cfg) -> dict:
         "compact_threshold": cfg.compact_threshold,
         "files_path": str(cfg.files_path),
         "bind": cfg.bind,
-        "privacy": {"secrets": cfg.privacy_secrets},
+        "privacy": {"secrets": cfg.privacy_secrets, "local_only": cfg.privacy_local_only},
         "local": {"idle_unload_minutes": cfg.local_idle_unload_minutes},
         "oauth_host_id": cfg.oauth_host_id,
         "memory": {
@@ -2368,6 +2403,7 @@ def _config_rows(snapshot: dict) -> list[tuple[str, str]]:
         ("bind", snapshot["bind"]),
         ("local.idle_unload_minutes", str(snapshot["local"]["idle_unload_minutes"])),
         ("privacy.secrets", snapshot["privacy"]["secrets"]),
+        ("privacy.local_only", "on" if snapshot["privacy"]["local_only"] else "off"),
         ("oauth_host_id", snapshot["oauth_host_id"]),
         ("memory.path", memory["path"]),
         ("memory.write_subdir", memory["write_subdir"] or "(unset)"),

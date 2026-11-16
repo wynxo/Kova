@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false};
   let autostartBusy = false;
   async function refreshAutostart(action) {
     if (autostartBusy) return;
@@ -118,6 +118,7 @@
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     for (const id of ['mode', 'web', 'permission', 'cwd']) $(id).disabled ||= !!state.chat?.ephemeral;
+    $('web').disabled ||= state.localOnly;
     $('permission').disabled ||= !offers('approvals');
     $('cwd').disabled ||= !offers('tools');
     $('composer').dataset.mode = $('mode').value;
@@ -295,6 +296,84 @@
     if (version !== state.searchVersion) return;
     state.chats = chats; history(chats);
   }
+  (function privacyPanel() {
+    const dialog = el('dialog', 'panel privacy-dialog');
+    dialog.setAttribute('aria-labelledby', 'privacy-title');
+    const head = el('div', 'dialog-head'), title = el('h2', '', 'Privacy'); title.id = 'privacy-title';
+    const close = iconButton('x', 'Close Privacy'); close.onclick = () => dialog.close(); head.append(title, close);
+    const label = el('label', 'privacy-switch'), toggle = el('input'); toggle.type = 'checkbox';
+    label.append(toggle, el('span', '', 'Local only'));
+    const intro = el('p', '', 'Only loopback destinations are allowed when on. Enabling stops active turns and jobs, disconnects MCP, and withholds web and shell tools. It does not control other apps.');
+    const filters = el('div', 'privacy-filters'), days = el('select'), chat = el('select');
+    days.setAttribute('aria-label', 'Report period'); chat.setAttribute('aria-label', 'Filter by conversation');
+    for (const count of [1, 7, 30, 90, 365]) { const option = el('option', '', `Last ${count} days`); option.value = String(count); days.append(option); }
+    days.value = '30';
+    const refresh = el('button', 'btn', 'Refresh'), download = el('button', 'btn', 'Export report');
+    refresh.type = download.type = 'button'; filters.append(days, chat, refresh, download);
+    const summary = el('p'); summary.setAttribute('role', 'status');
+    const list = el('div', 'privacy-report');
+    const note = el('p', '', 'Metadata only: hosts, times, sizes and usage. HTTP body bytes exclude headers, URL queries and TLS. Outgoing sizes are prepared payloads; failed requests may send nothing. Tokens appear only when the provider reports them. Incognito records stay in RAM and are excluded from this report. External process traffic is not recorded.');
+    dialog.append(head, label, intro, filters, summary, list, note); document.body.append(dialog);
+    let report = null, version = 0;
+    function applyLocalOnly(value) {
+      state.localOnly = Boolean(value); toggle.checked = state.localOnly;
+      $('local-only-status').hidden = !state.localOnly; controls();
+    }
+    async function refreshReport() {
+      const current = ++version; download.disabled = true;
+      summary.textContent = 'Loading Privacy report…';
+      try {
+        const params = new URLSearchParams({days: days.value}); if (chat.value) params.set('chat_id', chat.value);
+        const next = await json(`/privacy?${params}`);
+        if (current !== version) return;
+        report = next; applyLocalOnly(report.local_only);
+        summary.textContent = `${report.requests} requests · ${report.bytes_out} body bytes prepared · ${report.bytes_in} received`;
+        list.replaceChildren();
+        if (!report.requests) list.append(el('p', '', 'No recorded requests in this period. Older traffic is not reconstructed.'));
+        for (const group of report.groups) {
+          const row = el('div', 'privacy-row');
+          row.append(el('strong', '', `${group.day} · ${group.host}`),
+            el('span', '', `${group.provider || 'Kova'} · ${group.kind} · ${group.local ? 'loopback' : 'remote'} · ${group.requests} requests · ${group.bytes_out} out / ${group.bytes_in} in · tokens ${group.tokens_in ?? '?'} / ${group.tokens_out ?? '?'}`));
+          list.append(row);
+        }
+        const timeline = el('details'), heading = el('summary', '', report.truncated ? 'Latest 1000 requests (totals include all)' : 'Request timeline');
+        timeline.append(heading);
+        for (const item of report.items) {
+          const row = el('p', '', `${item.created} · ${item.host} · ${item.kind} · ${item.status} · ${item.bytes_out} out / ${item.bytes_in} in`);
+          if (item.chat_id) {
+            const drill = el('button', 'btn quiet', 'This conversation'); drill.type = 'button';
+            drill.onclick = () => { chat.value = item.chat_id; safe(refreshReport); }; row.append(drill);
+          }
+          timeline.append(row);
+        }
+        list.append(timeline); download.disabled = false;
+      } catch (error) {
+        if (current !== version) return;
+        report = null; list.replaceChildren(); summary.textContent = `Could not load Privacy report. ${error.message || 'Refresh to retry.'}`;
+      }
+    }
+    toggle.onchange = async () => {
+      const requested = toggle.checked; toggle.disabled = true;
+      try {
+        const result = await json('/privacy', write('PATCH', {local_only: requested}));
+        applyLocalOnly(result.local_only); await refreshReport(); await health();
+      } catch (error) {
+        toggle.checked = state.localOnly; summary.textContent = `Privacy setting was not saved. ${error.message || 'Retry.'}`;
+      } finally { toggle.disabled = false; }
+    };
+    days.onchange = chat.onchange = refresh.onclick = () => safe(refreshReport);
+    download.onclick = () => {
+      if (!report) return;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], {type: 'application/json'}));
+      const link = el('a'); link.href = url; link.download = 'kova-privacy.json'; link.click(); URL.revokeObjectURL(url);
+    };
+    $('open-privacy').onclick = () => safe(async () => {
+      sidebar(false); chat.replaceChildren(); const all = el('option', '', 'All conversations'); all.value = ''; chat.append(all);
+      for (const item of state.chats.filter(item => !item.ephemeral)) { const option = el('option', '', item.title || 'New conversation'); option.value = item.id; chat.append(option); }
+      chat.value = ''; dialog.showModal(); await refreshReport();
+    });
+  })();
+
   // Phones get a drawer; wider windows collapse the sidebar in place and remember it.
   const wide = window.matchMedia?.('(min-width:721px)');
   function menuState() {
@@ -513,6 +592,9 @@
   async function health() {
     try {
       const status = await json('/health');
+      state.localOnly = Boolean(status.local_only);
+      $('local-only-status').hidden = !state.localOnly;
+      controls();
       if (!state.connected) return;
       // /health is public, so it says nothing about this window's live stream.
       if (live.lost) return reconnecting();
@@ -799,6 +881,10 @@
           focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
+        } else if (kind === 'egress') {
+          const remote = (event.items || []).filter(item => !item.local);
+          const hosts = [...new Set(remote.map(item => item.host))];
+          body.insertBefore(el('div', 'turn-status', hosts.length ? `Network: ${hosts.join(', ')} · ${remote.reduce((n, item) => n + item.bytes_out, 0)} body bytes prepared.` : 'Network: loopback only for this answer.'), activity);
         } else if (kind === 'privacy') {
           current = null;
           const count = Number(event.count) || 0;
@@ -1132,6 +1218,8 @@
     else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
     else if (mod && event.shiftKey && key === 'l') $('theme').onclick();
     else if (mod && key === '/') $('shortcuts-dialog').showModal();
+    // Like the terminal: Ctrl/Cmd+Space focuses the composer to type.
+    else if (mod && key === ' ') { event.preventDefault(); $('prompt').focus(); return; }
     else if (key === 'escape') {
       if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);

@@ -39,7 +39,7 @@ CONFIG_SECTION_KEYS = {
     }),
     'tui': frozenset({'theme', 'keys'}),
     'persona': frozenset({'name', 'tone', 'configured'}),
-    'privacy': frozenset({'secrets'}),
+    'privacy': frozenset({'secrets', 'local_only'}),
     'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
@@ -225,6 +225,7 @@ class Config:
     #: Outbound secret handling: "off" (compatible default), "redact" or "block".
     local_idle_unload_minutes: int = 5
     privacy_secrets: str = "off"
+    privacy_local_only: bool = False
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
     #: Voice (issue #68): speech-to-text backend ("local"|"browser"), text-to-
@@ -308,36 +309,37 @@ def load_config(home: Path | None = None) -> Config:
     privacy_secrets = normalize_mode(
         privacy.get('secrets') if isinstance(privacy, Mapping) else privacy)
     voice = data.get('voice', {}) if isinstance(data.get('voice'), Mapping) else {}
-    cfg = Config(home=home, models=models, providers=providers,\
-                 active=data.get('active', models[0].name if models else ''),\
-                 memory_path=Path(mem_path).expanduser(),\
-                 memory_write_subdir=mem.get('write_subdir') or None,\
-                 memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),\
-                 memory_index_lines=int(mem.get('index_lines', 200)),\
-                 memory_review=bool(mem.get('review', False)),\
-                 memory_review_every=int(mem.get('review_every', 12)),\
-                 memory_consolidate=bool(mem.get('consolidate', False)),\
-                 memory_consolidate_hour=int(mem.get('consolidate_hour', 3)),\
-                 memory_consolidate_min_confidence=float(mem.get('consolidate_min_confidence', 0.8)),\
-                 memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),\
-                 files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),\
-                 port=int(data.get('port', 7700)),\
-                 compact_threshold=float(data.get('compact_threshold', 0.75)),\
-                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),\
-                 tui_theme=data.get('tui', {}).get('theme', 'dark'),\
-                 tui_keys=data.get('tui', {}).get('keys', {}),\
-                 persona_name=data.get('persona', {}).get('name', 'Kova'),\
-                 persona_tone=data.get('persona', {}).get('tone', 'warm'),\
-                 persona_configured=data.get('persona', {}).get('configured', False),\
-                 bind='lan' if data.get('bind') == 'lan' else 'loopback',\
-                 mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])\
-                      if entry is not None] if isinstance(data.get('mcp'), list) else [],\
-                 privacy_secrets=privacy_secrets,\
-                 local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),\
-                 catalog_url=_catalog_url(data.get('catalog')),\
-                 voice_stt=str(voice.get('stt') or 'local'),\
-                 voice_tts=str(voice.get('tts') or 'espeak-ng'),\
-                 voice_language=str(voice.get('language') or '') or None,\
+    cfg = Config(home=home, models=models, providers=providers,
+                 active=data.get('active', models[0].name if models else ''),
+                 memory_path=Path(mem_path).expanduser(),
+                 memory_write_subdir=mem.get('write_subdir') or None,
+                 memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),
+                 memory_index_lines=int(mem.get('index_lines', 200)),
+                 memory_review=bool(mem.get('review', False)),
+                 memory_review_every=int(mem.get('review_every', 12)),
+                 memory_consolidate=bool(mem.get('consolidate', False)),
+                 memory_consolidate_hour=int(mem.get('consolidate_hour', 3)),
+                 memory_consolidate_min_confidence=float(mem.get('consolidate_min_confidence', 0.8)),
+                 memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),
+                 files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
+                 port=int(data.get('port', 7700)),
+                 compact_threshold=float(data.get('compact_threshold', 0.75)),
+                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),
+                 tui_theme=data.get('tui', {}).get('theme', 'dark'),
+                 tui_keys=data.get('tui', {}).get('keys', {}),
+                 persona_name=data.get('persona', {}).get('name', 'Kova'),
+                 persona_tone=data.get('persona', {}).get('tone', 'warm'),
+                 persona_configured=data.get('persona', {}).get('configured', False),
+                 bind='lan' if data.get('bind') == 'lan' else 'loopback',
+                 mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
+                      if entry is not None] if isinstance(data.get('mcp'), list) else [],
+                 privacy_secrets=privacy_secrets,
+                 privacy_local_only=(privacy.get('local_only', False) is not False) if isinstance(privacy, Mapping) else False,
+                 local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
+                 catalog_url=_catalog_url(data.get('catalog')),
+                 voice_stt=str(voice.get('stt') or 'local'),
+                 voice_tts=str(voice.get('tts') or 'espeak-ng'),
+                 voice_language=str(voice.get('language') or '') or None,
                  voice_max_seconds=max(1, int(voice.get('max_seconds') or MAX_VOICE_SECONDS)))
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
@@ -525,6 +527,7 @@ def save_config(cfg: Config) -> None:
     _put(memory, 'consolidate_max_loss', cfg.memory_consolidate_max_loss)
     _put(memory, 'write_subdir', cfg.memory_write_subdir or _UNSET)
     _put(_section(doc, 'privacy'), 'secrets', normalize_mode(cfg.privacy_secrets))
+    _put(_section(doc, 'privacy'), 'local_only', cfg.privacy_local_only)
     _put(_section(doc, 'local'), 'idle_unload_minutes', max(0, cfg.local_idle_unload_minutes))
     tui = _section(doc, 'tui')
     _put(tui, 'theme', cfg.tui_theme)
