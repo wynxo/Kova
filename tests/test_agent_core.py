@@ -244,7 +244,8 @@ def real_server(tmp_path, scripts):
     server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='error'))
     thread = threading.Thread(target=server.run, kwargs={'sockets': [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5
+    # A loaded CI runner can take well over 5 s to start uvicorn; the loop exits as soon as it is up.
+    deadline = time.monotonic() + 30
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(.01)
     assert server.started, 'real server did not start'
