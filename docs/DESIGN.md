@@ -32,7 +32,7 @@ file. That directory is what `src/kova/web.py` mounts at `/app/assets`, and
 
 ```bash
 python scripts/build_tokens.py           # regenerate src/kova/web_assets/tokens.css
-python scripts/build_tokens.py --check   # contrast + shape gate, exits 1 on failure
+python scripts/build_tokens.py --check   # contrast + shape + freshness, exits 1 on failure
 ```
 
 Three layers, and components may only use the third:
