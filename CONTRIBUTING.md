@@ -216,17 +216,11 @@ input line and completion menu. The full-screen chat converts them for 256- and
 `NO_COLOR=1 ./cli` to check a change on a simpler terminal.
 `CODE_THEME` is the Pygments theme for code blocks in the terminal.
 
-The web app keeps its own copy as CSS variables at the top of
-`src/kova/web_assets/app.css`:
-
-- `:root` — the dark theme
-- `:root[data-theme=light]` — the light theme
-
-Keep the two in sync: `--accent` with `ACCENT`, `--accent-soft` with
-`ACCENT_SOFT`, `--user` with `USER`, and so on. The CSS file also has
-background, surface and shadow variables that have no terminal equivalent, and
-`.hljs-*` rules for code highlighting. Reload the window to see CSS changes;
-restart the server to see Python changes.
+The web app consumes semantic CSS variables generated from `design/tokens.json`.
+Edit that source and run `python scripts/build_tokens.py`; never edit `tokens.css`
+by hand. Components use roles such as `--bg-base`, `--fg-muted` and
+`--accent-default`, not a second palette in `app.css`. See
+[docs/DESIGN.md](docs/DESIGN.md) and [docs/THEMES.md](docs/THEMES.md).
 
 ### Add a model server
 

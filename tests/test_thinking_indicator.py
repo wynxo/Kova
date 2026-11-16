@@ -26,7 +26,7 @@ def test_bolt_is_flat_and_uses_the_text_colour():
 
 def test_styles_use_theme_variables_and_no_glow():
     assert not LITERAL_COLOUR.search(CSS)
-    assert "var(--accent)" in CSS
+    assert "var(--accent-default)" in CSS
     assert not re.search(r"box-shadow|drop-shadow|gradient", CSS)
 
 
