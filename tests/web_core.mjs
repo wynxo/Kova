@@ -34,9 +34,9 @@ class Element {
 }
 const elements = new Map();
 function $(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }
-for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'));
+for (const id of ['theme', 'web']) $(id).append(new Element('span'));
 $('mode').value = 'work';
-new Element().append($('connection')); const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
+const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [];
 const uploads = [];
 let pendingApprovals = [];
@@ -117,8 +117,11 @@ const buttons = node => walk(node).filter(n => n.tagName === 'button');
 // rest fall into local-calendar buckets, and "Previous 7 days" is the seven
 // complete days before yesterday.
 const {groups, bucket} = sandbox.KovaChatList;
-const now = new Date(2026, 10, 16, 12, 0, 0).getTime();
-const at = days => new Date(2026, 10, 16 - days, 9, 0, 0).toISOString();
+// Anchored to today, because history() groups by the real clock: a fixed date
+// made the sidebar checks fail on any other day.
+const today = new Date();
+const now = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0).getTime();
+const at = days => new Date(today.getFullYear(), today.getMonth(), today.getDate() - days, 9, 0, 0).toISOString();
 const groupedChats = [
   {id: 'pinned', title: 'Pinned', pinned: true, last_message: at(30)},
   {id: 'today', title: 'Today', last_message: at(0)},
@@ -498,7 +501,9 @@ console.log('Live indicators, tool rows, message actions and keyboard shortcuts 
 state.connected = true; state.busy = false; $('mode').value = 'work'; controls();
 await sandbox.test.openPalette(); await tick(); await tick();
 assert.equal(sandbox.test.commandPalette.isOpen(), true, 'the palette opens');
-assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New conversation'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New chat'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Settings'), 'Settings is one command away');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New incognito chat'), 'incognito stays in the palette');
 assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Keyboard shortcuts'));
 assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Privacy'));
 sandbox.test.commandPalette.input.value = 'thm';
@@ -763,7 +768,13 @@ assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 day
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
 
+// Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
+await sandbox.test.newChat(); controls();
+assert.equal($('new-incognito').hidden, false, 'the start screen offers an incognito chat');
+assert.equal($('chat-menu').hidden, true, 'no chat actions before a chat exists');
 await sandbox.test.newIncognito();
+assert.equal($('new-incognito').hidden, true, 'an open chat does not offer it again');
+assert.equal($('chat-menu').hidden, false, 'an open chat has its actions menu');
 assert.equal(requests.filter(r => r.path === '/chats' && r.body).at(-1).body.ephemeral, true);
 assert.equal(state.chat.ephemeral, true);
 assert.equal($('incognito-note').hidden, false);

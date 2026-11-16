@@ -1,48 +1,42 @@
-/* One Settings view for the panels that used to sit in the sidebar footer.
-   Loaded after app.js: it hosts the existing controls by id, so their logic
-   stays where it is and this file only arranges and searches them. */
+/* Settings: the one place for everything that is not the conversation.
+   Loaded after app.js. The sidebar keeps a single Settings row; every panel
+   that used to sit beside it is a row here. Rows run the action targets
+   app.js and the panel scripts already bind (index.html #settings-actions),
+   so their logic stays where it is and this file only arranges and searches. */
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);
 
-  // Each row is one setting, or a link to the dialog that owns it. Keeping the
-  // copy here means search can match words people actually use ("appearance",
-  // "boot", "plugins") instead of only the section labels.
+  // Each item is one setting: a link to the dialog that owns it (`action`), an
+  // inline control (`control`), or an existing widget hosted in place (`host`).
+  // The copy lives here so search matches words people use ("appearance",
+  // "boot", "plugins"), not only the section labels.
   const SECTIONS = [
     {
-      id: 'general', label: 'General', icon: 'sliders-horizontal',
-      keywords: 'appearance theme light dark shortcuts keyboard install notifications phone device',
+      id: 'general', label: 'General', icon: 'settings',
+      keywords: 'appearance theme light dark sounds startup sign out keyboard',
       items: [
-        {title: 'Theme', help: 'Switch between the dark and light theme.',
-         keywords: 'appearance colour color light dark', action: 'theme', actionLabel: 'Switch theme'},
-        {title: 'Keyboard shortcuts', help: 'Every shortcut the app listens for.',
-         keywords: 'keys keyboard', action: 'open-shortcuts', actionLabel: 'Show shortcuts'},
-        {title: 'Install and notifications', help: 'Install Kova on this device and choose how it notifies you.',
-         keywords: 'pwa install notification phone', action: 'install-settings', actionLabel: 'Open install'},
-        {title: 'Sounds', help: 'Choose the cues for finished replies, reminders and approvals.',
-         keywords: 'sound audio chime volume alert', action: 'open-sounds', actionLabel: 'Open sounds'},
-        {title: 'Connect your phone', help: 'Chat from your phone on the same private network.',
-         keywords: 'phone pair device remote', action: 'connect-phone', actionLabel: 'Connect a phone'},
+        {title: 'Theme', help: 'Dark or light.',
+         keywords: 'appearance colour color light dark mode', control: 'theme'},
+        {title: 'Sounds', help: 'Quiet cues for finished replies, reminders and approvals.',
+         keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
+        {title: 'Keyboard shortcuts', help: 'Every key this window understands.',
+         keywords: 'keys keyboard hotkeys', action: 'open-shortcuts', actionLabel: 'Show'},
+        {title: 'Startup', help: 'Keep reminders and scheduled jobs running after you sign in.',
+         keywords: 'start login sign in boot autostart service status bar', host: 'settings'},
+        {title: 'Sign out', help: 'End this session in this window. On a paired phone, this unpairs it.',
+         keywords: 'logout sign out disconnect unpair leave', action: 'disconnect', actionLabel: 'Sign out'},
       ],
     },
     {
       id: 'models', label: 'Models and providers', icon: 'square-terminal',
       keywords: 'model provider api key vision local ollama',
       items: [
-        {title: 'Connect a provider', help: 'Add a hosted provider or use a model on this computer.',
+        {title: 'Providers', help: 'Add a hosted provider, or run a model on this computer.',
          keywords: 'add provider api key openai chatgpt custom local ollama',
-         action: 'add-provider', actionLabel: 'Connect a provider'},
-        {title: 'Model settings', help: 'Turn on vision for the model in the composer.',
-         keywords: 'vision image model settings', action: 'open-model-settings', actionLabel: 'Open model settings'},
-      ],
-    },
-    {
-      id: 'privacy', label: 'Privacy', icon: 'lock',
-      keywords: 'local only outbound report traffic secrets',
-      items: [
-        {title: 'Local only and traffic report',
-         help: 'Keep every request on this computer, and see what left it.',
-         keywords: 'local only report outbound requests', action: 'open-privacy', actionLabel: 'Open privacy'},
+         action: 'add-provider', actionLabel: 'Connect'},
+        {title: 'Model settings', help: 'Vision and details for the model in the message box.',
+         keywords: 'vision image model settings context', action: 'open-model-settings', actionLabel: 'Open'},
       ],
     },
     {
@@ -50,30 +44,51 @@
       keywords: 'notes remember recall obsidian',
       items: [
         {title: 'Memory notes', help: 'Browse, search, edit or forget what Kova remembers.',
-         keywords: 'notes remember recall obsidian', action: 'open-memory', actionLabel: 'Open memory'},
+         keywords: 'notes remember recall obsidian forget', action: 'open-memory', actionLabel: 'Open'},
       ],
     },
     {
-      id: 'extensions', label: 'Extensions', icon: 'puzzle',
+      id: 'reminders', label: 'Reminders', icon: 'bell',
+      keywords: 'alarms schedule jobs',
+      items: [
+        {title: 'Reminders', help: 'Everything scheduled to remind you.',
+         keywords: 'alarms schedule jobs timer', action: 'open-reminders', actionLabel: 'Open'},
+      ],
+    },
+    {
+      id: 'extensions', label: 'Extensions and MCP', icon: 'puzzle',
       keywords: 'plugins skills mcp tools catalog',
       items: [
-        {title: 'Installed extensions and skills', help: 'See what each plugin adds, and edit your own skills.',
-         keywords: 'plugins skills catalog install', action: 'open-extensions', actionLabel: 'Open extensions'},
+        {title: 'Extensions and skills', help: 'See what each plugin adds, and edit your own skills.',
+         keywords: 'plugins skills catalog install add-ons', action: 'open-extensions', actionLabel: 'Open'},
         {title: 'MCP servers', help: 'Add tools from Model Context Protocol servers.',
-         keywords: 'mcp tools servers', action: 'open-mcp', actionLabel: 'Open MCP servers'},
+         keywords: 'mcp tools servers', action: 'open-mcp', actionLabel: 'Open'},
       ],
     },
     {
-      id: 'startup', label: 'Startup', icon: 'arrow-up',
-      keywords: 'start login sign in boot autostart service',
+      id: 'privacy', label: 'Privacy', icon: 'lock',
+      keywords: 'local only outbound report traffic secrets network',
       items: [
-        {title: 'Start Kova when I sign in',
-         help: 'Keep reminders and scheduled jobs running after you sign in.',
-         keywords: 'start login sign in boot autostart service startup'},
+        {title: 'Local only and traffic report',
+         help: 'Keep every request on this computer, and see what left it.',
+         keywords: 'local only report outbound requests network', action: 'open-privacy', actionLabel: 'Open'},
       ],
-      // The autostart widget already exists in the page; host it verbatim so
-      // its toggle and status keep talking to the same app.js code.
-      host: 'settings',
+    },
+    {
+      id: 'phone', label: 'Phone', icon: 'smartphone',
+      keywords: 'phone pair device remote mobile qr',
+      items: [
+        {title: 'Connect your phone', help: 'Chat from your phone on the same private network.',
+         keywords: 'phone pair device remote mobile qr', action: 'connect-phone', actionLabel: 'Connect'},
+      ],
+    },
+    {
+      id: 'install', label: 'Install and notifications', icon: 'download',
+      keywords: 'pwa install notifications alerts app',
+      items: [
+        {title: 'Install and notifications', help: 'Add Kova to this device and choose how it notifies you.',
+         keywords: 'pwa install notification alerts app', action: 'install-settings', actionLabel: 'Open'},
+      ],
     },
   ];
 
@@ -152,7 +167,7 @@
         `${section.label} ${section.keywords || ''}`.toLowerCase().includes(query);
       let visible = 0;
       for (const entry of section.entries) {
-        const hit = !query || sectionHit || entry.search.includes(query);
+        const hit = (!query || sectionHit || entry.search.includes(query)) && entry.available();
         entry.row.hidden = !hit;
         paint(entry, hit ? query : '');
         if (hit) visible += 1;
@@ -180,6 +195,7 @@
   function open(sectionId) {
     if (!view) return;
     opener = document.activeElement;
+    syncControls();
     search.value = '';
     filter('');
     activate(sectionId || activeId);
@@ -211,7 +227,60 @@
     });
   }
 
-  function rowFor(section, item) {
+  // Light and dark as a two-option radio group. app.js owns the theme (and its
+  // Ctrl+Shift+L toggle) through #theme; this only reflects and flips it.
+  const themeRadios = [];
+  function currentTheme() {
+    return document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark';
+  }
+  function themeControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Theme');
+    for (const [value, label, glyph] of [['dark', 'Dark', 'moon'], ['light', 'Light', 'sun']]) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.setAttribute('role', 'radio');
+      radio.append(icon(glyph), element('span', '', label));
+      radio.addEventListener('click', () => chooseTheme(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const next = value === 'dark' ? 'light' : 'dark';
+        chooseTheme(next);
+        themeRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      themeRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
+  }
+  function chooseTheme(value) {
+    if (currentTheme() !== value) byId('theme')?.click();
+    syncTheme();
+  }
+  function syncTheme() {
+    const value = currentTheme();
+    for (const radio of themeRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
+  }
+
+  // Rows follow their target: a control another script hides (Connect your
+  // phone, on the phone itself) or disables (while offline) does the same here.
+  const actionButtons = [];
+  function syncControls() {
+    syncTheme();
+    for (const {button, item} of actionButtons) {
+      const target = byId(item.action);
+      button.disabled = Boolean(target?.disabled);
+    }
+  }
+
+  function rowFor(item) {
     const row = element('div', 'settings-row');
     const copy = element('div', 'settings-copy');
     const title = element('span', 'settings-row-title', item.title);
@@ -219,14 +288,25 @@
     copy.append(title, help);
     row.append(copy);
     if (item.action) {
-      const button = element('button', 'btn quiet settings-open', item.actionLabel || 'Open');
+      const button = element('button', 'btn small settings-action', item.actionLabel || 'Open');
       button.type = 'button';
-      button.setAttribute('aria-label', `${item.actionLabel || 'Open'} ${item.title}`);
+      button.setAttribute('aria-label', `${item.actionLabel || 'Open'}: ${item.title}`);
       button.addEventListener('click', () => {
         const target = byId(item.action);
-        if (target) target.click();
+        if (target && !target.disabled) target.click();
       });
+      actionButtons.push({button, item});
       row.append(button);
+    } else if (item.control === 'theme') {
+      row.append(themeControl());
+    } else if (item.host) {
+      const hosted = byId(item.host);
+      if (hosted) {
+        row.classList.add('settings-row-hosted');
+        hosted.classList.add('settings-hosted');
+        hosted.open = true;
+        row.append(hosted);
+      }
     }
     return {row, title, help};
   }
@@ -304,26 +384,16 @@
       const rows = element('div', 'settings-rows');
       const entries = [];
       for (const item of data.items) {
-        const {row, title: rowTitle, help} = rowFor(data, item);
+        const {row, title: rowTitle, help} = rowFor(item);
         rows.append(row);
         entries.push({
           row, item,
+          available: () => !item.action || !byId(item.action)?.hidden,
           titleNode: rowTitle, helpNode: help,
           search: `${data.label} ${item.title} ${item.help} ${item.keywords || ''}`.toLowerCase(),
         });
       }
       panel.append(rows);
-
-      if (data.host) {
-        const hosted = byId(data.host);
-        if (hosted) {
-          hosted.classList.add('settings-autostart');
-          hosted.open = true;
-          const wrap = element('div', 'settings-host');
-          wrap.append(hosted);
-          panel.append(wrap);
-        }
-      }
 
       content.append(panel);
       sections.push({id: data.id, label: data.label, keywords: data.keywords, tab, panel, entries});
@@ -369,4 +439,6 @@
   build();
   const launch = byId('open-settings');
   if (launch) launch.addEventListener('click', event => { event.preventDefault(); open(); });
+  // The command palette opens a section directly ("Startup settings").
+  if (typeof window !== 'undefined') window.KovaSettings = {open, close};
 })();

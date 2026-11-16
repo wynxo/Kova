@@ -2,7 +2,7 @@
 
 The view is plain files with no bundler or type checker, so these tests pin the
 things a browser would only reveal late: the page loads both assets, every
-control the view links to exists, the sections are the agreed six, and the
+control the view links to exists, the sections are the agreed eight (every row that left the sidebar), and the
 stylesheet keeps to tokens instead of inventing colours.
 """
 
@@ -17,7 +17,8 @@ INDEX = ASSETS / "index.html"
 SETTINGS_JS = ASSETS / "settings.js"
 SETTINGS_CSS = ASSETS / "settings.css"
 
-SECTIONS = ["General", "Models and providers", "Privacy", "Memory", "Extensions", "Startup"]
+SECTIONS = ["General", "Models and providers", "Memory", "Reminders", "Extensions and MCP",
+            "Privacy", "Phone", "Install and notifications"]
 
 # Colour syntax a stylesheet may not carry when the semantic layer owns colour.
 COLOUR_LITERAL = re.compile(
@@ -77,12 +78,12 @@ def test_every_linked_control_exists_in_the_page():
     assert actions, "no linked controls found; did the settings data move?"
     missing = sorted(actions - ids)
     assert missing == [], f"settings.js links to controls missing from index.html: {missing}"
-    # The one literal byId is the sidebar launcher; host ids come from the data.
+    # Literal byId lookups are the sidebar launcher and the theme control.
     for literal in re.findall(r"byId\('([a-z-]+)'\)", source):
         assert literal in ids, f"settings.js looks up missing id {literal!r}"
 
 
-def test_sections_are_the_agreed_six_in_order():
+def test_sections_are_the_agreed_eight_in_order():
     source = SETTINGS_JS.read_text(encoding="utf-8")
     labels = re.findall(r"id: '[a-z]+', label: '([^']+)'", source)
     assert labels == SECTIONS
@@ -115,3 +116,15 @@ def test_settings_css_honours_focus_and_reduced_motion():
     assert ":focus-visible" in css
     assert "@media (prefers-reduced-motion: reduce)" in css
     assert "animation: none" in css and "transition: none" in css
+
+
+def test_every_sidebar_panel_moved_into_settings():
+    """The rows removed from the sidebar each have a Settings row."""
+    source = SETTINGS_JS.read_text(encoding="utf-8")
+    actions = set(re.findall(r"action:\s*'([a-z-]+)'", source))
+    for moved in ("open-memory", "open-reminders", "add-provider", "open-extensions", "open-privacy",
+                  "open-mcp", "open-sounds", "install-settings", "connect-phone", "disconnect",
+                  "open-shortcuts", "open-model-settings"):
+        assert moved in actions, f"{moved} has no Settings row"
+    assert "host: 'settings'" in source, "startup is hosted in Settings"
+    assert "control: 'theme'" in source, "theme is a Settings control"
