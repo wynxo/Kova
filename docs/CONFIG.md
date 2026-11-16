@@ -88,6 +88,10 @@ compare. Defaults are what a fresh install writes.
 | `[persona] name` | `persona_name` | `Kova` | 1–40 printable characters | The assistant's displayed name and the "You are …" identity line. The name is trimmed. |
 | `[persona] tone` | `persona_tone` | `warm` | `warm`, `concise`, `professional`, `playful` | One added line in the system prompt and the identity shown in setup. |
 | `[persona] configured` | `persona_configured` | `false` | `true`/`false` | Whether onboarding has asked for a name and tone. Usually set by setup, not by hand. |
+| `[voice] stt` | `voice_stt` | `local` | `local` or `browser` | Speech-to-text backend. `local` uses the bundled Whisper model on the server; `browser` transcribes from the desktop web UI. |
+| `[voice] tts` | `voice_tts` | `espeak-ng` | `espeak-ng` or `off` | Text-to-speech backend for spoken replies. `off` disables spoken output. |
+| `[voice] language` | `voice_language` | unset | an ISO language code, or empty to clear | Language for speech-to-text and text-to-speech. Defaults to the model's primary language when unset. |
+| `[voice] max_seconds` | `voice_max_seconds` | `60` | integer ≥ 1 | Longest voice clip the server accepts, in seconds. |
 
 Booleans accept `on`/`off`, `true`/`false`, `yes`/`no`, `1`/`0`, `enabled` and
 `disabled` on the command line. Path values are expanded (`~`) and resolved
@@ -299,6 +303,11 @@ palette = "ctrl-g"
 name = "Kova"
 tone = "warm"
 configured = false
+
+[voice]
+stt = "local"
+tts = "espeak-ng"
+max_seconds = 60
 
 [[providers]]
 id = "local"

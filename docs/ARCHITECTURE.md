@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 72 endpoints: 71 route handlers plus the static asset mount.
+The app exposes 103 endpoints: 102 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -133,6 +133,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
 | `POST /chats/{chat_id}/steer` | token or session | put a message into the turn running now |
 | `POST /chats/{chat_id}/stop` | token or session | cancel that chat's server-side turns |
+| `POST /transcribe` | token or session | transcribe audio to text (`[voice] stt = "local"`); `browser` transcribes client-side |
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
 | `DELETE /jobs/{jid}` | token or session | delete a job |
@@ -590,6 +591,11 @@ files_path = "/home/you/Kova Files"
 path = "/home/you/.kova/memory"
 budget = 8000            # characters across all notes; 0 = unlimited
 # write_subdir = "Kova"   # set in Obsidian mode
+
+[voice]
+stt = "local"          # "browser" for the desktop web UI
+tts = "espeak-ng"      # "off" disables spoken replies
+max_seconds = 60        # longest voice clip the server accepts
 
 [[models]]
 name = "local"

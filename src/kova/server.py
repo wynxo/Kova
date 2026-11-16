@@ -30,6 +30,7 @@ from kova.store import Store
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
 from kova.web import install_web, require_browser_session
+from kova.voice import TranscriptionError, build_transcriber, MAX_AUDIO_BYTES
 
 
 class TurnBody(BaseModel):
@@ -40,7 +41,6 @@ class TurnBody(BaseModel):
 
 
 class ChatBody(BaseModel):
-    """Optional fields for a new or updated chat; every field may be omitted."""
     title: str | None = None
     mode: str | None = None
     web: bool | None = None
@@ -427,6 +427,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.model_health.close()
         store.drop_ephemeral()
 
+def _build_transcriber(config) -> "voice.Transcriber | None":
+    """Build the transcriber, tolerating a missing backend.
+
+    ``[voice] stt = "browser"`` means the client transcribes, so the server
+    holds no transcriber. ``local`` builds a whisper.cpp backend; if the
+    binary is missing we return ``None`` so the server still starts and the
+    route reports that transcription is off.
+    """
+    try:
+        return build_transcriber(config)
+    except TranscriptionError:
+        return None
+
 
 def create_app(
     config: Config,
@@ -452,7 +465,7 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     app.state.steering = {}
-    app.state.events_keepalive = EVENTS_KEEPALIVE
+    app.state.transcriber = _build_transcriber(config)
     install_web(app, _require_bearer)
     pairing.install_phone(app, _require_token)
     from kova.provider_routes import install_provider_routes
@@ -609,6 +622,27 @@ def create_app(
                 raise HTTPException(400, str(exc)) from None
             finally:
                 await file.close()
+
+    @api.post("/transcribe")
+    async def transcribe(audio: UploadFile = File(...)) -> dict:
+        from kova import voice
+        if app.state.transcriber is None:
+            raise HTTPException(409, "Voice transcription is off. Set [voice] stt = \"local\" to turn it on.")
+        try:
+            raw = await audio.read(MAX_AUDIO_BYTES + 1)
+            if len(raw) > MAX_AUDIO_BYTES:
+                raise HTTPException(413, "The audio is too large.")
+            fmt = (audio.filename or "").rsplit(".", 1)[-1].lower()
+            result = await asyncio.to_thread(app.state.transcriber.transcribe, raw, fmt=fmt)
+        except voice.TranscriptionError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, "Transcription failed.") from exc
+        finally:
+            await audio.close()
+        return result.as_dict()
 
     @api.delete("/chats/{chat_id}/attachments/{ident}")
     async def remove_attachment(chat_id: str, ident: str) -> dict:

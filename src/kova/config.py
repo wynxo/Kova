@@ -22,12 +22,14 @@ DEFAULT_MODEL = {"name": "local", "base_url": "http://127.0.0.1:11434/v1", "mode
 
 CONFIG_SCHEMA = 2
 
+#: Longest voice clip the server accepts (seconds), matching voice.MAX_SECONDS.
+MAX_VOICE_SECONDS = 60
 #: Every key this version reads or writes. Anything else is preserved for the
 #: user (and for a newer Kova) but never interpreted here.
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'local', 'catalog',
+    'mcp', 'local', 'catalog', 'voice',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -40,6 +42,7 @@ CONFIG_SECTION_KEYS = {
     'privacy': frozenset({'secrets'}),
     'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
+    'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
@@ -224,6 +227,12 @@ class Config:
     privacy_secrets: str = "off"
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
+    #: Voice (issue #68): speech-to-text backend ("local"|"browser"), text-to-
+    #: speech backend ("espeak-ng"|"off"), the STT language, and the clip cap.
+    voice_stt: str = "local"
+    voice_tts: str = "espeak-ng"
+    voice_language: str | None = None
+    voice_max_seconds: int = MAX_VOICE_SECONDS
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -298,33 +307,38 @@ def load_config(home: Path | None = None) -> Config:
     privacy = data.get('privacy')
     privacy_secrets = normalize_mode(
         privacy.get('secrets') if isinstance(privacy, Mapping) else privacy)
-    cfg = Config(home=home, models=models, providers=providers,
-                 active=data.get('active', models[0].name if models else ''),
-                 memory_path=Path(mem_path).expanduser(),
-                 memory_write_subdir=mem.get('write_subdir') or None,
-                 memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),
-                 memory_index_lines=int(mem.get('index_lines', 200)),
-                 memory_review=bool(mem.get('review', False)),
-                 memory_review_every=int(mem.get('review_every', 12)),
-                 memory_consolidate=bool(mem.get('consolidate', False)),
-                 memory_consolidate_hour=int(mem.get('consolidate_hour', 3)),
-                 memory_consolidate_min_confidence=float(mem.get('consolidate_min_confidence', 0.8)),
-                 memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),
-                 files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
-                 port=int(data.get('port', 7700)),
-                 compact_threshold=float(data.get('compact_threshold', 0.75)),
-                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),
-                 tui_theme=data.get('tui', {}).get('theme', 'dark'),
-                 tui_keys=data.get('tui', {}).get('keys', {}),
-                 persona_name=data.get('persona', {}).get('name', 'Kova'),
-                 persona_tone=data.get('persona', {}).get('tone', 'warm'),
-                 persona_configured=data.get('persona', {}).get('configured', False),
-                 bind='lan' if data.get('bind') == 'lan' else 'loopback',
-                 mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])
-                      if entry is not None] if isinstance(data.get('mcp'), list) else [],
-                 privacy_secrets=privacy_secrets,
-                 local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
-                 catalog_url=_catalog_url(data.get('catalog')))
+    voice = data.get('voice', {}) if isinstance(data.get('voice'), Mapping) else {}
+    cfg = Config(home=home, models=models, providers=providers,\
+                 active=data.get('active', models[0].name if models else ''),\
+                 memory_path=Path(mem_path).expanduser(),\
+                 memory_write_subdir=mem.get('write_subdir') or None,\
+                 memory_budget=int(mem.get('budget', DEFAULT_MEMORY_BUDGET)),\
+                 memory_index_lines=int(mem.get('index_lines', 200)),\
+                 memory_review=bool(mem.get('review', False)),\
+                 memory_review_every=int(mem.get('review_every', 12)),\
+                 memory_consolidate=bool(mem.get('consolidate', False)),\
+                 memory_consolidate_hour=int(mem.get('consolidate_hour', 3)),\
+                 memory_consolidate_min_confidence=float(mem.get('consolidate_min_confidence', 0.8)),\
+                 memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),\
+                 files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),\
+                 port=int(data.get('port', 7700)),\
+                 compact_threshold=float(data.get('compact_threshold', 0.75)),\
+                 oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),\
+                 tui_theme=data.get('tui', {}).get('theme', 'dark'),\
+                 tui_keys=data.get('tui', {}).get('keys', {}),\
+                 persona_name=data.get('persona', {}).get('name', 'Kova'),\
+                 persona_tone=data.get('persona', {}).get('tone', 'warm'),\
+                 persona_configured=data.get('persona', {}).get('configured', False),\
+                 bind='lan' if data.get('bind') == 'lan' else 'loopback',\
+                 mcp=[entry for entry in map(_mcp_entry, data.get('mcp') or [])\
+                      if entry is not None] if isinstance(data.get('mcp'), list) else [],\
+                 privacy_secrets=privacy_secrets,\
+                 local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),\
+                 catalog_url=_catalog_url(data.get('catalog')),\
+                 voice_stt=str(voice.get('stt') or 'local'),\
+                 voice_tts=str(voice.get('tts') or 'espeak-ng'),\
+                 voice_language=str(voice.get('language') or '') or None,\
+                 voice_max_seconds=max(1, int(voice.get('max_seconds') or MAX_VOICE_SECONDS)))
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
     cfg._extra = {k: v for k, v in data.items() if k not in TOP_LEVEL_CONFIG_KEYS}
@@ -531,6 +545,15 @@ def save_config(cfg: Config) -> None:
         _put(catalog, 'url', cfg.catalog_url.strip() or _UNSET)
         if not catalog:
             del doc['catalog']
+    if (cfg.voice_stt != 'local' or cfg.voice_tts != 'espeak-ng' or \
+            cfg.voice_language or 'voice' in doc):
+        voice = _section(doc, 'voice')
+        _put(voice, 'stt', cfg.voice_stt)
+        _put(voice, 'tts', cfg.voice_tts)
+        _put(voice, 'language', cfg.voice_language or _UNSET)
+        _put(voice, 'max_seconds', cfg.voice_max_seconds)
+        if not any(voice):
+            del doc['voice']
     private_write(cfg.home / 'config.toml', tomlkit.dumps(doc))
 
 
