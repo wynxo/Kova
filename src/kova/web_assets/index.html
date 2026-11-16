@@ -25,8 +25,8 @@
       <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
-    <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd>Ctrl Shift N</kbd></button>
     <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl K</kbd></button>
+    <button id="new-incognito" type="button" class="nav-row"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span><kbd>Ctrl Shift N</kbd></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <div class="section-label"><span>Conversations</span><span id="chat-count"></span></div>
     <nav id="chat-list" aria-label="Chat history"></nav>
@@ -38,7 +38,7 @@
         <button id="open-extensions" type="button" class="nav-row"><span class="icon i-puzzle" aria-hidden="true"></span>Extensions</button>
         <button id="open-privacy" type="button" class="nav-row"><span class="icon i-lock" aria-hidden="true"></span>Privacy</button>
         <button id="open-mcp" type="button" class="nav-row"><span class="icon i-sliders-horizontal" aria-hidden="true"></span>MCP servers</button>
-        <button id="install-settings" type="button" class="nav-row">Install &amp; notifications</button>
+        <button id="install-settings" type="button" class="nav-row"><span class="icon i-download" aria-hidden="true"></span>Install &amp; notifications</button>
         <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
         <details id="settings" class="footer-settings">
           <summary class="nav-row"><span class="icon i-power" aria-hidden="true"></span>Startup</summary>
@@ -84,8 +84,8 @@
         <input id="attachment-input" type="file" multiple hidden>
         <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
         <div class="compose-toolbar">
-          <button id="commands" type="button" class="chip" aria-label="Show commands">/</button>
-          <button id="attach" class="chip" type="button" aria-label="Attach files">📎</button>
+          <button id="commands" type="button" class="chip icon-chip" aria-label="Show commands" title="Commands"><span class="icon i-slash" aria-hidden="true"></span></button>
+          <button id="attach" class="chip icon-chip" type="button" aria-label="Attach files"><span class="icon i-paperclip" aria-hidden="true"></span></button>
           <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
           <div id="compose-options" class="compose-options">
           <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
