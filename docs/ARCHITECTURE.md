@@ -129,9 +129,9 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/restore` | token or session | put the working folder back to this checkpoint |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
-| `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events |
+| `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
-| `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn |
+| `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
 | `POST /chats/{chat_id}/steer` | token or session | put a message into the turn running now |
 | `POST /chats/{chat_id}/stop` | token or session | cancel that chat's server-side turns |
@@ -193,6 +193,7 @@ devices or pairing.
 | `GET /devices` | token or session, local only | phones paired with this server |
 | `DELETE /devices` | token or session, local only | unpair every phone |
 | `DELETE /devices/{device_id}` | token or session, local only | unpair one phone |
+| `PATCH /devices/{device_id}` | token or session, local only | replace what one phone may do (its capabilities) |
 | `GET/POST /phone` | token or session, local only | read / turn the phone listener on or off |
 | `POST /phone/pair` | token or session, local only | start a pairing code |
 | `GET/DELETE /phone/pair/{code_id}` | token or session, local only | poll / cancel a pairing code |
@@ -260,7 +261,19 @@ anything without a paired device's cookie. On those requests the bearer token,
 browser sessions and the local-only routes (`/phone`, `/phone/pair`,
 `/devices`) are refused. Pairing secrets are one-use and live for two minutes in
 memory; device tokens are stored as SHA-256 hashes in `devices.json` and survive
-restarts. See [remote-access.md](remote-access.md).
+restarts. Each device record also holds its capabilities (`pairing.CAPABILITIES`,
+default `chat` and `models:read`); expensive or configuration-changing routes
+declare `Depends(require_capability("models:write"))` and friends, which refuse
+a LAN request whose device lacks it and never limit the computer itself. The
+limits also reach the agent: `Agent.run_turn(capabilities=…)` drops tools whose
+`pairing.action_capabilities` exceed the phone's set (commands, jobs and MCP
+tools need `host:exec`, as do file tools outside Kova Files), each pending
+approval records what allowing it needs and the asking turn's own limits (a
+phone may put an answer or reason only into a turn no stronger than itself), and
+a chat a phone wrote in keeps that phone's limits for every later turn
+(`Store.limit_chat`, applied in `Agent.run_turn` for every caller). Memory
+writes need `memory:write`. The matrix is in
+[remote-access.md](remote-access.md#what-a-paired-phone-may-do).
 
 ## Clients
 
