@@ -26,9 +26,16 @@ MAX_SNIPPET_CHARS = 240
 MAX_TITLE_CHARS = 120
 
 
-def set_current_chat(chat_id: str | None) -> None:
-    """Remember which chat a tool call belongs to for the current task."""
+#: The capability limit of the turn that is running (kova.pairing); None means none.
+_CURRENT_LIMIT: contextvars.ContextVar[frozenset[str] | None] = contextvars.ContextVar(
+    "kova_current_limit", default=None
+)
+
+
+def set_current_chat(chat_id: str | None, capabilities: frozenset[str] | None = None) -> None:
+    """Remember which chat a tool call belongs to, and its turn's limit, for the current task."""
     _CURRENT_CHAT.set(chat_id)
+    _CURRENT_LIMIT.set(capabilities)
 
 
 def current_chat() -> str | None:
@@ -60,9 +67,21 @@ def tools(ctx: ToolContext) -> list[Tool]:
             limit = DEFAULT_RESULTS
         limit = max(1, min(limit, MAX_RESULTS))
         exclude = None if args.get("include_current") else current_chat()
-        rows = ctx.store.search_chats(args["query"], limit=limit,
+        from kova.pairing import within
+        turn = _CURRENT_LIMIT.get()
+        rows = ctx.store.search_chats(args["query"], limit=MAX_RESULTS,
                                       exclude_chat_id=exclude)
-        results = [_result(row) for row in rows]
+        # A phone-limited chat's text never reaches a turn that may do more than
+        # that phone: recalled words would carry its instructions past the limit.
+        limits: dict[str, frozenset[str] | None] = {}
+        visible = []
+        for row in rows:
+            if row["id"] not in limits:
+                limits[row["id"]] = ctx.store.chat_capabilities(row["id"])
+            chat_limit = limits[row["id"]]
+            if chat_limit is None or within(turn, chat_limit):
+                visible.append(row)
+        results = [_result(row) for row in visible[:limit]]
         payload: dict = {"query": args["query"], "count": len(results),
                          "results": results}
         if not results:

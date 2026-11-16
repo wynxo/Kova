@@ -207,6 +207,12 @@ class PendingApproval:
     cwd: Path | None
     key: str
     event: dict = field(default_factory=dict)
+    #: Device capabilities needed to allow it (kova.pairing.action_capabilities).
+    needs: frozenset = frozenset()
+    #: The capabilities of the turn that asks; None for a turn with no limit.
+    #: A phone may put words into it (an answer, a reason) only when this is
+    #: within the phone's own capabilities.
+    authority: frozenset | None = None
 
 
 class Approvals:
@@ -237,7 +243,8 @@ class Approvals:
         message = next((r.message for r in rules if r.action == "deny" and evaluate_rules([r], name, args, cwd) == "deny"), None)
         return action, message
 
-    def create(self, chat_id: str, name: str, args: dict, cwd: Path | None = None) -> dict:
+    def create(self, chat_id: str, name: str, args: dict, cwd: Path | None = None,
+               needs: frozenset = frozenset(), authority: frozenset | None = None) -> dict:
         identifier = uuid4().hex
         args = copy.deepcopy(args)
         command = shell_command_arg(name, args)
@@ -264,7 +271,9 @@ class Approvals:
                  "args": copy.deepcopy(args), "change_summary": changes,
                  "risk": risk, "summary": summary, "binding": action_key(name, args, cwd)}
         self.pending[identifier] = PendingApproval(chat_id, risk, future, name, args, cwd,
-                                                   action_key(name, args, cwd), copy.deepcopy(event))
+                                                   action_key(name, args, cwd), copy.deepcopy(event),
+                                                   frozenset(needs),
+                                                   None if authority is None else frozenset(authority))
         return event
 
     def pending_for(self, chat_id: str) -> list[dict]:

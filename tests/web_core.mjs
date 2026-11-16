@@ -40,6 +40,12 @@ new Element().append($('connection')); const footer = new Element(), actions = n
 const requests = [];
 const uploads = [];
 let pendingApprovals = [];
+const nextQueued = [];
+const streamDone = () => {
+  let consumed = false;
+  const wire = new TextEncoder().encode('data: {"type": "done"}\n\n');
+  return {ok: true, body: {getReader: () => ({read: async () => consumed ? {done: true} : (consumed = true, {done: false, value: wire}), releaseLock() {}})}};
+};
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
@@ -80,6 +86,9 @@ const sandbox = {
          capabilities: ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']},
       ]},
     };
+    if (path.startsWith('/chats/send-chat/messages') && options.method === 'POST') return streamDone();
+    if (path === '/chats/send-chat/queue/next') return {ok: true, json: async () => nextQueued.shift() || {message: null}};
+    if (path === '/chats/send-chat') return {ok: true, json: async () => ({id: 'send-chat', cwd: '/project', messages: []})};
     if (path.endsWith('/compact')) return {ok: true, json: async () => ({type: 'compact_skipped', message: 'Nothing to compact'})};
     if (path.endsWith('/fork')) return {ok: true, json: async () => ({id: 'blocked'})};
     if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
@@ -93,7 +102,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -705,3 +714,33 @@ assert.equal($('prompt').value, '', 'an unsent incognito draft must not enter a 
 assert.equal($('incognito-note').hidden, true);
 assert.ok(requests.slice(beforeClose).filter(r => r.path === `/chats/${closedId}`).length >= 2);
 console.log('Incognito entry, marking, upload prevention, fork refusal and cleanup passed');
+
+// Sending a message: earlier checks only sent while busy (the queue path) or a
+// slash command, so a broken sendText went unnoticed. Errors inside it become a
+// toast, so this asserts the request itself went out.
+{
+  state.connected = true; state.busy = false; state.chat = {id: 'send-chat'};
+  sandbox.test.pendingAttachments.splice(0);
+  $('prompt').value = 'hello there';
+  const before = requests.length;
+  await sandbox.test.send({preventDefault() {}});
+  const sent = requests.slice(before).filter(r => r.path === '/chats/send-chat/messages');
+  assert.equal(sent.length, 1, 'a typed message reaches the server');
+  assert.equal(sent[0].body.text, 'hello there');
+  assert.equal('queued' in sent[0].body, false);
+  assert.equal(state.busy, false, 'the turn finished cleanly');
+
+  // A message a paired phone queued is sent exactly as queued, bound to its row,
+  // without this window's pending attachments or command parsing.
+  state.chat = {id: 'send-chat'};
+  sandbox.test.pendingAttachments.push({id: 'local-file', chat_id: 'send-chat', name: 'mine.txt', size: 1, pages: null});
+  nextQueued.push({id: 41, text: '/model other', remote: true});
+  const beforeQueued = requests.length;
+  await sandbox.test.runNextQueued();
+  const queued = requests.slice(beforeQueued).filter(r => r.path === '/chats/send-chat/messages');
+  assert.equal(queued.length, 1, 'a remote queued row is sent, not dispatched as a slash command');
+  assert.deepEqual([queued[0].body.text, queued[0].body.queued, queued[0].body.attachments], ['/model other', 41, []]);
+  assert.equal(sandbox.test.pendingAttachments.length, 1, 'local attachments stay for the user');
+  sandbox.test.pendingAttachments.splice(0);
+  console.log('Sending a message and a phone-queued message passed');
+}
