@@ -869,7 +869,11 @@
     const blocks = [], pendingTools = [], approvals = new Map();
     let plan = null;
     const activityText = el('span', 'shimmer', 'Thinking…');
-    const activity = el('div', 'activity'); activity.append(el('span', 'spinner'), activityText); body.append(activity);
+    // The Kova mark with a small bolt that strikes now and then: still "working", never a loud spinner.
+    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo');
+    activityMark.setAttribute('aria-hidden', 'true'); activityLogo.src = '/app/assets/icon.svg'; activityLogo.alt = '';
+    activityMark.append(activityLogo, el('span', 'thinking-bolt'));
+    const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
     function paint() {
       scheduled = false;
       for (const block of blocks) {

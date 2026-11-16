@@ -388,6 +388,9 @@ const article = new Element('article'), liveBody = new Element(); article.append
 const live = turnView(liveBody);
 const activityRow = byClass(liveBody, 'activity')[0];
 assert.equal(Boolean(activityRow.hidden), false, 'a fresh turn shows that Kova is thinking');
+assert.equal(byClass(activityRow, 'thinking-mark').length, 1, 'the thinking row carries the Kova mark');
+assert.equal(byClass(activityRow, 'thinking-bolt').length, 1, 'and the bolt that belongs to it');
+assert.ok(activityRow.textContent.includes('Thinking'), 'the state is written, not only animated');
 live.accept({type: 'reasoning', text: 'Let me think.'});
 assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
 assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
