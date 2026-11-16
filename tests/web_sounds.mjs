@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 let focused = false;
+const made = [];
 let contexts = 0;
 const oscillators = [];
 const gains = [];
@@ -14,7 +15,7 @@ class Param {
   exponentialRampToValueAtTime(value, at) { this.values.push([value, at]); }
 }
 class Context {
-  constructor() { contexts++; this.currentTime = 1; this.state = 'running'; this.destination = {}; this.resumed = 0; }
+  constructor() { contexts++; made.push(this); this.currentTime = 1; this.state = 'running'; this.destination = {}; this.resumed = 0; }
   createOscillator() {
     const node = {type: '', frequency: new Param(), started: null, stopped: null,
                   connect: target => target, start(at) { this.started = at; }, stop(at) { this.stopped = at; }};
@@ -138,6 +139,21 @@ range.value = '80'; range.oninput();
 assert.equal(read().volume, 0.8);
 toggles[2].checked = false; toggles[2].onchange();
 assert.equal(read().reminder, false);
+
+// A browser keeps the context suspended until the page has seen a click or key press.
+// Turning sounds on is such a click, so it must resume the context, and a cue before any
+// activity must say it did not play instead of pretending.
+const live = made[made.length - 1];
+live.state = 'suspended';
+const resumedBefore = live.resumed;
+on.checked = false; on.onchange();
+on.checked = true; on.onchange();
+assert.ok(live.resumed > resumedBefore, 'enabling the switch resumes a suspended context');
+sandbox.navigator = {userActivation: {hasBeenActive: false}};
+assert.equal(sounds.play('needs'), false, 'a cue before any user activity reports that it did not play');
+sandbox.navigator = {userActivation: {hasBeenActive: true}};
+assert.equal(sounds.play('needs'), true, 'after user activity the cue plays');
+live.state = 'running';
 
 // The module ships no audio and no hard-coded colours.
 const source = readFileSync(new URL('../src/kova/web_assets/sounds.js', import.meta.url), 'utf8');

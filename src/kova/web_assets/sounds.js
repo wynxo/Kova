@@ -66,7 +66,11 @@
     if (name === 'done' && document.hasFocus?.()) return false;
     const ctx = audio();
     if (!ctx) return false;
-    if (ctx.state === 'suspended') ctx.resume?.()?.catch?.(() => {});
+    if (ctx.state === 'suspended') {
+      ctx.resume?.()?.catch?.(() => {});
+      // Before any click or key press a browser keeps the context suspended; say so instead of pretending.
+      if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) return false;
+    }
     try {
       for (const cue of CUES[name]) tone(ctx, cue, PEAK * settings.volume);
     } catch (_) { return false; }
@@ -121,7 +125,12 @@
       range.disabled = !settings.enabled;
       level.textContent = `${Math.round(settings.volume * 100)}%`;
     }
-    on.children[0].onchange = () => { save({enabled: on.children[0].checked}); render(); };
+    on.children[0].onchange = () => {
+      save({enabled: on.children[0].checked});
+      // Turning sounds on is a user gesture: create and resume the context now, so a later cue can play.
+      if (on.children[0].checked) audio()?.resume?.()?.catch?.(() => {});
+      render();
+    };
     range.oninput = () => { save({volume: Number(range.value) / 100}); render(); };
     for (const name of EVENTS) {
       toggles[name].children[0].onchange = () => { save({[name]: toggles[name].children[0].checked}); render(); };
