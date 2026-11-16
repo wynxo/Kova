@@ -101,3 +101,43 @@ def test_status_words_are_not_filled_pills() -> None:
     for selector in (".status-badge {", ".risk-badge {"):
         rule = css[css.index(selector):css.index("}", css.index(selector))]
         assert "background" not in rule and "uppercase" not in rule, selector
+
+
+# ------------------------------------------------------------ sidebar, composer
+
+
+def test_sidebar_and_composer_type_comes_from_the_scale() -> None:
+    css = APP_CSS.read_text(encoding="utf-8")
+    for start, end in (("/* ---------- Sidebar", "/* ---------- Main column"),
+                       ("/* ---------- Composer", "/* ---------- Popover")):
+        raw = re.findall(r"font(?:-size)?:[^;}]*?\b\d+(?:\.\d+)?px", _section(css, start, end))
+        assert raw == [], f"raw pixel font sizes after {start!r}: {raw}"
+
+
+def test_no_emoji_or_text_glyphs_standing_in_for_icons() -> None:
+    _, html = _shell()
+    for button in ("attach", "commands"):
+        tag = re.search(rf'<button id="{button}"[^>]*>(.*?)</button>', html).group(1)
+        assert 'class="icon i-' in tag, f"#{button} should use an icon from the set"
+    assert "📎" not in html
+
+
+def test_every_sidebar_nav_row_has_an_icon() -> None:
+    """Rows without an icon break the column the others line up on."""
+    _, html = _shell()
+    rows = re.findall(r'<(?:button|summary)[^>]*class="nav-row"[^>]*>(.*?)</(?:button|summary)>', html)
+    sidebar = [row for row in rows if "Compact now" not in row]
+    assert sidebar, "expected sidebar nav rows"
+    for row in sidebar:
+        assert 'class="icon i-' in row, f"nav row without an icon: {row!r}"
+
+
+def test_idle_composer_has_no_accent() -> None:
+    """Send, toggles and focus are monochrome; the accent is reserved for activity."""
+    css = APP_CSS.read_text(encoding="utf-8")
+    composer = _section(css, "/* ---------- Composer", "/* ---------- Popover")
+    assert "var(--accent" not in composer
+    assert "infinite" not in composer, "no looping animation on composer controls"
+    # Only the floating jump-to-latest button may cast a shadow.
+    without_jump = re.sub(r"\.jump \{.*?\}", "", composer, flags=re.S)
+    assert "var(--shadow" not in without_jump, "the composer sits in the layout; it needs no shadow"
