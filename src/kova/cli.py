@@ -2112,6 +2112,10 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("persona.tone", "persona_tone", "choice", tuple(TONES)),
         _ConfigField("port", "port", "int", minimum=1, maximum=65535),
         _ConfigField("privacy.local_only", "privacy_local_only", "bool"),
+        _ConfigField("voice.stt", "voice_stt", "choice", ("local", "browser")),
+        _ConfigField("voice.tts", "voice_tts", "choice", ("espeak-ng", "off")),
+        _ConfigField("voice.language", "voice_language", "str"),
+        _ConfigField("voice.max_seconds", "voice_max_seconds", "int", minimum=1),
         _ConfigField("privacy.secrets", "privacy_secrets", "choice", ("off", "redact", "block")),
         _ConfigField("tui.theme", "tui_theme", "choice", ("dark", "light")),
     )
@@ -2197,6 +2201,12 @@ def _parse_config_value(field: _ConfigField, raw: str, cfg) -> object:
                 raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must use https.')
             return text
         return str(_config_path_value(key, text))
+    if field.kind == "str":
+        if not text:
+            return None
+        if "\0" in text:
+            raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must not contain a null.')
+        return text
     if field.kind == "persona":
         try:
             return Persona(text).name
