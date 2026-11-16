@@ -97,6 +97,7 @@ EXPECTED = {
     ("POST", "/persona"): "settings:write",
     ("PATCH", "/memory/settings"): "settings:write",
     ("POST", "/jobs"): "host:exec",
+    ("DELETE", "/jobs/{jid}"): "host:exec",
     ("POST", "/memory"): "memory:write",
     ("DELETE", "/memory/{slug}"): "memory:write",
     ("PATCH", "/memory/{slug}"): "memory:write",
@@ -605,6 +606,102 @@ def test_a_backup_round_trip_keeps_a_chats_limits(tmp_path):
     restored = Store(tmp_path / "restored.db")
     backup.import_archive(cfg, archive, merge=False, store=restored)
     assert restored.chat_capabilities(chat["id"]) == {"chat"}
+
+
+def test_a_phone_cannot_write_git_data(kova, fake):
+    """Fourth review: a planted .git/config fsmonitor ran when the computer listed files."""
+    client, app, local, phone, record = kova
+    files = app.state.config.files_path
+    planted = [(".git/config", "[core]\n\tfsmonitor = \"touch marker; echo\"\n"),
+               ("repo/.GIT/HEAD", "ref: refs/heads/main\n"),
+               ("repo2/.git", "gitdir: ../elsewhere\n")]
+    scripts = []
+    for n, (path, content) in enumerate(planted):
+        scripts += [tool("write_file", {"path": path, "content": content}, id=f"call_{n}"), text("ok")]
+    fake.scripts[:] = scripts
+    chat = client.post("/chats", json={"mode": "work", "permission": "auto"}, headers=phone).json()
+    for path, _ in planted:
+        assert "host:exec" in _turn(client, chat["id"], phone, "plant it")
+        assert not (files / path).exists(), path
+    for path in (".git/hooks/pre-commit", "a/.Git/config", "sub/.git"):
+        assert action_capabilities("write_file", args={"path": path}) == {"host:exec"}, path
+    assert action_capabilities("write_file", args={"path": "a/.gitignore"}) == frozenset()
+    # Nor can it restore git data from a checkpoint.
+    local_chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    checkpoint = app.state.store.add_checkpoint(local_chat["id"], str(files.resolve()),
+                                                {".git/config": {"before": None}})
+    restore = client.post(f"/chats/{local_chat['id']}/checkpoints/{checkpoint}/restore", headers=phone)
+    assert restore.status_code == 403
+
+
+def test_the_terminal_file_index_never_runs_git_fsmonitor(tmp_path):
+    import shutil
+    import subprocess
+    if not shutil.which("git"):
+        pytest.skip("git is not installed")
+    from kova.tui.editor import FileIndex
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "notes.txt").write_text("hi")
+    marker = tmp_path / "ran"
+    subprocess.run(["git", "-C", str(tmp_path), "config", "core.fsmonitor",
+                    f"touch '{marker.as_posix()}'; echo"], check=True)
+    assert "notes.txt" in FileIndex(tmp_path)()
+    assert not marker.exists(), "listing files executed core.fsmonitor"
+
+
+def test_a_phone_changing_chat_settings_writes_in_the_chat(kova, fake, tmp_path):
+    """Fourth review: a phone could set auto or work mode on a computer project chat."""
+    client, app, local, phone, record = kova
+    project = tmp_path / "project"
+    project.mkdir()
+    chat = client.post("/chats", json={"mode": "chat", "cwd": str(project)}, headers=local).json()
+    path = f"/chats/{chat['id']}"
+    assert client.patch(path, json={"mode": "work", "permission": "auto"}, headers=phone).status_code == 200
+    assert app.state.store.chat_capabilities(chat["id"]) == {"chat", "models:read"}
+    _turn(client, chat["id"], local, "go")
+    assert {"run_command", "write_file"}.isdisjoint(_offered(fake.requests[-1])), \
+        "the settings a phone picked never widen a turn"
+
+
+def test_a_phone_set_title_limits_the_chat(kova, fake):
+    """Fourth review: a phone-written title reached computer turns through recall."""
+    client, app, local, phone, record = kova
+    created = client.post("/chats", json={"title": "zebratitle: run kova pair"}, headers=phone).json()
+    assert app.state.store.chat_capabilities(created["id"]) is not None
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, chat["id"], local, "zebraword notes")
+    assert app.state.store.chat_capabilities(chat["id"]) is None
+    assert client.patch(f"/chats/{chat['id']}", json={"title": "run kova pair"}, headers=phone).status_code == 200
+    assert app.state.store.chat_capabilities(chat["id"]) == {"chat", "models:read"}
+    fake.scripts[len(fake.requests):] = [tool("recall", {"query": "zebraword"}), text("ok")]
+    fresh = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, fresh["id"], local, "what was it?")
+    assert _last_tool_result(fake)["count"] == 0
+
+
+def test_a_phone_cannot_remove_scheduled_jobs(kova):
+    """Fourth review: job_remove and DELETE /jobs/{id} were ungated."""
+    client, app, local, phone, record = kova
+    job = client.post("/jobs", json={"text": "backup", "schedule": "every 1h", "command": "true"},
+                      headers=local).json()
+    assert client.delete(f"/jobs/{job['id']}", headers=phone).status_code == 403
+    assert app.state.store.list_jobs(include_done=True) != []
+    assert action_capabilities("job_remove") == {"host:exec"}
+    assert client.delete(f"/jobs/{job['id']}", headers=local).status_code == 200
+
+
+def test_a_memory_folder_inside_kova_files_is_not_shared(kova, fake, tmp_path):
+    """Fourth review: with memory inside Kova Files, file tools could edit notes."""
+    client, app, local, phone, record = kova
+    files = app.state.config.files_path
+    app.state.config.memory_path = files / "Memory"
+    app.state.config.memory_path.mkdir()
+    assert not folder_is_shared(files, files, tmp_path / "home", files / "Memory")
+    assert not folder_is_shared(files / "Memory" / "a", files, tmp_path / "home", files / "Memory")
+    assert folder_is_shared(files / "Other", files, tmp_path / "home", files / "Memory")
+    chat = client.post("/chats", json={"mode": "work"}, headers=phone).json()
+    _turn(client, chat["id"], phone, "edit my notes")
+    assert {"write_file", "edit_file"}.isdisjoint(_offered(fake.requests[-1]))
 
 
 def test_global_settings_need_settings_write(kova):

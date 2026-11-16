@@ -49,7 +49,7 @@ $ kova devices allow 3f9a1c2e models:write
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
 | `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/… |
 | `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
-| `host:exec` | no | run commands, schedule jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, plus the agent rules below |
+| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, DELETE /jobs/…, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
 command to run. Some things no capability unlocks, because they choose programs
@@ -71,7 +71,9 @@ same thing for the phone, so the limits follow the phone into the agent:
   tools are not offered at all, so no permission rule or approval can bring them
   back.
 - **Chat settings:** without `host:exec` a phone cannot choose Full access or a
-  working folder outside Kova Files, when creating or changing a chat.
+  working folder outside Kova Files, when creating or changing a chat. Any
+  title, mode or permission a phone sets counts as writing in that chat, so the
+  chat keeps the phone's limits.
 - **A chat a phone wrote in keeps that phone's limits.** The model reads the
   whole history, so once a phone has sent a message, queued or steered text,
   uploaded or shared a file, or answered a question in a chat, every later turn
@@ -91,9 +93,14 @@ same thing for the phone, so the limits follow the phone into the agent:
   phone's limits. The terminal and web apps never read it as local input: no
   `!` shell command, slash command, `#` memory note, `@file` expansion or
   attachment is applied to it.
-- **Project instructions:** `KOVA.md` and `AGENTS.md` are read into the system
-  prompt of every chat working in or under their folder, so writing or
-  restoring one (any letter case) needs `host:exec`, even inside Kova Files.
+- **Project instructions and git data:** `KOVA.md` and `AGENTS.md` are read
+  into the system prompt of every chat working in or under their folder, and
+  anything under `.git` (or a `.git` gitdir file) can make git run a program,
+  for example through `core.fsmonitor`. Writing or restoring either (any letter
+  case, also through a link) needs `host:exec`, even inside Kova Files. The
+  terminal app also lists files with `core.fsmonitor` turned off.
+- **The memory folder** is never a shared folder: if it sits inside Kova Files,
+  file tools there need `host:exec`, like memory writes need `memory:write`.
 - **Recall:** searching past chats never returns a chat a phone wrote in to a
   turn that can do more than that phone.
 - **Backups** keep each chat's limits; a restored chat stays limited.

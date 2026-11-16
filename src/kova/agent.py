@@ -378,7 +378,7 @@ class Agent:
         def needs(name: str, tool, args: dict | None = None) -> frozenset[str]:
             return action_capabilities(name, external=tool.external, cwd=cwd,
                                        files_path=self.config.files_path, home=self.config.home,
-                                       args=args)
+                                       args=args, memory=self.config.memory_path)
 
         if capabilities is not None:
             tools = {name: tool for name, tool in tools.items() if needs(name, tool) <= capabilities}

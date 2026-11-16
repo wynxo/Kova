@@ -535,7 +535,7 @@ def create_app(
         if allowed is None or "host:exec" in allowed:
             return
         if permission == "full" or (cwd is not None and not pairing.folder_is_shared(
-                cwd, config.files_path, config.home)):
+                cwd, config.files_path, config.home, config.memory_path)):
             raise HTTPException(403, "This phone is not allowed to choose Full access or a working "
                                      "folder outside Kova Files. Do this on your computer.")
 
@@ -637,7 +637,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
         cwd = working_folder(body.cwd) if body and body.cwd is not None else None
         limit_chat_settings(request, body.permission if body else None, cwd)
-        return app.state.store.create_chat(
+        chat = app.state.store.create_chat(
             body.title if body else None,
             ephemeral=bool(body and body.ephemeral),
             mode=mode or DEFAULT_MODE,
@@ -645,6 +645,9 @@ def create_app(
             permission=body.permission if body and body.permission else "manual",
             cwd=cwd if cwd is not None else str(config.files_path.resolve()),
         )
+        # A phone chose its title and settings: the chat keeps that phone's limits.
+        wrote_in(chat["id"], request)
+        return chat
 
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
@@ -696,6 +699,9 @@ def create_app(
             raise HTTPException(status_code=404, detail="chat not found")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
+        # A phone's title, mode or permission is the phone writing in the chat, so
+        # it keeps that phone's limits; no setting a phone picks can widen a turn.
+        wrote_in(chat_id, request)
         app.state.store.update_chat(chat_id, **changes)
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
@@ -1068,7 +1074,8 @@ def create_app(
         row = checkpoint_or_404(chat_id, checkpoint_id)
         allowed = pairing.request_capabilities(request)
         if allowed is not None and "host:exec" not in allowed and \
-                not pairing.folder_is_shared(row["root"], config.files_path, config.home):
+                not pairing.folder_is_shared(row["root"], config.files_path, config.home,
+                                             config.memory_path):
             raise HTTPException(403, "This phone may restore files only inside Kova Files. "
                                      "Restore this on your computer.")
         if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
@@ -1076,8 +1083,8 @@ def create_app(
         rows = await asyncio.to_thread(app.state.store.checkpoints_from, chat_id, checkpoint_id)
         plan = checkpoints.revert_plan(rows, checkpoint_id)
         if allowed is not None and "host:exec" not in allowed and \
-                any(pairing.instruction_file(path) for path, _ in plan):
-            raise HTTPException(403, "This phone may not restore KOVA.md or AGENTS.md. "
+                any(pairing.protected_path(path) for path, _ in plan):
+            raise HTTPException(403, "This phone may not restore KOVA.md, AGENTS.md or git data. "
                                      "Restore this on your computer.")
         result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
                                          app.state.agent.blobs)
@@ -1246,7 +1253,7 @@ def create_app(
                                       prompt=prompt or None, idle_only=body.idle_only)
         return next(job for job in app.state.store.list_jobs(include_done=True) if job["id"] == jid)
 
-    @api.delete("/jobs/{jid}")
+    @api.delete("/jobs/{jid}", dependencies=host_exec)
     async def job_delete(jid: int) -> dict:
         if not app.state.store.delete_job(jid):
             raise HTTPException(status_code=404, detail="job not found")

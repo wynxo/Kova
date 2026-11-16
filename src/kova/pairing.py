@@ -415,17 +415,27 @@ def request_capabilities(request: Request) -> frozenset[str] | None:
     return frozenset(device_capabilities(device)) if device is not None else frozenset()
 
 
-def folder_is_shared(folder, files_path, home) -> bool:
-    """A working folder a phone without ``host:exec`` may use: inside Kova Files, clear of the Kova home."""
+def folder_is_shared(folder, files_path, home, memory=None) -> bool:
+    """A working folder a phone without ``host:exec`` may use.
+
+    Inside Kova Files, and clear of the Kova home and of the memory folder
+    (notes there reach every chat), whichever way round they nest.
+    """
     folder = Path(folder).expanduser().resolve()
     files = Path(files_path).expanduser().resolve()
-    home = Path(home).expanduser().resolve()
-    return (folder.is_relative_to(files) and not folder.is_relative_to(home)
-            and not home.is_relative_to(folder))
+    if not folder.is_relative_to(files):
+        return False
+    for private in (home, memory):
+        if private is None:
+            continue
+        private = Path(private).expanduser().resolve()
+        if folder.is_relative_to(private) or private.is_relative_to(folder):
+            return False
+    return True
 
 
-#: Tools that start programs on this computer or schedule them for later.
-COMMAND_TOOLS = frozenset({"run_command", "job_add"})
+#: Tools that start programs on this computer, or schedule or unschedule them.
+COMMAND_TOOLS = frozenset({"run_command", "job_add", "job_remove"})
 #: Tools that change the installed skills.
 EXTENSION_TOOLS = frozenset({"skill_write", "skill_remove"})
 #: Tools that change memory notes, which every later turn reads.
@@ -446,6 +456,17 @@ def within(limit: frozenset[str] | None, allowed: frozenset[str] | None) -> bool
     return allowed is None or (limit is not None and limit <= allowed)
 
 
+def protected_path(path) -> bool:
+    """A path a phone without ``host:exec`` may never write: project instructions or git data.
+
+    ``KOVA.md``/``AGENTS.md`` are read into every chat's system prompt; anything
+    under a ``.git`` folder (or a ``.git`` gitdir file) can make git run a
+    program, through ``core.fsmonitor`` or hooks, the next time the computer
+    lists files there. Case-insensitive, since some file systems are.
+    """
+    return instruction_file(path) or any(part.casefold() == ".git" for part in Path(str(path)).parts)
+
+
 def instruction_file(path) -> bool:
     """Whether ``path`` is named like a project-instruction file (KOVA.md, AGENTS.md).
 
@@ -458,18 +479,19 @@ def instruction_file(path) -> bool:
 
 
 def action_capabilities(name: str, *, external: bool = False, cwd=None, files_path=None,
-                        home=None, args: dict | None = None) -> frozenset[str]:
+                        home=None, args: dict | None = None, memory=None) -> frozenset[str]:
     """The capabilities an agent tool call needs beyond ``chat``.
 
     Commands, scheduled jobs and tools Kova cannot see into (MCP) can reach
     anything on the computer, so they need ``host:exec``; so do file tools whose
     working folder is outside Kova Files or holds the Kova home (config, tokens,
     devices.json). With ``args``, writing a project-instruction file (KOVA.md,
-    AGENTS.md) also needs ``host:exec``: a chat on the computer would read it as
-    guidance with every tool available.
+    AGENTS.md) or anything under ``.git`` also needs ``host:exec``: a chat on
+    the computer would read the first as guidance with every tool available,
+    and git would run what the second configures (``protected_path``).
     """
     from kova.tools.code_files import FILE_TOOLS, WRITE_TOOLS
-    if name in WRITE_TOOLS and isinstance(args, dict) and _writes_instructions(args.get("path"), cwd):
+    if name in WRITE_TOOLS and isinstance(args, dict) and _writes_protected(args.get("path"), cwd):
         return frozenset({"host:exec"})
     if name in COMMAND_TOOLS or external or "__" in name:
         return frozenset({"host:exec"})
@@ -478,21 +500,21 @@ def action_capabilities(name: str, *, external: bool = False, cwd=None, files_pa
     if name in MEMORY_TOOLS:
         return frozenset({"memory:write"})
     if name in FILE_TOOLS and cwd is not None and files_path is not None and home is not None \
-            and not folder_is_shared(cwd, files_path, home):
+            and not folder_is_shared(cwd, files_path, home, memory):
         return frozenset({"host:exec"})
     return frozenset()
 
 
-def _writes_instructions(path, cwd) -> bool:
+def _writes_protected(path, cwd) -> bool:
     if not isinstance(path, str):
         return False
-    if instruction_file(path):
+    if protected_path(path):
         return True
     try:  # a link named otherwise that points at one
         target = Path(path).expanduser()
         if not target.is_absolute() and cwd is not None:
             target = Path(cwd) / target
-        return instruction_file(target.resolve())
+        return protected_path(target.resolve())
     except (OSError, RuntimeError, ValueError):
         return True  # cannot tell: fail closed
 
