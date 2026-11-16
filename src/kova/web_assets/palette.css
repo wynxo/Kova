@@ -10,46 +10,46 @@
 .palette-launch {
   display:flex;
   align-items:center;
-  gap:var(--space-2, 8px);
+  gap:var(--space-2);
   width:100%;
   min-height:34px;
-  margin-top:var(--space-2, 8px);
-  padding:0 var(--space-3, 12px);
-  border:1px solid var(--border-subtle, var(--border));
-  border-radius:var(--radius-md, var(--r-md));
-  background:var(--bg-surface, var(--surface));
-  color:var(--fg-muted, var(--text-2));
-  font-size:var(--type-size-body, 14px);
+  margin-top:var(--space-2);
+  padding:0 var(--space-3);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  background:var(--bg-surface);
+  color:var(--fg-muted);
+  font-size:var(--type-size-body);
   text-align:left;
-  transition:color var(--motion-fast, var(--fast)), border-color var(--motion-fast, var(--fast));
+  transition:color var(--motion-fast), border-color var(--motion-fast);
 }
 .palette-launch > span:nth-child(2) { flex:1; min-width:0; }
 .palette-launch .icon { width:15px; height:15px; }
 .palette-launch:hover:not(:disabled) {
   border-color:var(--border-strong);
-  color:var(--fg-default, var(--text));
+  color:var(--fg-default);
 }
 .palette-launch:disabled { opacity:.45; cursor:not-allowed; }
 .palette-launch kbd { margin-left:auto; }
 
 dialog.palette {
-  width:min(560px, calc(100vw - var(--space-6, 24px)));
-  max-width:calc(100vw - var(--space-6, 24px));
-  max-height:min(560px, calc(100dvh - var(--space-8, 48px)));
+  width:min(560px, calc(100vw - var(--space-6)));
+  max-width:calc(100vw - var(--space-6));
+  max-height:min(560px, calc(100dvh - var(--space-8)));
   padding:0;
   overflow:hidden;
   border:1px solid var(--border-strong);
-  border-radius:var(--radius-lg, var(--r-xl));
-  background:var(--bg-surface, var(--surface));
-  color:var(--fg-default, var(--text));
-  box-shadow:var(--shadow-lg, none);
+  border-radius:var(--radius-lg);
+  background:var(--bg-surface);
+  color:var(--fg-default);
+  box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
 }
 dialog.palette[open] {
   display:flex;
   flex-direction:column;
-  animation:palette-in var(--motion-base, var(--slow)) var(--motion-ease-standard, var(--ease));
+  animation:palette-in var(--motion-base) var(--motion-ease-standard);
 }
-dialog.palette::backdrop { background:var(--bg-overlay, var(--overlay)); }
+dialog.palette::backdrop { background:var(--bg-overlay); }
 @keyframes palette-in {
   from { opacity:0; transform:translateY(-6px) scale(.99); }
 }
@@ -74,16 +74,16 @@ dialog.palette::backdrop { background:var(--bg-overlay, var(--overlay)); }
 .palette-field {
   display:flex;
   align-items:center;
-  gap:var(--space-3, 12px);
-  padding:var(--space-4, 16px);
-  border-bottom:1px solid var(--border-subtle, var(--border));
-  transition:border-color var(--motion-fast, var(--fast)), box-shadow var(--motion-fast, var(--fast));
+  gap:var(--space-3);
+  padding:var(--space-4);
+  border-bottom:1px solid var(--border-subtle);
+  transition:border-color var(--motion-fast), box-shadow var(--motion-fast);
 }
 .palette-field:focus-within {
-  border-bottom-color:var(--accent-default, var(--accent));
-  box-shadow:inset 0 -1px 0 var(--accent-default, var(--accent));
+  border-bottom-color:var(--accent-default);
+  box-shadow:inset 0 -1px 0 var(--accent-default);
 }
-.palette-field .icon { width:16px; height:16px; color:var(--fg-muted, var(--text-2)); }
+.palette-field .icon { width:16px; height:16px; color:var(--fg-muted); }
 .palette-input,
 dialog.palette .palette-input {
   flex:1;
@@ -94,36 +94,36 @@ dialog.palette .palette-input {
   border:0;
   border-radius:0;
   background:none;
-  color:var(--fg-default, var(--text));
-  font-size:var(--type-size-body-comfortable, 16px);
-  line-height:var(--type-leading-tight, 1.3);
+  color:var(--fg-default);
+  font-size:var(--type-size-body-comfortable);
+  line-height:var(--type-leading-tight);
 }
 dialog.palette .palette-input:focus-visible {
-  outline:2px solid var(--accent-default, var(--accent));
+  outline:2px solid var(--accent-default);
   outline-offset:2px;
 }
-.palette-input::placeholder { color:var(--fg-faint, var(--text-3)); opacity:1; }
+.palette-input::placeholder { color:var(--fg-faint); opacity:1; }
 .palette-escape {
   flex:none;
-  padding:var(--space-1, 4px) var(--space-2, 8px);
-  border:1px solid var(--border-subtle, var(--border));
-  border-radius:var(--radius-sm, var(--r-sm));
-  color:var(--fg-faint, var(--text-3));
-  font-size:var(--type-size-label, 12px);
+  padding:var(--space-1) var(--space-2);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  color:var(--fg-faint);
+  font-size:var(--type-size-label);
 }
 
 .palette-list {
   flex:1 1 auto;
   min-height:0;
-  padding:var(--space-2, 8px) 0;
+  padding:var(--space-2) 0;
   overflow-y:auto;
   overscroll-behavior:contain;
 }
-.palette-group + .palette-group { margin-top:var(--space-2, 8px); }
+.palette-group + .palette-group { margin-top:var(--space-2); }
 .palette-group-label {
-  padding:var(--space-2, 8px) var(--space-4, 16px) var(--space-1, 4px);
-  color:var(--fg-faint, var(--text-3));
-  font-size:var(--type-size-label, 12px);
+  padding:var(--space-2) var(--space-4) var(--space-1);
+  color:var(--fg-faint);
+  font-size:var(--type-size-label);
   font-weight:600;
   letter-spacing:.04em;
   text-transform:uppercase;
@@ -131,60 +131,60 @@ dialog.palette .palette-input:focus-visible {
 .palette-option {
   display:flex;
   align-items:center;
-  gap:var(--space-3, 12px);
-  padding:var(--space-2, 8px) var(--space-4, 16px);
+  gap:var(--space-3);
+  padding:var(--space-2) var(--space-4);
   border-left:2px solid transparent;
   cursor:pointer;
-  transition:background var(--motion-fast, var(--fast)), border-color var(--motion-fast, var(--fast));
+  transition:background var(--motion-fast), border-color var(--motion-fast);
 }
 .palette-option[aria-selected="true"] {
   background:var(--accent-soft);
-  border-left-color:var(--accent-default, var(--accent));
+  border-left-color:var(--accent-default);
 }
-.palette-option-text { display:grid; flex:1; min-width:0; gap:var(--space-0-5, 2px); }
+.palette-option-text { display:grid; flex:1; min-width:0; gap:var(--space-0-5); }
 .palette-option-title {
   overflow:hidden;
-  color:var(--fg-default, var(--text));
-  font-size:var(--type-size-body, 14px);
+  color:var(--fg-default);
+  font-size:var(--type-size-body);
   font-weight:500;
   text-overflow:ellipsis;
   white-space:nowrap;
 }
 .palette-option-hint {
   overflow:hidden;
-  color:var(--fg-muted, var(--text-2));
-  font-size:var(--type-size-label, 12px);
+  color:var(--fg-muted);
+  font-size:var(--type-size-label);
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-.palette-option-keys { display:flex; flex:none; gap:var(--space-1, 4px); }
+.palette-option-keys { display:flex; flex:none; gap:var(--space-1); }
 .palette-option-keys kbd {
-  padding:var(--space-1, 2px) var(--space-1, 5px);
-  border:1px solid var(--border-subtle, var(--border));
-  border-radius:var(--radius-sm, var(--r-sm));
-  color:var(--fg-faint, var(--text-3));
-  font-size:var(--type-size-label, 11px);
+  padding:var(--space-1) var(--space-1);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  color:var(--fg-faint);
+  font-size:var(--type-size-label);
 }
 .palette-empty {
-  padding:var(--space-5, 20px) var(--space-4, 16px);
-  color:var(--fg-muted, var(--text-2));
-  font-size:var(--type-size-body, 14px);
+  padding:var(--space-5) var(--space-4);
+  color:var(--fg-muted);
+  font-size:var(--type-size-body);
 }
 .palette-foot {
   display:flex;
   flex-wrap:wrap;
-  gap:var(--space-4, 16px);
-  padding:var(--space-2, 8px) var(--space-4, 16px);
-  border-top:1px solid var(--border-subtle, var(--border));
-  color:var(--fg-faint, var(--text-3));
-  font-size:var(--type-size-label, 12px);
+  gap:var(--space-4);
+  padding:var(--space-2) var(--space-4);
+  border-top:1px solid var(--border-subtle);
+  color:var(--fg-faint);
+  font-size:var(--type-size-label);
 }
-.palette-foot-key { display:inline-flex; align-items:center; gap:var(--space-1, 4px); }
+.palette-foot-key { display:inline-flex; align-items:center; gap:var(--space-1); }
 .palette-foot-key kbd {
-  padding:var(--space-0-5, 1px) var(--space-1, 4px);
-  border:1px solid var(--border-subtle, var(--border));
-  border-radius:var(--radius-sm, var(--r-sm));
-  font-size:var(--type-size-label, 11px);
+  padding:var(--space-0-5) var(--space-1);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  font-size:var(--type-size-label);
 }
 .palette-status {
   position:absolute;
