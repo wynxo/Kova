@@ -102,12 +102,37 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, history, togglePin};');
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
+
+// Pinned chats and date groups (#195). A pinned chat appears once, on top; the
+// rest fall into local-calendar buckets, and "Previous 7 days" is the seven
+// complete days before yesterday.
+const {groups, bucket} = sandbox.KovaChatList;
+const now = new Date(2026, 10, 16, 12, 0, 0).getTime();
+const at = days => new Date(2026, 10, 16 - days, 9, 0, 0).toISOString();
+const groupedChats = [
+  {id: 'pinned', title: 'Pinned', pinned: true, last_message: at(30)},
+  {id: 'today', title: 'Today', last_message: at(0)},
+  {id: 'yesterday', title: 'Yesterday', last_message: at(1)},
+  {id: 'week', title: 'Week', last_message: at(4)},
+  {id: 'edge', title: 'Edge', last_message: at(8)},
+  {id: 'older', title: 'Older', last_message: at(9)},
+];
+const grouped = groups(groupedChats, now);
+assert.equal(Array.from(grouped.map(group => group.label)).join('|'),
+             'Pinned|Today|Yesterday|Previous 7 days|Older');
+assert.equal(Array.from(grouped.map(group => group.chats.map(chat => chat.id).join(','))).join('|'),
+             'pinned|today|yesterday|week,edge|older');
+assert.equal(bucket({last_message: at(8)}, now), 'week');
+assert.equal(bucket({last_message: at(9)}, now), 'older');
+assert.equal(bucket({created: 'not a date'}, now), 'older');
+console.log('Pinned chats and local-calendar date groups passed');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 // The controls follow the declared contract: the provider's capabilities
 // intersected with the mode's, never a hardcoded mode name.
@@ -692,6 +717,32 @@ console.log('Managed engine desktop selection and explicit install passed');
 // discards it on navigation, reload, and a normal tab close.
 sandbox.fetch = oldFetch;
 state.busy = false; state.connected = true; state.chat = null; $('search').value = '';
+
+// The sidebar renders the groups and toggles a pin through the same PATCH as the
+// chat settings; a pin needs no confirmation and no other setting.
+state.chats = groupedChats;
+sandbox.test.history(state.chats);
+const groupLabels = () => walk($('chat-list'))
+  .filter(node => node.className === 'history-group').map(node => node.textContent);
+const rowFor = title => byClass($('chat-list'), 'history-row')
+  .find(row => walk(row).some(node => node.className === 'history-title' && node.textContent.includes(title)));
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+assert.ok(!walk(rowFor('Older')).some(node => node.className === 'icon i-pin'),
+          'an unpinned row has no pin marker');
+buttons(rowFor('Older')).find(button => button.textContent === 'Pin').onclick();
+await tick(); await tick();
+assert.deepEqual(requests.at(-1), {path: '/chats/older', body: {pinned: true}});
+assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, true);
+assert.ok(walk(rowFor('Older')).some(node => node.className === 'icon i-pin'),
+          'the pinned row shows its marker');
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days']);
+buttons(rowFor('Older')).find(button => button.textContent === 'Unpin').onclick();
+await tick(); await tick();
+assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+state.chats = [];
+console.log('Sidebar pin and unpin through the chat settings PATCH passed');
+
 await sandbox.test.newIncognito();
 assert.equal(requests.filter(r => r.path === '/chats' && r.body).at(-1).body.ephemeral, true);
 assert.equal(state.chat.ephemeral, true);
