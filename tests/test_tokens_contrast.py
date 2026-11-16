@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "scripts" / "build_tokens.py"
+INDEX = ROOT / "src" / "kova" / "web_assets" / "index.html"
 
 
 def _load_build():
@@ -100,6 +101,18 @@ def test_stylesheet_lands_where_the_web_app_serves_it() -> None:
     assert build.CSS_PATH.parts[-2:] == ("web_assets", "tokens.css")
     assert build.CSS_PATH.parts[-4:-1] == ("src", "kova", "web_assets")
     assert "src" in build.CSS_PATH.parts and "kova" in build.CSS_PATH.parts
+
+
+def test_stylesheet_is_linked_before_app_css() -> None:
+    """`app.css` still owns the shipped palette, so it has to win the cascade.
+
+    Two names (`--accent-soft`, `--border-strong`) are defined by both files with
+    different values. The app's declaration wins today because `app.css` is linked
+    second and, for the light theme, is more specific. Reordering these links would
+    silently repaint the UI, so the order is asserted instead of assumed.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    assert html.index("/app/assets/tokens.css") < html.index("/app/assets/app.css")
 
 
 def _approx(value: float | None, expected: float, abs_tol: float = 1e-6) -> bool:
