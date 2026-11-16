@@ -73,7 +73,8 @@ same thing for the phone, so the limits follow the phone into the agent:
 - **Chat settings:** without `host:exec` a phone cannot choose Full access or a
   working folder outside Kova Files, when creating or changing a chat. Any
   title, mode or permission a phone sets counts as writing in that chat, so the
-  chat keeps the phone's limits.
+  chat keeps the phone's limits. A colour or icon on its own is cosmetic — it
+  carries no text or file the model could read — so picking one limits nothing.
 - **A chat a phone wrote in keeps that phone's limits.** The model reads the
   whole history, so once a phone has sent a message, queued or steered text,
   uploaded or shared a file, or answered a question in a chat, every later turn
