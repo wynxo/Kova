@@ -139,11 +139,18 @@
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
   }
+  // A healthy link is the normal case and says nothing; the indicator only
+  // appears when something needs the user (offline, reconnecting, no model).
+  function connection(text, ok = false) {
+    const node = $('connection');
+    node.className = `connection${ok ? ' online' : ''}`;
+    node.lastElementChild.textContent = text;
+    node.hidden = ok;
+  }
   function disconnected(message) {
     state.connected = false; retry.hidden = false;
     state.events?.close();
-    $('connection').className = 'connection';
-    $('connection').lastElementChild.textContent = 'Disconnected';
+    connection('Disconnected');
     banner(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
       : 'Open kova-web on this computer to connect. No token or account needed.'));
     controls();
@@ -642,14 +649,13 @@
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
       const ready = status.model_ok && configured;
       const checked = checkedAgo(status.model_checked_at);
-      $('connection').className = `connection${ready ? ' online' : ''}`;
-      $('connection').lastElementChild.textContent = ready ? 'Model connected'
-        : configured ? (checked ? `Model offline (checked ${checked})` : 'Model offline') : 'Model not set up';
+      connection(ready ? 'Model connected'
+        : configured ? (checked ? `Model offline (checked ${checked})` : 'Model offline') : 'Model not set up', ready);
       banner(ready ? '' : configured ? `Your space is ready. Model offline${checked ? ` (checked ${checked})` : ''}: start your model server, or run kova setup, then try again.` : 'Your space is ready. Choose a model first: run kova setup, then reopen Kova.');
     } catch (_) {
       if (!state.connected) return;
       retry.hidden = false;
-      $('connection').className = 'connection'; $('connection').lastElementChild.textContent = 'Server offline';
+      connection('Server offline');
       banner('Cannot reach Kova. Open kova-web to restart the server, then reload this window.');
     }
   }
@@ -898,6 +904,7 @@
           const question = questionCard(event); approvals.set(event.id, question);
           body.insertBefore(question.card, activity);
           announce(`Kova asked a question: ${event.args.question}`);
+          window.KovaSounds?.play('needs');
           // A question with no options is answered by typing, so focus the field.
           focusCard(question.card, event.args.options?.length ? null : question.input);
         } else if (kind === 'question_resolved') {
@@ -907,6 +914,7 @@
           const approval = approvalCard(event); approvals.set(event.id, approval);
           body.insertBefore(approval.card, activity);
           announce(`Kova needs approval: ${describeApproval(event)}`);
+          window.KovaSounds?.play('needs');
           focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
@@ -958,6 +966,7 @@
           announce('Stopped.');
         } else if (kind === 'done') {
           announce('Reply finished.');
+          window.KovaSounds?.play('done');
           usage = event.usage || null;
           const budget = event.budget_warning;
           if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget');
@@ -1394,8 +1403,7 @@
   const STALE_MS = 45000;
   const live = {retry: 0, timer: null, seen: 0, pinged: false, lost: false};
   function reconnecting() {
-    $('connection').className = 'connection';
-    $('connection').lastElementChild.textContent = 'Reconnecting…';
+    connection('Reconnecting…');
     banner('Lost the live connection to Kova. Reconnecting… Reminders and chat updates resume when it is back.');
   }
   function connectEvents() {
@@ -1409,7 +1417,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
@@ -2208,9 +2216,7 @@
     launch.hidden = onPhone();
     launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); await render(); });
     if (onPhone()) {
-      // On the phone itself: say where the thinking happens, and make Disconnect mean unpair.
-      const note = document.querySelector('.local-note div');
-      if (note) { note.replaceChildren(el('strong', '', 'Connected over Wi-Fi'), el('small', '', 'Your computer does the thinking.')); }
+      // On the phone itself, Disconnect means unpair.
       $('disconnect').title = 'Unpair this phone'; $('disconnect').setAttribute('aria-label', 'Unpair this phone');
       const unpair = $('disconnect').onclick;
       $('disconnect').onclick = () => { if (window.confirm('Unpair this phone? You will need to scan a new code from your computer to come back.')) unpair(); };
