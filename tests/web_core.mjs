@@ -102,11 +102,12 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, history, togglePin};');
-vm.runInNewContext(
-  readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
-  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source,
-  sandbox);
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+// palette.js and diff.js are plain scripts, like app.js: load them first so
+// app.js builds its command registry and diff hooks against the same document.
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
@@ -490,6 +491,20 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+// Ctrl/Cmd+K opens the palette; new conversation moved to Ctrl/Cmd+Shift+K.
+state.connected = true; state.busy = false; $('mode').value = 'work'; controls();
+await sandbox.test.openPalette(); await tick(); await tick();
+assert.equal(sandbox.test.commandPalette.isOpen(), true, 'the palette opens');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New conversation'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Keyboard shortcuts'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Privacy'));
+sandbox.test.commandPalette.input.value = 'thm';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Switch to light theme'),
+          'the theme command is reachable by fuzzy query');
+sandbox.test.commandPalette.close();
+assert.equal(sandbox.test.commandPalette.isOpen(), false);
+console.log('Command palette entry, registry and fuzzy filtering passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey.
  let spaceFocused = 0, spacePrevented = 0;
  $('prompt').focus = () => { spaceFocused++; };
