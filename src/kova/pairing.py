@@ -25,8 +25,10 @@ How it fits together:
   docs/remote-access.md.
 * The same limits follow a phone into the agent: a turn it starts gets only the
   tools its capabilities cover (``action_capabilities``), it can approve only
-  actions it could have run itself, and text it steers or queues into a turn
-  never runs with more authority than the phone has.
+  actions it could have run itself, and nothing it writes (messages, queued or
+  steered text, approval answers, attachments) ever reaches a turn with more
+  authority than the phone has: a chat a phone wrote in keeps that phone's
+  limits for every later turn (``Store.limit_chat``).
 """
 
 from __future__ import annotations
@@ -61,12 +63,13 @@ LAST_SEEN_EVERY = 300.0    # write a device's last_seen at most this often
 #: What a paired device may do, by name. ``chat`` is the baseline every device
 #: has: chats, messages, approvals, memory, reminders and reading settings.
 CAPABILITIES = {
-    "chat": "chat, use tools, and manage chats, memory and reminders",
+    "chat": "chat, use everyday tools, and manage chats and reminders",
     "models:read": "see local models and how they fit this computer",
     "models:write": "download or delete local models",
     "providers:write": "add, remove or sign in to model providers and servers",
     "extensions:write": "change MCP servers, plugins and skills",
     "settings:write": "change approval rules, privacy, memory and persona settings, and start at login",
+    "memory:write": "save, change or delete memory notes, which every chat reads",
     "host:exec": "run commands, schedule jobs, use MCP tools and work with files outside the Kova Files folder",
 }
 #: What a newly paired phone may do: a chat client, not a remote control.
@@ -425,6 +428,22 @@ def folder_is_shared(folder, files_path, home) -> bool:
 COMMAND_TOOLS = frozenset({"run_command", "job_add"})
 #: Tools that change the installed skills.
 EXTENSION_TOOLS = frozenset({"skill_write", "skill_remove"})
+#: Tools that change memory notes, which every later turn reads.
+MEMORY_TOOLS = frozenset({"memory_add", "memory_patch", "memory_remove", "memory_save"})
+
+
+def narrow(*limits: frozenset[str] | None) -> frozenset[str] | None:
+    """The intersection of capability limits; None means no limit."""
+    result = None
+    for limit in limits:
+        if limit is not None:
+            result = frozenset(limit) if result is None else result & frozenset(limit)
+    return result
+
+
+def within(limit: frozenset[str] | None, allowed: frozenset[str] | None) -> bool:
+    """Whether something running with ``limit`` can do no more than ``allowed``."""
+    return allowed is None or (limit is not None and limit <= allowed)
 
 
 def action_capabilities(name: str, *, external: bool = False, cwd=None, files_path=None,
@@ -441,6 +460,8 @@ def action_capabilities(name: str, *, external: bool = False, cwd=None, files_pa
         return frozenset({"host:exec"})
     if name in EXTENSION_TOOLS:
         return frozenset({"extensions:write"})
+    if name in MEMORY_TOOLS:
+        return frozenset({"memory:write"})
     if name in FILE_TOOLS and cwd is not None and files_path is not None and home is not None \
             and not folder_is_shared(cwd, files_path, home):
         return frozenset({"host:exec"})

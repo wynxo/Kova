@@ -42,12 +42,13 @@ $ kova devices allow 3f9a1c2e models:write
 
 | Capability | Default | What it allows | Routes |
 | --- | --- | --- | --- |
-| `chat` | always | chat and use everyday tools (web, memory, reminders, files inside Kova Files; approvals still apply), manage chats, attachments, memory notes and reminders, switch the active model, read settings | every route not listed below |
+| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats, attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
 | `models:read` | yes | see local models and how they fit this computer | GET /local-models |
 | `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
 | `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
 | `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/… |
+| `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
 | `host:exec` | no | run commands, schedule jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
@@ -71,13 +72,25 @@ same thing for the phone, so the limits follow the phone into the agent:
   back.
 - **Chat settings:** without `host:exec` a phone cannot choose Full access or a
   working folder outside Kova Files, when creating or changing a chat.
-- **Approvals:** a phone can always deny, but it can allow only an action it
-  could have run itself. A command that a turn on the computer asks about must
-  be answered on the computer.
-- **Steering and the queue:** a phone cannot steer a reply that runs with more
-  capabilities than it has (queue the message instead). A message a phone
-  queues keeps the phone's capabilities, so it runs limited even when the
-  computer's window sends it.
+- **A chat a phone wrote in keeps that phone's limits.** The model reads the
+  whole history, so once a phone has sent a message, queued or steered text,
+  uploaded or shared a file, or answered a question in a chat, every later turn
+  in that chat runs with no more than that phone's capabilities, whoever sends
+  it. Forks keep the limit. Start a new chat on the computer for full access.
+- **Approvals:** a phone can always decline without a message. It can allow
+  only an action it could have run itself, and only one at a time (not for the
+  session or always, unless it has `settings:write`). It can answer a question
+  or give a reason only to a turn that can do no more than the phone may; a
+  turn started on the computer is answered on the computer.
+- **Steering:** a phone cannot steer a reply that runs with more capabilities
+  than it has (queue the message instead).
+- **The queue:** a message a phone queues is marked `remote` and stays bound to
+  its own row. `POST /chats/{id}/queue/next` hands it back without taking it,
+  and a client sends it unchanged with `queued: <id>` on
+  `POST /chats/{id}/messages`, which takes that row once and runs it under the
+  phone's limits. The terminal and web apps never read it as local input: no
+  `!` shell command, slash command, `#` memory note, `@file` expansion or
+  attachment is applied to it.
 - **Restoring a checkpoint** outside Kova Files needs `host:exec`.
 
 Requests from the computer itself (the CLI, the desktop app, a local browser

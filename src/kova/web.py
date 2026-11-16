@@ -163,6 +163,9 @@ def install_web(app, require_bearer) -> None:
                         chat = app.state.store.create_chat(
                             chat_title, mode=DEFAULT_MODE, web=True, permission="manual",
                             cwd=str(app.state.config.files_path.resolve()))
+                        # Files a phone shared keep that phone's limits (kova.pairing).
+                        from kova.pairing import request_capabilities
+                        app.state.store.limit_chat(chat["id"], request_capabilities(request))
                     rows.append(await asyncio.to_thread(
                         attachments.save, app.state.config.home, app.state.store,
                         chat["id"], file.filename, content, now=app.state.now))

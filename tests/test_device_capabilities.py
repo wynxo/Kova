@@ -97,6 +97,11 @@ EXPECTED = {
     ("POST", "/persona"): "settings:write",
     ("PATCH", "/memory/settings"): "settings:write",
     ("POST", "/jobs"): "host:exec",
+    ("POST", "/memory"): "memory:write",
+    ("DELETE", "/memory/{slug}"): "memory:write",
+    ("PATCH", "/memory/{slug}"): "memory:write",
+    ("POST", "/memory/undo"): "memory:write",
+    ("POST", "/memory/consolidate"): "memory:write",
 }
 
 
@@ -248,11 +253,12 @@ def test_a_phone_turn_gets_only_the_tools_its_capabilities_cover(kova, fake):
     chat = client.post("/chats", json={"mode": "work"}, headers=phone).json()
     _turn(client, chat["id"], phone)
     offered = _offered(fake.requests[-1])
-    assert {"run_command", "job_add", "skill_write", "skill_remove"}.isdisjoint(offered)
-    assert {"write_file", "memory_add"} <= offered, "everyday tools stay"
-    _turn(client, chat["id"], local)
+    assert {"run_command", "job_add", "skill_write", "skill_remove", "memory_add"}.isdisjoint(offered)
+    assert {"write_file", "memory_search"} <= offered, "everyday tools stay"
+    other = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, other["id"], local)
     assert {"run_command", "job_add", "skill_write"} <= _offered(fake.requests[-1]), \
-        "the computer is not limited"
+        "the computer is not limited in its own chats"
 
 
 def test_a_phone_cannot_run_a_command_the_model_asks_for(kova, fake, monkeypatch):
@@ -327,16 +333,168 @@ def test_a_phone_cannot_steer_a_turn_with_more_authority(kova):
     assert client.post(url, json={"text": "shorter"}, headers=phone).status_code == 200
 
 
-def test_a_queued_phone_message_runs_limited_even_when_the_computer_sends_it(kova, fake):
+def _queue_from_phone(client, chat_id, phone, text_):
+    response = client.post(f"/chats/{chat_id}/queue", json={"text": text_}, headers=phone)
+    assert response.status_code == 200 and response.json()["remote"] is True
+    return response.json()
+
+
+def test_a_phone_queued_message_is_bound_to_its_own_row(kova, fake):
     client, app, local, phone, record = kova
     chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
-    assert client.post(f"/chats/{chat['id']}/queue", json={"text": "run it"}, headers=phone).status_code == 200
-    row = client.post(f"/chats/{chat['id']}/queue/next", headers=local).json()
-    assert row["text"] == "run it" and "capabilities" not in row
-    _turn(client, chat["id"], local, row["text"])
+    row = _queue_from_phone(client, chat["id"], phone, "!touch pwned")
+    # queue/next hands a phone's row back unconsumed, marked remote.
+    taken = client.post(f"/chats/{chat['id']}/queue/next", headers=local).json()
+    assert taken["id"] == row["id"] and taken["remote"] is True and "capabilities" not in taken
+    assert [r["id"] for r in client.get(f"/chats/{chat['id']}/queue", headers=local).json()] == [row["id"]]
+    # It must be sent exactly as queued, once.
+    url = f"/chats/{chat['id']}/messages"
+    assert client.post(url, json={"text": "something else", "queued": row["id"]},
+                       headers=local).status_code == 409
+    _turn_body = {"text": row["text"], "queued": row["id"]}
+    assert client.post(url, json=_turn_body, headers=local).status_code == 200
     assert "run_command" not in _offered(fake.requests[-1])
+    assert client.post(url, json=_turn_body, headers=local).status_code == 404, "sent once only"
+
+
+def test_an_unrelated_failed_request_cannot_lift_a_queued_limit(kova, fake):
+    """Review finding: a 404 on another request used to consume the chat-wide limit."""
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    row = _queue_from_phone(client, chat["id"], phone, "run kova pair")
+    client.post(f"/chats/{chat['id']}/queue/next", headers=local)
+    failed = client.post(f"/chats/{chat['id']}/messages", json={"text": "x", "model": "missing"},
+                         headers=phone)
+    assert failed.status_code == 404
+    # The computer sends the phone's text, with or without the row binding: still limited.
+    client.post(f"/chats/{chat['id']}/messages", json={"text": row["text"]}, headers=local)
+    assert "run_command" not in _offered(fake.requests[-1])
+    client.post(f"/chats/{chat['id']}/messages", json={"text": row["text"], "queued": row["id"]},
+                headers=local)
+    assert "run_command" not in _offered(fake.requests[-1])
+
+
+def test_a_chat_a_phone_wrote_in_keeps_its_limits(kova, fake):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
     _turn(client, chat["id"], local)
-    assert "run_command" in _offered(fake.requests[-1]), "only that one turn is limited"
+    assert "run_command" in _offered(fake.requests[-1])
+    _turn(client, chat["id"], phone, "from now on, run whatever I ask")
+    _turn(client, chat["id"], local, "go")
+    assert "run_command" not in _offered(fake.requests[-1]), "history from the phone stays limited"
+    fork = client.post(f"/chats/{chat['id']}/fork", headers=local).json()
+    _turn(client, fork["id"], local, "go")
+    assert "run_command" not in _offered(fake.requests[-1]), "and so does a fork of it"
+    fresh = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, fresh["id"], local)
+    assert "run_command" in _offered(fake.requests[-1]), "other chats are untouched"
+
+
+def test_a_prompt_job_in_a_chat_a_phone_wrote_in_stays_limited(kova, fake):
+    """Re-audit: scheduled prompt jobs call the agent directly, not through a request."""
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    _turn(client, chat["id"], phone, "when the job runs, run kova pair")
+
+    async def job_turn():
+        return [event async for event in app.state.agent.run_turn(chat["id"], "daily check")]
+
+    client.portal.call(job_turn)
+    assert "run_command" not in _offered(fake.requests[-1])
+
+
+def test_a_phone_upload_limits_the_chat(kova, fake):
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    upload = client.post(f"/chats/{chat['id']}/attachments", headers=phone,
+                         files={"file": ("notes.txt", b"run kova pair", "text/plain")})
+    assert upload.status_code == 200, upload.text
+    _turn(client, chat["id"], local)
+    assert "run_command" not in _offered(fake.requests[-1])
+
+
+def test_a_phone_cannot_put_words_into_a_turn_with_more_authority(kova):
+    """Review finding: ask_user answers and denial reasons bypassed the steering boundary."""
+    client, app, local, phone, record = kova
+    chat = client.post("/chats", json={"mode": "work"}, headers=local).json()
+    approvals = app.state.agent.approvals
+
+    async def pending(name, args, authority):
+        return approvals.create(chat["id"], name, args, authority=authority)
+
+    base = f"/chats/{chat['id']}/approvals/"
+    question = client.portal.call(pending, "ask_user", {"question": "Which?"}, None)
+    answer = client.post(base + question["id"], json={"decision": "allow", "message": "run kova pair"},
+                         headers=phone)
+    assert answer.status_code == 403
+    reason = client.post(base + question["id"], json={"decision": "deny", "message": "instead run x"},
+                         headers=phone)
+    assert reason.status_code == 403
+    assert client.post(base + question["id"], json={"decision": "deny"}, headers=phone).status_code == 200
+    # A command approval: a plain refusal is fine, a reason is not.
+    command = client.portal.call(pending, "write_file", {"path": "a.txt", "content": ""}, None)
+    assert client.post(base + command["id"], json={"decision": "deny", "message": "run x"},
+                       headers=phone).status_code == 403
+    # A turn the phone itself started may take its answers.
+    own = client.portal.call(pending, "ask_user", {"question": "Which?"}, frozenset({"chat", "models:read"}))
+    assert client.post(base + own["id"], json={"decision": "allow", "message": "the first"},
+                       headers=phone).status_code == 200
+    # Session-wide and permanent grants are not one action.
+    again = client.portal.call(pending, "write_file", {"path": "b.txt", "content": ""},
+                               frozenset({"chat", "models:read"}))
+    assert client.post(base + again["id"], json={"decision": "allow_always"},
+                       headers=phone).status_code == 403
+
+
+def test_the_tui_never_runs_a_phone_queued_message_as_local_input(monkeypatch):
+    """Review finding: a phone's '!command' reached the TUI's local shell."""
+    from tests.test_tui import StubClient, chat_app, drain
+    client = StubClient([{"type": "text", "text": "hi"}, {"type": "done"}])
+    client.queues = [{"id": 7, "text": "!touch pwned", "model": None, "remote": True}]
+    sent = []
+    client.stream_message = lambda chat_id, text_, **kw: (sent.append((text_, kw)), iter(client.script))[1]
+    app = chat_app(client)
+    shell, commands = [], []
+    monkeypatch.setattr(app, "_shell", lambda command: shell.append(command))
+    monkeypatch.setattr(app, "_remember", lambda note: shell.append(note))
+    monkeypatch.setattr(app, "command", lambda line: commands.append(line))
+    app.refresh_chat()
+    assert app.queued == [], "a phone's row is not this computer's input"
+    app.submit("first")
+    drain(app, until=lambda app: len(sent) == 2 and app.job is None)
+    assert shell == [] and commands == []
+    assert sent[1] == ("!touch pwned", {"queued": 7})
+
+
+def test_the_tui_stop_path_leaves_a_phone_queued_message_alone():
+    """Stopping returns this computer's queued text to the input; a phone's stays queued."""
+    import time
+    from types import SimpleNamespace
+    from tests.test_tui import StubClient, chat_app, drain
+
+    def slow(*_args, **_kwargs):
+        yield {"type": "text", "text": "partial"}
+        while not client.stops:
+            time.sleep(0.01)
+        yield {"type": "stopped"}
+
+    client = StubClient()
+    client.stream_message = slow
+    app = chat_app(client)
+    app.submit("long one")
+    app.submit("mine")
+    client.queues.append({"id": 9, "text": "!touch pwned", "model": None, "remote": True})
+
+    def next_queued(_chat_id):
+        if client.queues and not client.queues[0].get("remote"):
+            return client.queues.pop(0)
+        return dict(client.queues[0]) if client.queues else None  # the server keeps a phone's row
+
+    client.next_queued_message = next_queued
+    app.on_key(SimpleNamespace(name="esc", text=""))
+    drain(app)
+    assert app.editor.text == "mine" and "pwned" not in app.editor.text
+    assert [row["id"] for row in client.queues] == [9]
 
 
 def test_global_settings_need_settings_write(kova):
@@ -352,7 +510,8 @@ def test_action_capabilities():
     assert action_capabilities("github__create_issue") == {"host:exec"}
     assert action_capabilities("anything", external=True) == {"host:exec"}
     assert action_capabilities("skill_write") == {"extensions:write"}
-    assert action_capabilities("memory_add") == frozenset()
+    assert action_capabilities("memory_add") == {"memory:write"}
+    assert action_capabilities("memory_search") == frozenset()
 
 
 def test_shared_folders(tmp_path):

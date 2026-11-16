@@ -26,7 +26,7 @@ from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
 from kova.tools import core
 from kova.tools.sessions import set_current_chat
-from kova.pairing import action_capabilities
+from kova.pairing import action_capabilities, narrow
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
 from kova.review import MemoryReview, ReviewSettings
@@ -316,7 +316,12 @@ class Agent:
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None) -> AsyncIterator[dict]:
-        """Persist and stream a turn under its home and chat privacy policy."""
+        """Persist and stream a turn under its home and chat privacy policy.
+
+        A chat a paired phone wrote in keeps that phone's limits here, for every
+        caller (the server, scheduled prompt jobs), not only for HTTP requests.
+        """
+        capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities):
@@ -562,7 +567,10 @@ class Agent:
                     review = await self._review(chat_id, cwd, tracker, derive_title(text, 60))
                     if review is not None:
                         yield review
-                    if not incognito and self.memory_review is not None:
+                    # A limited turn without memory:write must not reach memory
+                    # through the background pass either: notes go into every chat.
+                    may_remember = capabilities is None or 'memory:write' in capabilities
+                    if not incognito and self.memory_review is not None and may_remember:
                         # Opt-in background passes run last so the answer is already
                         # stored; a failure there can never break the reply.
                         for notice in await self.memory_review.after_turn(
@@ -602,7 +610,8 @@ class Agent:
                                 if name in CORE_TOOLS:
                                     validate(tools[name].parameters, args)
                                 if name == 'ask_user':
-                                    question = self.approvals.create(chat_id, name, args, cwd=cwd)
+                                    question = self.approvals.create(chat_id, name, args, cwd=cwd,
+                                                                     authority=capabilities)
                                     question['type'] = 'question'
                                     try:
                                         yield question
@@ -626,7 +635,8 @@ class Agent:
                                         name, args, permission, cwd, self.config.files_path,
                                         False, sandboxed=confined, external=tools[name].external)):
                                     approval = self.approvals.create(chat_id, name, args, cwd=cwd,
-                                                                     needs=needs(name, tools[name]))
+                                                                     needs=needs(name, tools[name]),
+                                                                     authority=capabilities)
                                     approved_binding = approval["binding"]
                                     try:
                                         yield approval

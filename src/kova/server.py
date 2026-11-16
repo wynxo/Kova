@@ -42,6 +42,8 @@ class TurnBody(BaseModel):
     text: str
     model: str | None = None
     attachments: list[str] = Field(default_factory=list, max_length=3)
+    #: Send this queued message (its id), bound to the limits of whoever queued it.
+    queued: int | None = None
 
 
 class ChatBody(BaseModel):
@@ -515,9 +517,17 @@ def create_app(
     settings_write = [Depends(pairing.require_capability("settings:write"))]
     providers_write = [Depends(pairing.require_capability("providers:write"))]
     host_exec = [Depends(pairing.require_capability("host:exec"))]
-    # The next turn in a chat after the computer took a phone's queued message
-    # runs with at most that phone's capabilities (see queue/next).
-    app.state.queue_limits = {}
+    memory_write = [Depends(pairing.require_capability("memory:write"))]
+
+    def wrote_in(chat_id: str, request: Request) -> frozenset[str] | None:
+        """Record that the caller put text or files into a chat; return its limits.
+
+        A chat a phone wrote in keeps that phone's limits for every later turn,
+        whoever sends it, because the model reads the whole history.
+        """
+        allowed = pairing.request_capabilities(request)
+        app.state.store.limit_chat(chat_id, allowed)
+        return allowed
 
     def limit_chat_settings(request: Request, permission: str | None, cwd: str | None) -> None:
         """A phone without host:exec cannot pick Full access or a folder outside Kova Files."""
@@ -693,11 +703,12 @@ def create_app(
         return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
 
     @api.post("/chats/{chat_id}/attachments")
-    async def upload_attachment(chat_id: str, file: UploadFile = File(...)) -> dict:
+    async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:
         from kova import attachments
         async with chat_lock(chat_id):
             if app.state.store.get_chat(chat_id) is None:
                 raise HTTPException(404, "Chat not found.")
+            wrote_in(chat_id, request)
             try:
                 data = await file.read(attachments.MAX_BYTES + 1)
                 await asyncio.to_thread(attachments.reap, app.state.store,
@@ -801,12 +812,25 @@ def create_app(
             raise HTTPException(status_code=404, detail="chat not found")
         allowed = pairing.request_capabilities(request)
         waiting = app.state.agent.approvals.pending.get(approval_id)
-        if allowed is not None and body.decision != "deny" and waiting is not None \
-                and not waiting.needs <= allowed:
-            # A phone may refuse anything, but allow only what it could have run itself.
-            missing = ", ".join(sorted(waiting.needs - allowed))
-            raise HTTPException(403, f"This phone is not allowed to approve this ({missing}). "
-                                     "Answer it on your computer.")
+        if allowed is not None and waiting is not None and waiting.chat_id == chat_id:
+            # A phone may always refuse without a message. It may allow only what it
+            # could have run itself, and put words (an answer, a reason) only into a
+            # turn that can do no more than it may.
+            if body.decision != "deny" and not waiting.needs <= allowed:
+                missing = ", ".join(sorted(waiting.needs - allowed))
+                raise HTTPException(403, f"This phone is not allowed to approve this ({missing}). "
+                                         "Answer it on your computer.")
+            if body.decision in {"allow_session", "allow_always"} and not (
+                    "settings:write" in allowed and pairing.within(waiting.authority, allowed)):
+                raise HTTPException(403, "This phone can allow one action at a time. "
+                                         "Grant more on your computer.")
+            words = (body.message or "").strip() or (waiting.tool == "ask_user" and body.decision != "deny")
+            if words and not pairing.within(waiting.authority, allowed):
+                raise HTTPException(403, "This reply can do more than this phone may, so it cannot take "
+                                         "an answer or reason from it. Answer on your computer, or "
+                                         "decline without a message.")
+            if words:
+                app.state.store.limit_chat(chat_id, allowed)
         if "approvals" not in mode_capabilities(chat.get("mode") or DEFAULT_MODE):
             raise HTTPException(status_code=409, detail="This chat's mode does not ask for approvals")
         pending = app.state.agent.approvals.pending.get(approval_id)
@@ -843,10 +867,13 @@ def create_app(
     async def post_message(chat_id: str, body: TurnBody, request: Request) -> StreamingResponse:
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        capabilities = pairing.request_capabilities(request)
-        queued_limit = app.state.queue_limits.pop(chat_id, None)
-        if queued_limit is not None:
-            capabilities = queued_limit if capabilities is None else capabilities & queued_limit
+        queued = None
+        if body.queued is not None:
+            queued = app.state.store.get_queued_message(chat_id, body.queued)
+            if queued is None:
+                raise HTTPException(404, "That queued message was already sent or removed.")
+            if body.text != queued["text"] or (queued["remote"] and body.attachments):
+                raise HTTPException(409, "Send a queued message as it was queued.")
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
         rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
@@ -860,6 +887,16 @@ def create_app(
         if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
             if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
                 raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
+        # Validation is over: only now take the queued row (once) and record who wrote.
+        if queued is not None:
+            if not app.state.store.take_queued_message(chat_id, queued["id"]):
+                raise HTTPException(404, "That queued message was already sent or removed.")
+            app.state.store.limit_chat(chat_id, queued.get("capabilities"))
+        wrote_in(chat_id, request)
+        # The caller's limits, the chat's (anyone limited who wrote in it, including
+        # whoever queued this message) and nothing else.
+        capabilities = pairing.narrow(pairing.request_capabilities(request),
+                                      app.state.store.chat_capabilities(chat_id))
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def run_turn() -> None:
@@ -937,7 +974,7 @@ def create_app(
         if body.model is not None and not any(m.name == body.model for m in config.models):
             raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
         row = app.state.store.queue_message(chat_id, body.text, body.model,
-                                            capabilities=pairing.request_capabilities(request))
+                                            capabilities=wrote_in(chat_id, request))
         message = next(entry for entry in app.state.store.queued_messages(chat_id)
                        if entry["id"] == row)
         return message
@@ -950,19 +987,16 @@ def create_app(
 
     @api.post("/chats/{chat_id}/queue/next")
     async def next_queued(chat_id: str) -> dict:
-        """Take the oldest queued message, for a client to send as its next turn."""
+        """Take the oldest queued message, for a client to send as its next turn.
+
+        A message a phone queued comes back with ``remote: true`` and stays
+        queued: the client sends it as-is with ``queued: <id>`` on
+        ``POST /chats/{id}/messages``, which takes it and runs it under that
+        phone's limits. Clients never treat its text as their own input.
+        """
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        row = app.state.store.pop_queued_message(chat_id)
-        if row is None:
-            return {"message": None}
-        limit = row.pop("capabilities")
-        if limit is not None:
-            # Whoever sends it next, it runs with no more than the phone that queued it.
-            limit = frozenset(limit)
-            earlier = app.state.queue_limits.get(chat_id)
-            app.state.queue_limits[chat_id] = limit if earlier is None else earlier & limit
-        return row
+        return app.state.store.pop_queued_message(chat_id) or {"message": None}
 
     @api.post("/chats/{chat_id}/steer")
     async def steer(chat_id: str, body: QueuedBody, request: Request) -> dict:
@@ -977,6 +1011,7 @@ def create_app(
         if allowed is not None and (steering.capabilities is None or not steering.capabilities <= allowed):
             raise HTTPException(403, "This reply can do more than this phone may. "
                                      "Queue the message instead; it runs after the reply.")
+        wrote_in(chat_id, request)
         steering.add(body.text)
         return {"ok": True, "text": body.text}
 
@@ -1065,7 +1100,7 @@ def create_app(
             else await asyncio.to_thread(mem.list)
         return [_note_dict(note) for note in notes]
 
-    @api.post("/memory")
+    @api.post("/memory", dependencies=memory_write)
     async def memory_add(body: NoteBody) -> dict:
         try:
             note = await asyncio.to_thread(app.state.memory.save, body.title, body.body, body.tags)
@@ -1097,13 +1132,13 @@ def create_app(
         app.state.agent.memory_review = _refresh_review(app.state.store, config)
         return _memory_settings(config)
 
-    @api.delete("/memory/{slug}")
+    @api.delete("/memory/{slug}", dependencies=memory_write)
     async def memory_delete(slug: str) -> dict:
         if not app.state.memory.delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
 
-    @api.patch("/memory/{slug}")
+    @api.patch("/memory/{slug}", dependencies=memory_write)
     async def memory_edit(slug: str, body: MemoryEditBody) -> dict:
         """Rewrite one note in place, keeping its slug, provenance and creation date."""
         if body.title is None and body.body is None and body.tags is None:
@@ -1126,7 +1161,7 @@ def create_app(
         """Recent background memory changes, newest first, with their undo state."""
         return app.state.store.memory_revisions(limit=limit)
 
-    @api.post("/memory/undo")
+    @api.post("/memory/undo", dependencies=memory_write)
     async def memory_undo(body: MemoryUndoBody | None = None) -> dict:
         """Reverse recorded review/consolidation writes from their preimages."""
         from kova.review import undo
@@ -1134,7 +1169,7 @@ def create_app(
                                          revision_id=body.revision_id if body else None)
         return {"undone": undone}
 
-    @api.post("/memory/consolidate")
+    @api.post("/memory/consolidate", dependencies=memory_write)
     async def memory_consolidate(body: ConsolidateBody | None = None) -> dict:
         """Plan one consolidation run and, unless asked to dry-run, apply it."""
         from kova.review import gate_operations, plan_consolidation, apply_operations
