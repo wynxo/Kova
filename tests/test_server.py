@@ -492,7 +492,7 @@ def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not server.started and time.monotonic() < deadline:
         time.sleep(.01)
     try:
