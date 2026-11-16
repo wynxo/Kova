@@ -138,7 +138,19 @@
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
+    refreshStatusBar();
   }
+  // First slice of #204: the optional status bar reads what the server already
+  // sent (chat messages, the model list, the active model) and reuses the same
+  // ~4-chars-a-token estimate as the terminal chat. No new endpoint.
+  function refreshStatusBar() {
+    const status = typeof window !== 'undefined' ? window.KovaStatus : null;
+    if (!status) return;
+    const active = (state.models || []).find(entry => entry.name === $('model').value);
+    status.update({model: $('model').value || '', windowTokens: (active && active.context) || 0,
+                   messages: (state.chat && state.chat.messages) || []});
+  }
+  window.KovaStatusRefresh = refreshStatusBar;
   // A healthy link is the normal case and says nothing; the indicator only
   // appears when something needs the user (offline, reconnecting, no model).
   function connection(text, ok = false) {
@@ -686,20 +698,9 @@
     return totals;
   }
   function diffView(preview) {
-    const pre = el('pre', 'diff');
-    for (const line of (preview.diff || '').split('\n')) {
-      const row = el('span', 'diff-line');
-      if (line.startsWith('+++') || line.startsWith('---')) row.className += ' meta';
-      else if (line.startsWith('@@')) row.className += ' hunk';
-      else if (line.startsWith('+')) row.className += ' add';
-      else if (line.startsWith('-')) row.className += ' del';
-      row.textContent = line || ' ';
-      pre.append(row);
-    }
-    if (!preview.diff) pre.append(el('span', 'diff-line meta', 'No textual changes.'));
-    if (preview.truncated) pre.append(el('span', 'diff-line meta', '… preview truncated'));
-    return pre;
+    return KovaDiff.render(preview);
   }
+
   function changeFile(chatId, checkpointId, file) {
     const details = el('details', 'change-file');
     const summary = el('summary');
@@ -955,6 +956,7 @@
         } else if (kind === 'tool_result') {
           const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
           if (tool) {
+            if (event.file_change) tool.node.append(KovaDiff.file(event.file_change));
             tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok);
             // What ran stays visible; a failure says why instead. The full result opens underneath.
             const summary = toolSummary(event);

@@ -1034,3 +1034,19 @@ Installed extensions stay on disk; reconnect MCP explicitly after turning the po
 off. This is a policy for Kova-owned traffic, not an OS firewall. Shell/stdio-plugin
 traffic from before enabling it is not observable and is not included in the ledger;
 other applications are outside its scope. Historical traffic is never reconstructed.
+
+### Inline file diffs
+
+Successful `write_file` and `edit_file` SSE tool results may carry `file_change`:
+a bounded checkpoint preview (`path`, `status`, `before`, `after`, `diff`,
+`truncated`). It compares the first pre-write checkpoint image to the current
+contents, so repeated writes show changes **so far this turn**, not just the
+last operation. It is presentation metadata, not model context or a new file
+read endpoint. Existing tool and phone capability checks still apply. No new
+route or restore permission is introduced.
+
+The web client renders this in a collapsed per-file tool card with old/new line
+numbers; saved change sets reuse the same `diff.js` renderer through the existing
+checkpoint diff route above. `diff.css` uses semantic status colours. Source and
+paths are inserted only as text. Per-hunk accept/undo, word highlights and a
+side-panel review are deferred; existing whole-checkpoint restore is unchanged.
