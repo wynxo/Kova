@@ -139,7 +139,19 @@
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
+    refreshStatusBar();
   }
+  // First slice of #204: the optional status bar reads what the server already
+  // sent (chat messages, the model list, the active model) and reuses the same
+  // ~4-chars-a-token estimate as the terminal chat. No new endpoint.
+  function refreshStatusBar() {
+    const status = typeof window !== 'undefined' ? window.KovaStatus : null;
+    if (!status) return;
+    const active = (state.models || []).find(entry => entry.name === $('model').value);
+    status.update({model: $('model').value || '', windowTokens: (active && active.context) || 0,
+                   messages: (state.chat && state.chat.messages) || []});
+  }
+  window.KovaStatusRefresh = refreshStatusBar;
   // A healthy link is the normal case and says nothing; the indicator only
   // appears when something needs the user (offline, reconnecting, no model).
   function connection(text, ok = false) {
