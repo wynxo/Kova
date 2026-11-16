@@ -87,7 +87,7 @@ def format_audio(audio: bytes, fmt: str = "webm") -> bytes:
         raise TranscriptionError("No audio sent.")
 
     with tempfile.TemporaryDirectory(prefix="kova-voice-") as tmp:
-        src = Path(tmp) / "in." + fmt
+        src = Path(tmp) / f"in.{fmt}"
         dst = Path(tmp) / "out.wav"
         src.write_bytes(audio)
         try:
@@ -123,13 +123,13 @@ class LocalTranscriber:
     def transcribe(self, audio: bytes, fmt: str = "webm") -> TranscriptionResult:
         pcm = format_audio(audio, fmt)
         with tempfile.TemporaryDirectory(prefix="kova-voice-") as tmp:
-            src = Path(tmp) / "in." + fmt
+            src = Path(tmp) / "in.wav"  # format_audio already returned 16 kHz mono WAV
             out = Path(tmp) / "out.txt"
             src.write_bytes(pcm)
             cmd = [
                 "whisper-cli", "-m", "models/whisper.bin",
                 "-l", self.language or "auto", "-f", str(src),
-                "--no-gpu", "-otxt", "-o", str(out),
+                "--no-gpu", "-otxt", "-of", str(out.with_suffix("")),
             ]
             try:
                 subprocess.run(cmd, stdout=subprocess.DEVNULL,
