@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from kova import __version__
 from kova.config import ensure_token, load_config
 from kova.server import create_app
+from kova.voice import TranscriptionResult, MAX_AUDIO_BYTES
 from tests.fake_model import FakeModel, text
 
 
@@ -503,3 +504,65 @@ def test_autostart_settings(server, monkeypatch):
     response = client.get('/autostart', headers=headers)
     assert response.status_code == 503
     assert 'private diagnostic' not in response.text
+
+class _FakeTranscriber:
+    """A transcriber that returns a fixed result for any audio."""
+    def __init__(self, result=None):
+        self.result = result or TranscriptionResult("hi there")
+        self.calls = 0
+
+    def transcribe(self, audio, fmt="webm"):
+        self.calls += 1
+        return self.result
+
+
+def _audio_file(payload=b"hello", name="t.webm"):
+    return {"audio": (name, payload, "audio/webm")}
+
+
+def test_transcribe_off_without_transcriber(server):
+    client, headers, *_ = server
+    # No whisper.cpp in the test env, so the server reports transcription off.
+    client.app.state.transcriber = None
+    response = client.post("/transcribe", files=_audio_file(), headers=headers)
+    assert response.status_code == 409
+    assert "transcription is off" in response.text.lower()
+
+
+def test_transcribe_returns_the_result(server):
+    client, headers, *_ = server
+    client.app.state.transcriber = _FakeTranscriber()
+    response = client.post("/transcribe", files=_audio_file(), headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"text": "hi there", "language": None,
+                               "backend": "whisper.cpp", "duration_ms": None}
+
+
+def test_transcribe_rejects_audio_that_is_too_large(server):
+    client, headers, *_ = server
+    client.app.state.transcriber = _FakeTranscriber()
+    response = client.post("/transcribe",
+                           files=_audio_file(b"x" * (MAX_AUDIO_BYTES + 2)),
+                           headers=headers)
+    assert response.status_code == 413
+    assert "too large" in response.text.lower()
+
+
+def test_transcribe_maps_a_transcription_error(server):
+    client, headers, *_ = server
+
+    class _FailingTranscriber(_FakeTranscriber):
+        def transcribe(self, audio, fmt="webm"):
+            from kova.voice import TranscriptionError
+            raise TranscriptionError("the audio is corrupt")
+
+    client.app.state.transcriber = _FailingTranscriber()
+    response = client.post("/transcribe", files=_audio_file(), headers=headers)
+    assert response.status_code == 422
+    assert "the audio is corrupt" in response.text
+
+
+def test_transcribe_requires_auth(server):
+    client, headers, *_ = server
+    client.app.state.transcriber = _FakeTranscriber()
+    assert client.post("/transcribe", files=_audio_file()).status_code == 401

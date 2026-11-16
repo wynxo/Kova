@@ -254,6 +254,11 @@ base_url = "http://192.168.1.20:8080/v1"
 model = "MODEL"
 context = 131072
 api_key = "..."        # optional
+
+[voice]
+stt = "local"          # "browser" for the desktop web UI
+tts = "espeak-ng"      # "off" disables spoken replies
+max_seconds = 60        # longest voice clip the server accepts
 ```
 
 `context` is the token budget used when trimming history. Set it to your
