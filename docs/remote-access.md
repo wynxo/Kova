@@ -42,7 +42,7 @@ $ kova devices allow 3f9a1c2e models:write
 
 | Capability | Default | What it allows | Routes |
 | --- | --- | --- | --- |
-| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats, attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
+| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats (rename, pin, delete), attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
 | `models:read` | yes | see local models and how they fit this computer | GET /local-models |
 | `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
 | `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
@@ -57,6 +57,11 @@ to run on this computer or manage access itself: adding an MCP server
 (`POST /mcp`), previewing and installing extensions, turning a plugin on,
 pairing, listing or revoking devices, changing capabilities, and turning phone
 access on or off. Those are for the computer only.
+
+Pinning a conversation is cosmetic: it only changes the order of the sidebar, so
+a phone with `chat` can pin or unpin. Unlike a title, mode or permission, a pin
+carries no content and does not count as the phone writing in that chat, so it
+never lowers the chat's capabilities.
 
 ### The same limits inside a chat
 
@@ -151,8 +156,8 @@ existed get the defaults.
 ## Threat model
 
 - **Who can get in:** only a browser holding a paired device's cookie, on your
-  local network. A paired phone can chat, use tools and change chat
-  settings; everything else needs a capability you grant (see above).
+  local network. A paired phone can chat, use tools, pin conversations and
+  change chat settings; everything else needs a capability you grant (see above).
   Destructive actions still stop for your approval as usual.
 - **Plain HTTP on the LAN.** Kova does not serve TLS, because a self-signed
   certificate would mean scary browser warnings. Someone who can sniff your

@@ -338,26 +338,45 @@
     return body;
   }
   function history(chats) {
-    $('chat-list').replaceChildren(); $('chat-count').textContent = chats.length || '';
-    if (!chats.length) $('chat-list').append(el('div', 'history-empty', $('search').value ? 'No conversations found.' : 'A fresh space. Start something new.'));
-    for (const chat of chats) {
-      const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
-      const button = el('button', 'history-open');
-      const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
-      button.append(el('span', 'history-title', title)); button.title = title;
-      const date = new Date(chat.last_message || chat.created);
-      button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
-      button.onclick = () => safe(() => openChat(chat.id));
-      const actions = el('details', 'history-actions');
-      actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
-      for (const [symbol, name, fn] of [['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
-        if (chat.ephemeral && symbol === 'copy') continue;
-        const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
-        action.onclick = () => safe(fn); actions.append(action);
+    const list = $('chat-list');
+    list.replaceChildren(); $('chat-count').textContent = chats.length || '';
+    if (!chats.length) list.append(el('div', 'history-empty', $('search').value ? 'No conversations found.' : 'A fresh space. Start something new.'));
+    // Pinned chats first, then date groups; app.js only renders what the module
+    // decided, so the grouping stays testable without a DOM (chat_list.js).
+    const groups = globalThis.KovaChatList?.groups(chats) || [{label: '', chats}];
+    for (const group of groups) {
+      if (group.label) list.append(el('div', 'history-group', group.label));
+      for (const chat of group.chats) {
+        const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
+        const button = el('button', 'history-open');
+        const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
+        const titleRow = el('span', 'history-title');
+        if (chat.pinned) titleRow.append(icon('pin'));
+        titleRow.append(document.createTextNode(title));
+        button.append(titleRow); button.title = title;
+        const date = new Date(chat.last_message || chat.created);
+        button.append(el('span', 'history-date', `${chat.state ? chat.state.replaceAll('-', ' ') + ' · ' : ''}${chat.mode ? chat.mode + ' · ' : ''}${Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}`));
+        button.onclick = () => safe(() => openChat(chat.id));
+        const actions = el('details', 'history-actions');
+        actions.append(el('summary', '', '•••')); actions.setAttribute('aria-label', `Actions for ${title}`);
+        for (const [symbol, name, fn] of [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)], ['trash-2', 'Delete', () => editChat(chat, true)]]) {
+          if (chat.ephemeral && symbol === 'copy') continue;
+          const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
+          action.onclick = () => safe(fn); actions.append(action);
+        }
+        row.append(button, actions); list.append(row);
       }
-      row.append(button, actions); $('chat-list').append(row);
     }
     controls();
+  }
+  // A pin only reorders the sidebar, so it works while a turn runs and needs no
+  // confirmation. The server keeps it in the same PATCH as the chat's settings.
+  async function togglePin(chat) {
+    const pinned = !chat.pinned;
+    await json(`/chats/${chat.id}`, write('PATCH', {pinned}));
+    chat.pinned = pinned;
+    if (state.chat?.id === chat.id) state.chat.pinned = pinned;
+    history(state.chats);
   }
   async function refreshChats() {
     const version = ++state.searchVersion;

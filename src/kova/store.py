@@ -241,7 +241,8 @@ class Store:
                 title TEXT,
                 created TEXT NOT NULL,
                 mode TEXT NOT NULL DEFAULT 'work',
-                web INTEGER NOT NULL DEFAULT 1
+                web INTEGER NOT NULL DEFAULT 1,
+                pinned INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +358,10 @@ class Store:
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
         if "plan" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+        # Pinned chats stay at the top of the sidebar (#195); cosmetic and local,
+        # so an existing database keeps every chat and gains an unpinned flag.
+        if "pinned" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -454,7 +459,7 @@ class Store:
                 (cid, title, created, mode, web, permission, cwd),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": [], **({"ephemeral": True} if self._memory_only else {})}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": [], "pinned": False, **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str) -> dict | None:
         """Atomically clone a conversation, including its compacted context."""
@@ -526,11 +531,12 @@ class Store:
     def list_chats(self, *, include_ephemeral: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, COUNT(m.id) AS message_count, "
+                "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, c.pinned, "
+                "COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "GROUP BY c.id "
-                "ORDER BY last_message DESC, c.created DESC, c.id DESC"
+                "ORDER BY c.pinned DESC, last_message DESC, c.created DESC, c.id DESC"
             ).fetchall()
         chats = [
             {
@@ -542,6 +548,7 @@ class Store:
                 "web": bool(r["web"]),
                 "permission": r["permission"],
                 "cwd": r["cwd"],
+                "pinned": bool(r["pinned"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
             }
@@ -549,7 +556,9 @@ class Store:
         ]
         if include_ephemeral and self._temporary is not None:
             chats += self._temporary.list_chats()
-            chats.sort(key=lambda c: (c["last_message"], c["created"], c["id"]), reverse=True)
+            # Pinned chats stay on top, current activity breaks the tie.
+            chats.sort(key=lambda c: (bool(c.get("pinned")), c["last_message"], c["created"], c["id"]),
+                       reverse=True)
         return chats
 
     @_chat_scoped
@@ -557,7 +566,7 @@ class Store:
                  include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan, pinned, capabilities FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -569,6 +578,7 @@ class Store:
             "web": bool(row["web"]),
             "permission": row["permission"],
             "cwd": row["cwd"],
+            "pinned": bool(row["pinned"]),
             "plan": json.loads(row["plan"]),
             **({"capabilities": sorted(json.loads(row["capabilities"]))}
                if row["capabilities"] is not None else {}),
@@ -580,14 +590,16 @@ class Store:
     @_chat_scoped
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None, plan: list[dict] | None = None) -> None:
-        """Change chat settings or its latest plan; ``None`` leaves a field alone."""
+                    cwd: str | None = None, plan: list[dict] | None = None,
+                    pinned: bool | None = None) -> None:
+        """Change chat settings, its pin or its latest plan; ``None`` leaves a field alone."""
         if mode is not None and mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
         if permission is not None and permission not in PERMISSIONS:
             raise ValueError(f"unknown permission '{permission}'")
         fields = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
-                  "plan": json.dumps(plan) if plan is not None else None}
+                  "plan": json.dumps(plan) if plan is not None else None,
+                  "pinned": int(pinned) if pinned is not None else None}
         changes = {name: value for name, value in fields.items() if value is not None}
         if not changes:
             return
@@ -794,9 +806,11 @@ class Store:
             # grant unattended command access on this machine.
             try:
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, pinned) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
-                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit),
+                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
+                     1 if chat.get("pinned") else 0),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -890,13 +904,14 @@ class Store:
                     "created": chat["created"],
                     "last_message": chat["last_message"],
                     "message_count": chat["message_count"],
+                    "pinned": chat["pinned"],
                     "message_id": row["message_id"],
                     "role": row["role"],
                     "snippet": _clean_snippet(snippet),
                 }
             )
         results.sort(
-            key=lambda r: (r["last_message"] or "", r["created"] or "", r["id"]),
+            key=lambda r: (r["pinned"], r["last_message"] or "", r["created"] or "", r["id"]),
             reverse=True,
         )
         if exclude_chat_id is not None:
