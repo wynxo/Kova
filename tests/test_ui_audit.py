@@ -96,3 +96,13 @@ def test_a_token_only_sheet_needs_no_focus_ring_or_motion_block():
 
 def test_a_sheet_that_styles_elements_still_needs_them():
     assert audit_ui.check_css(":root { --a: 1; }\nbutton { color: red; }\n", "x.css")
+
+
+def test_a_passive_indicator_sheet_needs_no_focus_ring():
+    sheet = ".thinking-bolt { opacity: 0; }\n@media (prefers-reduced-motion: reduce) { .thinking-bolt { animation: none; } }\n"
+    assert audit_ui.check_css(sheet, "thinking.css") == []
+
+
+def test_a_sheet_styling_buttons_still_needs_a_focus_ring():
+    sheet = "button { color: red; }\n@media (prefers-reduced-motion: reduce) { button { transition: none; } }\n"
+    assert any(":focus-visible" in problem for problem in audit_ui.check_css(sheet, "x.css"))
