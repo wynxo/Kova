@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/palette.css">
   <link rel="stylesheet" href="/app/assets/settings.css">
+  <link rel="stylesheet" href="/app/assets/toast.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
@@ -24,6 +25,7 @@
   <link rel="stylesheet" href="/app/assets/thinking.css">
   <script defer src="/app/assets/diff.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
+  <script defer src="/app/assets/toast.js"></script>
   <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/app.js"></script>
   <script defer src="/app/assets/settings.js"></script>
@@ -131,7 +133,7 @@
       </div>
     </div>
   </main>
-  <div id="toasts" role="status" aria-live="polite"></div>
+  <div id="toasts" role="region" aria-label="Notifications" aria-live="polite" aria-relevant="additions"></div>
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
