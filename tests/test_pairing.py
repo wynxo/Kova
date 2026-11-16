@@ -61,7 +61,7 @@ def test_devices_store_only_hashes_and_survive_reload(tmp_path):
     second, _ = devices.add("iPhone")
     assert second["name"] == "iPhone 2"
     assert token not in path.read_text()
-    assert set(first) == {"id", "name", "created", "last_seen"}
+    assert set(first) == {"id", "name", "created", "last_seen", "capabilities"}
     reloaded = Devices(path)
     assert reloaded.find(token)["id"] == first["id"]
     assert reloaded.find("wrong") is None and reloaded.find(None) is None
