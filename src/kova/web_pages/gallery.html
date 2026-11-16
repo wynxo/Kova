@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Kova · Component gallery</title>
+  <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app/assets/app.css">
+  <style>
+    /* Layout only. Every colour comes from the tokens in app.css; the gallery
+       pins a state that CSS otherwise takes from the pointer or focus. */
+    body.gallery-page { display:block; height:auto; min-height:100vh; overflow:auto; }
+    .gallery-main { display:grid; gap:28px; max-width:1080px; margin:0 auto; padding:32px 20px 64px; }
+    .gallery-head { display:grid; gap:8px; }
+    .gallery-head h1 { font-size:24px; font-weight:620; letter-spacing:-.02em; }
+    .gallery-head p { max-width:74ch; color:var(--text-2); font-size:13.5px; line-height:1.6; }
+    .gallery-head code, .gallery-item h3 code {
+      padding:1px 5px; border-radius:5px; background:var(--surface-2); font:.9em/1.4 var(--mono);
+    }
+    .gallery-section {
+      display:grid; gap:16px; padding:18px;
+      border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface);
+    }
+    .gallery-section h2 { font-size:15px; font-weight:600; }
+    .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; }
+    .gallery-item {
+      display:grid; align-content:start; gap:10px; min-width:0; padding:12px;
+      border:1px solid var(--border); border-radius:var(--r-md); background:var(--bg);
+    }
+    .gallery-item h3 { color:var(--text-2); font-size:12.5px; font-weight:600; }
+    .gallery-demo { display:grid; justify-items:start; gap:5px; min-width:0; }
+    .gallery-label { color:var(--text-3); font-size:10.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; }
+    .gallery-demo .search, .gallery-demo .folder-control, .gallery-demo label, .gallery-demo .field { width:100%; }
+
+    /* Hover-like: the declarations each component gets from :hover. */
+    .gallery-demo[data-state="hover"] .btn:not(.primary):not(.quiet):not(.danger) { background:var(--surface-3); }
+    .gallery-demo[data-state="hover"] .btn.primary { background:var(--accent-strong); }
+    .gallery-demo[data-state="hover"] .btn.quiet { background:var(--surface-2); color:var(--text); }
+    .gallery-demo[data-state="hover"] .btn.danger { background:var(--danger-soft); }
+    .gallery-demo[data-state="hover"] .icon-button { background:var(--surface-2); color:var(--text); }
+    .gallery-demo[data-state="hover"] .chip.toggle { background:var(--surface-2); color:var(--text); }
+    .gallery-demo[data-state="hover"] .chip.toggle[aria-pressed="true"] {
+      background:color-mix(in srgb, var(--accent) 20%, transparent); color:var(--accent);
+    }
+    .gallery-demo[data-state="hover"] .send { background:var(--accent-strong); }
+    .gallery-demo[data-state="hover"] .search { background:var(--surface); }
+    .gallery-demo[data-state="hover"] .folder-control { border-color:var(--border-strong); }
+    .gallery-demo[data-state="hover"] .menu-button {
+      background:var(--bg); border-color:var(--accent-line); color:var(--text);
+    }
+
+    /* Focus: the same outline and field ring the app draws for :focus-visible. */
+    .gallery-demo[data-state="focus"] :is(.btn, .icon-button, .chip, .send, .menu-button),
+    .gallery-demo[data-state="focus"] input[type="checkbox"] {
+      outline:2px solid var(--accent); outline-offset:2px;
+    }
+    .gallery-demo[data-state="focus"] .search { background:var(--surface); border-color:var(--accent-line); }
+    .gallery-demo[data-state="focus"] .folder-control { border-color:var(--accent-line); color:var(--text); }
+    .gallery-demo[data-state="focus"] .search input,
+    .gallery-demo[data-state="focus"] .folder-control input { outline:none; }
+    .gallery-demo[data-state="focus"] input:not([type="checkbox"]),
+    .gallery-demo[data-state="focus"] textarea {
+      outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
+    }
+
+    /* The dialog is only a styling context for the real field rules. */
+    .gallery-dialog[open] {
+      position:static; display:block; width:100%; max-width:none; max-height:none;
+      margin:0; padding:0; border:0; background:none; color:var(--text);
+      box-shadow:none; animation:none;
+    }
+  </style>
+</head>
+<body class="gallery-page">
+  <main class="gallery-main">
+    <header class="gallery-head">
+      <h1>Component gallery</h1>
+      <p>Dev-only: start Kova with <code>KOVA_GALLERY=1</code>, then open <code>/app/gallery</code>.
+        Every sample uses the classes and tokens from <code>app.css</code>; this page only pins the
+        hover and focus states that CSS normally reads from the pointer.</p>
+    </header>
+
+    <section class="gallery-section" aria-labelledby="gallery-buttons">
+      <h2 id="gallery-buttons">Buttons</h2>
+      <div class="gallery-grid">
+        <article class="gallery-item">
+          <h3>Secondary <code>.btn</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="btn" type="button">Cancel</button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="btn" type="button">Cancel</button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="btn" type="button">Cancel</button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="btn" type="button" disabled>Cancel</button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Primary <code>.btn.primary</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="btn primary" type="button">Save</button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="btn primary" type="button">Save</button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="btn primary" type="button">Save</button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="btn primary" type="button" disabled>Save</button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Quiet <code>.btn.quiet</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="btn quiet" type="button">Later</button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="btn quiet" type="button">Later</button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="btn quiet" type="button">Later</button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="btn quiet" type="button" disabled>Later</button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Danger <code>.btn.danger</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="btn danger" type="button">Delete</button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="btn danger" type="button">Delete</button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="btn danger" type="button">Delete</button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="btn danger" type="button" disabled>Delete</button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Icon <code>.icon-button</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="icon-button" type="button" aria-label="Close"><span class="icon i-x" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="icon-button" type="button" aria-label="Close"><span class="icon i-x" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="icon-button" type="button" aria-label="Close"><span class="icon i-x" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="icon-button" type="button" aria-label="Close" disabled><span class="icon i-x" aria-hidden="true"></span></button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Toggle chip <code>.chip.toggle</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="chip toggle" type="button" aria-pressed="true" disabled><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Send <code>.send</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="send" type="button" aria-label="Send"><span class="icon i-arrow-up" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="send" type="button" aria-label="Send"><span class="icon i-arrow-up" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="send" type="button" aria-label="Send"><span class="icon i-arrow-up" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="send" type="button" aria-label="Send" disabled><span class="icon i-arrow-up" aria-hidden="true"></span></button></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-fields">
+      <h2 id="gallery-fields">Form fields</h2>
+      <dialog open class="gallery-dialog" aria-label="Form field samples">
+        <div class="gallery-grid">
+          <article class="gallery-item">
+            <h3>Text input</h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><label>Connection name<input placeholder="e.g. personal"></label></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label>Connection name<input placeholder="e.g. personal"></label></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label>Connection name<input placeholder="e.g. personal" disabled></label></div>
+          </article>
+
+          <article class="gallery-item">
+            <h3>Text area</h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><label>Notes<textarea rows="2" placeholder="A short note"></textarea></label></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label>Notes<textarea rows="2" placeholder="A short note"></textarea></label></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label>Notes<textarea rows="2" placeholder="A short note" disabled></textarea></label></div>
+          </article>
+
+          <article class="gallery-item">
+            <h3>Menu field <code>.field .menu-button</code></h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><div class="field"><span>Model</span><button class="menu-button" type="button" aria-expanded="false"><span class="menu-value">local</span><span class="icon i-chevron-down" aria-hidden="true"></span></button></div></div>
+            <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><div class="field"><span>Model</span><button class="menu-button" type="button" aria-expanded="false"><span class="menu-value">local</span><span class="icon i-chevron-down" aria-hidden="true"></span></button></div></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><div class="field"><span>Model</span><button class="menu-button" type="button" aria-expanded="false"><span class="menu-value">local</span><span class="icon i-chevron-down" aria-hidden="true"></span></button></div></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><div class="field"><span>Model</span><button class="menu-button" type="button" aria-expanded="false" disabled><span class="menu-value">local</span><span class="icon i-chevron-down" aria-hidden="true"></span></button></div></div>
+          </article>
+
+          <article class="gallery-item">
+            <h3>Search field <code>.search</code></h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><label class="search"><span class="icon i-search" aria-hidden="true"></span><input type="search" placeholder="Search conversations" aria-label="Search conversations"></label></div>
+            <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><label class="search"><span class="icon i-search" aria-hidden="true"></span><input type="search" placeholder="Search conversations" aria-label="Search conversations"></label></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label class="search"><span class="icon i-search" aria-hidden="true"></span><input type="search" placeholder="Search conversations" aria-label="Search conversations"></label></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label class="search"><span class="icon i-search" aria-hidden="true"></span><input type="search" placeholder="Search conversations" aria-label="Search conversations" disabled></label></div>
+          </article>
+
+          <article class="gallery-item">
+            <h3>Folder field <code>.folder-control</code></h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
+            <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder" disabled></label></div>
+          </article>
+
+          <article class="gallery-item">
+            <h3>Checkbox <code>.provider-check</code></h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><label class="provider-check"><input type="checkbox" checked><span>Remember this</span></label></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label class="provider-check"><input type="checkbox" checked><span>Remember this</span></label></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label class="provider-check"><input type="checkbox" checked disabled><span>Remember this</span></label></div>
+          </article>
+        </div>
+      </dialog>
+    </section>
+  </main>
+</body>
+</html>

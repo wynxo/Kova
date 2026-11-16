@@ -35,6 +35,7 @@ from kova.config import load_config
 from kova.modes import MODES
 from kova.privacy import status_text as privacy_status_text
 from kova.tui.app import COMMANDS, PERMISSIONS
+from kova.tui.style import active_theme, colour
 
 _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
 
@@ -60,15 +61,17 @@ _COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off"), "/permissions": tup
 _PLAN_MARKS = {"done": "☑", "in_progress": "◐", "pending": "☐"}
 
 # Prompt_toolkit styling for the input line, the completion menu and the
-# bottom toolbar. Hex colours mirror kova.theme; prompt_toolkit parses them.
-_CHAT_STYLE = Style.from_dict({
-    "prompt": f"bold {theme.USER}",
-    "bottom-toolbar": f"bg:{theme.BORDER} {theme.MUTED}",
-    "completion-menu.completion": f"bg:{theme.BORDER} {theme.ACCENT_SOFT}",
-    "completion-menu.meta.completion": f"bg:{theme.BORDER} {theme.MUTED}",
-    "completion-menu.completion.current": f"bg:{theme.ACCENT} #ffffff",
-    "completion-menu.meta.completion.current": f"bg:{theme.ACCENT} #ffffff",
-})
+# bottom toolbar. Resolve the active theme when the input session starts.
+def _chat_style() -> Style:
+    selection_text = colour('ON_ACCENT') if active_theme() == 'light' else '#ffffff'
+    return Style.from_dict({
+        "prompt": f"bold {colour('USER')}",
+        "bottom-toolbar": f"bg:{colour('BORDER', background=True)} {colour('MUTED')}",
+        "completion-menu.completion": f"bg:{colour('BORDER', background=True)} {colour('ACCENT_SOFT')}",
+        "completion-menu.meta.completion": f"bg:{colour('BORDER', background=True)} {colour('MUTED')}",
+        "completion-menu.completion.current": f"bg:{colour('ACCENT', background=True)} {selection_text}",
+        "completion-menu.meta.completion.current": f"bg:{colour('ACCENT', background=True)} {selection_text}",
+    })
 
 
 class _CommandCompleter(Completer):
@@ -172,8 +175,8 @@ class _Turn:
 
     def render(self) -> Group:
         from kova.tui.brand import assistant_name
-        items: list = [Text.assemble(("◆ ", f"bold {theme.ACCENT}"),
-                                     (assistant_name(), f"bold {theme.ACCENT}"))]
+        items: list = [Text.assemble(("◆ ", f"bold {colour('ACCENT')}"),
+                                     (assistant_name(), f"bold {colour('ACCENT')}"))]
         for block in self.blocks:
             text = "".join(block.chunks)
             if block.kind == "text":
@@ -182,28 +185,28 @@ class _Turn:
                 if block.elapsed is None and not self.finished:
                     age = perf_counter() - block.started
                     items.append(Spinner("dots",
-                                         text=Text(f"Thinking… {age:.1f}s", style=theme.MUTED),
-                                         style=theme.ACCENT))
+                                         text=Text(f"Thinking… {age:.1f}s", style=colour('MUTED')),
+                                         style=colour('ACCENT')))
                 elif not self.no_think:
                     items.append(Text(f"  thought for {block.elapsed or 0:.1f}s",
-                                      style=theme.MUTED))
+                                      style=colour('MUTED')))
                 if self.show_thinking and not self.no_think:
-                    items.append(Text(text, style=theme.MUTED))
+                    items.append(Text(text, style=colour('MUTED')))
             elif block.kind == "tool":
                 if block.ok is None and not self.finished:
-                    label = Text(f"⚙ {block.name}", style=f"bold {theme.ACCENT}")
+                    label = Text(f"⚙ {block.name}", style=f"bold {colour('ACCENT')}")
                     if block.args:
-                        label.append(f"  {block.args}", style=theme.MUTED)
-                    items.append(Spinner("dots", text=label, style=theme.ACCENT))
+                        label.append(f"  {block.args}", style=colour('MUTED'))
+                    items.append(Spinner("dots", text=label, style=colour('ACCENT')))
                 else:
                     if block.ok is True:
-                        icon_style = f"bold {theme.SUCCESS}"
-                        detail_style = theme.MUTED
+                        icon_style = f"bold {colour('SUCCESS')}"
+                        detail_style = colour('MUTED')
                     else:
                         # Plain "red": committed tests pin ANSI red (\x1b[31m)
                         # here, which the theme's truecolor red would not emit.
                         icon_style = "bold red"
-                        detail_style = "red" if block.ok is False else theme.MUTED
+                        detail_style = "red" if block.ok is False else colour('MUTED')
                     icon = "✓" if block.ok else "✗" if block.ok is False else "·"
                     detail = text if block.ok is not None else "interrupted"
                     row = Text("  ")
@@ -216,12 +219,12 @@ class _Turn:
                 # Plain "red" for the same committed-test reason as above.
                 items.append(Text(f"  Error: {text}", style="red"))
             elif block.kind == "privacy":
-                items.append(Text(f"  {text}", style=theme.MUTED))
+                items.append(Text(f"  {text}", style=colour('MUTED')))
             elif block.kind == "plan":
-                items.append(Text.assemble(("  ● ", theme.ACCENT), ("Update Todos", "bold")))
+                items.append(Text.assemble(("  ● ", colour('ACCENT')), ("Update Todos", "bold")))
                 for item in block.items:
                     status = item.get("status")
-                    style = {"done": f"strike {theme.MUTED}", "in_progress": f"bold {theme.ACCENT}"}
+                    style = {"done": f"strike {colour('MUTED')}", "in_progress": f"bold {colour('ACCENT')}"}
                     items.append(Text(f"    {_PLAN_MARKS.get(status, '☐')} "
                                       f"{_short(str(item.get('text', '')))}",
                                       style=style.get(status, "")))
@@ -229,21 +232,21 @@ class _Turn:
                 additions = sum(int(file.get("additions") or 0) for file in block.items)
                 deletions = sum(int(file.get("deletions") or 0) for file in block.items)
                 row = Text("  ")
-                row.append("◆ ", style=f"bold {theme.ACCENT}")
+                row.append("◆ ", style=f"bold {colour('ACCENT')}")
                 row.append(f"{len(block.items)} file{'' if len(block.items) == 1 else 's'} changed",
                            style="bold")
-                row.append(f"  +{additions} −{deletions}", style=theme.MUTED)
-                row.append("  · /changes to review", style=theme.FAINT)
+                row.append(f"  +{additions} −{deletions}", style=colour('MUTED'))
+                row.append("  · /changes to review", style=colour('FAINT'))
                 items.append(row)
             elif block.kind == "stopped":
-                items.append(Text("  Interrupted.", style=theme.MUTED))
+                items.append(Text("  Interrupted.", style=colour('MUTED')))
         # Keep activity visible before the first token and between tool calls.
         if not self.finished and (not self.blocks or
                                   (self.blocks[-1].kind == "tool" and self.blocks[-1].ok is not None)):
             age = self.age()
-            thinking = Text("Thinking…", style=theme.MUTED) if age is None else \
-                Text(f"Thinking… {age:.1f}s", style=theme.MUTED)
-            items.append(Spinner("dots", text=thinking, style=theme.ACCENT))
+            thinking = Text("Thinking…", style=colour('MUTED')) if age is None else \
+                Text(f"Thinking… {age:.1f}s", style=colour('MUTED'))
+            items.append(Spinner("dots", text=thinking, style=colour('ACCENT')))
         return Group(*items)
 
 
@@ -257,11 +260,11 @@ def _approve(client: KovaClient, chat_id: str, event: dict, console: Console,
     if sys.stdin.isatty() and console.is_terminal:
         if live is not None:
             live.stop()
-        console.print(Text.assemble(("  ? ", f"bold {theme.WARNING}"), (f"Allow {tool}", "bold"),
-                                    (f"  {summary}", theme.MUTED)))
+        console.print(Text.assemble(("  ? ", f"bold {colour('WARNING')}"), (f"Allow {tool}", "bold"),
+                                    (f"  {summary}", colour('MUTED'))))
         if destructive:
             console.print("    Destructive: can delete data or change the system for good",
-                          style=theme.ERROR)
+                          style=colour('ERROR'))
         choices = "[y]es · [n]o" if destructive else "[y]es · [a]lways this chat · [n]o"
         try:
             answer = console.input(f"    {choices} › ").strip().lower()
@@ -277,7 +280,7 @@ def _approve(client: KovaClient, chat_id: str, event: dict, console: Console,
             live.start()
     else:
         console.print(f"  Declined {tool}: approvals need an interactive terminal.",
-                      style=theme.MUTED)
+                      style=colour('MUTED'))
     answer_approval = getattr(client, "answer_approval", None)
     if answer_approval is not None:
         answer_approval(chat_id, str(event.get("id", "")), decision, message or None)
@@ -330,7 +333,7 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
         # taller than the terminal, rather than leaving only the cropped live view.
         console.print(turn.render())
         if interrupted:
-            console.print("  Reply stopped · send another message when ready.", style=theme.MUTED)
+            console.print("  Reply stopped · send another message when ready.", style=colour('MUTED'))
         console.print()
 
 
@@ -350,53 +353,53 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
     console.print(wordmark(__version__))
     console.print()
     status = Text("  ")
-    status.append("●", style=theme.SUCCESS if health["model_ok"] else theme.WARNING)
+    status.append("●", style=colour('SUCCESS') if health["model_ok"] else colour('WARNING'))
     status.append("  ")
     status.append_text(gradient_text(assistant_name()))
-    status.append("  ·  model ", style=theme.MUTED)
+    status.append("  ·  model ", style=colour('MUTED'))
     status.append(str(health["model"]), style="bold")
     if not health["model_ok"]:
-        status.append("  ·  offline", style=f"bold {theme.WARNING}")
-    status.append("  ·  mode ", style=theme.MUTED)
-    status.append(mode, style=f"bold {theme.ACCENT}")
+        status.append("  ·  offline", style=f"bold {colour('WARNING')}")
+    status.append("  ·  mode ", style=colour('MUTED'))
+    status.append(mode, style=f"bold {colour('ACCENT')}")
     if not web:
-        status.append("  ·  web off", style=theme.MUTED)
-    status.append("  ·  ", style=theme.MUTED)
-    status.append(f"{notes} {'note' if notes == 1 else 'notes'}", style=theme.MUTED)
+        status.append("  ·  web off", style=colour('MUTED'))
+    status.append("  ·  ", style=colour('MUTED'))
+    status.append(f"{notes} {'note' if notes == 1 else 'notes'}", style=colour('MUTED'))
     console.print(status)
-    console.print(f"     memory  {cfg.memory_path}", style=theme.FAINT)
+    console.print(f"     memory  {cfg.memory_path}", style=colour('FAINT'))
     if not health["model_ok"]:
         console.print("  The model is unreachable — replies may fail. "
-                      "Check kova setup or /model.", style=theme.WARNING)
-    console.print(Text.assemble(("  /help", f"bold {theme.ACCENT_SOFT}"), (" commands  ·  ", theme.MUTED),
-                                ("/think", f"bold {theme.ACCENT_SOFT}"), (" reasoning  ·  ", theme.MUTED),
-                                ("Ctrl+D", f"bold {theme.ACCENT_SOFT}"), (" leave", theme.MUTED)))
+                      "Check kova setup or /model.", style=colour('WARNING'))
+    console.print(Text.assemble(("  /help", f"bold {colour('ACCENT_SOFT')}"), (" commands  ·  ", colour('MUTED')),
+                                ("/think", f"bold {colour('ACCENT_SOFT')}"), (" reasoning  ·  ", colour('MUTED')),
+                                ("Ctrl+D", f"bold {colour('ACCENT_SOFT')}"), (" leave", colour('MUTED'))))
     console.print()
 
 
 def _help(console: Console) -> None:
     table = Table(title="Chat commands", box=None, show_header=False, padding=(0, 2, 0, 0))
-    table.add_column(style=theme.ACCENT, no_wrap=True)
+    table.add_column(style=colour('ACCENT'), no_wrap=True)
     table.add_column()
     for command, description in _all_commands().items():
         table.add_row(command, description)
     console.print(table)
     console.print("↑ history · Tab complete · Ctrl+C stop reply / clear input · Ctrl+D leave",
-                  style=theme.MUTED)
+                  style=colour('MUTED'))
     console.print()
 
 
 def _models(client: KovaClient, console: Console) -> None:
     active = client.health()["model"]
     table = Table(box=None, padding=(0, 2, 0, 0))
-    table.add_column("Model", style=theme.ACCENT)
+    table.add_column("Model", style=colour('ACCENT'))
     table.add_column("Identifier")
-    table.add_column("Provider", style=theme.MUTED)
-    table.add_column("Server", style=theme.MUTED)
+    table.add_column("Provider", style=colour('MUTED'))
+    table.add_column("Server", style=colour('MUTED'))
     for entry in sorted(client.models_list(), key=lambda m: (m.get("provider_name", ""), m["name"])):
         name = Text(entry["name"])
         if entry["name"] == active:
-            name.append(" (active)", style=theme.SUCCESS)
+            name.append(" (active)", style=colour('SUCCESS'))
         table.add_row(name, Text(entry["model"]), Text(entry.get("provider_name", "Custom")), Text(entry["base_url"]))
     console.print(table)
     console.print()
@@ -407,11 +410,11 @@ def _changes(client: KovaClient, console: Console, chat_id: str) -> None:
     checkpoints = client.list_checkpoints(chat_id)
     if not checkpoints:
         console.print("No changes recorded yet. Kova checkpoints the files it edits.",
-                      style=theme.MUTED)
+                      style=colour('MUTED'))
         console.print()
         return
-    table = Table(box=None, padding=(0, 2, 0, 0), header_style=theme.MUTED)
-    table.add_column("#", style=theme.ACCENT, justify="right", no_wrap=True)
+    table = Table(box=None, padding=(0, 2, 0, 0), header_style=colour('MUTED'))
+    table.add_column("#", style=colour('ACCENT'), justify="right", no_wrap=True)
     table.add_column("Change")
     table.add_column("Files", justify="right")
     table.add_column("Lines", justify="right")
@@ -420,7 +423,7 @@ def _changes(client: KovaClient, console: Console, chat_id: str) -> None:
         table.add_row(str(checkpoint["id"]), checkpoint.get("label") or "change set",
                       str(totals["files"]), f"+{totals['additions']} −{totals['deletions']}")
     console.print(table)
-    console.print("/diff <n> shows one · /restore <n> puts the files back", style=theme.MUTED)
+    console.print("/diff <n> shows one · /restore <n> puts the files back", style=colour('MUTED'))
     console.print()
 
 
@@ -429,7 +432,7 @@ def _checkpoint_at(client: KovaClient, console: Console, chat_id: str, rest: str
     checkpoints = client.list_checkpoints(chat_id)
     if not checkpoints:
         console.print("No changes recorded yet. Kova checkpoints the files it edits.",
-                      style=theme.MUTED)
+                      style=colour('MUTED'))
         return None
     if not rest:
         return checkpoints[0]
@@ -437,7 +440,7 @@ def _checkpoint_at(client: KovaClient, console: Console, chat_id: str, rest: str
         found = next((entry for entry in checkpoints if entry["id"] == int(rest)), None)
         if found is not None:
             return found
-    console.print(f"No change set {rest!r}. Type /changes to list them.", style=theme.ERROR)
+    console.print(f"No change set {rest!r}. Type /changes to list them.", style=colour('ERROR'))
     return None
 
 
@@ -460,33 +463,33 @@ def _diff(client: KovaClient, console: Console, chat_id: str, rest: str) -> None
         return
     files = list((checkpoint.get("files") or {}).items())
     if not files:
-        console.print("That change set recorded no files.", style=theme.MUTED)
+        console.print("That change set recorded no files.", style=colour('MUTED'))
         return
-    console.print(Text.assemble((f"Change set {checkpoint['id']}  ", f"bold {theme.ACCENT}"),
-                                (str(checkpoint.get("label") or ""), theme.MUTED)))
+    console.print(Text.assemble((f"Change set {checkpoint['id']}  ", f"bold {colour('ACCENT')}"),
+                                (str(checkpoint.get("label") or ""), colour('MUTED'))))
     for path, entry in files:
         preview = client.checkpoint_diff(chat_id, checkpoint["id"], path)
-        console.print(Text.assemble((f"  {entry.get('status', 'modified')} ", theme.ACCENT),
+        console.print(Text.assemble((f"  {entry.get('status', 'modified')} ", colour('ACCENT')),
                                     (path, "bold"),
                                     (f"  +{entry.get('additions', 0)} −{entry.get('deletions', 0)}",
-                                     theme.MUTED)))
+                                     colour('MUTED'))))
         lines = (preview.get("diff") or "").splitlines()
         for line in lines[:DIFF_LINES]:
             if line.startswith(("+++", "---")):
-                style = theme.FAINT
+                style = colour('FAINT')
             elif line.startswith("+"):
-                style = theme.SUCCESS
+                style = colour('SUCCESS')
             elif line.startswith("-"):
-                style = theme.ERROR
+                style = colour('ERROR')
             elif line.startswith("@@"):
-                style = theme.ACCENT
+                style = colour('ACCENT')
             else:
-                style = theme.MUTED
+                style = colour('MUTED')
             console.print(Text("    " + line, style=style))
         if len(lines) > DIFF_LINES:
-            console.print(f"    … {len(lines) - DIFF_LINES} more lines", style=theme.FAINT)
+            console.print(f"    … {len(lines) - DIFF_LINES} more lines", style=colour('FAINT'))
         if preview.get("truncated"):
-            console.print("    (preview truncated)", style=theme.FAINT)
+            console.print("    (preview truncated)", style=colour('FAINT'))
     console.print()
 
 
@@ -500,29 +503,29 @@ def _restore(client: KovaClient, console: Console, chat_id: str, rest: str) -> N
         return
     paths = _restore_paths(client, chat_id, checkpoint["id"])
     if not paths:
-        console.print("That change set recorded no files to restore.", style=theme.MUTED)
+        console.print("That change set recorded no files to restore.", style=colour('MUTED'))
         return
     for path in paths[:RESTORE_PREVIEW]:
-        console.print("  " + path, style=theme.MUTED)
+        console.print("  " + path, style=colour('MUTED'))
     if len(paths) > RESTORE_PREVIEW:
-        console.print(f"  … {len(paths) - RESTORE_PREVIEW} more", style=theme.FAINT)
+        console.print(f"  … {len(paths) - RESTORE_PREVIEW} more", style=colour('FAINT'))
     if not confirmed and sys.stdin.isatty() and console.is_terminal:
         answer = console.input(f"  Restore change set {checkpoint['id']}? Kova's later edits are "
                                "undone and files it created are removed. [y/N] › ").strip().lower()
         confirmed = answer in ("y", "yes")
     if not confirmed:
         console.print("Cancelled. Re-run as "
-                      f"/restore {checkpoint['id']} yes to confirm.", style=theme.MUTED)
+                      f"/restore {checkpoint['id']} yes to confirm.", style=colour('MUTED'))
         return
     result = client.restore_checkpoint(chat_id, checkpoint["id"])
-    console.print(Text.assemble(("  ✓ ", f"bold {theme.SUCCESS}"),
+    console.print(Text.assemble(("  ✓ ", f"bold {colour('SUCCESS')}"),
                                 (f"Restored change set {checkpoint['id']}", "bold")))
     for path in result.get("restored") or []:
-        console.print(f"    put back {path}", style=theme.MUTED)
+        console.print(f"    put back {path}", style=colour('MUTED'))
     for path in result.get("deleted") or []:
-        console.print(f"    removed {path}", style=theme.MUTED)
+        console.print(f"    removed {path}", style=colour('MUTED'))
     for failure in result.get("failed") or []:
-        console.print(f"    {failure.get('path')}: {failure.get('error')}", style=theme.ERROR)
+        console.print(f"    {failure.get('path')}: {failure.get('error')}", style=colour('ERROR'))
     console.print()
 
 
@@ -530,7 +533,7 @@ def _watch_reminders(client: KovaClient, console: Console) -> None:
     try:
         for event in client.events():
             if event.get("type") == "reminder":
-                console.print(Text(f"⏰ {_short(event['text'], 200)}", style=theme.SUCCESS))
+                console.print(Text(f"⏰ {_short(event['text'], 200)}", style=colour('SUCCESS')))
     except Exception:  # A dead event connection must never crash chat.
         pass
 
@@ -571,7 +574,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
     current = (client.get_chat(chat_id) or {}) if chat_id else {}
     incognito = incognito or bool(current.get("ephemeral"))
     if incognito:
-        console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=theme.WARNING)
+        console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=colour('WARNING'))
     toolbar_state = {"mode": mode or current.get("mode") or "work",
                      "web": current.get("web", True) if web is None else web,
                      "model": str(client.health()["model"])}
@@ -604,7 +607,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         session = PromptSession(history=InMemoryHistory(),
                                 completer=_CommandCompleter(),
                                 complete_while_typing=False,
-                                style=None if "NO_COLOR" in os.environ else _CHAT_STYLE,
+                                style=None if "NO_COLOR" in os.environ else _chat_style(),
                                 bottom_toolbar=None if "NO_COLOR" in os.environ else _toolbar)
         threading.Thread(target=_watch_reminders, args=(client, console), daemon=True).start()
     try:
@@ -612,14 +615,14 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         while True:
             try:
                 if session is None:
-                    line = console.input(f"[bold {theme.USER}]› [/]")
+                    line = console.input(f"[bold {colour('USER')}]› [/]")
                 else:
                     with patch_stdout(raw=True):
                         line = session.prompt([("class:prompt", "› ")])
             except EOFError:
                 break
             except KeyboardInterrupt:
-                console.print("Input cleared · Ctrl+D to leave.", style=theme.MUTED)
+                console.print("Input cleared · Ctrl+D to leave.", style=colour('MUTED'))
                 continue
             stripped = line.strip()
             if not stripped:
@@ -631,14 +634,14 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 close_incognito()
                 chat_id = None
                 incognito = True
-                console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=theme.WARNING)
+                console.print("Incognito: not saved on this PC. Your provider still receives messages.", style=colour('WARNING'))
             elif command == "/new" and not args:
                 close_incognito()
                 incognito = False
                 # Defer creation to the first message so /new leaves no empty row (#100).
                 chat_id = None
                 console.print("Started a new chat. It is saved when you send the first message.",
-                              style=theme.MUTED)
+                              style=colour('MUTED'))
             elif command == "/help" and not args:
                 _help(console)
             elif command == "/clear" and not args:
@@ -650,33 +653,33 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 show_thinking = not show_thinking
                 no_think = False
                 console.print("Reasoning expanded." if show_thinking else "Reasoning collapsed.",
-                              style=theme.MUTED)
+                              style=colour('MUTED'))
             elif command == "/mode":
                 if not args:
                     console.print(f"Current mode: {toolbar_state['mode']}. "
-                                  f"Switch with /mode {' or '.join(MODES)}.", style=theme.MUTED)
+                                  f"Switch with /mode {' or '.join(MODES)}.", style=colour('MUTED'))
                 elif args[0] in MODES:
                     if chat_id is not None:
                         client.update_chat(chat_id, mode=args[0])
                     toolbar_state["mode"] = args[0]
                     console.print(f"Mode: {args[0]}. Takes effect on your next message.",
-                                  style=theme.MUTED)
+                                  style=colour('MUTED'))
                 else:
                     console.print(f'Unknown mode "{args[0]}". Use /mode {" or ".join(MODES)}.',
-                                  style=theme.ERROR)
+                                  style=colour('ERROR'))
             elif command == "/web":
                 if not args:
                     state = "on" if toolbar_state["web"] else "off"
                     console.print(f"Web search is {state}. Toggle with /web on or /web off.",
-                                  style=theme.MUTED)
+                                  style=colour('MUTED'))
                 elif args[0] in ("on", "off"):
                     if chat_id is not None:
                         client.update_chat(chat_id, web=args[0] == "on")
                     toolbar_state["web"] = args[0] == "on"
                     console.print(f"Web search {args[0]}. Takes effect on your next message.",
-                                  style=theme.MUTED)
+                                  style=colour('MUTED'))
                 else:
-                    console.print("Use /web on or /web off.", style=theme.ERROR)
+                    console.print("Use /web on or /web off.", style=colour('ERROR'))
             elif command == "/model":
                 if not args:
                     _models(client, console)
@@ -684,18 +687,18 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     try:
                         client.model_use(args[0])
                         toolbar_state["model"] = args[0]
-                        console.print(Text(f"Now using {args[0]}.", style=theme.MUTED))
+                        console.print(Text(f"Now using {args[0]}.", style=colour('MUTED')))
                     except KovaError as exc:
                         if exc.status != 404:
                             raise
                         console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
-                                           style=theme.ERROR))
+                                           style=colour('ERROR')))
             elif command == "/permissions":
                 if not args:
                     current_level = pending["permission"]
                     state = f"Permissions: {current_level}. " if current_level else ""
                     console.print(f"{state}Switch with /permissions {' | '.join(PERMISSIONS)}.",
-                                  style=theme.MUTED)
+                                  style=colour('MUTED'))
                 elif args[0] in PERMISSIONS:
                     if chat_id is None:
                         pending["permission"] = args[0]
@@ -707,27 +710,27 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                             pending["permission"] = updated["permission"]
                     if changed:
                         console.print(f"Permissions: {args[0]} · {PERMISSIONS[args[0]]}.",
-                                      style=theme.MUTED)
+                                      style=colour('MUTED'))
                     else:
                         console.print("This Kova server doesn't support permission modes yet.",
-                                      style=theme.ERROR)
+                                      style=colour('ERROR'))
                 else:
-                    console.print(f"Use /permissions {' | '.join(PERMISSIONS)}.", style=theme.ERROR)
+                    console.print(f"Use /permissions {' | '.join(PERMISSIONS)}.", style=colour('ERROR'))
             elif command == "/cd":
                 target = os.path.abspath(os.path.expanduser(args[0] if args else "~"))
                 if os.path.isdir(target):
                     if chat_id is not None:
                         client.update_chat(chat_id, cwd=target)
                     pending["cwd"] = target
-                    console.print(f"Folder: {target}", style=theme.MUTED)
+                    console.print(f"Folder: {target}", style=colour('MUTED'))
                 else:
-                    console.print(f"Not a folder: {target}", style=theme.ERROR)
+                    console.print(f"Not a folder: {target}", style=colour('ERROR'))
             elif command == "/steer":
                 console.print("Steering a running reply needs the full-screen chat or the web UI.",
-                              style=theme.MUTED)
+                              style=colour('MUTED'))
             elif command in ("/changes", "/diff", "/restore"):
                 if chat_id is None:
-                    console.print("Nothing changed yet.", style=theme.MUTED)
+                    console.print("Nothing changed yet.", style=colour('MUTED'))
                     continue
                 try:
                     if command == "/changes":
@@ -737,7 +740,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     else:
                         _restore(client, console, chat_id, args[0] if args else "")
                 except KovaError as exc:
-                    console.print(exc.message, style=theme.ERROR)
+                    console.print(exc.message, style=colour('ERROR'))
             elif command == "/resume":
                 chats = [c for c in client.list_chats() if not c.get("ephemeral")][:15]
                 if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):
@@ -750,12 +753,12 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     pending["cwd"] = resumed.get("cwd") or os.getcwd()
                     pending["permission"] = resumed.get("permission")
                     console.print(f"Resumed {chats[int(args[0]) - 1].get('title') or 'Untitled'}.",
-                                  style=theme.MUTED)
+                                  style=colour('MUTED'))
                 else:
                     for index, chat in enumerate(chats, 1):
                         mark = "›" if chat["id"] == chat_id else " "
                         console.print(Text(f"{mark}{index:>3}  {chat.get('title') or 'Untitled'}"))
-                    console.print("/resume <n> opens one.", style=theme.MUTED)
+                    console.print("/resume <n> opens one.", style=colour('MUTED'))
             elif command in _plugin_commands():
                 from kova import plugins
 
@@ -763,16 +766,16 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 _render_turn(client, ensure_chat(), prompt, no_think, console,
                              show_thinking=show_thinking)
             elif stripped.startswith("/"):
-                console.print("Unknown command. Type /help to see commands.", style=theme.ERROR)
+                console.print("Unknown command. Type /help to see commands.", style=colour('ERROR'))
             else:
                 if session is None:
                     # Piped input leaves no visible line behind, so echo it as the
                     # user's turn; an interactive prompt already stays on screen.
-                    console.print(Text(f"› {stripped}", style=f"bold {theme.USER}"))
+                    console.print(Text(f"› {stripped}", style=f"bold {colour('USER')}"))
                 else:
                     console.print()
                 _render_turn(client, ensure_chat(), stripped, no_think, console,
                              show_thinking=show_thinking)
     finally:
         close_incognito()
-    console.print("Until next time.", style=theme.MUTED)
+    console.print("Until next time.", style=colour('MUTED'))

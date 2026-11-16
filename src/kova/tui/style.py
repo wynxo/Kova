@@ -19,8 +19,41 @@ from __future__ import annotations
 
 import os
 import re
+import tomllib
 
 from kova import theme
+
+
+def active_theme(configured: str | None = None) -> str:
+    """Resolve the terminal theme: environment, config, then dark.
+
+    Styling must not create or migrate a config just to print ``--help``.
+    Read only the theme setting and fall back safely for unreadable configs.
+    """
+    name = os.environ.get("KOVA_THEME", "").strip()
+    if not name:
+        if configured is None:
+            from kova.config import kova_home
+            try:
+                data = tomllib.loads((kova_home() / "config.toml").read_text(encoding="utf-8"))
+                configured = data.get("tui", {}).get("theme", "dark")
+            except (OSError, ValueError, AttributeError):
+                configured = "dark"
+        name = configured
+    return "light" if str(name).strip().lower() == "light" else "dark"
+
+
+def _translated_rgb(values, *, background: bool):
+    # The same light translation for Rich, prompt_toolkit and ANSI palettes.
+    return tuple(round(235 + v * .06) if background else round(v * .48) for v in values)
+
+
+def colour(role: str, *, background: bool = False, theme_name: str | None = None) -> str:
+    """Effective hex for a palette role (or gradient hex), before downscaling."""
+    value = getattr(theme, role) if not role.startswith("#") else role
+    if (theme_name or active_theme()) != "light":
+        return value
+    return "#" + "".join(f"{v:02x}" for v in _translated_rgb(rgb(value), background=background))
 
 
 # ------------------------------------------------------------------ hex and RGB
@@ -161,7 +194,7 @@ class Palette:
             color = 2
         self.level = max(0, min(3, int(color or 0)))
         self.color = self.level > 0
-        self.theme_name = (theme_name or os.environ.get("KOVA_THEME", "dark")).lower()
+        self.theme_name = (theme_name or active_theme()).lower()
 
     def _codes(self, codes: str) -> str:
         if self.theme_name == "light" and self.level >= 2:
@@ -169,7 +202,7 @@ class Palette:
                 kind = match.group(1)
                 values = [int(match.group(i)) for i in (2, 3, 4)]
                 # Keep text dark and tints pale on a light terminal background.
-                values = [round(v * .48) for v in values] if kind == "38" else [round(235 + v * .06) for v in values]
+                values = _translated_rgb(values, background=kind == "48")
                 return f"{kind};2;{values[0]};{values[1]};{values[2]}"
             codes = _TRUECOLOR.sub(translate, codes)
         return downgrade(codes, self.level)
@@ -259,4 +292,4 @@ def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
 
 __all__ = ["ACCENT", "ACCENT_END", "ACCENT_SOFT", "BASH", "BORDER", "CODE", "ERROR", "FAINT",
            "HEADING", "MEMORY", "MUTED", "SELECT", "SUCCESS", "USER", "WARNING", "Palette", "bg",
-           "blend", "colour_level", "downgrade", "fg", "gradient", "mix", "rgb"]
+           "active_theme", "blend", "colour", "colour_level", "downgrade", "fg", "gradient", "mix", "rgb"]
