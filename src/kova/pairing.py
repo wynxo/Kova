@@ -17,6 +17,18 @@ How it fits together:
   local ones: a private-range client, the exact LAN ``Host``, a paired
   device's cookie, and no bearer token or local-only routes (pairing, devices,
   turning phone access on or off).
+* Each paired device also carries a capability set (``CAPABILITIES``). New
+  phones get ``DEFAULT_CAPABILITIES``, enough to chat; expensive or
+  configuration-changing routes ask for more with ``require_capability`` and
+  are granted from the computer with ``kova devices allow``. Requests from the
+  computer itself are never limited by capabilities. The full matrix is in
+  docs/remote-access.md.
+* The same limits follow a phone into the agent: a turn it starts gets only the
+  tools its capabilities cover (``action_capabilities``), it can approve only
+  actions it could have run itself, and nothing it writes (messages, queued or
+  steered text, approval answers, attachments) ever reaches a turn with more
+  authority than the phone has: a chat a phone wrote in keeps that phone's
+  limits for every later turn (``Store.limit_chat``).
 """
 
 from __future__ import annotations
@@ -47,6 +59,21 @@ MAX_OPEN_CODES = 4
 FAILED_LIMIT = 10          # failed claims per client address ...
 FAILED_WINDOW = 300.0      # ... within this many seconds
 LAST_SEEN_EVERY = 300.0    # write a device's last_seen at most this often
+
+#: What a paired device may do, by name. ``chat`` is the baseline every device
+#: has: chats, messages, approvals, memory, reminders and reading settings.
+CAPABILITIES = {
+    "chat": "chat, use everyday tools, and manage chats and reminders",
+    "models:read": "see local models and how they fit this computer",
+    "models:write": "download or delete local models",
+    "providers:write": "add, remove or sign in to model providers and servers",
+    "extensions:write": "change MCP servers, plugins and skills",
+    "settings:write": "change approval rules, privacy, memory and persona settings, and start at login",
+    "memory:write": "save, change or delete memory notes, which every chat reads",
+    "host:exec": "run commands, schedule jobs, use MCP tools and work with files outside the Kova Files folder",
+}
+#: What a newly paired phone may do: a chat client, not a remote control.
+DEFAULT_CAPABILITIES = ("chat", "models:read")
 
 
 def _now_iso() -> str:
@@ -118,7 +145,7 @@ class Devices:
         if os.name != "nt":
             os.chmod(self.path, 0o600)
 
-    def add(self, name: str) -> tuple[dict, str]:
+    def add(self, name: str, capabilities=DEFAULT_CAPABILITIES) -> tuple[dict, str]:
         """Register a device; returns its public record and its one-time token."""
         token = secrets.token_urlsafe(32)
         taken = {d["name"] for d in self.items}
@@ -126,7 +153,8 @@ class Devices:
         while unique in taken:
             unique, n = f"{name} {n}", n + 1
         device = {"id": secrets.token_hex(4), "name": unique, "token_sha256": _hash(token),
-                  "created": _now_iso(), "last_seen": _now_iso()}
+                  "created": _now_iso(), "last_seen": _now_iso(),
+                  "capabilities": normalize_capabilities(capabilities)}
         self.items.append(device)
         self._save()
         return self.public(device), token
@@ -161,12 +189,43 @@ class Devices:
             self._save()
         return removed
 
+    def set_capabilities(self, device_id: str, capabilities) -> dict | None:
+        """Replace what one device may do; its public record, or None for an unknown id."""
+        for device in self.items:
+            if device["id"] == device_id:
+                device["capabilities"] = normalize_capabilities(capabilities)
+                self._save()
+                return self.public(device)
+        return None
+
     @staticmethod
     def public(device: dict) -> dict:
-        return {key: device[key] for key in ("id", "name", "created", "last_seen")}
+        record = {key: device[key] for key in ("id", "name", "created", "last_seen")}
+        return {**record, "capabilities": sorted(device_capabilities(device))}
 
     def list(self) -> list[dict]:
         return [self.public(d) for d in self.items]
+
+
+def normalize_capabilities(capabilities) -> list[str]:
+    """A sorted, known capability list that always includes ``chat``."""
+    unknown = sorted(set(capabilities) - set(CAPABILITIES))
+    if unknown:
+        raise ValueError(f"Unknown capability: {', '.join(unknown)}. "
+                         f"Choose from: {', '.join(CAPABILITIES)}.")
+    return sorted({"chat", *capabilities})
+
+
+def device_capabilities(device: dict) -> set[str]:
+    """What a stored device may do.
+
+    A record paired before capabilities existed has none stored and gets the
+    defaults, not full access; unknown names in the file are ignored.
+    """
+    stored = device.get("capabilities")
+    if not isinstance(stored, list):
+        stored = DEFAULT_CAPABILITIES
+    return {"chat", *(c for c in stored if c in CAPABILITIES)}
 
 
 @dataclass
@@ -348,6 +407,139 @@ def require_local(request: Request) -> None:
         raise HTTPException(403, "Do this on the computer Kova runs on.")
 
 
+def request_capabilities(request: Request) -> frozenset[str] | None:
+    """What the caller may do: None (no limit) for the computer itself, else the device's set."""
+    if not is_lan_request(request):
+        return None
+    device = request.app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+    return frozenset(device_capabilities(device)) if device is not None else frozenset()
+
+
+def folder_is_shared(folder, files_path, home, memory=None) -> bool:
+    """A working folder a phone without ``host:exec`` may use.
+
+    Inside Kova Files, and clear of the Kova home and of the memory folder
+    (notes there reach every chat), whichever way round they nest.
+    """
+    folder = Path(folder).expanduser().resolve()
+    files = Path(files_path).expanduser().resolve()
+    if not folder.is_relative_to(files):
+        return False
+    for private in (home, memory):
+        if private is None:
+            continue
+        private = Path(private).expanduser().resolve()
+        if folder.is_relative_to(private) or private.is_relative_to(folder):
+            return False
+    return True
+
+
+#: Tools that start programs on this computer, or schedule or unschedule them.
+COMMAND_TOOLS = frozenset({"run_command", "job_add", "job_remove"})
+#: Tools that change the installed skills.
+EXTENSION_TOOLS = frozenset({"skill_write", "skill_remove"})
+#: Tools that change memory notes, which every later turn reads.
+MEMORY_TOOLS = frozenset({"memory_add", "memory_patch", "memory_remove", "memory_save"})
+
+
+def narrow(*limits: frozenset[str] | None) -> frozenset[str] | None:
+    """The intersection of capability limits; None means no limit."""
+    result = None
+    for limit in limits:
+        if limit is not None:
+            result = frozenset(limit) if result is None else result & frozenset(limit)
+    return result
+
+
+def within(limit: frozenset[str] | None, allowed: frozenset[str] | None) -> bool:
+    """Whether something running with ``limit`` can do no more than ``allowed``."""
+    return allowed is None or (limit is not None and limit <= allowed)
+
+
+def protected_path(path) -> bool:
+    """A path a phone without ``host:exec`` may never write: project instructions or git data.
+
+    ``KOVA.md``/``AGENTS.md`` are read into every chat's system prompt; anything
+    under a ``.git`` folder (or a ``.git`` gitdir file) can make git run a
+    program, through ``core.fsmonitor`` or hooks, the next time the computer
+    lists files there. Case-insensitive, since some file systems are.
+    """
+    return instruction_file(path) or any(part.casefold() == ".git" for part in Path(str(path)).parts)
+
+
+def instruction_file(path) -> bool:
+    """Whether ``path`` is named like a project-instruction file (KOVA.md, AGENTS.md).
+
+    Those are read into the system prompt of every chat working in or under
+    their folder, so writing one is like writing a prompt for the computer.
+    Case-insensitive, since some file systems are.
+    """
+    from kova.project_instructions import FILE_NAMES
+    return Path(str(path)).name.casefold() in {name.casefold() for name in FILE_NAMES}
+
+
+def action_capabilities(name: str, *, external: bool = False, cwd=None, files_path=None,
+                        home=None, args: dict | None = None, memory=None) -> frozenset[str]:
+    """The capabilities an agent tool call needs beyond ``chat``.
+
+    Commands, scheduled jobs and tools Kova cannot see into (MCP) can reach
+    anything on the computer, so they need ``host:exec``; so do file tools whose
+    working folder is outside Kova Files or holds the Kova home (config, tokens,
+    devices.json). With ``args``, writing a project-instruction file (KOVA.md,
+    AGENTS.md) or anything under ``.git`` also needs ``host:exec``: a chat on
+    the computer would read the first as guidance with every tool available,
+    and git would run what the second configures (``protected_path``).
+    """
+    from kova.tools.code_files import FILE_TOOLS, WRITE_TOOLS
+    if name in WRITE_TOOLS and isinstance(args, dict) and _writes_protected(args.get("path"), cwd):
+        return frozenset({"host:exec"})
+    if name in COMMAND_TOOLS or external or "__" in name:
+        return frozenset({"host:exec"})
+    if name in EXTENSION_TOOLS:
+        return frozenset({"extensions:write"})
+    if name in MEMORY_TOOLS:
+        return frozenset({"memory:write"})
+    if name in FILE_TOOLS and cwd is not None and files_path is not None and home is not None \
+            and not folder_is_shared(cwd, files_path, home, memory):
+        return frozenset({"host:exec"})
+    return frozenset()
+
+
+def _writes_protected(path, cwd) -> bool:
+    if not isinstance(path, str):
+        return False
+    if protected_path(path):
+        return True
+    try:  # a link named otherwise that points at one
+        target = Path(path).expanduser()
+        if not target.is_absolute() and cwd is not None:
+            target = Path(cwd) / target
+        return protected_path(target.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return True  # cannot tell: fail closed
+
+
+def require_capability(capability: str):
+    """A route dependency: a paired phone needs ``capability``; the computer itself always passes."""
+    if capability not in CAPABILITIES:
+        raise ValueError(f"unknown capability {capability!r}")
+
+    def check(request: Request) -> None:
+        from fastapi import HTTPException
+        if not is_lan_request(request):
+            return
+        device = request.app.state.devices.find(request.cookies.get(DEVICE_COOKIE))
+        if device is None:
+            raise HTTPException(401, NOT_PAIRED)
+        if capability not in device_capabilities(device):
+            raise HTTPException(403, f"This phone is not allowed to {CAPABILITIES[capability]}. "
+                                     f"To allow it, on your computer run: "
+                                     f"kova devices allow {device['id']} {capability}")
+
+    check.capability = capability
+    return check
+
+
 # ------------------------------------------------------------ lifecycle
 async def start_lan(app) -> None:
     """Start the LAN listener if phone access is on; record why when it cannot."""
@@ -383,6 +575,10 @@ def phone_status(app) -> dict:
 # ---------------------------------------------------------------- routes
 class PhoneBody(BaseModel):
     enabled: bool
+
+
+class CapabilitiesBody(BaseModel):
+    capabilities: list[str] = Field(max_length=len(CAPABILITIES))
 
 
 class ClaimBody(BaseModel):
@@ -445,6 +641,16 @@ def install_phone(app, require_token) -> None:
     @local.get("/devices")
     async def devices() -> list[dict]:
         return app.state.devices.list()
+
+    @local.patch("/devices/{device_id}")
+    async def set_capabilities(device_id: str, body: CapabilitiesBody) -> dict:
+        try:
+            device = app.state.devices.set_capabilities(device_id, body.capabilities)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if device is None:
+            raise HTTPException(404, "No paired device with that id.")
+        return device
 
     @local.delete("/devices/{device_id}")
     async def revoke(device_id: str) -> dict:

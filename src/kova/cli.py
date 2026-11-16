@@ -2735,10 +2735,56 @@ def devices_list():
     table.add_column("Device")
     table.add_column("Paired", style=theme.MUTED, no_wrap=True)
     table.add_column("Last seen", style=theme.MUTED, no_wrap=True)
+    table.add_column("May")
     for device in devices:
         table.add_row(device["id"], device["name"], device["created"][:16].replace("T", " "),
-                      device["last_seen"][:16].replace("T", " "))
+                      device["last_seen"][:16].replace("T", " "),
+                      ", ".join(device.get("capabilities", [])))
     console.print(table)
+
+
+def _change_capabilities(device_id: str, names: list[str], grant: bool) -> None:
+    from kova.pairing import CAPABILITIES
+    unknown = [name for name in names if name not in CAPABILITIES]
+    if unknown:
+        _fail(f"Unknown capability: {', '.join(unknown)}.", f"Choose from: {', '.join(CAPABILITIES)}")
+    if not grant and "chat" in names:
+        _fail("Every paired device can chat.", f"To cut a device off, run: kova devices revoke {device_id}")
+    client = get_client()
+    device = next((d for d in client.devices_list() if d["id"] == device_id), None)
+    if device is None:
+        _fail(f"No paired device {device_id}.", "See the IDs with: kova devices")
+    current = set(device.get("capabilities", []))
+    wanted = current | set(names) if grant else current - set(names)
+    try:
+        updated = client.device_set_capabilities(device_id, sorted(wanted))
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f"No paired device {device_id}.", "See the IDs with: kova devices")
+        raise
+    _ok(f"{updated['name']} may now: {', '.join(updated['capabilities'])}.")
+
+
+@_devices.command("allow")
+def devices_allow(
+    device_id: str = typer.Argument(..., help="The device ID from: kova devices"),
+    capabilities: list[str] = typer.Argument(..., help="What to allow, such as models:write."),
+):
+    """Let a paired device do more, such as models:write to install local models.
+
+    Capabilities: chat, models:read, models:write, providers:write,
+    extensions:write, settings:write. A new phone gets chat and models:read.
+    """
+    _change_capabilities(device_id, capabilities, grant=True)
+
+
+@_devices.command("deny")
+def devices_deny(
+    device_id: str = typer.Argument(..., help="The device ID from: kova devices"),
+    capabilities: list[str] = typer.Argument(..., help="What to take away, such as models:write."),
+):
+    """Take capabilities away from a paired device; chat always stays."""
+    _change_capabilities(device_id, capabilities, grant=False)
 
 
 @_devices.command("revoke")

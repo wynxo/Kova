@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from kova import modes, provider_auth, providers, egress
 from kova.config import Config, ProviderEntry, save_config
+from kova.pairing import require_capability
 
 
 class ProviderBody(BaseModel):
@@ -52,6 +53,7 @@ def install_provider_routes(app, config: Config, require_token):
         return await request_validation_exception_handler(request, exc)
 
     router = APIRouter(dependencies=[Depends(require_token)])
+    write = [Depends(require_capability('providers:write'))]
     pending: dict = {}
 
     async def build(body: ProviderBody):
@@ -135,7 +137,7 @@ def install_provider_routes(app, config: Config, require_token):
     async def listing():
         return [public_provider(p) for p in config.providers]
 
-    @router.post('/providers/validate')
+    @router.post('/providers/validate', dependencies=write)
     async def validate(body: ProviderBody):
         try:
             p = await build(body)
@@ -143,7 +145,7 @@ def install_provider_routes(app, config: Config, require_token):
             raise HTTPException(400, str(exc)) from None
         return {'models': await catalog(p)}
 
-    @router.post('/providers')
+    @router.post('/providers', dependencies=write)
     async def add(body: ProviderBody):
         try:
             p = await build(body)
@@ -161,7 +163,7 @@ def install_provider_routes(app, config: Config, require_token):
         except providers.ProviderError as exc:
             raise HTTPException(400, str(exc)) from None
 
-    @router.delete('/providers/{identifier}')
+    @router.delete('/providers/{identifier}', dependencies=write)
     async def remove(identifier: str):
         try:
             providers.remove_provider(config, identifier)
@@ -169,7 +171,7 @@ def install_provider_routes(app, config: Config, require_token):
             raise HTTPException(404, str(exc)) from None
         return {'ok': True}
 
-    @router.post('/providers/{identifier}/logout')
+    @router.post('/providers/{identifier}/logout', dependencies=write)
     async def logout(identifier: str):
         p = next((p for p in config.providers if p.id == identifier), None)
         if not p:
@@ -181,7 +183,7 @@ def install_provider_routes(app, config: Config, require_token):
         save_config(config)
         return {'ok': True, 'remote_revocation_confirmed': confirmed}
 
-    @router.post('/providers/{identifier}/login')
+    @router.post('/providers/{identifier}/login', dependencies=write)
     async def login(identifier: str, body: ProviderBody):
         egress.check_external_process()
         p = next((p for p in config.providers if p.id == identifier), None)
@@ -210,7 +212,7 @@ def install_provider_routes(app, config: Config, require_token):
         save_config(config)
         return public_provider(p)
 
-    @router.post('/providers/auth/start')
+    @router.post('/providers/auth/start', dependencies=write)
     async def start():
         egress.check_url(provider_auth.ISSUER)
         # Bound pending listeners and expire them in LoginAttempt, including cancelled UI flows.
@@ -236,7 +238,7 @@ def install_provider_routes(app, config: Config, require_token):
             raise HTTPException(400, attempt.error)
         return {'complete': bool(attempt.done.is_set() and attempt.result)}
 
-    @router.delete('/providers/auth/{key}')
+    @router.delete('/providers/auth/{key}', dependencies=write)
     async def cancel(key: str):
         attempt = pending.pop(key, None)
         if attempt:

@@ -1,0 +1,18 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "graphite",
+  "name": "Graphite",
+  "version": "1.0.0",
+  "description": "Neutral dark theme for people who want no warm colour at all: grey surfaces, one cool blue accent. The accent still means activity, never decoration.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "accent": {
+      "default": "#7aa2ff",
+      "hover": "#96b4ff",
+      "pressed": "#5f8ae6",
+      "on": "#0d0c13",
+      "soft": "rgba(122, 162, 255, 0.14)"
+    }
+  }
+}
