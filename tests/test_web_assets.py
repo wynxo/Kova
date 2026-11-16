@@ -20,6 +20,9 @@ import pytest
 ASSETS = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets"
 INDEX = ASSETS / "index.html"
 APP_JS = ASSETS / "app.js"
+SOUNDS_JS = ASSETS / "sounds.js"
+# Formats the app deliberately does not ship: cues are synthesized at play time.
+AUDIO_SUFFIXES = {".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus"}
 
 # Attributes that make the browser fetch something.
 FETCH_ATTRIBUTES = {"src", "href", "poster", "data"}
@@ -96,6 +99,19 @@ def js_dollar_ids(source: str) -> set[str]:
         r"""\$\s*\(\s*(?P<quote>['"`])(?P<id>[^'"`$]+)(?P=quote)\s*\)"""
     )
     return {match.group("id") for match in pattern.finditer(source)}
+
+
+def test_sounds_load_before_the_app_and_ship_no_audio_files(page: Page) -> None:
+    """The optional cues are code, not media: no audio file, no runtime fetch."""
+    scripts = [reference for reference in page.references if reference.endswith(".js")]
+    assert "/app/assets/sounds.js" in scripts
+    assert scripts.index("/app/assets/sounds.js") < scripts.index("/app/assets/app.js"), \
+        "sounds.js defines window.KovaSounds, so it must run before app.js"
+    source = SOUNDS_JS.read_text(encoding="utf-8")
+    assert "AudioContext" in source and "fetch(" not in source
+    shipped = sorted(path.name for path in ASSETS.rglob("*")
+                     if path.suffix.lower() in AUDIO_SUFFIXES)
+    assert shipped == [], f"the web app ships no audio files: {shipped}"
 
 
 def test_app_js_only_looks_up_ids_that_exist_in_index(page: Page) -> None:
