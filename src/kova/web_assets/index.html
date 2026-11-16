@@ -13,10 +13,12 @@
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/chat_list.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
+  <script defer src="/app/assets/status-bar.js"></script>
   <link rel="stylesheet" href="/app/assets/diff.css">
   <script defer src="/app/assets/chat_list.js"></script>
   <script defer src="/app/assets/diff.js"></script>
@@ -50,6 +52,7 @@
           <summary class="nav-row"><span class="icon i-power" aria-hidden="true"></span>Startup</summary>
           <div class="footer-settings-body">
             <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+            <label><input id="status-bar-toggle" type="checkbox"> Show the status bar under the composer</label>
             <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
             <button id="autostart-refresh" type="button" class="btn small quiet">Refresh</button>
           </div>
@@ -114,6 +117,7 @@
           <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
+      <div id="status-bar" class="status-bar" role="note" hidden><span id="status-bar-model" class="status-bar-model"></span><span class="status-bar-meter" aria-hidden="true"><span id="status-bar-fill" class="status-bar-fill"></span></span><span id="status-bar-context" class="status-bar-context"></span><button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button></div>
     </div>
     <div id="starters" class="starters">
       <div class="suggestions">
