@@ -163,7 +163,7 @@ def test_agent_core_frontend_behavior():
     if not node:
         pytest.skip('Node is optional; needed only for frontend DOM behavior checks')
     for script in ('web_core.mjs', 'web_events.mjs', 'web_pairing.mjs', 'web_privacy.mjs',
-                   'web_status_bar.mjs', 'web_sounds.mjs'):
+                   'web_status_bar.mjs', 'web_sounds.mjs', 'web_palette.mjs'):
         result = subprocess.run([node, str(Path(__file__).with_name(script))],
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, script + '\n' + result.stdout + result.stderr
