@@ -25,6 +25,8 @@ SOUNDS_JS = ASSETS / "sounds.js"
 AUDIO_SUFFIXES = {".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus"}
 PALETTE_JS = ASSETS / "palette.js"
 PALETTE_CSS = ASSETS / "palette.css"
+TOAST_JS = ASSETS / "toast.js"
+TOAST_CSS = ASSETS / "toast.css"
 
 # Any literal colour in a component stylesheet: themes own those values.
 COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
@@ -169,3 +171,44 @@ def test_app_js_wires_the_palette_registry() -> None:
     assert "KovaPalette?.create" in text, "app.js does not create the palette"
     assert "safe(openPalette)" in text, "the palette has no keyboard or button entry point"
     assert "paletteItems" in text, "the command registry is missing"
+
+
+def test_toast_module_ships_with_the_shell() -> None:
+    """toast.js defines window.KovaToast, so it must run before app.js; its
+    stylesheet must win over the removed ad-hoc rules in app.css."""
+    html = INDEX.read_text(encoding="utf-8")
+    worker = (ASSETS / "sw.js").read_text(encoding="utf-8")
+    assert html.index("toast.css") > html.index("app.css")
+    assert html.index("toast.js") < html.index("app.js")
+    assert "/app/assets/toast.js" in worker and "/app/assets/toast.css" in worker
+
+
+def test_toast_stylesheet_uses_tokens_and_no_glow() -> None:
+    text = without_comments(TOAST_CSS.read_text(encoding="utf-8"))
+    assert COLOUR_LITERAL.findall(text) == [], "toast.css hard-codes a colour; use a token"
+    assert not re.search(r"gradient|drop-shadow|text-shadow", text, re.I)
+    for token in ("--bg-surface", "--fg-default", "--border-strong",
+                  "--status-success", "--status-warning", "--status-danger",
+                  "--space-3", "--radius-md", "--motion-base"):
+        assert f"var({token})" in text, f"toast.css should take its look from {token}"
+    assert "prefers-reduced-motion" in text, "toast.css must honour reduced motion"
+    assert ":focus-visible" in text, "toast.css must keep keyboard focus visible"
+
+
+def test_toast_script_is_self_contained_and_accessible() -> None:
+    text = without_comments(TOAST_JS.read_text(encoding="utf-8"))
+    for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(",
+                      "new Function", "fetch(", "http://", "https://"):
+        assert forbidden not in text, f"toast.js must not use {forbidden}"
+    for needed in ("'aria-live'", "'aria-label'", "'role'", "'Escape'",
+                   "'pointerenter'", "'focusin'", "textContent"):
+        assert needed in text, f"toast.js lost {needed}"
+
+
+def test_app_js_posts_messages_through_the_toast_component() -> None:
+    text = APP_JS.read_text(encoding="utf-8")
+    assert "globalThis.KovaToast" in text, "app.js never reaches the toast component"
+    assert "toastError(" in text and "toastSuccess(" in text, "severities are unwired"
+    assert "severity: 'error'" in text, "errors ask the component for the sticky severity"
+    assert "label: 'Undo'" in text, "the action button has no real user"
+    assert "sticky: true" in text, "reminders must not expire"
