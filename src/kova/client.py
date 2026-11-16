@@ -168,10 +168,11 @@ class KovaClient:
 
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None) -> dict:
-        """Change a chat's title, mode, web toggle, permission or working folder;
+                    cwd: str | None = None, pinned: bool | None = None) -> dict:
+        """Change a chat's title, mode, web toggle, permission, working folder or pin;
         ``None`` leaves a field alone."""
-        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
+        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
+                "pinned": pinned}
         body = {field: value for field, value in body.items() if value is not None}
         return self._request("PATCH", f"/chats/{chat_id}", json=body).json()
 
