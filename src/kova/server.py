@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins, egress
+from kova import __version__, checkpoints, pairing, plugins, egress, ui_prefs
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -488,6 +488,7 @@ def create_app(
     app.state.now = now
     app.state.model_health = _ModelHealth(config, transport, now)
     app.state.token = ensure_token(config.home)
+    app.state.preferences = ui_prefs.Preferences(config.home)
     app.state.turns = set()
     app.state.chat_locks = {}
     app.state.chat_turns = {}
@@ -631,6 +632,22 @@ def create_app(
         current.persona_name, current.persona_tone, current.persona_configured = identity.name, identity.tone, True
         save_config(current)
         return {"name": identity.name, "tone": identity.tone, "configured": True}
+
+    @api.get("/preferences")
+    async def preferences() -> dict:
+        """Every UI preference the clients share, with defaults filled in."""
+        try:
+            return app.state.preferences.read()
+        except ui_prefs.UiPrefsError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @api.put("/preferences")
+    async def set_preferences(body: dict = Body(...)) -> dict:
+        """Merge validated preference changes and save them for every client."""
+        try:
+            return app.state.preferences.update(body)
+        except ui_prefs.UiPrefsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @api.get("/chats")
     async def list_chats() -> list[dict]:

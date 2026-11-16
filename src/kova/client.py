@@ -103,6 +103,14 @@ class KovaClient:
     def privacy_update(self, local_only: bool) -> dict:
         return self._request('PATCH', '/privacy', json={'local_only': local_only}).json()
 
+    def preferences(self) -> dict:
+        """Every UI preference the server holds, with defaults filled in."""
+        return self._request('GET', '/preferences').json()
+
+    def set_preferences(self, preferences: dict) -> dict:
+        """Merge validated preference changes; returns the saved values."""
+        return self._request('PUT', '/preferences', json=preferences).json()
+
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:
