@@ -1,0 +1,18 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "paper",
+  "name": "Paper",
+  "version": "1.0.0",
+  "description": "A true-white light theme with an ink-blue accent, for bright rooms and projectors. Surfaces stay untinted so screenshots and docs read cleanly.",
+  "appearance": "light",
+  "extends": "kova-light",
+  "tokens": {
+    "accent": {
+      "default": "#2454a6",
+      "hover": "#1f4e8c",
+      "pressed": "#1a4275",
+      "on": "#ffffff",
+      "soft": "rgba(36, 84, 166, 0.10)"
+    }
+  }
+}
