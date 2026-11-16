@@ -124,6 +124,21 @@ def test_import_round_trip_and_merge_skips_existing(tmp_path):
     assert len(store.list_reminders()) == 1
 
 
+def test_round_trip_keeps_a_chats_pin_colour_and_icon(tmp_path):
+    """Appearance and the pin are cosmetic, but a restore keeps them (#213, #195)."""
+    source = _home(tmp_path, "source")
+    store, chat_id = _seed(source)
+    store.update_chat(chat_id, pinned=True, colour="warning", icon="sun")
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+
+    target = load_config(tmp_path / "target")
+    import_archive(target, backup)
+
+    restored = Store(target.home / "kova.db").get_chat(chat_id)
+    assert (restored["pinned"], restored["colour"], restored["icon"]) == (True, "warning", "sun")
+
+
 def test_import_restores_message_attachment_names(tmp_path):
     """A reloaded transcript keeps the file label, not the extracted document text."""
     source = _home(tmp_path, "source")
