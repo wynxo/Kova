@@ -328,8 +328,9 @@ and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
 over `uv run kova-app`.
 
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
-`settings.css`, `settings.js`, vendored copies of marked, DOMPurify and highlight.js, and the
-variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
+`palette.css`, `palette.js`, `settings.css`, `settings.js`, vendored copies of marked, DOMPurify and
+highlight.js, and the variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at
+runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
