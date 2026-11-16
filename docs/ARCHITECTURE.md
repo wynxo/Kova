@@ -334,7 +334,10 @@ only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows collapsible reasoning and live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`.
+stored in `localStorage`. Optional sound cues (`web_assets/sounds.js`, off by
+default, with a volume and per-event switches in the *Sounds* panel) are
+synthesized with WebAudio, so no audio file ships and nothing is fetched; a
+finished reply only chimes while the window is unfocused.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal

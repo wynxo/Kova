@@ -915,6 +915,7 @@
           const question = questionCard(event); approvals.set(event.id, question);
           body.insertBefore(question.card, activity);
           announce(`Kova asked a question: ${event.args.question}`);
+          window.KovaSounds?.play('needs');
           // A question with no options is answered by typing, so focus the field.
           focusCard(question.card, event.args.options?.length ? null : question.input);
         } else if (kind === 'question_resolved') {
@@ -924,6 +925,7 @@
           const approval = approvalCard(event); approvals.set(event.id, approval);
           body.insertBefore(approval.card, activity);
           announce(`Kova needs approval: ${describeApproval(event)}`);
+          window.KovaSounds?.play('needs');
           focusCard(approval.card);
         } else if (kind === 'approval_resolved') {
           approvals.get(event.id)?.resolve(event.decision, event.message);
@@ -974,6 +976,7 @@
           announce('Stopped.');
         } else if (kind === 'done') {
           announce('Reply finished.');
+          window.KovaSounds?.play('done');
           usage = event.usage || null;
           const budget = event.budget_warning;
           if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget');
@@ -1424,7 +1427,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder'); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
