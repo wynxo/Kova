@@ -11,6 +11,7 @@
   <link rel="icon" href="/app/assets/icon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
@@ -132,7 +133,7 @@
   <dialog id="provider-dialog" aria-labelledby="provider-title">
     <form id="provider-form" autocomplete="off">
       <div class="dialog-head"><h2 id="provider-title">Connect a provider</h2><button id="provider-cancel" type="button" class="icon-button" aria-label="Close provider setup"><span class="icon i-x" aria-hidden="true"></span></button></div>
-      <p class="provider-intro">Choose where your messages go. Existing connections only list models. The PC flow downloads and loads one; neither sends a chat.</p>
+      <p class="provider-intro">Choose where your messages go. Existing connections only list models. Models on this PC are downloaded and run locally; neither sends a chat.</p>
       <button id="provider-local" type="button" class="btn quiet">Use a model on this PC</button>
       <section id="local-model-step" hidden aria-label="Get a local model">
         <p id="local-hardware" class="local-hardware" role="status"></p>

@@ -1,6 +1,8 @@
 # Instructions for AI agents working on Kova
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first.
+Any change users can see also starts with [docs/DESIGN.md](docs/DESIGN.md): every colour, space,
+radius and motion value comes from a token, and a theme may only override the semantic layer.
 
 ## This repository is public: never leak the machine you run on
 
@@ -39,4 +41,7 @@ body). A made-up private IP used as an example must be listed in `.privacy-allow
 
 - `uv run pytest -q` passes.
 - `python scripts/privacy_check.py` passes.
+- `python scripts/build_tokens.py --check` passes for any change to tokens or themes.
 - The PR description contains no real paths, prompts, addresses or machine details.
+- UI changes follow [docs/DESIGN.md](docs/DESIGN.md): tokens only, no hard-coded colours,
+  contrast measured rather than eyeballed.
