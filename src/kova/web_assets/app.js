@@ -1218,6 +1218,8 @@
     else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
     else if (mod && event.shiftKey && key === 'l') $('theme').onclick();
     else if (mod && key === '/') $('shortcuts-dialog').showModal();
+    // Like the terminal: Ctrl/Cmd+Space focuses the composer to type.
+    else if (mod && key === ' ') { event.preventDefault(); $('prompt').focus(); return; }
     else if (key === 'escape') {
       if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
