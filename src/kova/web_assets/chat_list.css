@@ -1,8 +1,8 @@
 /* Sidebar date groups and the pinned-chat marker (#195).
  *
  * New component rules live here rather than in app.css, which is being moved
- * onto the design tokens. Every value below is a semantic token from
- * tokens.css; no literal colour or spacing scale lives here.
+ * onto the design tokens. Colours and scales come from tokens.css; only the
+ * icon size stays relative to its label.
  */
 
 /* Lucide "pin" (ISC; see vendor/lucide.LICENSE). The mask paints in currentColor. */
@@ -26,11 +26,6 @@
   margin-right:var(--space-1);
   color:var(--fg-muted);
   vertical-align:-.1em;
-  animation:chat-pin-in var(--motion-fast) var(--motion-ease-standard);
-}
-
-@keyframes chat-pin-in {
-  from { opacity:0; transform:translateY(-1px) scale(.9); }
 }
 
 /* The row already shows focus through the global ring; keep it inside the row
@@ -41,5 +36,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .history-title .i-pin { animation:none; }
+  .history-row, .history-row .history-actions { transition:none; }
 }
