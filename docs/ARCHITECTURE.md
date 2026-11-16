@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 107 endpoints: 106 route handlers plus the static asset mount.
+The app exposes 108 endpoints: 107 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -92,6 +92,7 @@ same commit as the route.
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
 | `GET /app/sw.js` | public | app-shell-only service worker |
+| `GET /app/gallery` | public | dev-only component gallery, served only with `KOVA_GALLERY=1` |
 | `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |
 | `POST /app/share/{token}` | browser session | consume an owner-bound share once |
 
