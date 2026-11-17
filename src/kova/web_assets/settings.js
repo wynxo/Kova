@@ -14,10 +14,13 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark sounds startup sign out keyboard',
+      keywords: 'appearance theme light dark sounds startup sign out keyboard reasoning',
       items: [
         {title: 'Theme', help: 'Dark or light.',
          keywords: 'appearance colour color light dark mode', control: 'theme'},
+        {title: 'Reasoning', help: 'Show how Kova thought before each answer.',
+         keywords: 'thinking thought chain show hide collapsed thinking rows',
+         control: 'reasoning'},
         {title: 'Sounds', help: 'Quiet cues for finished replies, reminders and approvals.',
          keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
         {title: 'Keyboard shortcuts', help: 'Every key this window understands.',
@@ -272,8 +275,37 @@
   // Rows follow their target: a control another script hides (Connect your
   // phone, on the phone itself) or disables (while offline) does the same here.
   const actionButtons = [];
+
+  // Reasoning is one checkbox: on shows the folded "Thought for Ns" rows after
+  // each thinking burst. KovaReasoning owns the value, its local copy and the
+  // server-side UI preferences, so this only reflects and flips it.
+  const reasoningInputs = [];
+  function reasoningShown() {
+    return window.KovaReasoning ? window.KovaReasoning.shown() : true;
+  }
+  function reasoningControl() {
+    const label = element('label', 'reasoning-setting');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'reasoning-setting-input';
+    input.setAttribute('aria-label', 'Show reasoning');
+    input.checked = reasoningShown();
+    input.addEventListener('change', () => {
+      window.KovaReasoning?.setShown(input.checked);
+      input.checked = reasoningShown();
+    });
+    reasoningInputs.push(input);
+    label.append(input, element('span', '', 'Show reasoning'));
+    return label;
+  }
+  function syncReasoning() {
+    const visible = reasoningShown();
+    for (const input of reasoningInputs) input.checked = visible;
+  }
+
   function syncControls() {
     syncTheme();
+    syncReasoning();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
       button.disabled = Boolean(target?.disabled);
@@ -299,6 +331,8 @@
       row.append(button);
     } else if (item.control === 'theme') {
       row.append(themeControl());
+    } else if (item.control === 'reasoning') {
+      row.append(reasoningControl());
     } else if (item.host) {
       const hosted = byId(item.host);
       if (hosted) {

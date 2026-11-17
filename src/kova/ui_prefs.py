@@ -26,12 +26,14 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "theme": ("dark", "light"),
     "sidebar": ("open", "collapsed"),
     "notifications": ("on", "off"),
+    "reasoning": ("shown", "hidden"),
 }
 
 DEFAULTS: dict[str, str] = {
     "theme": "dark",
     "sidebar": "open",
     "notifications": "off",
+    "reasoning": "shown",
 }
 
 _KNOWN = ", ".join(sorted(SCHEMA))
