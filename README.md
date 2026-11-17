@@ -7,8 +7,9 @@ Want to work on it? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CON
 ## Incognito chats
 
 Use `kova --incognito`, `kova ask --incognito "your question"`, or `/incognito`
-in terminal chat. In the web/desktop app choose **New incognito chat** or press
-**Ctrl+Shift+N** (Cmd+Shift+N on macOS).
+in terminal chat. In the web/desktop app open the **+** menu in the message box
+of a new chat and choose **Incognito chat**, pick **New incognito chat** in the
+command palette, or press **Ctrl+Shift+N** (Cmd+Shift+N on macOS).
 
 Incognito chats live only in server memory: no saved transcript, search results,
 exports, backups, memories or checkpoints. Tools and attachments are disabled.
@@ -48,8 +49,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wyn
 ```
 
 Then open **Kova** from your application menu / Super search (Linux), **Start**
-(Windows), or **Applications / Spotlight** (macOS). Choose **Add provider** in
-the app to connect a model and start chatting. No terminal is needed to launch it.
+(Windows), or **Applications / Spotlight** (macOS). Choose **Settings → Models and
+providers → Connect** in the app to connect a model and start chatting. No terminal is needed to launch it.
 
 The installer sets up [uv](https://docs.astral.sh/uv/), Python 3.12, the Kova
 backend and Electron dependencies **during installation**, and registers the
@@ -196,7 +197,7 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 | **Local server** | Type an address such as `homelab:8080`, `192.168.1.20:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
 | **Custom provider** | Give any OpenAI-compatible base URL (including its API path), a connection name, optional key and optional JSON headers. Nonstandard paths are preserved. |
 
-The desktop sidebar has **Add provider** with key/custom/local setup, browser
+The desktop app's **Settings → Models and providers** has provider setup with key/custom/local options, browser
 sign-in and consented installed-login reuse. Its model menu groups choices by
 provider. Terminal chat's `/model` picker has the same groups and type-to-filter.
 
@@ -502,7 +503,7 @@ POST /chats/{chat_id}/queue        {"text": "also update the docs"}
 POST /chats/{chat_id}/steer        {"text": "use the other file"}
 ```
 
-`GET /chats/{chat_id}/queue` lists queued messages oldest first; `DELETE /chats/{chat_id}/queue/{id}` removes one; `POST /chats/{chat_id}/queue/next` takes the oldest so a client can send it as the next turn. Queued messages are stored in the chat database and survive restarts. Steering requires a running turn (otherwise **409**) and delivers the message to that turn at its next model round, followed by a `{"type":"steer","text":...}` event; a steer that arrives after the last round is moved to the queue rather than lost. `KovaClient` exposes `queue_message`, `queued_messages`, `delete_queued_message`, `next_queued_message` and `steer_message`. Chat create/get/list/update responses include `permission` and `cwd`; get/create also include the latest `plan`. `PATCH /chats/{id}` accepts `permission` and `cwd` alongside `title`, `mode`, and `web`. `KovaClient.answer_approval(...)` answers approvals; `create_chat` and `update_chat` accept both new settings. Approvals and session allowances are server memory only; chat settings and the latest plan survive restart.
+`GET /chats/{chat_id}/queue` lists queued messages oldest first; `DELETE /chats/{chat_id}/queue/{id}` removes one; `POST /chats/{chat_id}/queue/next` takes the oldest so a client can send it as the next turn. Queued messages are stored in the chat database and survive restarts. Steering requires a running turn (otherwise **409**) and delivers the message to that turn at its next model round, followed by a `{"type":"steer","text":...}` event; a steer that arrives after the last round is moved to the queue rather than lost. `KovaClient` exposes `queue_message`, `queued_messages`, `delete_queued_message`, `next_queued_message` and `steer_message`. Chat create/get/list/update responses include `permission`, `cwd`, `pinned`, `colour` and `icon`; get/create also include the latest `plan`. `PATCH /chats/{id}` accepts `permission` and `cwd` alongside `title`, `mode`, `web`, `pinned`, `colour` (one palette key) and `icon` (one vendored icon name); `""` clears the cosmetic fields. `pinned` is a boolean that can be sent on its own: it only reorders the sidebar, so it is allowed while a turn runs. Pinning, colour and icon choices never limit a chat the way a phone's title or mode does. `KovaClient.answer_approval(...)` answers approvals; `create_chat` and `update_chat` accept both new settings. Approvals and session allowances are server memory only; chat settings and the latest plan survive restart.
 
 ## Memory and Obsidian mode
 

@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from kova import __version__, checkpoints, pairing, plugins, egress, ui_prefs
+from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -52,7 +53,10 @@ class ChatBody(BaseModel):
     web: bool | None = None
     permission: Literal["manual", "auto", "full"] | None = None
     cwd: str | None = None
+    pinned: bool | None = None
     ephemeral: bool | None = None
+    colour: str | None = None
+    icon: str | None = None
 
 
 class PersonaBody(BaseModel):
@@ -179,6 +183,12 @@ class ModelPatch(BaseModel):
 class ActiveBody(BaseModel):
     """The name of the model to activate."""
     name: str
+
+
+class CompareBody(BaseModel):
+    """One prompt to run against several models at once (issue #96)."""
+    text: str = Field(min_length=1, max_length=100_000)
+    models: list[str] | None = None
 
 
 def _note_dict(note: Note) -> dict:
@@ -652,6 +662,11 @@ def create_app(
         mode = body.mode if body else None
         if mode is not None and mode not in MODES:
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
+        try:
+            colour = normalize_colour(body.colour) if body else None
+            icon = normalize_icon(body.icon) if body else None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         cwd = working_folder(body.cwd) if body and body.cwd is not None else None
         limit_chat_settings(request, body.permission if body else None, cwd)
         chat = app.state.store.create_chat(
@@ -661,6 +676,8 @@ def create_app(
             web=body.web if body is not None and body.web is not None else True,
             permission=body.permission if body and body.permission else "manual",
             cwd=cwd if cwd is not None else str(config.files_path.resolve()),
+            colour=colour,
+            icon=icon,
         )
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
@@ -693,7 +710,7 @@ def create_app(
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
-        changes: dict[str, str | bool] = {}
+        changes: dict[str, str | bool | None] = {}
         if body.title is not None:
             title = body.title.strip()
             if not title:
@@ -709,21 +726,36 @@ def create_app(
             changes["permission"] = body.permission
         if body.cwd is not None:
             changes["cwd"] = working_folder(body.cwd)
-        if not changes:
+        try:
+            if body.colour is not None:
+                changes["colour"] = normalize_colour(body.colour)
+            if body.icon is not None:
+                changes["icon"] = normalize_icon(body.icon)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        # A pin is cosmetic: it only reorders one sidebar. It never widens or
+        # narrows a chat, so it needs no capability, no stopped turn and does
+        # not count as a phone writing in the chat (#195).
+        pinned = body.pinned
+        if not changes and pinned is None:
             raise HTTPException(status_code=422, detail="nothing to update")
         limit_chat_settings(request, body.permission, changes.get("cwd"))
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+        if changes and any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
         # A phone's title, mode or permission is the phone writing in the chat, so
         # it keeps that phone's limits; no setting a phone picks can widen a turn.
-        wrote_in(chat_id, request)
-        app.state.store.update_chat(chat_id, **changes)
+        # A colour, icon or pin on its own is cosmetic: it carries no text or file
+        # the model could read, so picking one is not writing in and limits nothing.
+        if set(changes) - {"colour", "icon"}:
+            wrote_in(chat_id, request)
+        app.state.store.update_chat(chat_id, pinned=pinned, **changes)
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
         chat = app.state.store.get_chat(chat_id)
-        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission", "cwd")}
+        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission",
+                                           "cwd", "colour", "icon", "pinned")}
 
     @api.post("/chats/{chat_id}/attachments")
     async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:
@@ -1309,6 +1341,38 @@ def create_app(
         config.active = body.name
         save_config(config)
         return {"active": body.name}
+
+    @api.post("/compare")
+    async def compare(body: CompareBody) -> dict:
+        """Run one prompt on several models concurrently (issue #96).
+
+        Side-effect free: no chat is written and no tools run. Each model
+        gets the same single user message; one failure never breaks the
+        others. ``models`` names configured models; omitted means all of them.
+        """
+        from kova.compare import MAX_COMPARE_MODELS, compare_prompts
+        config.bind_providers()
+        names = list(body.models) if body.models is not None else [m.name for m in config.models]
+        seen: list[str] = []
+        for name in names:
+            if name not in seen:
+                seen.append(name)
+        names = seen
+        if not names:
+            raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
+        if len(names) > MAX_COMPARE_MODELS:
+            raise HTTPException(status_code=422,
+                                detail=f"Choose at most {MAX_COMPARE_MODELS} models to compare")
+        entries = []
+        for name in names:
+            entry = next((m for m in config.models if m.name == name), None)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"unknown model '{name}'")
+            entries.append(entry)
+        results = await compare_prompts(entries, body.text,
+                                        transport=app.state.agent.transport,
+                                        privacy=config.privacy_secrets, config=config)
+        return {"results": results}
 
     @api.get("/events")
     async def events() -> StreamingResponse:

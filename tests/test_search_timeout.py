@@ -7,10 +7,16 @@ from kova.tools import code_files
 def test_catastrophic_regex_timeout_preserves_partial_matches(tmp_path, monkeypatch):
     (tmp_path / "input.txt").write_text("aaa\n" + "a" * 32 + "Z\n")
     monkeypatch.setattr(code_files.shutil, "which", lambda _: None)
-    monkeypatch.setattr(code_files, "SEARCH_TIMEOUT", 0.5)
+    # The budget covers starting the worker interpreter as well as the search.
+    # The first match is only reported once the worker is running, so a budget
+    # near the cold-start time (about 0.2 s here, slower on loaded CI runners)
+    # could kill it before any match and make the partial-result check flaky.
+    # The regex never finishes, so the test always waits the full budget; keep
+    # it short but far above worst-case startup.
+    monkeypatch.setattr(code_files, "SEARCH_TIMEOUT", 5)
     started = time.monotonic()
     result = code_files.search_files(str(tmp_path), "(a+)+$", regex=True)
-    assert time.monotonic() - started < 3
+    assert 4 < time.monotonic() - started < 30
     assert result["ok"] is False
     assert "timed out" in result["error"].lower()
     assert result["matches"] == ["input.txt:1: aaa"]

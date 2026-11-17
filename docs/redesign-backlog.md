@@ -2,10 +2,16 @@
 
 The parts of the redesign are already specified — tokens and themes in
 [DESIGN.md](DESIGN.md), the conversation in `design-ui-1..3`, and the panels in #182–#213.
-What is still undecided is the *shell*: where things live when they are not the message.
+This page records the *shell* decisions: where things live when they are not the message.
 Each section below is one issue. The heading is the title; **Why**, **Proposal** and
-**Acceptance** are the body. They are written against the current `index.html`, `app.css`
-and the 1440 and 360 screenshots, so they can be reviewed before anything is built.
+**Acceptance** are the body.
+
+**Status.** The minimal shell (#262) has since made four of these decisions, in simpler
+forms than proposed: the composer is one chip plus Send, the sidebar footer is a single
+**Settings** row, a healthy connection says nothing, and the welcome screen is one line
+above the composer. Sections 1–4 are kept for the reasoning behind them; their **Why**
+describes the shell before #262. Decisions 5–8 — turn metadata, the actions gutter, code
+and table frames, and the sidebar rail — are still open.
 
 They deliberately do not repeat the existing issues: #184 (one Settings page), #187
 (reasoning), #188 (message actions), #189 (markdown), #191 (activity), #194 (new chat
@@ -132,6 +138,6 @@ pin and unpin it. The rail carries no accent unless something is happening.
 
 ---
 
-**Filing these.** One issue per section, title as written, body from the three paragraphs,
-labels `design`, `area:ui` and `idea`. Sections 1, 5 and 7 are the ones a reader feels
-first; section 2 is the cheapest to land and the one that stops the footer growing.
+**Filing these.** One issue per open section, title as written, body from the three
+paragraphs, labels `design`, `area:ui` and `idea`. That means sections 5–8; the first four
+are built. Of the open ones, 5 and 7 are the ones a reader feels first.

@@ -14,8 +14,8 @@ Scan this with your phone's camera (same Wi-Fi as this computer).
 ✓ Paired iPhone. Add Kova to its home screen for one-tap access.
 ```
 
-The web and desktop apps have the same flow under **Connect your phone** in the
-sidebar.
+The web and desktop apps have the same flow under **Settings → Phone → Connect**
+(or *Connect your phone* in the command palette).
 
 | Command | What it does |
 | --- | --- |
@@ -26,7 +26,7 @@ sidebar.
 | `kova devices allow ID CAPABILITY…` | Let one phone do more, such as `models:write` |
 | `kova devices deny ID CAPABILITY…` | Take a capability away again; `chat` always stays |
 
-On the phone, the log-out button in the sidebar unpairs that phone.
+On the phone, **Settings → General → Sign out** unpairs that phone.
 
 ## What a paired phone may do
 
@@ -42,7 +42,7 @@ $ kova devices allow 3f9a1c2e models:write
 
 | Capability | Default | What it allows | Routes |
 | --- | --- | --- | --- |
-| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats, attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
+| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats (rename, pin, delete), attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
 | `models:read` | yes | see local models and how they fit this computer | GET /local-models |
 | `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
 | `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
@@ -57,6 +57,11 @@ to run on this computer or manage access itself: adding an MCP server
 (`POST /mcp`), previewing and installing extensions, turning a plugin on,
 pairing, listing or revoking devices, changing capabilities, and turning phone
 access on or off. Those are for the computer only.
+
+Pinning a conversation is cosmetic: it only changes the order of the sidebar, so
+a phone with `chat` can pin or unpin. Unlike a title, mode or permission, a pin
+carries no content and does not count as the phone writing in that chat, so it
+never lowers the chat's capabilities.
 
 ### The same limits inside a chat
 
@@ -73,7 +78,8 @@ same thing for the phone, so the limits follow the phone into the agent:
 - **Chat settings:** without `host:exec` a phone cannot choose Full access or a
   working folder outside Kova Files, when creating or changing a chat. Any
   title, mode or permission a phone sets counts as writing in that chat, so the
-  chat keeps the phone's limits.
+  chat keeps the phone's limits. A colour or icon on its own is cosmetic — it
+  carries no text or file the model could read — so picking one limits nothing.
 - **A chat a phone wrote in keeps that phone's limits.** The model reads the
   whole history, so once a phone has sent a message, queued or steered text,
   uploaded or shared a file, or answered a question in a chat, every later turn
@@ -108,6 +114,10 @@ same thing for the phone, so the limits follow the phone into the agent:
   no record of who wrote them, so after upgrading they are treated as a phone's
   with only `chat`.
 - **Restoring a checkpoint** outside Kova Files needs `host:exec`.
+- **Compare** (`POST /compare`) runs one prompt on several configured models. It
+  is a chat-level route: it needs only `chat`, runs no tools, reads no history
+  and writes nothing, so it gives a phone no power that chatting with the
+  active model does not already give it.
 
 Requests from the computer itself (the CLI, the desktop app, a local browser
 session) are never limited by capabilities. Phones paired before capabilities
@@ -147,8 +157,8 @@ existed get the defaults.
 ## Threat model
 
 - **Who can get in:** only a browser holding a paired device's cookie, on your
-  local network. A paired phone can chat, use tools and change chat
-  settings; everything else needs a capability you grant (see above).
+  local network. A paired phone can chat, use tools, pin conversations and
+  change chat settings; everything else needs a capability you grant (see above).
   Destructive actions still stop for your approval as usual.
 - **Plain HTTP on the LAN.** Kova does not serve TLS, because a self-signed
   certificate would mean scary browser warnings. Someone who can sniff your

@@ -1,0 +1,40 @@
+/* Sidebar date groups and the pinned-chat marker (#195).
+ *
+ * New component rules live here rather than in app.css, which is being moved
+ * onto the design tokens. Colours and scales come from tokens.css; only the
+ * icon size stays relative to its label.
+ */
+
+/* Lucide "pin" (ISC; see vendor/lucide.LICENSE). The mask paints in currentColor. */
+.i-pin { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 17v5'/%3E%3Cpath d='M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'/%3E%3C/svg%3E"); }
+
+.history-group {
+  flex:none;
+  margin:var(--space-3) var(--space-2) var(--space-1);
+  color:var(--fg-muted);
+  font-size:var(--type-size-label);
+  font-weight:600;
+  letter-spacing:.04em;
+  line-height:var(--type-leading-tight);
+  text-transform:uppercase;
+}
+.history-group:first-child { margin-top:var(--space-1); }
+
+.history-title .i-pin {
+  width:.86em;
+  height:.86em;
+  margin-right:var(--space-1);
+  color:var(--fg-muted);
+  vertical-align:-.1em;
+}
+
+/* The row already shows focus through the global ring; keep it inside the row
+   so the pin marker and actions stay visually attached to it. */
+.history-open:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(-1 * var(--space-0-5));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-row, .history-row .history-actions { transition:none; }
+}

@@ -143,6 +143,24 @@ def test_failed_servers_are_reported_without_blocking_others(manager, tmp_path):
     assert {t.name.split("__")[0] for t in made.tools()} == {"fake"}
 
 
+def test_stop_reason_waits_for_stderr_to_drain(manager, monkeypatch):
+    # Stderr has its own reader thread, which can lag behind the process exit.
+    # The stop reason must still quote what the server printed.
+    real_drain = mcp._Stdio._drain
+
+    def slow_drain(self):
+        time.sleep(0.3)
+        real_drain(self)
+
+    monkeypatch.setattr(mcp._Stdio, "_drain", slow_drain)
+    broken = McpServerEntry(name="broken", command=sys.executable,
+                            args=["-c", "import sys; sys.stderr.write('missing token\\n'); sys.exit(2)"])
+    made = manager(broken)
+    row = next(row for row in made.status() if row["name"] == "broken")
+    assert row["state"] == "error"
+    assert "missing token" in row["error"]
+
+
 def test_disabled_tools_and_servers_offer_nothing(manager):
     made = manager(stdio(disabled_tools=["crash", "fail"]), stdio("off", enabled=False))
     names = {t.name for t in made.tools()}

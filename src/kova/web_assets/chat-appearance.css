@@ -1,0 +1,88 @@
+/* Per-chat colour and icon (issue #213). Every colour resolves to a semantic
+ * theme token from tokens.css, so themes and the theme gallery recolour chat
+ * rows without a code change. This file never hard-codes a colour. */
+
+.history-row[data-chat-colour="accent"] { --chat-colour: var(--accent-default); }
+.history-row[data-chat-colour="success"] { --chat-colour: var(--status-success); }
+.history-row[data-chat-colour="warning"] { --chat-colour: var(--status-warning); }
+.history-row[data-chat-colour="danger"] { --chat-colour: var(--status-danger); }
+.history-row[data-chat-colour="info"] { --chat-colour: var(--status-info); }
+.history-row[data-chat-colour="keyword"] { --chat-colour: var(--syntax-keyword); }
+.history-row[data-chat-colour="string"] { --chat-colour: var(--syntax-string); }
+.history-row[data-chat-colour="function"] { --chat-colour: var(--syntax-function); }
+
+/* The row is flex, so a leading mark lines up beside the open button. */
+.history-row > .chat-mark {
+  flex: none;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 10px;
+}
+
+.chat-mark.chat-dot {
+  border-radius: 50%;
+  background: var(--chat-colour, var(--accent-default));
+}
+
+/* Icon glyphs reuse the vendored .icon/.i-<name> classes from app.css; the
+ * row's colour only tints them. */
+.history-row[data-chat-colour] > .chat-mark.icon {
+  color: var(--chat-colour);
+}
+
+/* Colour & icon picker dialog. Buttons reuse app.css .btn styles. */
+.appearance-dialog::backdrop {
+  background: var(--bg-overlay);
+}
+
+.appearance-swatches,
+.appearance-icons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.appearance-swatch,
+.appearance-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-default);
+  cursor: pointer;
+}
+
+.appearance-swatch .dot {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-default);
+}
+
+.appearance-swatch[aria-pressed="true"],
+.appearance-icon[aria-pressed="true"] {
+  border-color: var(--accent-default);
+  box-shadow: 0 0 0 1px var(--accent-default);
+}
+
+.appearance-dialog :focus-visible {
+  outline: 2px solid var(--accent-default);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appearance-swatches,
+  .appearance-icons,
+  .appearance-swatch,
+  .appearance-icon {
+    transition: none;
+  }
+}
