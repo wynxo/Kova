@@ -71,7 +71,10 @@ for (const id of triggers) launch(id);
 const autostart = launch('settings', 'details');
 autostart.append(new Element('summary'), new Element('input'), new Element('p'), new Element('button'));
 
-const window = {};
+const reasoning = {value: 'shown',
+  shown() { return this.value === 'shown'; },
+  setShown(visible) { this.value = visible ? 'shown' : 'hidden'; }};
+const window = {KovaReasoning: reasoning};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -131,7 +134,7 @@ assert.ok(themeRow, 'the Theme setting is shown');
 const title = byClass(themeRow, 'settings-row-title')[0];
 const mark = walk(title).find(node => node.tagName === 'MARK');
 assert.equal(mark?.textContent, 'Theme', 'the matched word is highlighted');
-assert.match($('settings-search-status').textContent, /6 settings match/);
+assert.match($('settings-search-status').textContent, /7 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.
@@ -153,6 +156,7 @@ assert.equal(tabs[5].getAttribute('aria-selected'), 'true');
 
 // Every row that left the sidebar is findable by the word people would type.
 for (const [word, section] of [['sounds', 'General'], ['sign out', 'General'], ['startup', 'General'],
+  ['reasoning', 'General'], ['thinking', 'General'],
   ['provider', 'Models and providers'], ['remember', 'Memory'], ['reminders', 'Reminders'],
   ['mcp', 'Extensions and MCP'], ['plugins', 'Extensions and MCP'], ['local only', 'Privacy'],
   ['phone', 'Phone'], ['notifications', 'Install and notifications']]) {
@@ -201,6 +205,23 @@ radios[0].click();
 assert.equal($('theme').clicked, themeClicks, 'choosing the current theme does nothing');
 radios[1].click();
 assert.equal($('theme').clicked, themeClicks + 1, 'choosing Light asks app.js to switch');
+
+// Reasoning is a real checkbox that flips the shared setting and reflects it
+// back from the module, never a value duplicated in this file.
+const reasoningRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Reasoning'));
+assert.ok(reasoningRow, 'the Reasoning setting is in General');
+const reasoningToggle = walk(reasoningRow).find(node => node.tagName === 'INPUT');
+assert.equal(reasoningToggle.type, 'checkbox');
+assert.equal(reasoningToggle.checked, true, 'reasoning is shown by default');
+assert.equal(reasoningToggle.getAttribute('aria-label'), 'Show reasoning');
+reasoningToggle.checked = false;
+reasoningToggle.dispatch('change', {});
+assert.equal(reasoning.value, 'hidden', 'unchecking hides reasoning');
+assert.equal(reasoningToggle.checked, false);
+reasoning.value = 'shown';
+document.activeElement = sidebar;
+$('open-settings').click();
+assert.equal(reasoningToggle.checked, true, 'reopening Settings reflects the current value');
 
 // Startup is hosted in General: open, keeping its own ids and handlers.
 const hosted = $('settings');

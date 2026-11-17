@@ -74,9 +74,27 @@ so `additionalProperties: false` everywhere is deliberate. The **semantic checks
 merge the theme over its base and measure the WCAG pairs, reporting the ratio it got and
 the ratio it needed.
 
+If you have a theme file but not a checkout - one you downloaded, say - `kova themes check
+path/to/theme.json` runs the structural checks on it and prints the tokens it resolves to,
+without starting the server. Contrast stays the build-time gate in `build_tokens.py
+--check` and `validate_theme.py`.
+
 > There is no browser and no JavaScript in this path. A theme is a JSON document,
 > validated on the server before it is ever offered to the frontend, so a broken theme
 > cannot reach `app.css`.
+
+## Listing what Kova found
+
+```bash
+kova themes list          # the two built-ins, then the theme files in Kova's home
+kova themes show midnight-teal   # its tokens, resolved over the base it extends
+```
+
+The server resolves a theme; the browser never does. `GET /themes` lists every theme Kova can
+offer - a file that does not validate is listed with its error rather than hidden - and
+`GET /themes/<id>` returns the merged tokens. The built-in palettes come from
+`src/kova/tokens.json`, which `scripts/build_tokens.py` generates from `design/tokens.json`
+next to `tokens.css`.
 
 ## Adding a built-in theme
 

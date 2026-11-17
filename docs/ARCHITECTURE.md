@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 111 endpoints: 110 route handlers plus the static asset mount.
+The app exposes 114 endpoints: 113 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -162,6 +162,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /autostart/{action}` | token or session | enable or disable start at login (`on` or `off`) |
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/PUT /preferences` | token or session | read every UI preference / merge validated changes into them |
+| `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
+| `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
 | `GET /extensions/catalog` | token or session | the extensions catalog (configured index or the bundled one), with install state |
@@ -283,7 +285,7 @@ writes need `memory:write`. The matrix is in
 A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `plugin`, `catalog`, `skills`, `prefs` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+`chats`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -330,12 +332,15 @@ over `uv run kova-app`.
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
 `palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
 (the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`
-(per-chat colour and icon), vendored copies of marked, DOMPurify and highlight.js, and the
+(per-chat colour and icon), `token-sheet.html` (a standalone page that shows every
+semantic token and re-measures the build gate's contrast pairs in the browser),
+vendored copies of marked, DOMPurify and highlight.js, and the
 variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
-shows collapsible reasoning and live tool rows, and listens to `/events` with
+shows reasoning folded into "Thought for Ns" rows (hideable in Settings) and
+live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
 stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;

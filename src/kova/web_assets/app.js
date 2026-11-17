@@ -925,30 +925,45 @@
         if (block.kind === 'text' && block.dirty) { markdown(block.node, block.text, finished); block.dirty = false; }
         // Only the block being written right now carries the live cursor.
         block.node.classList.toggle('live', !finished && block === current && !block.end);
-        if (block.kind === 'reasoning') {
-          block.pre.textContent = block.text;
-          block.summary.textContent = block.end ? `Thought for ${((block.end - block.start) / 1000).toFixed(1)}s` : 'Thinking…';
-        }
       }
       follow();
     }
     function schedule() { if (!scheduled) { scheduled = true; requestAnimationFrame(paint); } }
-    function endReasoning() { if (current?.kind === 'reasoning' && !current.end) current.end = performance.now(); }
+    // While it thinks, the activity row is the one quiet line. When this burst
+    // ends, KovaReasoning folds it into "Thought for Ns" and owns the setting
+    // that hides it; app.js never builds the reasoning text as markup.
+    function endReasoning() {
+      if (current?.kind !== 'reasoning' || current.end) return;
+      current.end = performance.now();
+      const folded = window.KovaReasoning?.row(current.start, current.end, current.text);
+      if (folded) body.insertBefore(folded, activity);
+      current = null;
+    }
     return {
       accept(event) {
         const kind = event.type;
         if (kind !== 'reasoning') endReasoning();
         if (kind === 'text' || kind === 'reasoning') {
+          // A new answer or thinking burst starts a new region, so any tool
+          // card that was open ends here.
           toolGroup = null;
-          // The reasoning line says "Thinking…" itself; one indicator at a time.
-          activity.hidden = true;
-          if (!current || current.kind !== kind) {
-            current = {kind, text: '', dirty: true, start: performance.now()};
-            if (kind === 'text') current.node = el('div', 'markdown');
-            else { current.node = el('details', 'thinking'); current.summary = el('summary', '', 'Thinking…'); current.pre = el('pre'); current.node.append(current.summary, current.pre); }
-            body.insertBefore(current.node, activity); blocks.push(current);
+          if (kind === 'reasoning') {
+            // The reasoning text waits until the burst ends; until then the
+            // thinking row is the whole visible state.
+            activity.hidden = false;
+            activityText.textContent = 'Thinking…';
+            if (!current || current.kind !== kind) current = {kind, text: '', start: performance.now(), end: 0};
+            current.text += event.text || '';
+          } else {
+            // The answer is visible itself, so the indicator steps aside.
+            activity.hidden = true;
+            if (!current || current.kind !== kind) {
+              current = {kind, text: '', dirty: true, start: performance.now()};
+              current.node = el('div', 'markdown');
+              body.insertBefore(current.node, activity); blocks.push(current);
+            }
+            current.text += event.text; current.dirty = true;
           }
-          current.text += event.text; current.dirty = true;
         } else if (kind === 'compact_skipped') {
           toast(event.message);
         } else if (kind === 'compacted') {

@@ -22,6 +22,10 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 7. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is not
    shipped — including themes from the gallery.
 
+Shell decisions live in [redesign-backlog.md](redesign-backlog.md). Each section there is
+one issue: the layout question, why it is a question, what done looks like, and whether it
+is still open.
+
 ## Tokens
 
 Source of truth: [`design/tokens.json`](../design/tokens.json). Generated output:
@@ -31,9 +35,13 @@ file. That directory is what `src/kova/web.py` mounts at `/app/assets`, and
 `app.css`'s shipped palette wins the cascade for the two names they share.
 
 ```bash
-python scripts/build_tokens.py           # regenerate src/kova/web_assets/tokens.css
+python scripts/build_tokens.py           # regenerate tokens.css and tokens.json
 python scripts/build_tokens.py --check   # contrast + shape + freshness, exits 1 on failure
 ```
+
+Both generated files are checked for freshness: `src/kova/web_assets/tokens.css` for the
+browser, and `src/kova/tokens.json` for the server, which needs the same values as data so a
+user theme can be merged over its base ([`src/kova/themes.py`](../src/kova/themes.py)).
 
 Three layers, and components may only use the third:
 
