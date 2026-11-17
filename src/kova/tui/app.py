@@ -360,7 +360,10 @@ class ChatApp:
         if self.job is None:
             # Queued messages live on the server, so they survive a restart.
             try:
-                self.queued = [row["text"] for row in self.client.queued_messages(self.chat_id)]
+                # Only this computer's own messages; a paired phone's stay on the
+                # server and are sent bound to its limits (_send_queued).
+                self.queued = [row["text"] for row in self.client.queued_messages(self.chat_id)
+                               if not row.get("remote")]
             except KovaError:
                 pass
 
@@ -819,12 +822,30 @@ class ChatApp:
         chat_id = self._ensure_chat()
         if chat_id is None:
             return
+        self._stream_turn(chat_id, message, label=text)
+
+    def _send_queued(self, row: dict) -> None:
+        """Send a message a paired phone queued, exactly as written and under its limits.
+
+        It is never read as this computer's input: no slash or ``!`` shell
+        command, no ``#`` memory note, no ``@file`` expansion, no context notes.
+        """
+        if self.chat_id is None:
+            return
+        if self.welcome_started is not None:
+            self._commit_welcome()
+        self.renderer.user(row["text"])
+        self.renderer.line(self.p.faint("  ⎿  queued from a paired phone"))
+        self._stream_turn(self.chat_id, row["text"], label=row["text"], queued=row["id"])
+
+    def _stream_turn(self, chat_id: str, message: str, *, label: str, queued: int | None = None) -> None:
         self.context_chars += len(message)
         self.renderer.begin_turn()
         client = self.client
 
         def reply(emit, cancel):
-            events = client.stream_message(chat_id, message)
+            events = (client.stream_message(chat_id, message) if queued is None
+                      else client.stream_message(chat_id, message, queued=queued))
             try:
                 for event in events:
                     emit(event)
@@ -832,7 +853,7 @@ class ChatApp:
                         break
             finally:
                 events.close()
-        self.job = Job("reply", reply, label=text)
+        self.job = Job("reply", reply, label=label)
 
     def _shell(self, command: str) -> None:
         if self.incognito:
@@ -940,28 +961,40 @@ class ChatApp:
                 r.error(error.message if isinstance(error, KovaError) else str(error))
             r.finish_turn(stopped=stopped)
             self._refresh_title_later()
-        if self.queued:
-            if stopped:
-                # Stopping a reply also holds what was queued behind it.
+        if stopped:
+            if self.queued:
+                # Stopping a reply also holds what was queued behind it (this
+                # computer's own messages; a phone's stay queued on the server).
                 waiting = "\n".join(self.queued)
                 self.editor.set(waiting + ("\n" + self.editor.text if self.editor.text else ""))
                 self.queued.clear()
                 try:
-                    while self.client.next_queued_message(self.chat_id) is not None:
+                    while (row := self.client.next_queued_message(self.chat_id)) is not None \
+                            and not row.get("remote"):
                         pass
                 except KovaError:
                     pass
-            else:
-                text = self._next_queued()
-                if text is not None:
-                    self._dispatch(text)
+        elif self.queued or self.chat_id is not None:
+            item = self._next_queued()
+            if isinstance(item, dict):
+                self._send_queued(item)
+            elif item is not None:
+                self._dispatch(item)
 
-    def _next_queued(self) -> str | None:
-        """Take the next queued message from the server, or from this session."""
+    def _next_queued(self) -> str | dict | None:
+        """Take the next queued message from the server, or from this session.
+
+        A paired phone's message comes back as its row (a dict) to be sent with
+        ``_send_queued``; this computer's own come back as text.
+        """
+        if self.chat_id is None:
+            return self.queued.pop(0) if self.queued else None
         try:
             row = self.client.next_queued_message(self.chat_id)
         except KovaError:
             row = None
+        if row and row.get("remote"):
+            return row
         text = row.get("text") if row else None
         if text is not None:
             with suppress(ValueError):

@@ -297,7 +297,10 @@ class FileIndex:
     def _scan(self) -> list[str]:
         try:
             listed = subprocess.run(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                # fsmonitor would run a program named in the folder's own
+                # .git/config; listing files must never execute anything.
+                ["git", "-c", "core.fsmonitor=false", "ls-files", "--cached", "--others",
+                 "--exclude-standard"],
                 cwd=self.root, capture_output=True, text=True, timeout=3, check=True).stdout
             paths = [line for line in listed.splitlines() if line][:self.LIMIT]
             if paths:

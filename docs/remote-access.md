@@ -14,8 +14,8 @@ Scan this with your phone's camera (same Wi-Fi as this computer).
 ✓ Paired iPhone. Add Kova to its home screen for one-tap access.
 ```
 
-The web and desktop apps have the same flow under **Connect your phone** in the
-sidebar.
+The web and desktop apps have the same flow under **Settings → Phone → Connect**
+(or *Connect your phone* in the command palette).
 
 | Command | What it does |
 | --- | --- |
@@ -23,8 +23,105 @@ sidebar.
 | `kova pair --off` | Stop listening on the network. Paired phones stay paired but cannot connect |
 | `kova devices` | List paired phones, when they were last seen, and whether access is on |
 | `kova devices revoke ID` / `--all` | Unpair one phone, or all of them, immediately |
+| `kova devices allow ID CAPABILITY…` | Let one phone do more, such as `models:write` |
+| `kova devices deny ID CAPABILITY…` | Take a capability away again; `chat` always stays |
 
-On the phone, the log-out button in the sidebar unpairs that phone.
+On the phone, **Settings → General → Sign out** unpairs that phone.
+
+## What a paired phone may do
+
+A paired phone is a chat client by default, not a full remote control. Each
+paired device has a set of capabilities, stored with it in `devices.json`. A new
+phone gets `chat` and `models:read`; anything expensive or that changes how Kova
+is set up needs a capability you grant from the computer:
+
+```console
+$ kova devices
+$ kova devices allow 3f9a1c2e models:write
+```
+
+| Capability | Default | What it allows | Routes |
+| --- | --- | --- | --- |
+| `chat` | always | chat and use everyday tools (web, memory search, reminders, files inside Kova Files; approvals still apply), manage chats (rename, pin, delete), attachments and reminders, read memory, switch the active model, read settings | every route not listed below |
+| `models:read` | yes | see local models and how they fit this computer | GET /local-models |
+| `models:write` | no | download or delete local models (gigabytes of disk) | POST /local-models/install, DELETE /local-models/… |
+| `providers:write` | no | add, remove, check or sign in to providers and model servers | POST /providers/validate, POST /providers, DELETE /providers/…, POST /providers/…/login, POST /providers/…/logout, POST /providers/auth/start, DELETE /providers/auth/…, POST /models, PATCH /models |
+| `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
+| `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/… |
+| `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
+| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, DELETE /jobs/…, plus the agent rules below |
+
+A phone without the capability gets `403` with the exact `kova devices allow`
+command to run. Some things no capability unlocks, because they choose programs
+to run on this computer or manage access itself: adding an MCP server
+(`POST /mcp`), previewing and installing extensions, turning a plugin on,
+pairing, listing or revoking devices, changing capabilities, and turning phone
+access on or off. Those are for the computer only.
+
+Pinning a conversation is cosmetic: it only changes the order of the sidebar, so
+a phone with `chat` can pin or unpin. Unlike a title, mode or permission, a pin
+carries no content and does not count as the phone writing in that chat, so it
+never lowers the chat's capabilities.
+
+### The same limits inside a chat
+
+A capability gate on a route would mean little if the assistant could do the
+same thing for the phone, so the limits follow the phone into the agent:
+
+- **A turn a phone starts gets only the tools its capabilities cover.** Without
+  `host:exec` there is no `run_command`, no `job_add` and no MCP tool, and the
+  file tools are offered only when the chat's working folder is inside Kova
+  Files and does not hold the Kova home (config, tokens, `devices.json`).
+  Without `extensions:write` there is no `skill_write` or `skill_remove`. The
+  tools are not offered at all, so no permission rule or approval can bring them
+  back.
+- **Chat settings:** without `host:exec` a phone cannot choose Full access or a
+  working folder outside Kova Files, when creating or changing a chat. Any
+  title, mode or permission a phone sets counts as writing in that chat, so the
+  chat keeps the phone's limits. A colour or icon on its own is cosmetic — it
+  carries no text or file the model could read — so picking one limits nothing.
+- **A chat a phone wrote in keeps that phone's limits.** The model reads the
+  whole history, so once a phone has sent a message, queued or steered text,
+  uploaded or shared a file, or answered a question in a chat, every later turn
+  in that chat runs with no more than that phone's capabilities, whoever sends
+  it. Forks keep the limit. Start a new chat on the computer for full access.
+- **Approvals:** a phone can always decline without a message. It can allow
+  only an action it could have run itself, and only one at a time (not for the
+  session or always, unless it has `settings:write`). It can answer a question
+  or give a reason only to a turn that can do no more than the phone may; a
+  turn started on the computer is answered on the computer.
+- **Steering:** a phone cannot steer a reply that runs with more capabilities
+  than it has (queue the message instead).
+- **The queue:** a message a phone queues is marked `remote` and stays bound to
+  its own row. `POST /chats/{id}/queue/next` hands it back without taking it,
+  and a client sends it unchanged with `queued: <id>` on
+  `POST /chats/{id}/messages`, which takes that row once and runs it under the
+  phone's limits. The terminal and web apps never read it as local input: no
+  `!` shell command, slash command, `#` memory note, `@file` expansion or
+  attachment is applied to it.
+- **Project instructions and git data:** `KOVA.md` and `AGENTS.md` are read
+  into the system prompt of every chat working in or under their folder, and
+  anything under `.git` (or a `.git` gitdir file) can make git run a program,
+  for example through `core.fsmonitor`. Writing or restoring either (any letter
+  case, also through a link) needs `host:exec`, even inside Kova Files. The
+  terminal app also lists files with `core.fsmonitor` turned off.
+- **The memory folder** is never a shared folder: if it sits inside Kova Files,
+  file tools there need `host:exec`, like memory writes need `memory:write`.
+- **Recall:** searching past chats never returns a chat a phone wrote in to a
+  turn that can do more than that phone.
+- **Backups** keep each chat's limits; a restored chat stays limited.
+- **Older queued messages:** messages queued before capabilities existed have
+  no record of who wrote them, so after upgrading they are treated as a phone's
+  with only `chat`.
+- **Restoring a checkpoint** outside Kova Files needs `host:exec`.
+- **Compare** (`POST /compare`) runs one prompt on several configured models. It
+  is a chat-level route: it needs only `chat`, runs no tools, reads no history
+  and writes nothing, so it gives a phone no power that chatting with the
+  active model does not already give it.
+
+Requests from the computer itself (the CLI, the desktop app, a local browser
+session) are never limited by capabilities. Phones paired before capabilities
+existed get the defaults.
 
 ## How it works
 
@@ -60,8 +157,9 @@ On the phone, the log-out button in the sidebar unpairs that phone.
 ## Threat model
 
 - **Who can get in:** only a browser holding a paired device's cookie, on your
-  local network. A paired phone is you: it can chat, use tools and change
-  chat settings. Destructive actions still stop for your approval as usual.
+  local network. A paired phone can chat, use tools, pin conversations and
+  change chat settings; everything else needs a capability you grant (see above).
+  Destructive actions still stop for your approval as usual.
 - **Plain HTTP on the LAN.** Kova does not serve TLS, because a self-signed
   certificate would mean scary browser warnings. Someone who can sniff your
   Wi-Fi traffic, such as an untrusted guest network or an open hotspot, could

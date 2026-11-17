@@ -103,6 +103,14 @@ class KovaClient:
     def privacy_update(self, local_only: bool) -> dict:
         return self._request('PATCH', '/privacy', json={'local_only': local_only}).json()
 
+    def preferences(self) -> dict:
+        """Every UI preference the server holds, with defaults filled in."""
+        return self._request('GET', '/preferences').json()
+
+    def set_preferences(self, preferences: dict) -> dict:
+        """Merge validated preference changes; returns the saved values."""
+        return self._request('PUT', '/preferences', json=preferences).json()
+
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:
@@ -160,10 +168,13 @@ class KovaClient:
 
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None) -> dict:
-        """Change a chat's title, mode, web toggle, permission or working folder;
-        ``None`` leaves a field alone."""
-        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
+                    cwd: str | None = None, pinned: bool | None = None,
+                    colour: str | None = None, icon: str | None = None) -> dict:
+        """Change a chat's title, mode, web toggle, permission, working folder,
+        pin, colour or icon; ``None`` leaves a field alone (``""`` clears
+        colour/icon, and ``pinned=False`` unpins)."""
+        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
+                "pinned": pinned, "colour": colour, "icon": icon}
         body = {field: value for field, value in body.items() if value is not None}
         return self._request("PATCH", f"/chats/{chat_id}", json=body).json()
 
@@ -173,9 +184,16 @@ class KovaClient:
     def delete_chat(self, chat_id: str) -> bool:
         return self._request("DELETE", f"/chats/{chat_id}", missing_ok=True).status_code == 200
 
-    def stream_message(self, chat_id: str, text: str, model: str | None = None) -> Iterator[dict]:
-        """Stream one turn's events; ``model`` overrides the active model for this turn only."""
+    def stream_message(self, chat_id: str, text: str, model: str | None = None, *,
+                       queued: int | None = None) -> Iterator[dict]:
+        """Stream one turn's events; ``model`` overrides the active model for this turn only.
+
+        ``queued`` sends that queued message (``text`` must be its exact text),
+        under the limits of whoever queued it.
+        """
         payload = {"text": text} if model is None else {"text": text, "model": model}
+        if queued is not None:
+            payload["queued"] = queued
         finished = False
         for event in self._stream("POST", f"/chats/{chat_id}/messages", json=payload, timeout=330):
             finished = finished or event.get('type') in ('done', 'error', 'stopped')
@@ -206,7 +224,12 @@ class KovaClient:
                              missing_ok=True).status_code == 200
 
     def next_queued_message(self, chat_id: str) -> dict | None:
-        """Take the oldest queued message (or None) so it can run next."""
+        """Take the oldest queued message (or None) so it can run next.
+
+        A paired phone's message comes back with ``remote: true`` and stays
+        queued; send it with ``stream_message(..., queued=row["id"])``, never as
+        local input.
+        """
         row = self._request("POST", f"/chats/{chat_id}/queue/next").json()
         return row if row.get("text") else None
 
@@ -270,6 +293,11 @@ class KovaClient:
 
     def devices_list(self) -> list[dict]:
         return self._request("GET", "/devices", timeout=10).json()
+
+    def device_set_capabilities(self, device_id: str, capabilities: list[str]) -> dict:
+        """Replace what a paired device may do; returns its updated record."""
+        return self._request("PATCH", f"/devices/{device_id}",
+                             json={"capabilities": capabilities}, timeout=10).json()
 
     def device_revoke(self, device_id: str | None = None) -> int:
         """Unpair one device, or every device when ``device_id`` is None; returns how many."""
@@ -405,6 +433,13 @@ class KovaClient:
 
     def model_use(self, name: str) -> dict:
         return self._request("POST", "/models/active", json={"name": name}).json()
+
+    def compare(self, text: str, models: list[str] | None = None) -> dict:
+        """Run one prompt on several models at once; never picks a new active model."""
+        payload: dict = {"text": text}
+        if models is not None:
+            payload["models"] = models
+        return self._request("POST", "/compare", json=payload, timeout=330).json()
 
     # MCP servers connect while these requests wait; give them time to start.
     def mcp_list(self) -> list[dict]:

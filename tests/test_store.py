@@ -106,6 +106,54 @@ def test_migration_adds_mode_and_web_to_existing_chats(tmp_path):
     assert (store.get_chat("legacy")["mode"], store.get_chat("legacy")["web"]) == ("chat", False)
 
 
+def test_migration_adds_pin_to_existing_chats(tmp_path):
+    path = tmp_path / "kova.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE chats (id TEXT PRIMARY KEY, title TEXT, created TEXT NOT NULL);"
+        "INSERT INTO chats (id, title, created) "
+        "VALUES ('legacy', 'Old chat', '2026-01-01T00:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    assert store.get_chat("legacy")["pinned"] is False
+    assert store.list_chats()[0]["pinned"] is False
+
+    store.update_chat("legacy", pinned=True)
+    assert Store(path).get_chat("legacy")["pinned"] is True
+
+
+def test_pinned_chats_sort_first_until_unpinned(tmp_path):
+    path = tmp_path / "kova.db"
+    store = Store(path)
+    first = store.create_chat("first")
+    time.sleep(0.001)
+    second = store.create_chat("second")
+    assert [chat["id"] for chat in store.list_chats()] == [second["id"], first["id"]]
+
+    store.update_chat(first["id"], pinned=True)
+    assert [chat["id"] for chat in store.list_chats()] == [first["id"], second["id"]]
+    assert Store(path).get_chat(first["id"])["pinned"] is True
+
+    store.update_chat(first["id"], pinned=False)
+    assert [chat["id"] for chat in Store(path).list_chats()] == [second["id"], first["id"]]
+
+
+def test_search_results_keep_the_pin(store):
+    pinned = store.create_chat("Pinned")
+    store.add_message(pinned["id"], "user", "apple pie")
+    time.sleep(0.001)
+    newer = store.create_chat("Newer")
+    store.add_message(newer["id"], "user", "apple tart")
+    store.update_chat(pinned["id"], pinned=True)
+
+    results = store.search_chats("apple")
+    assert [result["id"] for result in results] == [pinned["id"], newer["id"]]
+    assert [result["pinned"] for result in results] == [True, False]
+
+
 def test_list_newest_first(store):
     first = store.create_chat("first")
     time.sleep(0.001)

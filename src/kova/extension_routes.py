@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from kova import catalog, extensions, plugins
 from kova.config import Config
-from kova.pairing import is_lan_request, require_local
+from kova.pairing import is_lan_request, require_capability, require_local
 from kova.permissions import Rule
 from kova.skills import SkillError
 
@@ -51,6 +51,7 @@ class SkillBody(BaseModel):
 
 def install_extension_routes(app: FastAPI, config: Config, require_token) -> None:
     router = APIRouter(dependencies=[Depends(require_token)])
+    write = [Depends(require_capability("extensions:write"))]
     home = config.home
     staged: dict[str, tuple[float, catalog.Staged]] = {}
     cache: dict[str, tuple[float, catalog.Catalog]] = {}
@@ -131,7 +132,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
         info["installed_version"] = catalog.installed_version(entry, home)
         return info
 
-    @router.delete("/extensions/catalog/preview/{ticket}")
+    @router.delete("/extensions/catalog/preview/{ticket}", dependencies=write)
     async def catalog_cancel(ticket: str) -> dict:
         found = staged.pop(ticket, None)
         if found:
@@ -157,7 +158,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
     async def plugin_list() -> list[dict]:
         return [plugin_row(plugin) for plugin in await asyncio.to_thread(plugins.installed, home)]
 
-    @router.patch("/extensions/plugins/{name}")
+    @router.patch("/extensions/plugins/{name}", dependencies=write)
     async def plugin_patch(name: str, body: PluginPatch, request: Request) -> dict:
         if body.enabled and is_lan_request(request):
             raise HTTPException(403, "Do this on the computer Kova runs on.")
@@ -173,7 +174,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
         found = next(plugin for plugin in plugins.installed(home) if plugin.name == name)
         return plugin_row(found)
 
-    @router.delete("/extensions/plugins/{name}")
+    @router.delete("/extensions/plugins/{name}", dependencies=write)
     async def plugin_remove(name: str) -> dict:
         async with lock:
             try:
@@ -194,7 +195,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
             raise HTTPException(404, "No such skill.")
         return found
 
-    @router.put("/extensions/skills/{skill_id:path}")
+    @router.put("/extensions/skills/{skill_id:path}", dependencies=write)
     async def skill_put(skill_id: str, body: SkillBody) -> dict:
         try:
             return await asyncio.to_thread(extensions.update_skill, home, skill_id,
@@ -202,7 +203,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
         except SkillError as exc:
             raise HTTPException(422, str(exc)) from None
 
-    @router.delete("/extensions/skills/{skill_id:path}")
+    @router.delete("/extensions/skills/{skill_id:path}", dependencies=write)
     async def skill_delete(skill_id: str) -> dict:
         try:
             await asyncio.to_thread(extensions.delete_skill, home, skill_id)

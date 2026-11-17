@@ -254,7 +254,7 @@ kova mcp test github       # reconnect now and list its tools
 kova mcp remove docs       # stop it and forget it
 ```
 
-In the app, **MCP servers** in the sidebar lists every server with its tools,
+In the app, **Settings → Extensions and MCP → MCP servers** lists every server with its tools,
 an on/off switch for each server and tool, **Always allow** per tool, a **Test**
 button and **Remove**. Servers that need a token are best added with the CLI, so
 the token never passes through the browser.
@@ -399,7 +399,7 @@ keys.
 ## Managed local models
 
 When Ollama is not running, **Use a model on this PC** in setup or desktop
-**Add provider** offers a managed llama.cpp engine. Nothing downloads until
+**Settings → Models and providers → Connect** offers a managed llama.cpp engine. Nothing downloads until
 you choose a model and confirm. GPU builds use Vulkan on Linux/Windows or
 Metal on Apple Silicon; explicit CPU mode offers the small 3B model with a
 speed warning. Unsupported platforms and failed GPU loading show a next step

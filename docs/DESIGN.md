@@ -32,7 +32,7 @@ file. That directory is what `src/kova/web.py` mounts at `/app/assets`, and
 
 ```bash
 python scripts/build_tokens.py           # regenerate src/kova/web_assets/tokens.css
-python scripts/build_tokens.py --check   # contrast + shape gate, exits 1 on failure
+python scripts/build_tokens.py --check   # contrast + shape + freshness, exits 1 on failure
 ```
 
 Three layers, and components may only use the third:
@@ -152,3 +152,12 @@ semantic tokens you want to change. A theme that inherits `kova-dark` and change
 - New interactive elements are reachable and operable by keyboard.
 - Screenshots in PRs use a throwaway `KOVA_HOME`, a neutral prompt and a stub model — see
   [AGENTS.md](../AGENTS.md).
+
+### One colour layer
+
+All served component stylesheets consume the semantic roles above, including
+syntax highlighting. Do not redeclare these roles in component CSS or add
+literal colours, legacy palette aliases, theme-specific component selectors, or
+fallback palettes. Subtle state fills use `color-mix` with a semantic status
+role and `transparent`; shadows derive from `--bg-overlay`. `tokens.css` is the
+only generated palette. `tests/test_semantic_css.py` guards this boundary.

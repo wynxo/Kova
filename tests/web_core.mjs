@@ -34,12 +34,18 @@ class Element {
 }
 const elements = new Map();
 function $(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }
-for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'));
+for (const id of ['theme', 'web']) $(id).append(new Element('span'));
 $('mode').value = 'work';
-new Element().append($('connection')); const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
+const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [];
 const uploads = [];
 let pendingApprovals = [];
+const nextQueued = [];
+const streamDone = () => {
+  let consumed = false;
+  const wire = new TextEncoder().encode('data: {"type": "done"}\n\n');
+  return {ok: true, body: {getReader: () => ({read: async () => consumed ? {done: true} : (consumed = true, {done: false, value: wire}), releaseLock() {}})}};
+};
 const sandbox = {
   document: {listeners: {}, getElementById: $, createElement: tag => new Element(tag), createTextNode: text => { const e = new Element('#text'); e.textContent = text; return e; },
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
@@ -80,6 +86,9 @@ const sandbox = {
          capabilities: ['api_key', 'custom_headers', 'editable_base_url', 'reasoning', 'tools']},
       ]},
     };
+    if (path.startsWith('/chats/send-chat/messages') && options.method === 'POST') return streamDone();
+    if (path === '/chats/send-chat/queue/next') return {ok: true, json: async () => nextQueued.shift() || {message: null}};
+    if (path === '/chats/send-chat') return {ok: true, json: async () => ({id: 'send-chat', cwd: '/project', messages: []})};
     if (path.endsWith('/compact')) return {ok: true, json: async () => ({type: 'compact_skipped', message: 'Nothing to compact'})};
     if (path.endsWith('/fork')) return {ok: true, json: async () => ({id: 'blocked'})};
     if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
@@ -93,12 +102,43 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel};');
-vm.runInNewContext(source, sandbox);
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+// palette.js and diff.js are plain scripts, like app.js: load them first so
+// app.js builds its command registry and diff hooks against the same document.
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
+
+// Pinned chats and date groups (#195). A pinned chat appears once, on top; the
+// rest fall into local-calendar buckets, and "Previous 7 days" is the seven
+// complete days before yesterday.
+const {groups, bucket} = sandbox.KovaChatList;
+// Anchored to today, because history() groups by the real clock: a fixed date
+// made the sidebar checks fail on any other day.
+const today = new Date();
+const now = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0).getTime();
+const at = days => new Date(today.getFullYear(), today.getMonth(), today.getDate() - days, 9, 0, 0).toISOString();
+const groupedChats = [
+  {id: 'pinned', title: 'Pinned', pinned: true, last_message: at(30)},
+  {id: 'today', title: 'Today', last_message: at(0)},
+  {id: 'yesterday', title: 'Yesterday', last_message: at(1)},
+  {id: 'week', title: 'Week', last_message: at(4)},
+  {id: 'edge', title: 'Edge', last_message: at(8)},
+  {id: 'older', title: 'Older', last_message: at(9)},
+];
+const grouped = groups(groupedChats, now);
+assert.equal(Array.from(grouped.map(group => group.label)).join('|'),
+             'Pinned|Today|Yesterday|Previous 7 days|Older');
+assert.equal(Array.from(grouped.map(group => group.chats.map(chat => chat.id).join(','))).join('|'),
+             'pinned|today|yesterday|week,edge|older');
+assert.equal(bucket({last_message: at(8)}, now), 'week');
+assert.equal(bucket({last_message: at(9)}, now), 'older');
+assert.equal(bucket({created: 'not a date'}, now), 'older');
+console.log('Pinned chats and local-calendar date groups passed');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 // The controls follow the declared contract: the provider's capabilities
 // intersected with the mode's, never a hardcoded mode name.
@@ -324,7 +364,7 @@ assert.ok(changes.textContent.includes('+1 −1'));
 const file = byClass(changes, 'change-file')[0];
 file.open = true; file.listeners.toggle(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/diff?path=notes.txt'));
-assert.equal(byClass(file, 'diff').length, 1);
+assert.equal(byClass(file, 'file-diff').length, 1);
 buttons(changes)[0].onclick(); await tick(); await tick();
 const restore = byClass(sandbox.document.body, 'restore-dialog').at(-1);
 assert.ok(restore.textContent.includes('Restore to change set 7?'));
@@ -376,6 +416,9 @@ const article = new Element('article'), liveBody = new Element(); article.append
 const live = turnView(liveBody);
 const activityRow = byClass(liveBody, 'activity')[0];
 assert.equal(Boolean(activityRow.hidden), false, 'a fresh turn shows that Kova is thinking');
+assert.equal(byClass(activityRow, 'thinking-mark').length, 1, 'the thinking row carries the Kova mark');
+assert.equal(byClass(activityRow, 'thinking-bolt').length, 1, 'and the bolt that belongs to it');
+assert.ok(activityRow.textContent.includes('Thinking'), 'the state is written, not only animated');
 live.accept({type: 'reasoning', text: 'Let me think.'});
 assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
 assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
@@ -454,6 +497,22 @@ assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
+// Ctrl/Cmd+K opens the palette; new conversation moved to Ctrl/Cmd+Shift+K.
+state.connected = true; state.busy = false; $('mode').value = 'work'; controls();
+await sandbox.test.openPalette(); await tick(); await tick();
+assert.equal(sandbox.test.commandPalette.isOpen(), true, 'the palette opens');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New chat'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Settings'), 'Settings is one command away');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('New incognito chat'), 'incognito stays in the palette');
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Keyboard shortcuts'));
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Privacy'));
+sandbox.test.commandPalette.input.value = 'thm';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Switch to light theme'),
+          'the theme command is reachable by fuzzy query');
+sandbox.test.commandPalette.close();
+assert.equal(sandbox.test.commandPalette.isOpen(), false);
+console.log('Command palette entry, registry and fuzzy filtering passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey.
  let spaceFocused = 0, spacePrevented = 0;
  $('prompt').focus = () => { spaceFocused++; };
@@ -683,7 +742,39 @@ console.log('Managed engine desktop selection and explicit install passed');
 // discards it on navigation, reload, and a normal tab close.
 sandbox.fetch = oldFetch;
 state.busy = false; state.connected = true; state.chat = null; $('search').value = '';
+
+// The sidebar renders the groups and toggles a pin through the same PATCH as the
+// chat settings; a pin needs no confirmation and no other setting.
+state.chats = groupedChats;
+sandbox.test.history(state.chats);
+const groupLabels = () => walk($('chat-list'))
+  .filter(node => node.className === 'history-group').map(node => node.textContent);
+const rowFor = title => byClass($('chat-list'), 'history-row')
+  .find(row => walk(row).some(node => node.className === 'history-title' && node.textContent.includes(title)));
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+assert.ok(!walk(rowFor('Older')).some(node => node.className === 'icon i-pin'),
+          'an unpinned row has no pin marker');
+buttons(rowFor('Older')).find(button => button.textContent === 'Pin').onclick();
+await tick(); await tick();
+assert.deepEqual(requests.at(-1), {path: '/chats/older', body: {pinned: true}});
+assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, true);
+assert.ok(walk(rowFor('Older')).some(node => node.className === 'icon i-pin'),
+          'the pinned row shows its marker');
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days']);
+buttons(rowFor('Older')).find(button => button.textContent === 'Unpin').onclick();
+await tick(); await tick();
+assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
+assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+state.chats = [];
+console.log('Sidebar pin and unpin through the chat settings PATCH passed');
+
+// Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
+await sandbox.test.newChat(); controls();
+assert.equal($('new-incognito').hidden, false, 'the start screen offers an incognito chat');
+assert.equal($('chat-menu').hidden, true, 'no chat actions before a chat exists');
 await sandbox.test.newIncognito();
+assert.equal($('new-incognito').hidden, true, 'an open chat does not offer it again');
+assert.equal($('chat-menu').hidden, false, 'an open chat has its actions menu');
 assert.equal(requests.filter(r => r.path === '/chats' && r.body).at(-1).body.ephemeral, true);
 assert.equal(state.chat.ephemeral, true);
 assert.equal($('incognito-note').hidden, false);
@@ -705,3 +796,53 @@ assert.equal($('prompt').value, '', 'an unsent incognito draft must not enter a 
 assert.equal($('incognito-note').hidden, true);
 assert.ok(requests.slice(beforeClose).filter(r => r.path === `/chats/${closedId}`).length >= 2);
 console.log('Incognito entry, marking, upload prevention, fork refusal and cleanup passed');
+
+// Sending a message: earlier checks only sent while busy (the queue path) or a
+// slash command, so a broken sendText went unnoticed. Errors inside it become a
+// toast, so this asserts the request itself went out.
+{
+  state.connected = true; state.busy = false; state.chat = {id: 'send-chat'};
+  sandbox.test.pendingAttachments.splice(0);
+  $('prompt').value = 'hello there';
+  const before = requests.length;
+  await sandbox.test.send({preventDefault() {}});
+  const sent = requests.slice(before).filter(r => r.path === '/chats/send-chat/messages');
+  assert.equal(sent.length, 1, 'a typed message reaches the server');
+  assert.equal(sent[0].body.text, 'hello there');
+  assert.equal('queued' in sent[0].body, false);
+  assert.equal(state.busy, false, 'the turn finished cleanly');
+
+  // A message a paired phone queued is sent exactly as queued, bound to its row,
+  // without this window's pending attachments or command parsing.
+  state.chat = {id: 'send-chat'};
+  sandbox.test.pendingAttachments.push({id: 'local-file', chat_id: 'send-chat', name: 'mine.txt', size: 1, pages: null});
+  nextQueued.push({id: 41, text: '/model other', remote: true});
+  const beforeQueued = requests.length;
+  await sandbox.test.runNextQueued();
+  const queued = requests.slice(beforeQueued).filter(r => r.path === '/chats/send-chat/messages');
+  assert.equal(queued.length, 1, 'a remote queued row is sent, not dispatched as a slash command');
+  assert.deepEqual([queued[0].body.text, queued[0].body.queued, queued[0].body.attachments], ['/model other', 41, []]);
+  assert.equal(sandbox.test.pendingAttachments.length, 1, 'local attachments stay for the user');
+  sandbox.test.pendingAttachments.splice(0);
+  console.log('Sending a message and a phone-queued message passed');
+}
+
+// Hunk counters distinguish source lines beginning +++/--- from file headers.
+const diffComponent = vm.runInNewContext('KovaDiff', sandbox);
+const numbered = diffComponent.rows('--- a/f\n+++ b/f\n@@ -5,2 +8,2 @@\n---old\n+++new\n same');
+assert.equal(numbered[3].kind, 'del');
+assert.equal(numbered[3].old, 5);
+assert.equal(numbered[4].kind, 'add');
+assert.equal(numbered[4].next, 8);
+assert.equal(numbered[5].old, 6);
+assert.equal(numbered[5].next, 9);
+const unsafe = '<img src=x onerror=alert(1)>';
+const renderedDiff = diffComponent.file({path: unsafe, status: 'added', diff: '@@ -0,0 +1 @@\n+' + unsafe});
+assert.equal(renderedDiff.tagName, 'details');
+assert.ok(renderedDiff.textContent.includes(unsafe));
+assert.equal(renderedDiff.children[1].children[1].children[2].tagName, 'code');
+const fileToolBody = new Element(), fileToolView = turnView(fileToolBody);
+fileToolView.accept({type: 'tool_call', name: 'write_file', args: {path: 'demo.txt'}});
+fileToolView.accept({type: 'tool_result', name: 'write_file', ok: true, output: 'Written', file_change: {path: 'demo.txt', status: 'added', diff: '@@ -0,0 +1 @@\n+hello'}});
+assert.equal(byClass(fileToolBody, 'file-diff-file').length, 1);
+assert.ok(fileToolBody.textContent.includes('+hello'));

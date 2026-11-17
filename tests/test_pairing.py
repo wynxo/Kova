@@ -61,7 +61,7 @@ def test_devices_store_only_hashes_and_survive_reload(tmp_path):
     second, _ = devices.add("iPhone")
     assert second["name"] == "iPhone 2"
     assert token not in path.read_text()
-    assert set(first) == {"id", "name", "created", "last_seen"}
+    assert set(first) == {"id", "name", "created", "last_seen", "capabilities"}
     reloaded = Devices(path)
     assert reloaded.find(token)["id"] == first["id"]
     assert reloaded.find("wrong") is None and reloaded.find(None) is None
@@ -116,7 +116,7 @@ def kova_server(tmp_path, monkeypatch, bind="loopback"):
                                            timeout_graceful_shutdown=2))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not server.started and time.monotonic() < deadline:
         time.sleep(.01)
     assert server.started

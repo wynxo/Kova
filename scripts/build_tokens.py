@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Kova's CSS custom properties and check theme contrast.
+"""Generate Kova's CSS custom properties and check theme contrast and freshness.
 
 One source of truth (`design/tokens.json`) produces the semantic custom properties
 that the web app consumes, plus the TUI palette that `kova.tui.style` needs.
@@ -8,7 +8,7 @@ maths and writes files.
 
 Usage:
     python scripts/build_tokens.py                 # write src/kova/web_assets/tokens.css
-    python scripts/build_tokens.py --check         # exit 1 if a contrast pair fails
+    python scripts/build_tokens.py --check         # exit 1 if contrast, shape or freshness fails
     python scripts/build_tokens.py --stdout        # print the CSS instead of writing
 
 Why not Style Dictionary or Tokens Studio: this repository generates four outputs
@@ -23,6 +23,7 @@ import argparse
 import json
 import re
 import sys
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,10 @@ THEME_SELECTORS = {
     "kova-light": '[data-theme="light"]',
 }
 THEME_SCHEMES = {"kova-dark": "dark", "kova-light": "light"}
+
+# Theme-independent groups in tokens.json, emitted once on :root as
+# --space-*, --radius-*, --motion-* and --type-*.
+SCALES = ("space", "radius", "motion", "type")
 
 ALIAS = re.compile(r"^\{([a-z0-9_.]+)\}$", re.IGNORECASE)
 
@@ -191,6 +196,26 @@ def _css_name(token: str) -> str:
     return "--" + token.replace(".", "-").replace("_", "-")
 
 
+def _css_value(value: Any) -> str:
+    """A token value as CSS: cubic-bezier lists become `cubic-bezier(...)`."""
+    if isinstance(value, list):
+        return "cubic-bezier(" + ", ".join(f"{number:g}" for number in value) + ")"
+    return str(value)
+
+
+def scale_tokens(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The theme-independent scales (space, radius, motion, type), flattened.
+
+    These are the same in every theme, so they are emitted once on `:root`. A theme
+    file cannot override them; density and type settings will swap them later.
+    """
+    data = data if data is not None else load_tokens()
+    out: dict[str, Any] = {}
+    for group in SCALES:
+        out.update(flatten(data.get(group, {}), data, group))
+    return out
+
+
 def render_css(data: dict[str, Any] | None = None) -> str:
     data = data if data is not None else load_tokens()
     lines = [
@@ -199,6 +224,13 @@ def render_css(data: dict[str, Any] | None = None) -> str:
         ' * Selectors match the web app\'s attribute values (data-theme="dark" / "light").',
         " * See docs/DESIGN.md. */",
     ]
+    scales = scale_tokens(data)
+    if scales:
+        lines.append("")
+        lines.append(":root {")
+        for token, value in scales.items():
+            lines.append(f"  {_css_name(token)}: {_css_value(value)};")
+        lines.append("}")
     for theme in THEMES:
         tokens = theme_tokens(theme, data)
         lines.append("")
@@ -251,9 +283,49 @@ def check_shape(data: dict[str, Any] | None = None) -> list[str]:
     return problems
 
 
+def _display(path: Path) -> str:
+    """Repository-relative path when possible, so the message is short and shareable."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def check_freshness(css: str, path: Path | None = None) -> str | None:
+    """Return one line explaining why the committed stylesheet differs from `css`.
+
+    Contrast and shape pass just as happily against a stale sheet, so `--check`
+    also regenerates in memory and compares bytes: editing a token and forgetting
+    to re-run this script must fail, not silently ship the old palette (#232).
+    """
+    path = CSS_PATH if path is None else path
+    if not path.exists():
+        return f"{_display(path)} is missing: run `python scripts/build_tokens.py`"
+    committed = path.read_text(encoding="utf-8")
+    if committed == css:
+        return None
+    # keepends so a trailing-newline-only difference still counts as a diff
+    old = committed.splitlines(keepends=True)
+    new = css.splitlines(keepends=True)
+    differing = [
+        number
+        for number, (before, after) in enumerate(zip_longest(old, new), start=1)
+        if before != after
+    ]
+    return (
+        f"{_display(path)} is stale ({len(differing)} line(s) differ, "
+        f"first at line {differing[0]}): run `python scripts/build_tokens.py` "
+        "and commit the result"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="verify contrast and shape, write nothing")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify contrast, shape and freshness, write nothing",
+    )
     parser.add_argument("--stdout", action="store_true", help="print CSS instead of writing it")
     args = parser.parse_args(argv)
 
@@ -261,12 +333,18 @@ def main(argv: list[str] | None = None) -> int:
     problems = check_shape(data) + check_contrast(data)
 
     if args.check:
+        stale = check_freshness(render_css(data))
         for problem in problems:
             print(f"FAIL {problem}", file=sys.stderr)
-        if problems:
-            print(f"\n{len(problems)} token problem(s).", file=sys.stderr)
+        if stale:
+            print(f"FAIL {stale}", file=sys.stderr)
+        if problems or stale:
+            print(f"\n{len(problems) + (1 if stale else 0)} problem(s) found.", file=sys.stderr)
             return 1
-        print(f"tokens ok: {len(PAIRS)} contrast pairs across {len(THEMES)} themes")
+        print(
+            f"tokens ok: {len(PAIRS)} contrast pairs across {len(THEMES)} themes; "
+            "stylesheet matches the generator"
+        )
         return 0
 
     css = render_css(data)
