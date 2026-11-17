@@ -103,11 +103,13 @@ const sandbox = {
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
 source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
-// palette.js and diff.js are plain scripts, like app.js: load them first so
-// app.js builds its command registry and diff hooks against the same document.
+// palette.js, chat_list.js, diff.js, tool-cards.js and reasoning.js are plain
+// scripts, like app.js: load them first so app.js builds its command registry,
+// tool cards, reasoning rows and diff hooks against the same document.
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
   source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
@@ -402,6 +404,23 @@ console.log('Queue and steer passed');
 
 // Chat feel: one live indicator at a time, readable tool rows, message actions and keys.
 sandbox.marked = {parse: text => text}; sandbox.DOMPurify = {sanitize: html => html};
+// Consecutive tools share a disclosure; intervening prose starts a new group.
+{
+  const body = new Element(), view = turnView(body);
+  view.accept({type: 'tool_call', name: 'read_file', args: {path: 'a.txt'}});
+  view.accept({type: 'tool_result', name: 'read_file', ok: true, output: 'a'});
+  view.accept({type: 'tool_call', name: 'read_file', args: {path: 'b.txt'}});
+  view.accept({type: 'tool_result', name: 'read_file', ok: true, output: 'b'});
+  assert.equal(byClass(body, 'tool-card').length, 1);
+  assert.equal(byClass(body, 'tool-card-step').length, 2);
+  view.accept({type: 'text', text: 'Next step.'});
+  view.accept({type: 'tool_call', name: 'run_command', args: {command: 'test'}});
+  assert.equal(byClass(body, 'tool-card').length, 2);
+  view.finish();
+  assert.ok(byClass(body, 'tool-card-error').some(row => row.textContent.includes('Interrupted')));
+}
+
+
 const copied = []; sandbox.navigator = {clipboard: {writeText: async text => { copied.push(text); }}};
 const {toolSummary, toolHint, toolLabel} = sandbox.test;
 assert.equal(toolLabel('run_command'), 'Run command');
@@ -431,13 +450,18 @@ assert.ok(reasoned, 'the finished reasoning becomes a folded row');
 assert.match(reasoned.textContent, /^Thought for \d+s/, reasoned.textContent);
 assert.match(reasoned.textContent, /Let me think\./);
 assert.equal(Boolean(reasoned.open), false, 'the row starts collapsed');
-assert.equal(activityRow.hidden, true, 'the tool spinner is the indicator now');
-const liveTool = byClass(liveBody, 'tool-row')[0];
+assert.equal(activityRow.hidden, true, 'the tool card is the indicator now');
+const liveCard = byClass(liveBody, 'tool-card')[0];
+assert.ok(liveCard, 'the tool call lands in a tool card');
+assert.equal(byClass(liveCard, 'tool-card-step').length, 1);
+const liveTool = byClass(liveCard, 'tool-card-step')[0];
 assert.ok(liveTool.textContent.includes('Run command') && liveTool.textContent.includes('npm test'));
 live.accept({type: 'tool_result', name: 'run_command', ok: false, summary: '{"ok": false', output: '{"ok": false, "error": "2 tests failed"}'});
 assert.ok(liveTool.textContent.includes('2 tests failed'), 'a failed tool says why');
 assert.ok(liveTool.classList.contains('failed'));
-assert.equal(byClass(liveBody, 'tool-output').length, 1, 'the full result opens under the row');
+assert.equal(byClass(liveBody, 'tool-card-output').length, 1, 'the full result opens under the row');
+assert.match(byClass(liveBody, 'tool-card-summary')[0].textContent, /^Ran 1 tool .* 1 failed/,
+  'the card counts the tool and its failure');
 assert.ok(activityRow.textContent.includes('Working'));
 live.accept({type: 'text', text: 'All '}); live.accept({type: 'text', text: 'done.'});
 assert.ok(byClass(liveBody, 'markdown')[0].classList.contains('live'));
@@ -475,7 +499,7 @@ setChat({id: 'saved-turn', messages: [
 ]});
 assert.equal(byClass($('messages'), 'assistant').length, 1);
 assert.equal(byClass($('messages'), 'usage-meter')[0].textContent, '~50 in · ~9 out · $0.00 local', 'a saved answer keeps its meter');
-assert.ok(byClass($('messages'), 'tool-row')[0].textContent.includes('notes.txt'));
+assert.ok(byClass($('messages'), 'tool-card-step')[0].textContent.includes('notes.txt'));
 const savedActions = byClass($('messages'), 'message-actions');
 assert.equal(savedActions.length, 2, 'your message and the reply each get actions');
 buttons(savedActions[1])[0].onclick(); await tick();

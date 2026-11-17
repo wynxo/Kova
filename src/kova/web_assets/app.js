@@ -555,17 +555,19 @@
     empty(!chat?.messages?.some(m => m.role === 'user'));
     $('messages').replaceChildren();
     // A saved turn reads like a live one: every round of it sits under one heading.
-    const turns = []; let turn = null;
+    const turns = []; let turn = null, savedTools = null;
     for (const msg of chat?.messages || []) {
-      if (msg.role === 'user') { message('user', msg.content, undefined, msg.attachments || []); turn = null; }
+      if (msg.role === 'user') { message('user', msg.content, undefined, msg.attachments || []); turn = null; savedTools = null; }
       else if (msg.role === 'assistant') {
         if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
-        if (msg.content) { const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
+        if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
         if (msg.usage) turn.usage = msg.usage;
         if (msg.tool_calls?.length) for (const call of msg.tool_calls) {
-          turn.body.append(toolRow(call.function?.name, call.function?.arguments, icon('check')).node);
+          if (!savedTools) { savedTools = KovaToolCards.create({saved: true}); turn.body.append(savedTools.node); }
+          savedTools.add({id: call.id, name: call.function?.name, args: call.function?.arguments, label: toolLabel(call.function?.name), hint: toolHint(call.function?.arguments)});
         }
       }
+      else if (msg.role === 'tool' && savedTools) savedTools.result({id: msg.tool_call_id, output: msg.content});
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
@@ -908,7 +910,8 @@
   }
   function turnView(body) {
     let current = null, scheduled = false, finished = false, usage = null;
-    const blocks = [], pendingTools = [], approvals = new Map();
+    const blocks = [], approvals = new Map(), toolGroups = [];
+    let toolGroup = null;
     let plan = null;
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with a small bolt that strikes now and then: still "working", never a loud spinner.
@@ -941,6 +944,9 @@
         const kind = event.type;
         if (kind !== 'reasoning') endReasoning();
         if (kind === 'text' || kind === 'reasoning') {
+          // A new answer or thinking burst starts a new region, so any tool
+          // card that was open ends here.
+          toolGroup = null;
           if (kind === 'reasoning') {
             // The reasoning text waits until the burst ends; until then the
             // thinking row is the whole visible state.
@@ -967,10 +973,8 @@
           body.insertBefore(details, activity);
         } else if (kind === 'tool_call') {
           current = null; activity.hidden = true;
-          const spinner = el('span', 'spinner'), tool = toolRow(event.name, event.args, spinner);
-          if (!tool.hint) tool.detail.textContent = 'Running…';
-          body.insertBefore(tool.node, activity);
-          pendingTools.push({...tool, name: event.name, icon: spinner, done: false});
+          if (!toolGroup) { toolGroup = KovaToolCards.create(); toolGroups.push(toolGroup); body.insertBefore(toolGroup.node, activity); }
+          toolGroup.add({...event, label: toolLabel(event.name), hint: toolHint(event.args)});
         } else if (kind === 'question') {
           activity.hidden = true;
           const question = questionCard(event); approvals.set(event.id, question);
@@ -1014,16 +1018,7 @@
                                           files: event.files || [], skipped: event.skipped || []}), activity);
           }
         } else if (kind === 'tool_result') {
-          const tool = pendingTools.find(tool => tool.name === event.name && !tool.done);
-          if (tool) {
-            if (event.file_change) tool.node.append(KovaDiff.file(event.file_change));
-            tool.done = true; tool.icon.className = `icon i-${event.ok ? 'check' : 'x'}`; tool.row.classList.toggle('failed', !event.ok);
-            // What ran stays visible; a failure says why instead. The full result opens underneath.
-            const summary = toolSummary(event);
-            tool.detail.textContent = event.ok && tool.hint ? tool.hint : summary;
-            const output = String(event.output ?? event.summary ?? '');
-            if (output.trim() && output.trim() !== tool.detail.textContent) tool.node.append(el('pre', 'tool-output', output.length > 6000 ? output.slice(0, 6000) + '\n…' : output));
-          }
+          toolGroup?.result(event);
           current = null; activity.hidden = false; activityText.textContent = 'Working…';
         } else if (kind === 'error') {
           // One announcement for a failure: the live region, not a second alert.
@@ -1048,7 +1043,7 @@
       finish() {
         endReasoning(); finished = true; activity.remove();
         for (const approval of approvals.values()) approval.finish();
-        for (const tool of pendingTools.filter(t => !t.done)) { tool.icon.className = 'icon i-minus'; tool.detail.textContent = tool.hint ? `Interrupted · ${tool.hint}` : 'Interrupted'; }
+        for (const group of toolGroups) group.finish();
         for (const block of blocks) block.dirty = true;
         paint();
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');

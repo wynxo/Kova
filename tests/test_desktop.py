@@ -166,7 +166,7 @@ def test_agent_core_frontend_behavior():
         pytest.skip('Node is optional; needed only for frontend DOM behavior checks')
     for script in ('web_core.mjs', 'web_events.mjs', 'web_pairing.mjs', 'web_privacy.mjs',
                    'web_status_bar.mjs', 'web_sounds.mjs', 'web_palette.mjs', 'web_settings.mjs',
-                   'web_toast.mjs', 'web_reasoning.mjs'):
+                   'web_toast.mjs', 'web_reasoning.mjs', 'web_tool_cards.mjs'):
         result = subprocess.run([node, str(Path(__file__).with_name(script))],
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, script + '\n' + result.stdout + result.stderr
@@ -182,3 +182,12 @@ def test_installed_commands_and_menu_entry_name_real_launchers():
                        "kova-web": "kova.app:web_main"}
     entry = (repo / "desktop" / "kova.desktop").read_text().splitlines()
     assert "Exec=kova-app" in entry
+
+
+def test_tool_card_assets():
+    from pathlib import Path
+    assets = Path(__file__).resolve().parents[1] / "src/kova/web_assets"
+    for name in ("tool-cards.js", "tool-cards.css"):
+        assert (assets / name).is_file()
+        assert name in (assets / "index.html").read_text()
+        assert name in (assets / "sw.js").read_text()
