@@ -26,9 +26,8 @@ class Element {
 }
 const elements = new Map();
 const $ = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
-for (const id of ['connection', 'theme', 'web']) $(id).append(new Element('span'));
+for (const id of ['theme', 'web']) $(id).append(new Element('span'));
 $('mode').value = 'work';
-new Element().append($('connection'));
 
 class FakeEventSource {
   static CONNECTING = 0; static OPEN = 1; static CLOSED = 2;
@@ -70,14 +69,19 @@ const sandbox = {
 sandbox.window.document = sandbox.document;
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8'), sandbox);
 const tick = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
-const pill = () => $('connection').lastElementChild.textContent;
+// The header carries no connection badge. The only visible state is one quiet
+// notice above the message box, and only after something actually failed.
+const shown = () => !$('notice').hidden;
+const said = () => $('notice-text').textContent;
+const chipTitle = () => $('chat-options').title || '';
 const runTimers = async () => { const due = timers.splice(0); for (const t of due) t.fn(); await tick(); };
 const reconnectTimers = () => timers.filter(t => t.delay >= 1000 && t.delay <= 30000);
 
 await tick();
 assert.equal(sources.length, 1, 'start() opens the live stream');
 assert.equal(sources[0].url, '/events');
-assert.equal(pill(), 'Model connected');
+assert.equal(shown(), false, 'a healthy link is not announced');
+assert.ok(!chipTitle().includes('offline'), chipTitle());
 sources[0].emit('open'); sources[0].emit('ping');
 timers.length = 0;  // the startup health timer is checked on its own below
 
@@ -85,19 +89,17 @@ timers.length = 0;  // the startup health timer is checked on its own below
 sources[0].emit('reminder', {text: 'Stretch'});
 assert.ok($('toasts').textContent.includes('Stretch'));
 
-// 1. Network blip: the browser retries by itself (CONNECTING); we only say so, then resync.
+// 1. Network blip: the browser retries by itself (CONNECTING). Routine
+// reconnecting is quiet; once the stream is back, it resyncs.
 sources[0].fail(FakeEventSource.CONNECTING);
-assert.equal(pill(), 'Reconnecting…');
-assert.ok($('banner').textContent.includes('Reconnecting'));
+assert.equal(shown(), false, 'a routine reconnect is not announced');
 assert.equal(reconnectTimers().length, 0, 'no second connection while the browser retries');
-// The health poll must not paint "Model connected" over a dead stream.
 sandbox.document.listeners.visibilitychange(); await tick();
-assert.equal(pill(), 'Reconnecting…');
+assert.equal(shown(), false, 'a health poll is not an action and says nothing');
 const before = requests.length;
 sources[0].emit('open'); await tick();
 assert.ok(requests.slice(before).includes('/chats'), 'reconnecting resyncs the chat list');
-assert.equal(pill(), 'Model connected');
-assert.equal($('banner').hidden, true);
+assert.equal(shown(), false);
 timers.length = 0;
 
 // 2. Server unreachable after the stream closed: retry with growing backoff.
@@ -113,29 +115,30 @@ unreachable = false;
 await runTimers();
 assert.equal(sources.length, 2, 'the stream reopens once the server answers');
 sources[1].emit('open'); await tick();
-assert.equal(pill(), 'Model connected');
+assert.equal(shown(), false, 'background retries never painted a notice');
 timers.length = 0;
 
 // 3. A stream that stops pinging (a phone that slept) is replaced.
 sources[1].emit('ping');
 clock += 50_000;
 sandbox.document.listeners.visibilitychange(); await tick();
-assert.equal(pill(), 'Reconnecting…');
 assert.ok(sources[1].closed);
+assert.equal(shown(), false);
 await runTimers();
 assert.equal(sources.length, 3);
 sources[2].emit('open'); sources[2].emit('ping'); await tick();
 timers.length = 0;
 
-// 3b. A known-offline cached check says how old it is instead of blocking.
+// 3b. A known-offline model is a detail of the model chip, with how old the
+// check is; it is never a banner, because nothing the user did has failed.
 healthPayload = {model: 'local', model_ok: false,
                  model_checked_at: new Date(clock - 120_000).toISOString()};
 sandbox.document.listeners.visibilitychange(); await tick();
-assert.equal(pill(), 'Model offline (checked 2 min ago)');
-assert.ok($('banner').textContent.includes('checked 2 min ago'));
+assert.ok(chipTitle().includes('Model offline (checked 2 min ago)'), chipTitle());
+assert.equal(shown(), false);
 healthPayload = {model: 'local', model_ok: true};
 sandbox.document.listeners.visibilitychange(); await tick();
-assert.equal(pill(), 'Model connected');
+assert.ok(!chipTitle().includes('offline'), chipTitle());
 
 // 3c. A hidden window skips /health and backs the poll off to 2–5 minutes.
 timers.length = 0;
@@ -149,14 +152,14 @@ assert.equal(requests.length, beforeHidden, 'no /health request while the window
 sandbox.document.visibilityState = 'visible'; sandbox.document.hidden = false;
 sandbox.document.listeners.visibilitychange(); await tick();
 timers.length = 0;
-assert.equal(pill(), 'Model connected');
+assert.equal(shown(), false);
 
 // 4. Server restarted: the stream gets a 401 and closes, and the session is gone.
 chatsStatus = 401;
 sources[2].fail(FakeEventSource.CLOSED);
 await runTimers();
-assert.equal(pill(), 'Disconnected');
-assert.ok($('banner').textContent.includes('Kova restarted'), $('banner').textContent);
+assert.equal(shown(), true, 'a signed-out window says so once, with Retry');
+assert.ok(said().includes('Kova restarted'), said());
 assert.equal(sources.length, 3, 'a signed-out window does not keep reconnecting');
 await runTimers();
 assert.equal(sources.length, 3);

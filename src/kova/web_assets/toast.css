@@ -1,0 +1,73 @@
+/* One toast system (#198, first slice). Values come from tokens.css; the only
+   non-token declarations are layout and the shared elevation shadow from
+   app.css. No literal colours, no glow, no gradient. */
+
+#toasts {
+  position: fixed;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 70;
+  display: grid;
+  gap: var(--space-2);
+  width: min(360px, calc(100vw - var(--space-6)));
+  pointer-events: none;
+}
+#toasts:empty { display: none; }
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  font-size: var(--type-size-body);
+  line-height: var(--type-leading-body);
+  pointer-events: auto;
+  animation: toast-in var(--motion-base) var(--motion-ease-standard);
+}
+
+.toast > .icon { flex: none; margin-top: var(--space-0-5); color: var(--fg-muted); }
+.toast[data-severity="success"] > .icon { color: var(--status-success); }
+.toast[data-severity="warning"] > .icon { color: var(--status-warning); }
+.toast[data-severity="error"] > .icon { color: var(--status-danger); }
+.toast[data-severity="info"] > .icon { color: var(--status-info); }
+
+.toast-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: var(--space-0-5);
+  overflow-wrap: anywhere;
+}
+.toast-title { color: var(--fg-muted); font-size: var(--type-size-label); font-weight: 600; }
+.toast-message { color: var(--fg-default); }
+
+.toast-action { flex: none; align-self: center; white-space: nowrap; }
+.toast-close { flex: none; color: var(--fg-muted); }
+
+.toast-action:focus-visible,
+.toast-close:focus-visible { outline: 2px solid var(--accent-default); outline-offset: 2px; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+}
+
+/* Phones put the stack at the top, away from the keyboard and the composer. */
+@media (max-width: 720px) {
+  #toasts {
+    top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
+    right: var(--space-3);
+    bottom: auto;
+    left: var(--space-3);
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+[data-motion="reduced"] .toast { animation: none; }

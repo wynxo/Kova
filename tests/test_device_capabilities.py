@@ -187,6 +187,30 @@ def test_a_default_phone_can_chat_but_not_install_or_reconfigure(kova):
     assert not load_config(app.state.config.home).privacy_local_only
 
 
+def test_a_phone_can_pin_a_chat_and_that_is_not_writing_in_it(kova):
+    client, app, local, phone, record = kova
+    chat_id = client.post("/chats", json={"title": "Trip"}, headers=local).json()["id"]
+
+    response = client.patch(f"/chats/{chat_id}", json={"pinned": True}, headers=phone)
+    assert response.status_code == 200 and response.json()["pinned"] is True
+    stored = app.state.store.get_chat(chat_id)
+    assert stored["pinned"] is True
+    assert stored.get("capabilities") is None, "a cosmetic pin must not limit the chat"
+    assert client.get("/chats", headers=phone).json()[0]["pinned"] is True
+
+
+def test_compare_is_a_chat_route_and_writes_nothing(kova):
+    client, app, local, phone, record = kova
+    before = client.get("/chats", headers=local).json()
+    # A default phone gets past the gate: the unknown model is the only refusal.
+    body = {"text": "which is better?", "models": ["ghost"]}
+    assert client.post("/compare", json=body, headers=phone).status_code == 404
+    assert client.post("/compare", json=body, headers=local).status_code == 404
+    assert client.get("/chats", headers=local).json() == before, "compare writes no chat"
+    # It grants nothing: the phone still cannot change models or providers.
+    assert client.post("/models", json={}, headers=phone).status_code == 403
+
+
 def test_the_computer_itself_is_never_limited(kova):
     client, app, local, phone, record = kova
     # Past the capability check: the empty body is what fails now.
