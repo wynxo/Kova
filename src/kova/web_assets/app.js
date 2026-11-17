@@ -211,18 +211,12 @@
       if (!/^https?:\/\//i.test(href)) link.removeAttribute('href');
       link.target = '_blank'; link.rel = 'noopener noreferrer';
     });
-    // The bar is there from the first streamed line, so nothing jumps when the reply ends.
-    node.querySelectorAll('pre code').forEach(code => {
-      try { if (code.textContent.length < (final ? 20000 : 4000)) hljs.highlightElement(code); } catch (_) {}
-      const language = /language-([\w+#.-]+)/.exec(code.className)?.[1] || 'text';
-      const bar = el('div', 'code-bar'), copy = el('button', 'copy-code'), text = el('span', '', 'Copy');
-      copy.type = 'button'; copy.setAttribute('aria-label', 'Copy code'); copy.append(icon('copy'), text);
-      copy.onclick = () => copyText(code.textContent, () => {
-        text.textContent = 'Copied'; setTimeout(() => { text.textContent = 'Copy'; }, 1800);
-      });
-      bar.append(el('span', 'code-lang', language), copy);
-      code.parentNode.insertBefore(bar, code);
-    });
+    // Quiet header row (language label + Copy button) and highlight.js
+    // highlighting, present from the first streamed line so nothing jumps when
+    // the reply ends. markdown() rebuilds this subtree on every chunk, so clear
+    // the module's once-per-root marker or it would skip the rebuild.
+    node.classList.remove('code-header-ready');
+    window.CodeHeader?.attach(node, final);
   }
   async function copyText(text, copied) {
     try { await navigator.clipboard.writeText(text); copied?.(); }

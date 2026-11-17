@@ -586,10 +586,6 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .markdown code { font:.875em/1.5 var(--mono); padding:2px 5px; border-radius:5px; background:var(--bg-raised); }
 .markdown pre { display:flex; flex-direction:column; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-base); overflow:hidden; }
 .markdown pre code { display:block; padding:var(--space-3) var(--space-4); overflow-x:auto; background:none; border-radius:0; font:var(--type-size-body)/1.6 var(--mono); white-space:pre; overflow-wrap:normal; tab-size:2; }
-.code-bar { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); height:36px; padding:0 var(--space-1) 0 var(--space-4); border-bottom:1px solid var(--border-subtle); color:var(--fg-faint); font:500 var(--type-size-label) var(--mono); }
-.copy-code { display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 8px; border-radius:var(--r-xs); color:var(--fg-muted); font:500 var(--type-size-label) var(--font); transition:background var(--fast), color var(--fast); }
-.copy-code .icon { width:13px; height:13px; }
-.copy-code:hover { background:var(--bg-raised); color:var(--fg-default); }
 .table-wrap { overflow-x:auto; border:1px solid var(--border-subtle); border-radius:var(--radius-md); }
 .markdown table { width:100%; border-collapse:collapse; font-size:var(--type-size-body); }
 .markdown th, .markdown td { padding:var(--space-2) var(--space-3); text-align:left; border-bottom:1px solid var(--border-subtle); vertical-align:top; }

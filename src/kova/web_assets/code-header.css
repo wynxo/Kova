@@ -1,0 +1,52 @@
+/* Quiet header row for rendered code blocks (#189): the language name on the
+   left, a Copy button on the right. It sits inside the code block's `pre`, so
+   it reads as part of the block instead of a toolbar above it. app.css owns the
+   block itself; this file only styles the row. Every colour, space, radius and
+   motion value comes from tokens.css. */
+
+.code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border-bottom: var(--space-0-5) solid var(--border-subtle);
+  color: var(--fg-faint);
+  font-size: var(--type-size-label);
+  font-weight: 500;
+  line-height: var(--type-leading-tight);
+}
+
+.code-lang { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.copy-code {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-family: var(--font);
+  font-size: var(--type-size-label);
+  font-weight: 500;
+  line-height: var(--type-leading-tight);
+  transition: background-color var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
+}
+
+/* The icon set is sized in app.css; this only keeps it quiet next to the text. */
+.copy-code .icon { width: var(--space-3); height: var(--space-3); }
+
+.copy-code:hover {
+  background: var(--bg-raised);
+  color: var(--fg-default);
+}
+
+.copy-code:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy-code { transition: none; }
+}
