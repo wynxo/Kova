@@ -332,7 +332,9 @@ over `uv run kova-app`.
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
 `palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
 (the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`
-(per-chat colour and icon), vendored copies of marked, DOMPurify and highlight.js, and the
+(per-chat colour and icon), `token-sheet.html` (a standalone page that shows every
+semantic token and re-measures the build gate's contrast pairs in the browser),
+vendored copies of marked, DOMPurify and highlight.js, and the
 variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown

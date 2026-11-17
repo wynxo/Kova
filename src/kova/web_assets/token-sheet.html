@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kova tokens</title>
+<!-- The generated stylesheet. This page sits beside it so the relative path resolves. -->
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* The only hand-written CSS in the sheet: page chrome, not tokens. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg-base);
+    color: var(--fg-default);
+    font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline; margin-bottom: 24px; }
+  h1 { font-size: 24px; line-height: 1.3; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-muted); margin: 32px 0 12px; }
+  .sub { color: var(--fg-muted); margin: 0; }
+  .modes { margin-left: auto; display: flex; gap: 4px; }
+  .modes button {
+    font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
+    color: var(--fg-muted); background: var(--bg-surface);
+    border: 1px solid var(--border-subtle); border-radius: 999px;
+  }
+  .modes button[aria-pressed="true"] {
+    color: var(--accent-on); background: var(--accent-default); border-color: var(--accent-default);
+  }
+  .modes button:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+  .grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .swatch {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+  .chip { width: 28px; height: 28px; border-radius: 6px; flex: none; border: 1px solid var(--border-subtle); }
+  .name { color: var(--fg-default); }
+  .value { color: var(--fg-muted); margin-left: auto; font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+  th { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); font-weight: 500; }
+  td.ratio { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .verdict { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .pass { color: var(--accent-on); background: var(--accent-default); }
+  .fail { color: var(--fg-inverse); background: var(--status-danger); }
+  .skip { color: var(--fg-muted); border: 1px solid var(--border-strong); }
+  .pair { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--border-subtle); }
+  footer { margin-top: 40px; color: var(--fg-faint); font-size: 12px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Kova tokens</h1>
+    <p class="sub">Every semantic token, and the contrast pairs the build gate enforces.</p>
+  </div>
+  <div class="modes" role="group" aria-label="Theme">
+    <button type="button" data-mode="dark" aria-pressed="true">Dark</button>
+    <button type="button" data-mode="light" aria-pressed="false">Light</button>
+  </div>
+</header>
+
+<noscript><p class="sub">This sheet reads the generated custom properties with JavaScript. Without it, see the values in <code>tokens.css</code>.</p></noscript>
+
+<main>
+  <h2>Surfaces and text</h2>
+  <div class="grid" id="group-core"></div>
+
+  <h2>Accent</h2>
+  <div class="grid" id="group-accent"></div>
+
+  <h2>Status and syntax</h2>
+  <div class="grid" id="group-status"></div>
+
+  <h2>Contrast</h2>
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>Sample</th><th>Ratio</th><th>Needs</th><th>Result</th></tr>
+    </thead>
+    <tbody id="pairs"></tbody>
+  </table>
+  <p class="sub" id="summary" role="status"></p>
+</main>
+
+<footer>
+  Generated values come from <code>design/tokens.json</code> via <code>scripts/build_tokens.py</code>.
+  This page recomputes the ratios in the browser so a change that breaks one is visible
+  here before it reaches a screenshot.
+</footer>
+
+<script>
+"use strict";
+
+// Mirrors PAIRS in scripts/build_tokens.py. If you change one, change both.
+const PAIRS = [
+  ["fg.default", "bg.base", 4.5, "body text on the app background"],
+  ["fg.default", "bg.surface", 4.5, "body text on panels"],
+  ["fg.default", "bg.raised", 4.5, "body text on raised chips and cards"],
+  ["fg.muted", "bg.surface", 4.5, "timestamps and secondary copy"],
+  ["fg.inverse", "accent.default", 4.5, "text drawn on a solid accent chip"],
+  ["accent.default", "bg.base", 3.0, "the accent edge, icon and activity dot"],
+  ["status.danger", "bg.surface", 4.5, "error text"],
+  ["status.success", "bg.surface", 4.5, "success text"],
+  ["status.warning", "bg.surface", 4.5, "warning text"],
+  ["border.strong", "bg.surface", 3.0, "input and focus-ring boundaries"],
+  ["border.subtle", "bg.surface", 1.2, "decorative dividers"],
+  ["syntax.keyword", "bg.base", 3.0, "code keyword colour"],
+  ["syntax.comment", "bg.base", 3.0, "code comment colour"]
+];
+
+const TOKENS = [
+  ["bg.base", "group-core"], ["bg.surface", "group-core"], ["bg.raised", "group-core"],
+  ["bg.overlay", "group-core"], ["fg.default", "group-core"], ["fg.muted", "group-core"],
+  ["fg.faint", "group-core"], ["fg.inverse", "group-core"],
+  ["border.subtle", "group-core"], ["border.strong", "group-core"],
+  ["accent.default", "group-accent"], ["accent.hover", "group-accent"],
+  ["accent.pressed", "group-accent"], ["accent.on", "group-accent"], ["accent.soft", "group-accent"],
+  ["status.success", "group-status"], ["status.warning", "group-status"],
+  ["status.danger", "group-status"], ["status.info", "group-status"],
+  ["syntax.keyword", "group-status"], ["syntax.string", "group-status"],
+  ["syntax.number", "group-status"], ["syntax.comment", "group-status"],
+  ["syntax.function", "group-status"], ["syntax.type", "group-status"],
+  ["syntax.invalid", "group-status"]
+];
+
+const canvas = document.createElement("canvas");
+const ctx = canvas.getContext("2d");
+
+/** Parse a CSS colour to linear-light sRGB, or null when it is translucent/invalid. */
+function linearise(value) {
+  if (!value) return null;
+  const probe = "#010203";
+  ctx.fillStyle = probe;
+  ctx.fillStyle = value;
+  const resolved = ctx.fillStyle;
+  if (resolved === probe && value.trim().toLowerCase() !== probe) return null;
+
+  let channels;
+  if (resolved.startsWith("#")) {
+    let hex = resolved.slice(1);
+    if (hex.length === 3) hex = hex.split("").map(c => c + c).join("");
+    channels = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  } else {
+    const parts = resolved.slice(resolved.indexOf("(") + 1, resolved.lastIndexOf(")"))
+      .split(/[,\s/]+/).filter(Boolean);
+    if (parts.length === 4 && parseFloat(parts[3]) < 1) return null;
+    channels = parts.slice(0, 3).map(p => parseFloat(p) / 255);
+  }
+  return channels.map(c => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+}
+
+function luminance(value) {
+  const lin = linearise(value);
+  if (!lin) return null;
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+function ratio(fg, bg) {
+  const a = luminance(fg), b = luminance(bg);
+  if (a === null || b === null) return null;
+  const hi = Math.max(a, b), lo = Math.min(a, b);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const variable = token => "--" + token.replace(/\./g, "-");
+const read = token =>
+  getComputedStyle(document.documentElement).getPropertyValue(variable(token)).trim();
+
+function renderTokens() {
+  document.querySelectorAll(".grid").forEach(host => { host.textContent = ""; });
+  for (const [token, group] of TOKENS) {
+    const value = read(token);
+    const host = document.getElementById(group);
+    if (!host) continue;
+    const row = document.createElement("div");
+    row.className = "swatch";
+
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.background = value || "transparent";
+
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = token;
+
+    const shown = document.createElement("span");
+    shown.className = "value";
+    shown.textContent = value || "\u2014";
+
+    row.append(chip, name, shown);
+    row.title = "var(" + variable(token) + ")";
+    host.append(row);
+  }
+}
+
+function renderPairs() {
+  const body = document.getElementById("pairs");
+  body.textContent = "";
+  let failures = 0;
+
+  for (const [fg, bg, minimum, why] of PAIRS) {
+    const value = ratio(read(fg), read(bg));
+    const tr = document.createElement("tr");
+
+    const label = document.createElement("td");
+    label.textContent = why;
+    label.title = fg + " on " + bg;
+
+    const sample = document.createElement("td");
+    const pair = document.createElement("span");
+    pair.className = "pair";
+    const fgDot = document.createElement("span");
+    fgDot.className = "dot";
+    fgDot.style.background = read(fg);
+    const bgDot = document.createElement("span");
+    bgDot.className = "dot";
+    bgDot.style.background = read(bg);
+    pair.append(fgDot, bgDot);
+    sample.append(pair);
+
+    const ratioCell = document.createElement("td");
+    ratioCell.className = "ratio";
+    ratioCell.textContent = value === null ? "n/a" : value.toFixed(2) + ":1";
+
+    const needed = document.createElement("td");
+    needed.textContent = minimum.toFixed(1) + ":1";
+
+    const verdict = document.createElement("td");
+    const badge = document.createElement("span");
+    if (value === null) {
+      badge.className = "verdict skip";
+      badge.textContent = "translucent";
+    } else if (value >= minimum) {
+      badge.className = "verdict pass";
+      badge.textContent = "pass";
+    } else {
+      badge.className = "verdict fail";
+      badge.textContent = "fail";
+      failures += 1;
+    }
+    verdict.append(badge);
+
+    tr.append(label, sample, ratioCell, needed, verdict);
+    body.append(tr);
+  }
+
+  const summary = document.getElementById("summary");
+  summary.textContent = failures === 0
+    ? "All " + PAIRS.length + " declared pairs pass in this theme."
+    : failures + " of " + PAIRS.length + " declared pairs fail in this theme.";
+}
+
+function render() {
+  renderTokens();
+  renderPairs();
+}
+
+document.querySelectorAll(".modes button").forEach(button => {
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.theme = button.dataset.mode;
+    document.querySelectorAll(".modes button").forEach(other => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+    render();
+  });
+});
+
+render();
+</script>
+</body>
+</html>
