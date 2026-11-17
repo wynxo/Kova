@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 110 endpoints: 109 route handlers plus the static asset mount.
+The app exposes 114 endpoints: 113 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -120,7 +120,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd, delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -150,6 +150,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
+| `POST /compare` | token or session | run one prompt on several models at once, side by side |
 | `GET /mcp` | token or session | list MCP servers with their tools and state |
 | `POST /mcp` | token or session, local only | add an MCP server and connect it (never from a paired phone) |
 | `POST /mcp/reload` | token or session | reconnect every MCP server now, including any from plugins |
@@ -281,7 +282,7 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
@@ -328,15 +329,42 @@ the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
 and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
 over `uv run kova-app`.
 
-The UI itself is `src/kova/web_assets/`: `index.html`, `app.css`, `app.js`,
-vendored copies of marked, DOMPurify and highlight.js, and the variable fonts
-Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
+The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
+`palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
+(the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`
+(per-chat colour and icon), vendored copies of marked, DOMPurify and highlight.js, and the
+variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows collapsible reasoning and live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`.
+stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
+rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
+`pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
+default, with a volume and per-event switches in the *Sounds* panel) are
+synthesized with WebAudio, so no audio file ships and nothing is fetched; a
+finished reply only chimes while the window is unfocused.
+
+The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
+search field that filters chats, the chat list and a single **Settings** row.
+The message box shows **+** (attach files, slash commands, and an incognito chat
+on the start screen), the text, one chip naming the model, and Send; the chip
+opens one popover with the model, Work/Chat mode, permission mode, working
+folder and web search. The header is the sidebar toggle, the chat title and,
+once a chat is open, its actions menu. A healthy connection shows nothing:
+reconnecting the event stream and polling `/health` are silent, the model's
+state is a detail of the chip, and only an action that actually failed (Kova
+unreachable, signed out, a used pairing code) shows one quiet line above the
+message box with **Retry**.
+
+`settings.js` layers one Settings view over the dialogs `app.js` still owns:
+General (theme, sounds, shortcuts, startup, sign out), Models and providers,
+Memory, Reminders, Extensions and MCP, Privacy, Phone, and Install and
+notifications. A section nav and a search box filter individual settings; rows
+activate the existing controls by id (kept, undrawn, in `index.html`'s
+`#settings-actions`) rather than reimplementing them, so every dialog is also
+reachable from the command palette.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
@@ -399,15 +427,16 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
-- `chats` — id, title, created, mode, web
+- `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
   nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
 - `reminders` — reminder_at, text, done
 
-Startup applies small migrations (message timestamps, `mode`, `web`) so older
-databases keep working. Search uses an FTS5 virtual table `messages_fts`, kept
-in sync by triggers and back-filled once; only `user` and `assistant` text is
-indexed, so tool output never pollutes results. If the local SQLite lacks
+Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
+`colour`, `icon`)
+so older databases keep working. Search uses an FTS5 virtual table
+`messages_fts`, kept in sync by triggers and back-filled once; only `user` and
+`assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
 split into at most 12 de-duplicated words, and each chat contributes only its
 best hit, with a short snippet.
@@ -455,8 +484,8 @@ No transcript, reasoning, tool arguments or provider error bodies are logged by
 these paths. A normal chat is unaffected.
 
 Entry points are `kova --incognito`, `kova ask --incognito`, `/incognito` in the
-terminal or web composer, and **New incognito chat** / **Ctrl+Shift+N** in the
-web/desktop client. Each shows an Incognito marker and explains that the provider
+terminal or web composer, and the **+** menu's **Incognito chat** (on a new chat),
+the palette's **New incognito chat** or **Ctrl+Shift+N** in the web/desktop client. Each shows an Incognito marker and explains that the provider
 still receives messages. Terminal input history is not saved once a session has
 entered incognito, even after switching back to a saved chat. One-shot `ask`
 discards its chat in `finally`, including on failure. Leaving an incognito chat
@@ -932,7 +961,7 @@ estimate for the current account or `OLLAMA_MODELS` volume; a separately run
 Ollama daemon may use another account/volume, which the UI explicitly notes.
 
 Setup offers **Use a model on this PC** (also `kova providers add this-pc`).
-The desktop offers the same step under **Add provider**. Only choosing that
+The desktop offers the same step under **Settings → Models and providers**. Only choosing that
 step probes the usual loopback Ollama, LM Studio and llama.cpp endpoints;
 there is no LAN scan or automatic model download. Without measurable VRAM,
 the user can explicitly choose the small 3B CPU model, with a speed warning.
@@ -1014,7 +1043,7 @@ HTTP bodies, not proof of delivery on a failed request; incoming bytes count con
 body data. Headers, query strings and TLS overhead are not counted. Incognito rows
 route to the existing RAM store and are excluded from persistent reports.
 `GET /privacy?days=30&chat_id=…` gives complete grouped totals and the newest 1000
-requests; the sidebar Privacy panel and `kova privacy --days 30 --json` share it.
+requests; the app's Privacy panel (Settings → Privacy) and `kova privacy --days 30 --json` share it.
 An `egress` SSE event before `done` summarizes the current turn's requests.
 
 `PATCH /privacy` and `kova privacy --local-only on|off` persist the boolean
@@ -1029,3 +1058,19 @@ Installed extensions stay on disk; reconnect MCP explicitly after turning the po
 off. This is a policy for Kova-owned traffic, not an OS firewall. Shell/stdio-plugin
 traffic from before enabling it is not observable and is not included in the ledger;
 other applications are outside its scope. Historical traffic is never reconstructed.
+
+### Inline file diffs
+
+Successful `write_file` and `edit_file` SSE tool results may carry `file_change`:
+a bounded checkpoint preview (`path`, `status`, `before`, `after`, `diff`,
+`truncated`). It compares the first pre-write checkpoint image to the current
+contents, so repeated writes show changes **so far this turn**, not just the
+last operation. It is presentation metadata, not model context or a new file
+read endpoint. Existing tool and phone capability checks still apply. No new
+route or restore permission is introduced.
+
+The web client renders this in a collapsed per-file tool card with old/new line
+numbers; saved change sets reuse the same `diff.js` renderer through the existing
+checkpoint diff route above. `diff.css` uses semantic status colours. Source and
+paths are inserted only as text. Per-hunk accept/undo, word highlights and a
+side-panel review are deferred; existing whole-checkpoint restore is unchanged.

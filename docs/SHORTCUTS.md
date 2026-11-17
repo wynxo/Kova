@@ -86,8 +86,31 @@ on a Mac) in the app for the same list.
 | `↑` in an empty box | Bring back your last message |
 | `esc` | Stop the reply; close the drawer or a menu |
 | `/` | Jump to the message box |
-| `ctrl+k` | New conversation |
-| `ctrl+shift+f` | Search conversations |
+| `ctrl+k` | Command palette: search chats, run commands, open settings |
+| `ctrl+shift+k` | New chat |
+| `ctrl+shift+n` | New incognito conversation |
+| `ctrl+shift+f` | Search chats (the sidebar's search field) |
 | `ctrl+b` | Show or hide the sidebar |
 | `ctrl+shift+l` | Switch light and dark |
 | `ctrl+/` or `?` | Keyboard shortcuts |
+
+`ctrl+k` opens the palette instead of starting a new chat; new conversations
+moved to `ctrl+shift+k` so the two do not compete for the same chord.
+
+## Command palette (web and desktop)
+
+The palette is one search box over everything the app can do. It opens with
+`ctrl+k` (`⌘K` on a Mac). The sidebar has no separate button for it: its one
+search field filters chats, and the palette is the way to run anything else,
+including every Settings section.
+
+- Type to filter. Matching is fuzzy and word-aware: `nwcn` finds *New
+  conversation*, `thm` finds the theme switch.
+- Results are grouped: actions, appearance, the current conversation, its
+  permissions, settings, models, then recent conversations.
+- Each row shows its shortcut, so the palette also teaches the keys.
+- `↑` `↓`, `pageup` `pgdn`, `home` and `end` move; `enter` runs; `esc` closes.
+- The dialog traps focus in its search box, announces the result count, and
+  returns focus to where you were when it closes.
+- Actions that need a conversation (compact, fork, rename, delete, permissions,
+  web search) only appear when one is open. Model rows switch the active model.

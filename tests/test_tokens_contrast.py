@@ -104,13 +104,7 @@ def test_stylesheet_lands_where_the_web_app_serves_it() -> None:
 
 
 def test_stylesheet_is_linked_before_app_css() -> None:
-    """`app.css` still owns the shipped palette, so it has to win the cascade.
-
-    Two names (`--accent-soft`, `--border-strong`) are defined by both files with
-    different values. The app's declaration wins today because `app.css` is linked
-    second and, for the light theme, is more specific. Reordering these links would
-    silently repaint the UI, so the order is asserted instead of assumed.
-    """
+    """Semantic tokens load before their component consumers."""
     html = INDEX.read_text(encoding="utf-8")
     assert html.index("/app/assets/tokens.css") < html.index("/app/assets/app.css")
 

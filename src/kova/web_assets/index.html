@@ -13,10 +13,26 @@
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/status-bar.css">
+  <link rel="stylesheet" href="/app/assets/palette.css">
+  <link rel="stylesheet" href="/app/assets/settings.css">
+  <link rel="stylesheet" href="/app/assets/toast.css">
+  <link rel="stylesheet" href="/app/assets/chat-appearance.css">
+  <link rel="stylesheet" href="/app/assets/chat_list.css">
   <script defer src="/app/assets/vendor/marked.js"></script>
   <script defer src="/app/assets/vendor/purify.js"></script>
   <script defer src="/app/assets/vendor/highlight.js"></script>
+  <script defer src="/app/assets/status-bar.js"></script>
+  <link rel="stylesheet" href="/app/assets/diff.css">
+  <link rel="stylesheet" href="/app/assets/thinking.css">
+  <script defer src="/app/assets/chat_list.js"></script>
+  <script defer src="/app/assets/diff.js"></script>
+  <script defer src="/app/assets/sounds.js"></script>
+  <script defer src="/app/assets/toast.js"></script>
+  <script defer src="/app/assets/palette.js"></script>
+  <script defer src="/app/assets/chat-appearance.js"></script>
   <script defer src="/app/assets/app.js"></script>
+  <script defer src="/app/assets/settings.js"></script>
 </head>
 <body class="is-empty">
   <button id="backdrop" aria-label="Close sidebar" hidden></button>
@@ -25,94 +41,101 @@
       <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
-    <button id="new-incognito" type="button" class="nav-row">New incognito chat <kbd>Ctrl Shift N</kbd></button>
-    <button id="new-chat" type="button" class="new-chat"><span class="icon i-square-pen" aria-hidden="true"></span><span>New conversation</span><kbd id="new-chat-key">Ctrl K</kbd></button>
-    <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" type="search" autocomplete="off"></label>
-    <div class="section-label"><span>Conversations</span><span id="chat-count"></span></div>
+    <button id="new-chat" type="button" class="new-chat" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
+    <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <nav id="chat-list" aria-label="Chat history"></nav>
     <div class="sidebar-footer">
-      <nav class="footer-nav" aria-label="Kova tools">
-        <button id="open-memory" type="button" class="nav-row"><span class="icon i-brain" aria-hidden="true"></span>Memory</button>
-        <button id="open-reminders" type="button" class="nav-row"><span class="icon i-bell" aria-hidden="true"></span>Reminders</button>
-        <button id="add-provider" type="button" class="nav-row"><span class="icon i-plus" aria-hidden="true"></span>Add provider</button>
-        <button id="open-extensions" type="button" class="nav-row"><span class="icon i-puzzle" aria-hidden="true"></span>Extensions</button>
-        <button id="open-privacy" type="button" class="nav-row"><span class="icon i-lock" aria-hidden="true"></span>Privacy</button>
-        <button id="open-mcp" type="button" class="nav-row"><span class="icon i-sliders-horizontal" aria-hidden="true"></span>MCP servers</button>
-        <button id="install-settings" type="button" class="nav-row">Install &amp; notifications</button>
-        <button id="connect-phone" type="button" class="nav-row"><span class="icon i-smartphone" aria-hidden="true"></span>Connect your phone</button>
-      </nav>
-      <div class="footer-bar">
-        <div class="local-note"><span class="icon i-lock" aria-hidden="true"></span><div><strong>On your computer</strong><small>Your chats stay yours.</small></div></div>
-        <button id="theme" type="button" class="icon-button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span class="sr-only">Light theme</span></button>
-        <button id="open-shortcuts" type="button" class="icon-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><span class="icon i-keyboard" aria-hidden="true"></span></button>
-        <button id="disconnect" type="button" class="icon-button" title="Disconnect this window" aria-label="Disconnect this window"><span class="icon i-log-out" aria-hidden="true"></span></button>
-      </div>
+      <button id="open-settings" type="button" class="nav-row"><span class="icon i-settings" aria-hidden="true"></span>Settings</button>
     </div>
   </aside>
   <main>
     <header class="topbar">
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
-      <strong id="chat-title" class="chat-title">New conversation</strong>
-      <details class="chat-menu"><summary aria-label="Conversation actions">•••</summary><button id="compact-now" type="button" class="btn">Compact now</button></details>
-      <span id="local-only-status" class="local-only-status" role="status" hidden><span class="icon i-lock" aria-hidden="true"></span> Local only</span>
-      <div id="connection" class="connection" role="status"><i></i><span>Connecting</span></div>
+      <strong id="chat-title" class="chat-title">New chat</strong>
+      <details id="chat-menu" class="chat-menu" hidden><summary class="icon-button" aria-label="Chat actions" title="Chat actions"><span class="icon i-ellipsis" aria-hidden="true"></span></summary><div class="chat-menu-list"><button id="compact-now" type="button" class="nav-row">Compact now</button></div></details>
     </header>
-    <div id="incognito-note" class="banner" role="status" hidden>Incognito · Not saved on this PC. Your provider still receives messages. Tools and attachments are disabled. Leaving this chat discards it.</div>
-    <div id="banner" class="banner" role="status" hidden></div>
+    <p id="incognito-note" class="incognito-note" role="status" hidden><span class="icon i-eye-off" aria-hidden="true"></span>Incognito: not saved on this PC. Your provider still receives messages, and tools and attachments are off.</p>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
-        <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="44" height="44">
-        <h1>Make room for <span>your next idea.</span></h1>
-        <p><span>A question, a plan, a half-formed thought.</span> <span>Bring it here.</span></p>
+        <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="40" height="40">
+        <h1>What are you working on?</h1>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
     <div class="compose-wrap">
       <button id="jump" type="button" class="jump" hidden title="Jump to the latest message" aria-label="Jump to the latest message"><span class="icon i-arrow-down" aria-hidden="true"></span></button>
       <div id="queue-strip" class="queue-strip" aria-label="Queued messages" hidden></div>
+      <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-retry" type="button" class="notice-retry">Retry</button></div>
       <form id="composer" class="composer" data-mode="work">
         <div id="command-picker" class="command-picker" aria-label="Commands" hidden></div>
-        <label class="sr-only" for="prompt">Message Kova</label>
         <div id="attachment-chips" aria-live="polite"></div>
         <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
         <input id="attachment-input" type="file" multiple hidden>
-        <textarea id="prompt" rows="1" placeholder="What’s on your mind?" maxlength="100000"></textarea>
-        <div class="compose-toolbar">
-          <button id="commands" type="button" class="chip" aria-label="Show commands">/</button>
-          <button id="attach" class="chip" type="button" aria-label="Attach files">📎</button>
-          <button id="options" type="button" class="chip options-toggle" aria-expanded="false" aria-controls="compose-options" title="Chat options"><span class="icon i-sliders-horizontal" aria-hidden="true"></span><span id="options-label">Work</span></button>
-          <div id="compose-options" class="compose-options">
-          <div id="mode-switch" class="segmented" role="radiogroup" aria-label="Chat mode">
-            <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
-            <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
+        <div class="compose-row">
+          <div class="compose-more">
+            <button id="compose-more" type="button" class="compose-icon" aria-label="Add files and more" title="Add files and more" aria-haspopup="menu" aria-expanded="false" aria-controls="compose-menu"><span class="icon i-plus" aria-hidden="true"></span></button>
+            <div id="compose-menu" class="compose-menu" role="menu" aria-label="Add files and more" hidden>
+              <button id="attach" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-paperclip" aria-hidden="true"></span><span>Attach files</span></button>
+              <button id="commands" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-slash" aria-hidden="true"></span><span>Slash commands</span></button>
+              <button id="new-incognito" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" aria-keyshortcuts="Control+Shift+N Meta+Shift+N"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span></button>
+            </div>
           </div>
-          <select id="mode" hidden tabindex="-1" aria-hidden="true"><option value="work">Work</option><option value="chat">Chat</option></select>
-          <span id="permission-slot" class="work-only"></span>
-          <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
-          <label class="chip folder-control work-only" title="Absolute path to an existing working folder"><span class="icon i-folder" aria-hidden="true"></span><input id="cwd" aria-label="Working folder" placeholder="Kova files folder" autocomplete="off" spellcheck="false"></label>
-          <button id="web" type="button" class="chip toggle" aria-pressed="true" title="Allow web search"><span class="icon i-globe" aria-hidden="true"></span><span>Web on</span></button>
+          <label class="sr-only" for="prompt">Message Kova</label>
+          <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000"></textarea>
+          <div class="chat-options-wrap">
+            <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
+            <div id="chat-options-panel" class="chat-options" role="dialog" aria-label="Chat options" hidden>
+              <div class="chat-option"><span id="model-label" class="chat-option-label">Model</span><span id="model-slot" class="chat-option-control"></span></div>
+              <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
+              <div class="chat-option"><span id="mode-label" class="chat-option-label">Mode</span>
+                <div id="mode-switch" class="segmented" role="radiogroup" aria-labelledby="mode-label">
+                  <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
+                  <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
+                </div>
+              </div>
+              <select id="mode" hidden tabindex="-1" aria-hidden="true"><option value="work">Work</option><option value="chat">Chat</option></select>
+              <div class="chat-option work-only"><span id="permission-label" class="chat-option-label">Permissions</span><span id="permission-slot" class="chat-option-control"></span></div>
+              <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
+              <label class="chat-option work-only"><span class="chat-option-label">Folder</span><input id="cwd" class="chat-option-input" placeholder="Kova files folder" title="Absolute path to an existing working folder" autocomplete="off" spellcheck="false"></label>
+              <div class="chat-option"><span id="web-label" class="chat-option-label">Web search</span><button id="web" type="button" class="switch" role="switch" aria-checked="true" aria-labelledby="web-label"><span class="switch-thumb" aria-hidden="true"></span><span class="sr-only">On</span></button></div>
+            </div>
           </div>
-          <span class="toolbar-gap" aria-hidden="true"></span>
-          <span id="model-slot"></span>
-          <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>
           <button id="queue" type="button" class="stop" hidden title="Run this message after the current reply"><span class="icon i-plus" aria-hidden="true"></span>Queue</button>
           <button id="steer" type="button" class="stop" hidden title="Send this message into the reply that is running"><span class="icon i-arrow-up" aria-hidden="true"></span>Steer</button>
           <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
-      <div class="compose-hint"><span>All yours. Right here on your machine.</span><span><kbd>Enter</kbd> to send <span class="hint-dot">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line <span class="hint-dot">·</span> <kbd data-mod>Ctrl</kbd> + <kbd>/</kbd> for shortcuts</span></div>
-    </div>
-    <div id="starters" class="starters">
-      <div class="suggestions">
-        <button type="button" data-prompt="Help me turn a half-formed idea into a clear plan."><span class="suggestion-icon"><span class="icon i-lightbulb" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Find a starting point</strong><span>Turn a spark into a plan</span></span></button>
-        <button type="button" data-prompt="Help me think through a decision. Ask me what I'm weighing up."><span class="suggestion-icon mint"><span class="icon i-compass" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Think it through</strong><span>Untangle something tricky</span></span></button>
-        <button type="button" data-prompt="Help me make space for what matters today. Ask me what's on my mind."><span class="suggestion-icon peach"><span class="icon i-sun" aria-hidden="true"></span></span><span class="suggestion-text"><strong>Make today lighter</strong><span>A little order for your day</span></span></button>
-      </div>
-      <div class="welcome-foot"><span class="icon i-lock" aria-hidden="true"></span>Private by nature. Here for you.</div>
+      <div id="status-bar" class="status-bar" role="note" hidden><span id="status-bar-model" class="status-bar-model"></span><span class="status-bar-meter" aria-hidden="true"><span id="status-bar-fill" class="status-bar-fill"></span></span><span id="status-bar-context" class="status-bar-context"></span><button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button></div>
     </div>
   </main>
-  <div id="toasts" role="status" aria-live="polite"></div>
+  <!-- Action targets. Settings (settings.js) and the command palette run these;
+       app.js and the panel scripts bind them by id. Nothing here is drawn. -->
+  <div id="settings-actions" hidden>
+    <button id="theme" type="button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span>Light theme</span></button>
+    <button id="open-shortcuts" type="button">Keyboard shortcuts</button>
+    <button id="open-sounds" type="button">Sounds</button>
+    <button id="disconnect" type="button" aria-label="Sign out of this window">Sign out</button>
+    <button id="add-provider" type="button">Connect a provider</button>
+    <button id="open-model-settings" type="button">Model settings</button>
+    <button id="open-memory" type="button">Memory</button>
+    <button id="open-reminders" type="button">Reminders</button>
+    <button id="open-extensions" type="button">Extensions</button>
+    <button id="open-mcp" type="button">MCP servers</button>
+    <button id="open-privacy" type="button">Privacy</button>
+    <button id="connect-phone" type="button">Connect your phone</button>
+    <button id="install-settings" type="button">Install &amp; notifications</button>
+    <details id="settings" class="startup-settings">
+      <summary>Startup</summary>
+      <div class="startup-settings-body">
+        <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
+        <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
+        <button id="autostart-refresh" type="button" class="btn small quiet">Check again</button>
+        <label><input id="status-bar-toggle" type="checkbox"> Show the status bar under the message box</label>
+      </div>
+    </details>
+  </div>
+  <div id="toasts" role="region" aria-label="Notifications" aria-live="polite" aria-relevant="additions"></div>
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
@@ -123,8 +146,10 @@
       <div><dt>Bring back your last message</dt><dd><kbd>↑</kbd> <span>in an empty box</span></dd></div>
       <div><dt>Stop the reply</dt><dd><kbd>Esc</kbd></dd></div>
       <div><dt>Jump to the message box</dt><dd><kbd>/</kbd></dd></div>
-      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
-      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd></div>
+      <div><dt>Command palette</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
+      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>K</kbd></dd></div>
+      <div><dt>New incognito chat</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>N</kbd></dd></div>
+      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>F</kbd></dd></div>
       <div><dt>Show or hide the sidebar</dt><dd><kbd data-mod>Ctrl</kbd><kbd>B</kbd></dd></div>
       <div><dt>Switch light and dark</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd></dd></div>
       <div><dt>This list</dt><dd><kbd data-mod>Ctrl</kbd><kbd>/</kbd></dd></div>
@@ -169,12 +194,6 @@
       <p class="provider-footnote">Credentials stay in your local, owner-only config. Messages go to the provider you choose.</p>
     </form>
   </dialog>
-  <details id="settings" style="position:fixed;bottom:12px;left:12px;z-index:10;background:var(--surface);padding:12px">
-    <summary>Settings</summary>
-    <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
-    <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
-    <button id="autostart-refresh" type="button">Refresh</button>
-  </details>
   <noscript>Kova needs JavaScript enabled. Open kova-web to connect.</noscript>
 </body>
 </html>

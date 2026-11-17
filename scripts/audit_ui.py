@@ -88,6 +88,16 @@ def _declares_only_tokens(text: str) -> bool:
     return bool(selectors) and all(TOKEN_SELECTOR.match(sel) for sel in selectors)
 
 
+INTERACTIVE = re.compile(
+    r"(?:^|[\s,>+~])(?:a|button|input|select|textarea|summary|dialog|label)\b|(?:^|[\s,>+~])\*|\[role=|:hover|:focus|:active|\.btn\b")
+
+
+def _styles_interactive_elements(text: str) -> bool:
+    """A sheet that only styles passive visuals (an indicator, a bolt) has nothing to focus."""
+    plain = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return any(INTERACTIVE.search(m.group(1)) for m in RULE.finditer(plain))
+
+
 def check_css(text: str, name: str = "<style>") -> list[str]:
     """Every problem in one stylesheet.
 
@@ -98,7 +108,7 @@ def check_css(text: str, name: str = "<style>") -> list[str]:
     """
     problems: list[str] = []
     if not _declares_only_tokens(text):
-        if ":focus-visible" not in text:
+        if ":focus-visible" not in text and _styles_interactive_elements(text):
             problems.append(f"{name}: no :focus-visible rule, so keyboard focus is invisible")
         if "prefers-reduced-motion" not in text:
             problems.append(f"{name}: no @media (prefers-reduced-motion: reduce) block")

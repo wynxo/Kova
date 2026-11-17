@@ -22,7 +22,7 @@ kova skills show "Explain an error"
 kova skills rm explain-error
 ```
 
-In the desktop and web app, **Extensions** in the sidebar has three tabs:
+In the desktop and web app, **Settings → Extensions and MCP → Extensions and skills** has three tabs:
 
 - **Installed**: your plugins (switch on/off, see what each adds, remove) and
   every skill with its origin. Skills Kova learned, catalog skills and skills

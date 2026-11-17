@@ -507,6 +507,40 @@ def ask(
         print()
 
 
+@app.command("compare")
+def compare(
+    text: str | None = typer.Argument(None, help="The question. Optional if you pipe text in."),
+    models: str | None = typer.Option(None, "--models", "-m",
+                                      help="Comma-separated model names; default is every configured model."),
+    as_json: bool = typer.Option(False, "--json", help="Print a JSON object for scripts."),
+):
+    """Run one prompt on several models at once and show the answers side by side."""
+    prompt = _ask_prompt(text, _piped_stdin(), [])
+    wanted = [part.strip() for part in models.split(",")] if models else None
+    if wanted is not None:
+        wanted = [part for part in wanted if part]
+        if not wanted:
+            _fail("Give at least one model name, for example: kova compare --models lab,cloud \"hi\"")
+    try:
+        client = get_client()
+        result = client.compare(prompt, wanted)
+    except KovaError as exc:
+        _ask_error(str(exc))
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    for entry in result.get("results", []):
+        name = entry.get("model", "?")
+        ms = entry.get("ms", 0)
+        error = entry.get("error")
+        if error:
+            console.print(f"## {name} (failed in {ms} ms: {error})", style=theme.ERROR)
+        else:
+            console.print(f"## {name} ({ms} ms)", style=theme.ACCENT)
+            console.print(entry.get("text", ""), markup=False)
+        console.print()
+
+
 @app.command(hidden=True)
 def chat(
     new: bool = typer.Option(False, "--new", help="Start a fresh chat instead of the latest."),

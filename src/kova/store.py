@@ -18,8 +18,13 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
+from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.modes import DEFAULT_MODE, MODES
 from kova.permissions import PERMISSIONS
+
+#: ``update_chat`` default meaning "leave this field alone" (``None`` clears
+#: an appearance field, so it cannot double as "absent").
+_UNSET: object = object()
 
 
 def _utc_now_iso() -> str:
@@ -241,7 +246,8 @@ class Store:
                 title TEXT,
                 created TEXT NOT NULL,
                 mode TEXT NOT NULL DEFAULT 'work',
-                web INTEGER NOT NULL DEFAULT 1
+                web INTEGER NOT NULL DEFAULT 1,
+                pinned INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +363,17 @@ class Store:
         self._conn.execute("UPDATE chats SET cwd = ? WHERE cwd IS NULL", (self.default_cwd or str(Path.home() / "Kova Files"),))
         if "plan" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+        # Per-chat colour and icon (#213): nullable, so older databases keep
+        # working and existing chats fall back to the default sidebar look.
+        appearance = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
+        if "colour" not in appearance:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN colour TEXT")
+        if "icon" not in appearance:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN icon TEXT")
+        # Pinned chats stay at the top of the sidebar (#195); cosmetic and local,
+        # so an existing database keeps every chat and gains an unpinned flag.
+        if "pinned" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -438,23 +455,26 @@ class Store:
     # -- chats ------------------------------------------------------------
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
                     web: bool = True, permission: str = "manual", cwd: str | None = None, *,
-                    ephemeral: bool = False) -> dict:
+                    ephemeral: bool = False, colour: str | None = None,
+                    icon: str | None = None) -> dict:
         if ephemeral and not self._memory_only:
             return self._temporary_store().create_chat(title or "Incognito", "chat", False, "manual", cwd)
         if mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
         if permission not in PERMISSIONS:
             raise ValueError(f"unknown permission '{permission}'")
+        colour = normalize_colour(colour)
+        icon = normalize_icon(icon)
         cwd = cwd or self.default_cwd or str(Path.home() / "Kova Files")
         with self._lock:
             cid = ("incognito-" if self._memory_only else "") + uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
-                "INSERT INTO chats (id, title, created, mode, web, permission, cwd) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (cid, title, created, mode, web, permission, cwd),
+                "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web, permission, cwd, colour, icon),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "plan": [], **({"ephemeral": True} if self._memory_only else {})}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "colour": colour, "icon": icon, "plan": [], "pinned": False, **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str) -> dict | None:
         """Atomically clone a conversation, including its compacted context."""
@@ -490,11 +510,11 @@ class Store:
                     return value
 
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
                      source['web'], source['permission'], source['cwd'], remap(source['plan']),
-                     source['capabilities']))
+                     source['capabilities'], source['colour'], source['icon']))
                 rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
@@ -526,11 +546,12 @@ class Store:
     def list_chats(self, *, include_ephemeral: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, COUNT(m.id) AS message_count, "
+                "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
+                "c.colour, c.icon, c.pinned, COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "GROUP BY c.id "
-                "ORDER BY last_message DESC, c.created DESC, c.id DESC"
+                "ORDER BY c.pinned DESC, last_message DESC, c.created DESC, c.id DESC"
             ).fetchall()
         chats = [
             {
@@ -542,6 +563,9 @@ class Store:
                 "web": bool(r["web"]),
                 "permission": r["permission"],
                 "cwd": r["cwd"],
+                "colour": r["colour"],
+                "icon": r["icon"],
+                "pinned": bool(r["pinned"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
             }
@@ -549,7 +573,9 @@ class Store:
         ]
         if include_ephemeral and self._temporary is not None:
             chats += self._temporary.list_chats()
-            chats.sort(key=lambda c: (c["last_message"], c["created"], c["id"]), reverse=True)
+            # Pinned chats stay on top, current activity breaks the tie.
+            chats.sort(key=lambda c: (bool(c.get("pinned")), c["last_message"], c["created"], c["id"]),
+                       reverse=True)
         return chats
 
     @_chat_scoped
@@ -557,7 +583,7 @@ class Store:
                  include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon, pinned FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -569,6 +595,9 @@ class Store:
             "web": bool(row["web"]),
             "permission": row["permission"],
             "cwd": row["cwd"],
+            "colour": row["colour"],
+            "icon": row["icon"],
+            "pinned": bool(row["pinned"]),
             "plan": json.loads(row["plan"]),
             **({"capabilities": sorted(json.loads(row["capabilities"]))}
                if row["capabilities"] is not None else {}),
@@ -580,15 +609,26 @@ class Store:
     @_chat_scoped
     def update_chat(self, chat_id: str, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None, plan: list[dict] | None = None) -> None:
-        """Change chat settings or its latest plan; ``None`` leaves a field alone."""
+                    cwd: str | None = None, plan: list[dict] | None = None,
+                    colour: str | None = _UNSET, icon: str | None = _UNSET,
+                    pinned: bool | None = None) -> None:
+        """Change chat settings, its pin or its latest plan; ``None`` leaves a field alone.
+
+        ``colour``/``icon`` use ``_UNSET`` for "leave alone" because ``None``
+        clears them; blank strings clear them too.
+        """
         if mode is not None and mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
         if permission is not None and permission not in PERMISSIONS:
             raise ValueError(f"unknown permission '{permission}'")
         fields = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
-                  "plan": json.dumps(plan) if plan is not None else None}
+                  "plan": json.dumps(plan) if plan is not None else None,
+                  "pinned": int(pinned) if pinned is not None else None}
         changes = {name: value for name, value in fields.items() if value is not None}
+        if colour is not _UNSET:
+            changes["colour"] = normalize_colour(colour)
+        if icon is not _UNSET:
+            changes["icon"] = normalize_icon(icon)
         if not changes:
             return
         assignments = ", ".join(f"{name} = ?" for name in changes)
@@ -793,10 +833,22 @@ class Store:
             # A restored chat starts at Manual; backup data cannot silently
             # grant unattended command access on this machine.
             try:
+                # Appearance is cosmetic: unknown names (hand-edited backup)
+                # fall back to the default look instead of failing the import.
+                try:
+                    colour = normalize_colour(chat.get("colour"))
+                except ValueError:
+                    colour = None
+                try:
+                    icon = normalize_icon(chat.get("icon"))
+                except ValueError:
+                    icon = None
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
-                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit),
+                     chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
+                     colour, icon, 1 if chat.get("pinned") else 0),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -888,15 +940,18 @@ class Store:
                     "id": chat["id"],
                     "title": chat["title"],
                     "created": chat["created"],
+                    "colour": chat["colour"],
+                    "icon": chat["icon"],
                     "last_message": chat["last_message"],
                     "message_count": chat["message_count"],
+                    "pinned": chat["pinned"],
                     "message_id": row["message_id"],
                     "role": row["role"],
                     "snippet": _clean_snippet(snippet),
                 }
             )
         results.sort(
-            key=lambda r: (r["last_message"] or "", r["created"] or "", r["id"]),
+            key=lambda r: (r["pinned"], r["last_message"] or "", r["created"] or "", r["id"]),
             reverse=True,
         )
         if exclude_chat_id is not None:

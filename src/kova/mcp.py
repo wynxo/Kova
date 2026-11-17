@@ -75,6 +75,8 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 _MAX_PAGES = 50
 _STDERR_LINES = 20
+# How long a stopped server's stderr may keep draining before its error is written.
+_STDERR_GRACE = 2.0
 
 
 class McpError(RuntimeError):
@@ -130,6 +132,10 @@ class _Stdio:
         self.waiters: dict[Any, _Waiter] = {}
         self.lock = threading.Lock()
         self.dead: str | None = None
+        # Set once stderr has hit EOF, and once `dead` is final. The stop
+        # message quotes stderr, so it must not be built before stderr drains.
+        self._stderr_done = threading.Event()
+        self._exited = threading.Event()
         env = {**os.environ, **server.env}
         command = shutil.which(server.command, path=env.get("PATH")) or server.command
         argv = [command, *server.args]
@@ -173,9 +179,11 @@ class _Stdio:
                     if isinstance(item, dict):
                         self._dispatch(item)
         code = self.process.wait()
+        self._stderr_done.wait(_STDERR_GRACE)
         detail = f" (exit code {code})" if code is not None else ""
         tail = " ".join(line for line in self.stderr if line)[-300:]
         self.dead = f"{self.server.name} stopped{detail}" + (f": {tail}" if tail else "")
+        self._exited.set()
         with self.lock:
             waiters = list(self.waiters.values())
         for waiter in waiters:
@@ -194,8 +202,11 @@ class _Stdio:
     def _drain(self) -> None:
         stream = self.process.stderr
         assert stream is not None
-        for raw in stream:
-            self.stderr.append(raw.decode("utf-8", "replace").strip()[:500])
+        try:
+            for raw in stream:
+                self.stderr.append(raw.decode("utf-8", "replace").strip()[:500])
+        finally:
+            self._stderr_done.set()
 
     def send(self, message: dict) -> None:
         data = (json.dumps(message, separators=(",", ":")) + "\n").encode()
@@ -205,6 +216,9 @@ class _Stdio:
                 self.process.stdin.write(data)
                 self.process.stdin.flush()
         except (OSError, ValueError):
+            # A server that exits at once breaks the pipe before the reader
+            # thread has recorded why; wait briefly so the caller sees that reason.
+            self._exited.wait(_STDERR_GRACE)
             raise McpError(self.dead or f"{self.server.name} is not running") from None
 
     def request(self, message: dict, timeout: float) -> dict:
