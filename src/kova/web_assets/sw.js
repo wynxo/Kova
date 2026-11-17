@@ -1,6 +1,6 @@
 /* Only public shell resources belong here. Never cache authenticated API data. */
 const CACHE = 'kova-shell-v1';
-const SHELL = ['/app', '/app/assets/app.css', '/app/assets/toast.css', '/app/assets/status-bar.css', '/app/assets/app.js', '/app/assets/toast.js', '/app/assets/status-bar.js', '/app/assets/sounds.js', '/app/assets/diff.js', '/app/assets/diff.css', '/app/assets/thinking.css', '/app/assets/bolt.svg', '/app/assets/chat-appearance.css', '/app/assets/chat-appearance.js', '/app/assets/chat_list.css', '/app/assets/chat_list.js',
+const SHELL = ['/app/assets/tool-cards.js', '/app/assets/tool-cards.css', '/app', '/app/assets/app.css', '/app/assets/toast.css', '/app/assets/status-bar.css', '/app/assets/app.js', '/app/assets/toast.js', '/app/assets/status-bar.js', '/app/assets/sounds.js', '/app/assets/diff.js', '/app/assets/diff.css', '/app/assets/thinking.css', '/app/assets/bolt.svg', '/app/assets/chat-appearance.css', '/app/assets/chat-appearance.js', '/app/assets/chat_list.css', '/app/assets/chat_list.js',
   '/app/assets/vendor/marked.js', '/app/assets/vendor/purify.js', '/app/assets/vendor/highlight.js',
   '/app/assets/fonts/InterVariable.woff2', '/app/assets/fonts/InterVariable-Italic.woff2', '/app/assets/fonts/JetBrainsMonoVariable.woff2', '/app/assets/icon.svg',
   '/app/assets/icon-32.png', '/app/assets/icon-180.png', '/app/assets/icon-192.png', '/app/assets/icon-512.png'];
