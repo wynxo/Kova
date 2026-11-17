@@ -22,6 +22,8 @@
          keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
         {title: 'Keyboard shortcuts', help: 'Every key this window understands.',
          keywords: 'keys keyboard hotkeys', action: 'open-shortcuts', actionLabel: 'Show'},
+        {title: 'Shortcut keys', help: 'Record a new key for an action. A key already in use is refused.',
+         keywords: 'remap rebind change custom keys hotkeys record', host: 'shortcut-remap'},
         {title: 'Startup', help: 'Keep reminders and scheduled jobs running after you sign in.',
          keywords: 'start login sign in boot autostart service status bar', host: 'settings'},
         {title: 'Sign out', help: 'End this session in this window. On a paired phone, this unpairs it.',

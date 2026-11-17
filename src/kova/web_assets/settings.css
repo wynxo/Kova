@@ -141,6 +141,15 @@ body.settings-open { overflow: hidden; }
   line-height: var(--type-leading-body);
 }
 .settings-action { flex: none; min-width: 84px; }
+
+/* The remap list (#200): the keys themselves are the button that records a
+   new chord, and a refused chord explains itself under the row. */
+.shortcut-row { flex-wrap: wrap; }
+.shortcut-row .settings-copy { flex: 1; }
+.shortcut-key { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
+.shortcut-key kbd { padding: 0; border: 0; background: transparent; color: inherit; }
+.shortcut-error { color: var(--status-danger); }
+.shortcut-remap-foot { display: flex; justify-content: flex-end; padding-top: var(--space-3); }
 .settings-page mark {
   padding: 0 .1em;
   border-radius: var(--radius-sm);
