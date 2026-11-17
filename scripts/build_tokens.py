@@ -7,13 +7,13 @@ No third-party dependencies: this reads JSON, resolves `{...}` aliases, does WCA
 maths and writes files.
 
 Usage:
-    python scripts/build_tokens.py                 # write src/kova/web_assets/tokens.css
+    python scripts/build_tokens.py                 # write tokens.css and tokens.json
     python scripts/build_tokens.py --check         # exit 1 if contrast, shape or freshness fails
     python scripts/build_tokens.py --stdout        # print the CSS instead of writing
 
-Why not Style Dictionary or Tokens Studio: this repository generates four outputs
-(CSS, TUI palettes, gallery exports, docs), the alias resolver is a dozen lines, and
-there is no package manager here to run them with. See
+Why not Style Dictionary or Tokens Studio: this repository generates several outputs
+(CSS, the server's token data, the TUI palettes and docs), the alias resolver is a dozen
+lines, and there is no package manager here to run them with. See
 docs/research/design-ui-1-tokens-and-themes.md.
 """
 
@@ -32,6 +32,9 @@ TOKENS_PATH = ROOT / "design" / "tokens.json"
 # src/kova/web_assets is mounted at /app/assets by src/kova/web.py; a stylesheet at the
 # repository root would never be served.
 CSS_PATH = ROOT / "src" / "kova" / "web_assets" / "tokens.css"
+# The server needs the same values as data, so a theme file can be merged over its base
+# (kova.themes). It sits next to the module so it ships in the package.
+TOKENS_JSON_PATH = ROOT / "src" / "kova" / "tokens.json"
 
 THEMES = ("kova-dark", "kova-light")
 
@@ -244,6 +247,30 @@ def render_css(data: dict[str, Any] | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_tokens_json(data: dict[str, Any] | None = None) -> str:
+    """The same tokens as JSON, for the runtime theme engine (``kova.themes``).
+
+    The stylesheet serves the browser; the server also needs the palette as values
+    so a user theme can be merged over its base (#174). Both come from this one
+    run, so they cannot disagree.
+    """
+    data = data if data is not None else load_tokens()
+    payload: dict[str, Any] = {
+        "generated": "scripts/build_tokens.py",
+        "source": "design/tokens.json",
+        "themes": {},
+    }
+    for theme in THEMES:
+        tokens = theme_tokens(theme, data)
+        payload["themes"][theme] = {
+            "appearance": THEME_SCHEMES[theme],
+            "tokens": {name: value for name, value in tokens.items()
+                       if not isinstance(value, list)},
+            "terminal": tokens.get("terminal", []),
+        }
+    return json.dumps(payload, indent=2) + "\n"
+
+
 # --------------------------------------------------------------------------- checks
 
 
@@ -331,30 +358,39 @@ def main(argv: list[str] | None = None) -> int:
 
     data = load_tokens()
     problems = check_shape(data) + check_contrast(data)
+    css = render_css(data)
+    tokens_json = render_tokens_json(data)
 
     if args.check:
-        stale = check_freshness(render_css(data))
+        stale = [
+            line
+            for line in (
+                check_freshness(css, CSS_PATH),
+                check_freshness(tokens_json, TOKENS_JSON_PATH),
+            )
+            if line
+        ]
         for problem in problems:
             print(f"FAIL {problem}", file=sys.stderr)
-        if stale:
-            print(f"FAIL {stale}", file=sys.stderr)
+        for problem in stale:
+            print(f"FAIL {problem}", file=sys.stderr)
         if problems or stale:
-            print(f"\n{len(problems) + (1 if stale else 0)} problem(s) found.", file=sys.stderr)
+            print(f"\n{len(problems) + len(stale)} problem(s) found.", file=sys.stderr)
             return 1
         print(
             f"tokens ok: {len(PAIRS)} contrast pairs across {len(THEMES)} themes; "
-            "stylesheet matches the generator"
+            "stylesheet matches the generator and so does the token data"
         )
         return 0
 
-    css = render_css(data)
     if args.stdout:
         sys.stdout.write(css)
         return 0
 
-    CSS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CSS_PATH.write_text(css, encoding="utf-8")
-    print(f"wrote {CSS_PATH.relative_to(ROOT)} ({len(css)} bytes)")
+    for path, text in ((CSS_PATH, css), (TOKENS_JSON_PATH, tokens_json)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"wrote {path.relative_to(ROOT)} ({len(text)} bytes)")
     for problem in problems:
         print(f"warn {problem}", file=sys.stderr)
     return 0

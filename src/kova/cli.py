@@ -308,6 +308,9 @@ app.add_typer(_chats, name="chats")
 _prefs = typer.Typer(no_args_is_help=True, help="Export and import UI preferences.")
 app.add_typer(_prefs, name="prefs")
 
+_themes = typer.Typer(no_args_is_help=False, help="List and inspect themes.")
+app.add_typer(_themes, name="themes")
+
 
 @_chats.callback(invoke_without_command=True)
 def chats_root(ctx: typer.Context):
@@ -963,6 +966,60 @@ def prefs_import(
         _fail(str(exc))
     _ok(f"Restored {len(saved)} UI preferences")
     _muted("  " + " · ".join(f"{name} {value}" for name, value in sorted(saved.items())))
+
+
+@_themes.callback(invoke_without_command=True)
+def themes_root(ctx: typer.Context):
+    """List the themes Kova can use."""
+    if ctx.invoked_subcommand is None:
+        themes_list()
+
+
+@_themes.command("list")
+def themes_list():
+    """List the built-in themes and the theme files in Kova's home."""
+    try:
+        entries = get_client().themes()
+    except KovaError as exc:
+        _fail(str(exc))
+    table = _table(caption=f"{len(entries)} theme(s) · built-in and user files")
+    table.add_column("Theme", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Appearance", no_wrap=True)
+    table.add_column("Source", style=theme.MUTED, no_wrap=True)
+    for entry in entries:
+        source = "built-in" if entry.get("source") == "built-in" else "file"
+        if entry.get("error"):
+            table.add_row(Text(entry["id"], style=theme.ERROR), Text("broken", style=theme.ERROR),
+                          "—", source)
+        else:
+            table.add_row(Text(entry["id"], style="bold"), entry.get("name") or "—",
+                          entry.get("appearance") or "—", source)
+    console.print(table)
+    for entry in entries:
+        if entry.get("error"):
+            _error_line(entry["error"])
+
+
+@_themes.command("show")
+def themes_show(theme_id: str = typer.Argument(..., help="A theme id from `kova themes list`.")):
+    """Print one theme's tokens, resolved over the base it extends."""
+    try:
+        data = get_client().theme(theme_id)
+    except KovaError as exc:
+        _fail(str(exc))
+    header = " ".join(str(part) for part in (data.get("name"), data.get("version")) if part)
+    _ok(f"{header or data['id']} · {data['appearance']}")
+    merged = data.get("tokens") or {}
+    terminal = data.get("terminal") or []
+    table = _table(caption=f"{len(merged)} semantic tokens · resolved over {data.get('extends') or 'its base'}")
+    table.add_column("Token", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    for name in sorted(merged):
+        table.add_row(name, str(merged[name]))
+    console.print(table)
+    if terminal:
+        _muted("Terminal palette: " + " ".join(terminal))
 
 
 # ---------------------------------------------------------------------------

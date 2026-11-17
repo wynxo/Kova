@@ -39,6 +39,15 @@ def test_committed_stylesheet_matches_the_generator() -> None:
     )
 
 
+def test_committed_token_data_matches_the_generator() -> None:
+    expected = build.render_tokens_json(build.load_tokens())
+    actual = build.TOKENS_JSON_PATH.read_text(encoding="utf-8")
+    assert actual == expected, (
+        f"{build.TOKENS_JSON_PATH.name} is stale: run `python scripts/build_tokens.py` "
+        "and commit the result"
+    )
+
+
 def test_check_passes_on_the_committed_tree(capsys) -> None:
     assert build.main(["--check"]) == 0
     assert "stylesheet matches the generator" in capsys.readouterr().out

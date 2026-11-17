@@ -78,6 +78,19 @@ the ratio it needed.
 > validated on the server before it is ever offered to the frontend, so a broken theme
 > cannot reach `app.css`.
 
+## Listing what Kova found
+
+```bash
+kova themes list          # the two built-ins, then the theme files in Kova's home
+kova themes show midnight-teal   # its tokens, resolved over the base it extends
+```
+
+The server resolves a theme; the browser never does. `GET /themes` lists every theme Kova can
+offer - a file that does not validate is listed with its error rather than hidden - and
+`GET /themes/<id>` returns the merged tokens. The built-in palettes come from
+`src/kova/tokens.json`, which `scripts/build_tokens.py` generates from `design/tokens.json`
+next to `tokens.css`.
+
 ## Adding a built-in theme
 
 A built-in theme is different work: it goes into `design/tokens.json` under `semantic`,
