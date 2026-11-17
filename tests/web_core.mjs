@@ -9,11 +9,15 @@ class Element {
     this.tagName = tag; this.children = []; this.parentNode = null;
     this.className = ''; this.value = ''; this.disabled = false; this.hidden = false;
     this.listeners = {}; this.attrs = {}; this.dataset = {}; this.style = {};
-    this.classList = {toggle: (name, force) => {
-      const names = new Set(this.className.split(' ').filter(Boolean));
-      const add = force ?? !names.has(name); if (add) names.add(name); else names.delete(name);
-      this.className = [...names].join(' ');
-    }, contains: name => this.className.split(' ').includes(name)};
+    this.classList = {
+      toggle: (name, force) => {
+        const names = new Set(this.className.split(' ').filter(Boolean));
+        const add = force ?? !names.has(name); if (add) names.add(name); else names.delete(name);
+        this.className = [...names].join(' ');
+      },
+      add: name => { const names = new Set(this.className.split(' ').filter(Boolean)); names.add(name); this.className = [...names].join(' '); },
+      remove: name => { const names = new Set(this.className.split(' ').filter(Boolean)); names.delete(name); this.className = [...names].join(' '); },
+      contains: name => this.className.split(' ').includes(name)};
   }
   set textContent(text) { this._text = text; this.children = []; }
   get textContent() { return (this._text || '') + this.children.map(n => n.textContent).join(''); }
@@ -103,15 +107,17 @@ const sandbox = {
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
 source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
-// palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js and reasoning.js are plain
-// scripts, like app.js: load them first so app.js builds its command registry,
-// tool cards, reasoning rows and diff hooks against the same document.
+// palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
+// and code-header.js are plain scripts, like app.js: load them first so app.js
+// builds its command registry, tool cards, reasoning rows, diff hooks and code
+// block headers against the same document.
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/shortcuts.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/code-header.js', import.meta.url), 'utf8') + '\n' +
   source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
