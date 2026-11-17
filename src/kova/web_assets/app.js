@@ -1310,32 +1310,28 @@
   try { if (localStorage.getItem('kova-sidebar') === 'collapsed') document.body.classList.toggle('sidebar-collapsed', true); } catch (_) {}
   menuState(); wide?.addEventListener?.('change', () => { sidebar(false); });
   $('backdrop').onclick = () => sidebar(false); $('sidebar-close').onclick = () => sidebar(false);
-  if (/Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '')) {
-    document.querySelectorAll('[data-mod]').forEach(key => { key.textContent = '⌘'; });
-    document.querySelectorAll('[data-shift]').forEach(key => { key.textContent = '⇧'; });
-  }
   $('open-shortcuts').onclick = () => { sidebar(false); $('shortcuts-dialog').showModal(); };
   $('shortcuts-close').onclick = () => $('shortcuts-dialog').close();
   // Command palette (#183). palette.js owns the dialog; this is only the registry,
   // so every menu action below stays reachable from the keyboard too.
-  const paletteMac = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '');
-  const shortcutKey = (...keys) => [paletteMac ? '⌘' : 'Ctrl',
-    ...keys.map(key => key === 'Shift' ? (paletteMac ? '⇧' : 'Shift') : key)];
+  // Shortcut labels come from shortcuts.js, so a row shows the keys the user
+  // has actually recorded, not the defaults (#200).
+  const shortcutKeys = id => globalThis.KovaShortcuts?.current?.labels?.(id) || [];
   let paletteChats = [];
   function paletteItems() {
     const items = [];
     const add = (group, item) => items.push({group, ...item});
     const current = state.chat && !state.chat.ephemeral ? state.chat : null;
     const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
-    add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKey('Shift', 'K'), run:() => safe(newChat)});
-    add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKey('Shift', 'N'), run:() => safe(newIncognito)});
-    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKey('Shift', 'F'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
-    add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKey('/'), run:() => $('shortcuts-dialog').showModal()});
-    add('Actions', {title:'Show or hide the sidebar', hint:'Give the conversation more room', keywords:'drawer panel collapse', shortcut:shortcutKey('B'), run:() => toggleSidebar()});
-    if (state.busy) add('Actions', {title:'Stop the reply', hint:'Cancel the turn that is running now', keywords:'cancel halt interrupt', shortcut:['Esc'], run:() => safe(stop)});
+    add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
+    add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
+    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
+    add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
+    add('Actions', {title:'Show or hide the sidebar', hint:'Give the conversation more room', keywords:'drawer panel collapse', shortcut:shortcutKeys('toggle-sidebar'), run:() => toggleSidebar()});
+    if (state.busy) add('Actions', {title:'Stop the reply', hint:'Cancel the turn that is running now', keywords:'cancel halt interrupt', shortcut:shortcutKeys('stop-reply'), run:() => safe(stop)});
     add('Actions', {title:'Sign out of this window', hint:'End this browser session', keywords:'logout sign out leave disconnect', run:() => $('disconnect').onclick?.()});
 
-    add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKey('Shift', 'L'), run:() => $('theme').onclick?.()});
+    add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKeys('toggle-theme'), run:() => $('theme').onclick?.()});
 
     if (current) {
       add('This conversation', {title:'Compact now', hint:'Summarise older turns to free context', keywords:'summarise summarize shorten context', run:() => safe(compactChat)});
@@ -1401,27 +1397,34 @@
     commandPalette.refresh();
   }
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
+  // Each chord is a registry entry (shortcuts.js), so a remapped key is
+  // dispatched from one place instead of a list of hard-coded compares (#200).
+  const shortcutActions = {
+    palette: () => safe(openPalette),
+    'new-conversation': () => { if (state.connected) safe(newChat); },
+    'new-incognito': () => safe(newIncognito),
+    'search-conversations': () => { toggleSidebar(true); $('search').focus(); $('search').select?.(); },
+    'toggle-sidebar': () => toggleSidebar(),
+    'toggle-theme': () => $('theme').onclick?.(),
+    'focus-composer': () => $('prompt').focus(),
+    'stop-reply': () => {
+      if (document.body.classList.contains('sidebar-open')) sidebar(false);
+      else if (state.busy) safe(stop);
+      else return false;
+    },
+    shortcuts: () => $('shortcuts-dialog').showModal(),
+  };
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
+    const action = globalThis.KovaShortcuts?.current?.actionFor?.(event) || null;
+    const run = action && shortcutActions[action];
+    if (run && run(event) !== false) { event.preventDefault(); return; }
+    // Plain keys keep their own behaviour: they are typing, not chords.
     const mod = event.metaKey || event.ctrlKey, key = (event.key || '').toLowerCase();
-    if (mod && event.shiftKey && key === 'n') { event.preventDefault(); safe(newIncognito); return; }
-    // Ctrl/Cmd+K is the palette now; new conversation moved to Ctrl/Cmd+Shift+K
-    // so the two never fight over the same chord (docs/SHORTCUTS.md).
-    if (mod && !event.shiftKey && key === 'k') { event.preventDefault(); safe(openPalette); return; }
-    if (mod && event.shiftKey && key === 'k') { event.preventDefault(); if (state.connected) safe(newChat); return; }
-    if (mod && !event.shiftKey && key === 'b') toggleSidebar();
-    else if (mod && event.shiftKey && key === 'f') { toggleSidebar(true); $('search').focus(); }
-    else if (mod && event.shiftKey && key === 'l') $('theme').onclick();
-    else if (mod && key === '/') $('shortcuts-dialog').showModal();
-    // Like the terminal: Ctrl/Cmd+Space focuses the composer to type.
-    else if (mod && key === ' ') { event.preventDefault(); $('prompt').focus(); return; }
-    else if (key === 'escape') {
-      if (document.body.classList.contains('sidebar-open')) sidebar(false);
-      else if (state.busy) safe(stop);
-      else return;
-    } else if (!mod && !event.altKey && !typingIn(event.target) && key === '/') $('prompt').focus();
-    else if (!mod && !event.altKey && !typingIn(event.target) && key === '?') $('shortcuts-dialog').showModal();
+    if (mod || event.altKey || typingIn(event.target)) return;
+    if (key === '/') $('prompt').focus();
+    else if (key === '?') $('shortcuts-dialog').showModal();
     else return;
     event.preventDefault();
   });

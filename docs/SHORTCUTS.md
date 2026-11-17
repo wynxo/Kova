@@ -92,10 +92,20 @@ on a Mac) in the app for the same list.
 | `ctrl+shift+f` | Search chats (the sidebar's search field) |
 | `ctrl+b` | Show or hide the sidebar |
 | `ctrl+shift+l` | Switch light and dark |
+| `ctrl+space` | Focus the message box |
 | `ctrl+/` or `?` | Keyboard shortcuts |
 
 `ctrl+k` opens the palette instead of starting a new chat; new conversations
 moved to `ctrl+shift+k` so the two do not compete for the same chord.
+
+Every modifier chord in that table comes from one registry; the typing keys
+(including the plain `/` and `?`) stay fixed. Settings → General → **Shortcut
+keys** lists the registry: click the keys, press the new
+combination, and `esc` cancels. A combination another action already uses is
+refused, and the row names that action, so two actions can never share a chord.
+**Reset** restores one action and **Reset all** restores every default. Changes
+are kept in this browser's preferences (`localStorage`) and the shortcuts
+dialog and the command palette show the recorded keys at once.
 
 ## Command palette (web and desktop)
 

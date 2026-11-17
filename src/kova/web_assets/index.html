@@ -32,6 +32,7 @@
   <script defer src="/app/assets/toast.js"></script>
   <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/chat-appearance.js"></script>
+  <script defer src="/app/assets/shortcuts.js"></script>
   <link rel="stylesheet" href="/app/assets/tool-cards.css">
   <script defer src="/app/assets/tool-cards.js"></script>
   <script defer src="/app/assets/reasoning.js"></script>
@@ -118,6 +119,7 @@
   <div id="settings-actions" hidden>
     <button id="theme" type="button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span>Light theme</span></button>
     <button id="open-shortcuts" type="button">Keyboard shortcuts</button>
+    <div id="shortcut-remap"></div>
     <button id="open-sounds" type="button">Sounds</button>
     <button id="disconnect" type="button" aria-label="Sign out of this window">Sign out</button>
     <button id="add-provider" type="button">Connect a provider</button>
@@ -144,19 +146,13 @@
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <div class="dialog-head"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button id="shortcuts-close" type="button" class="icon-button" aria-label="Close keyboard shortcuts"><span class="icon i-x" aria-hidden="true"></span></button></div>
-    <dl class="shortcuts">
+    <!-- The typing keys are fixed; the action rows below them are drawn from
+         the registry in shortcuts.js, so they always show the current keys. -->
+    <dl id="shortcut-list" class="shortcuts">
       <div><dt>Send the message</dt><dd><kbd>Enter</kbd></dd></div>
       <div><dt>New line</dt><dd><kbd>Shift</kbd><kbd>Enter</kbd></dd></div>
       <div><dt>Bring back your last message</dt><dd><kbd>↑</kbd> <span>in an empty box</span></dd></div>
-      <div><dt>Stop the reply</dt><dd><kbd>Esc</kbd></dd></div>
       <div><dt>Jump to the message box</dt><dd><kbd>/</kbd></dd></div>
-      <div><dt>Command palette</dt><dd><kbd data-mod>Ctrl</kbd><kbd>K</kbd></dd></div>
-      <div><dt>New conversation</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>K</kbd></dd></div>
-      <div><dt>New incognito chat</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>N</kbd></dd></div>
-      <div><dt>Search conversations</dt><dd><kbd data-mod>Ctrl</kbd><kbd data-shift>Shift</kbd><kbd>F</kbd></dd></div>
-      <div><dt>Show or hide the sidebar</dt><dd><kbd data-mod>Ctrl</kbd><kbd>B</kbd></dd></div>
-      <div><dt>Switch light and dark</dt><dd><kbd data-mod>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd></dd></div>
-      <div><dt>This list</dt><dd><kbd data-mod>Ctrl</kbd><kbd>/</kbd></dd></div>
     </dl>
   </dialog>
   <dialog id="provider-dialog" aria-labelledby="provider-title">
