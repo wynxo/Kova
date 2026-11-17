@@ -27,6 +27,8 @@ PALETTE_JS = ASSETS / "palette.js"
 PALETTE_CSS = ASSETS / "palette.css"
 TOAST_JS = ASSETS / "toast.js"
 TOAST_CSS = ASSETS / "toast.css"
+REASONING_JS = ASSETS / "reasoning.js"
+REASONING_CSS = ASSETS / "reasoning.css"
 
 # Any literal colour in a component stylesheet: themes own those values.
 COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
@@ -203,6 +205,51 @@ def test_toast_script_is_self_contained_and_accessible() -> None:
     for needed in ("'aria-live'", "'aria-label'", "'role'", "'Escape'",
                    "'pointerenter'", "'focusin'", "textContent"):
         assert needed in text, f"toast.js lost {needed}"
+
+
+def test_reasoning_module_ships_with_the_shell(page: Page) -> None:
+    """reasoning.js defines window.KovaReasoning, so it must run before app.js;
+    both it and its stylesheet are part of the offline shell."""
+    html = INDEX.read_text(encoding="utf-8")
+    worker = (ASSETS / "sw.js").read_text(encoding="utf-8")
+    scripts = [reference for reference in page.references if reference.endswith(".js")]
+    assert "/app/assets/reasoning.js" in scripts
+    assert scripts.index("/app/assets/reasoning.js") < scripts.index("/app/assets/app.js")
+    assert html.index("reasoning.css") > html.index("app.css")
+    assert "/app/assets/reasoning.js" in worker and "/app/assets/reasoning.css" in worker
+
+
+def test_reasoning_stylesheet_uses_tokens_and_reduced_motion() -> None:
+    text = without_comments(REASONING_CSS.read_text(encoding="utf-8"))
+    assert COLOUR_LITERAL.findall(text) == [], "reasoning.css hard-codes a colour; use a token"
+    for token in ("--fg-muted", "--fg-faint", "--border-strong", "--bg-raised",
+                  "--accent-default", "--space-1", "--space-2", "--radius-sm",
+                  "--type-size-label", "--motion-fast"):
+        assert f"var({token})" in text, f"reasoning.css should take its look from {token}"
+    assert "prefers-reduced-motion" in text, "reasoning.css must honour reduced motion"
+    assert ":focus-visible" in text, "reasoning.css must keep keyboard focus visible"
+    assert "[data-reasoning=\"hidden\"] .reasoning" in text, \
+        "the setting must hide rows already on screen"
+
+
+def test_reasoning_script_folds_text_and_never_builds_markup() -> None:
+    text = without_comments(REASONING_JS.read_text(encoding="utf-8"))
+    for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(",
+                      "new Function"):
+        assert forbidden not in text, f"reasoning.js must not use {forbidden}"
+    for needed in ("textContent", "'shown'", "'hidden'", "localStorage",
+                   "'/preferences'", "Thought for", "window.KovaReasoning"):
+        assert needed in text, f"reasoning.js lost {needed}"
+
+
+def test_app_js_delegates_reasoning_rows_to_the_module() -> None:
+    text = APP_JS.read_text(encoding="utf-8")
+    assert "window.KovaReasoning?.row" in text, \
+        "app.js must ask the module for the folded reasoning row"
+    assert "activityText.textContent = 'Thinking…'" in text, \
+        "the quiet thinking row must stay while reasoning streams"
+    assert "details', 'thinking'" not in text, \
+        "app.js must not build reasoning markup itself"
 
 
 def test_app_js_posts_messages_through_the_toast_component() -> None:

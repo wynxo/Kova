@@ -1,0 +1,85 @@
+/* Reasoning rows (#187). While a model thinks, app.js keeps the quiet
+   "Thinking..." activity row from thinking.css on screen. When that burst ends,
+   this row folds it into one muted line, "Thought for 12s", that opens in place.
+   The same setting that stops new rows also hides the ones already on screen.
+   Every colour, space, radius and motion value comes from tokens.css. */
+
+.reasoning {
+  color: var(--fg-muted);
+  font-size: var(--type-size-body);
+}
+.reasoning > summary {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--type-size-label);
+  font-weight: 500;
+  line-height: var(--type-leading-tight);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
+}
+.reasoning > summary::-webkit-details-marker { display: none; }
+.reasoning > summary::before {
+  content: "";
+  flex: none;
+  width: var(--space-1);
+  height: var(--space-1);
+  margin-inline: var(--space-1) var(--space-2);
+  border-right: var(--space-0-5) solid currentColor;
+  border-bottom: var(--space-0-5) solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--motion-fast) var(--motion-ease-standard);
+}
+.reasoning[open] > summary::before { transform: rotate(45deg); }
+.reasoning > summary:hover {
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+}
+.reasoning > summary:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-1);
+}
+.reasoning-text {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-0-5) 0 var(--space-0-5) var(--space-3);
+  border-left: var(--space-0-5) solid var(--border-strong);
+  color: var(--fg-muted);
+  font: var(--type-size-body) / var(--type-leading-body) var(--font);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Hiding reasoning removes the rows that are already in the transcript too. */
+[data-reasoning="hidden"] .reasoning { display: none; }
+
+/* The Settings toggle in the General section. The native checkbox keeps its
+   keyboard behaviour; only the accent and the spacing come from the theme. */
+.reasoning-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--type-size-body);
+  cursor: pointer;
+}
+.reasoning-setting input {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+  accent-color: var(--accent-default);
+}
+.reasoning-setting input:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning > summary,
+  .reasoning > summary::before { transition: none; }
+}

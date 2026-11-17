@@ -107,7 +107,9 @@ source = source.replace('controls(); start();', 'globalThis.test = {parseCommand
 // app.js builds its command registry and diff hooks against the same document.
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
-  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
+  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
+  source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
@@ -420,10 +422,16 @@ assert.equal(byClass(activityRow, 'thinking-mark').length, 1, 'the thinking row 
 assert.equal(byClass(activityRow, 'thinking-bolt').length, 1, 'and the bolt that belongs to it');
 assert.ok(activityRow.textContent.includes('Thinking'), 'the state is written, not only animated');
 live.accept({type: 'reasoning', text: 'Let me think.'});
-assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator while it streams');
-assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
+assert.equal(activityRow.hidden, false, 'the thinking row stays the one indicator while reasoning streams');
+assert.ok(activityRow.textContent.includes('Thinking'));
+assert.equal(byClass(liveBody, 'reasoning').length, 0, 'reasoning folds only when its burst ends');
 live.accept({type: 'tool_call', name: 'run_command', args: {command: 'npm test'}});
-assert.equal(byClass(liveBody, 'thinking')[0].classList.contains('live'), false);
+const reasoned = byClass(liveBody, 'reasoning')[0];
+assert.ok(reasoned, 'the finished reasoning becomes a folded row');
+assert.match(reasoned.textContent, /^Thought for \d+s/, reasoned.textContent);
+assert.match(reasoned.textContent, /Let me think\./);
+assert.equal(Boolean(reasoned.open), false, 'the row starts collapsed');
+assert.equal(activityRow.hidden, true, 'the tool spinner is the indicator now');
 const liveTool = byClass(liveBody, 'tool-row')[0];
 assert.ok(liveTool.textContent.includes('Run command') && liveTool.textContent.includes('npm test'));
 live.accept({type: 'tool_result', name: 'run_command', ok: false, summary: '{"ok": false', output: '{"ok": false, "error": "2 tests failed"}'});
@@ -444,6 +452,18 @@ assert.equal(byClass(liveBody, 'markdown')[0].classList.contains('live'), false)
 const replyActions = byClass(article, 'message-actions')[0];
 buttons(replyActions)[0].onclick(); await tick();
 assert.deepEqual(copied, ['All done.'], 'the reply copies as the text the model wrote');
+
+// Hiding reasoning stops new folded rows and keeps the text out of the DOM.
+sandbox.window.KovaReasoning.setShown(false);
+const hiddenBody = new Element();
+const hiddenTurn = turnView(hiddenBody);
+hiddenTurn.accept({type: 'reasoning', text: 'a private thought'});
+hiddenTurn.accept({type: 'text', text: 'The answer.'});
+hiddenTurn.finish();
+assert.equal(byClass(hiddenBody, 'reasoning').length, 0, 'hidden reasoning creates no row');
+assert.equal(hiddenBody.textContent.includes('a private thought'), false, 'its text never reaches the DOM');
+assert.equal(byClass(hiddenBody, 'markdown').length, 1, 'the answer still arrives');
+sandbox.window.KovaReasoning.setShown(true);
 
 // A saved turn is one message, however many rounds it took.
 setChat({id: 'saved-turn', messages: [

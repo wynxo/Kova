@@ -40,6 +40,7 @@ def runner(home, http, monkeypatch):
 
 def test_defaults_are_served_and_updates_merge(http):
     assert http.get("/preferences").json() == ui_prefs.DEFAULTS
+    assert ui_prefs.DEFAULTS["reasoning"] == "shown", "reasoning rows are visible by default"
 
     saved = http.put("/preferences", json={"theme": "light"})
 
@@ -48,9 +49,18 @@ def test_defaults_are_served_and_updates_merge(http):
     assert http.get("/preferences").json()["theme"] == "light"
 
 
+def test_reasoning_preference_is_shared_with_the_ui(http):
+    saved = http.put("/preferences", json={"reasoning": "hidden"})
+
+    assert saved.status_code == 200
+    assert saved.json()["reasoning"] == "hidden"
+    assert http.get("/preferences").json()["reasoning"] == "hidden"
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
     ({"theme": "sepia"}, "must be one of"),
+    ({"reasoning": "expanded"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):
@@ -83,7 +93,7 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
-        "theme": "light", "sidebar": "open", "notifications": "on",
+        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "shown",
     }
 
 
