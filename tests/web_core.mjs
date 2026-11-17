@@ -107,7 +107,7 @@ source = source.replace('controls(); start();', 'globalThis.test = {parseCommand
 // app.js builds its command registry and diff hooks against the same document.
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
-  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
+  readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
@@ -400,6 +400,23 @@ console.log('Queue and steer passed');
 
 // Chat feel: one live indicator at a time, readable tool rows, message actions and keys.
 sandbox.marked = {parse: text => text}; sandbox.DOMPurify = {sanitize: html => html};
+// Consecutive tools share a disclosure; intervening prose starts a new group.
+{
+  const body = new Element(), view = turnView(body);
+  view.accept({type: 'tool_call', name: 'read_file', args: {path: 'a.txt'}});
+  view.accept({type: 'tool_result', name: 'read_file', ok: true, output: 'a'});
+  view.accept({type: 'tool_call', name: 'read_file', args: {path: 'b.txt'}});
+  view.accept({type: 'tool_result', name: 'read_file', ok: true, output: 'b'});
+  assert.equal(byClass(body, 'tool-card').length, 1);
+  assert.equal(byClass(body, 'tool-card-step').length, 2);
+  view.accept({type: 'text', text: 'Next step.'});
+  view.accept({type: 'tool_call', name: 'run_command', args: {command: 'test'}});
+  assert.equal(byClass(body, 'tool-card').length, 2);
+  view.finish();
+  assert.ok(byClass(body, 'tool-card-error').some(row => row.textContent.includes('Interrupted')));
+}
+
+
 const copied = []; sandbox.navigator = {clipboard: {writeText: async text => { copied.push(text); }}};
 const {toolSummary, toolHint, toolLabel} = sandbox.test;
 assert.equal(toolLabel('run_command'), 'Run command');
@@ -424,12 +441,12 @@ assert.equal(activityRow.hidden, true, 'the reasoning line is the only indicator
 assert.ok(byClass(liveBody, 'thinking')[0].classList.contains('live'));
 live.accept({type: 'tool_call', name: 'run_command', args: {command: 'npm test'}});
 assert.equal(byClass(liveBody, 'thinking')[0].classList.contains('live'), false);
-const liveTool = byClass(liveBody, 'tool-row')[0];
+const liveTool = byClass(liveBody, 'tool-card-step')[0];
 assert.ok(liveTool.textContent.includes('Run command') && liveTool.textContent.includes('npm test'));
 live.accept({type: 'tool_result', name: 'run_command', ok: false, summary: '{"ok": false', output: '{"ok": false, "error": "2 tests failed"}'});
 assert.ok(liveTool.textContent.includes('2 tests failed'), 'a failed tool says why');
 assert.ok(liveTool.classList.contains('failed'));
-assert.equal(byClass(liveBody, 'tool-output').length, 1, 'the full result opens under the row');
+assert.equal(byClass(liveBody, 'tool-card-output').length, 1, 'the full result opens under the row');
 assert.ok(activityRow.textContent.includes('Working'));
 live.accept({type: 'text', text: 'All '}); live.accept({type: 'text', text: 'done.'});
 assert.ok(byClass(liveBody, 'markdown')[0].classList.contains('live'));
@@ -455,7 +472,7 @@ setChat({id: 'saved-turn', messages: [
 ]});
 assert.equal(byClass($('messages'), 'assistant').length, 1);
 assert.equal(byClass($('messages'), 'usage-meter')[0].textContent, '~50 in · ~9 out · $0.00 local', 'a saved answer keeps its meter');
-assert.ok(byClass($('messages'), 'tool-row')[0].textContent.includes('notes.txt'));
+assert.ok(byClass($('messages'), 'tool-card-step')[0].textContent.includes('notes.txt'));
 const savedActions = byClass($('messages'), 'message-actions');
 assert.equal(savedActions.length, 2, 'your message and the reply each get actions');
 buttons(savedActions[1])[0].onclick(); await tick();
