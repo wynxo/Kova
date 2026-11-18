@@ -28,6 +28,7 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "sidebar": ("open", "collapsed"),
     "notifications": ("on", "off"),
     "reasoning": ("collapsed", "expanded", "hidden"),
+    "motion": ("full", "reduced", "off"),
 }
 
 DEFAULTS: dict[str, str] = {
@@ -35,6 +36,7 @@ DEFAULTS: dict[str, str] = {
     "sidebar": "open",
     "notifications": "off",
     "reasoning": "collapsed",
+    "motion": "full",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the

@@ -94,6 +94,7 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 - Radii: `--radius-sm` (controls), `--radius-md` (panels), `--radius-lg` (sheets), `--radius-pill`.
 - Motion: `--motion-fast` (120ms) for hover/press, `--motion-base` (180ms) for popovers,
   `--motion-slow` (280ms) for view changes. `--motion-instant` for state flips with no travel.
+  The Motion setting (Full, Reduced, Off) overrides these tokens under `data-motion` on `<html>`.
 
 ## Components
 
@@ -147,7 +148,8 @@ semantic tokens you want to change. A theme that inherits `kova-dark` and change
 
 - Text: 4.5:1 against its background. Large text and UI boundaries: 3:1.
 - Every theme must pass `python scripts/build_tokens.py --check` before it ships.
-- Reduced motion is honoured, and `data-motion="reduced"` overrides it in both directions.
+- Reduced motion is honoured: a device that asks for it resolves Full to Reduced, and the
+  Motion setting's Reduced or Off always wins. `data-motion` on `<html>` is the one switch.
 - Focus is always visible and never removed without a replacement.
 - Streaming text must not live in an `aria-live` region; announce phase changes once instead.
 

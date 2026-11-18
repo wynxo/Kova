@@ -889,6 +889,50 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .spinner { animation-duration:1.2s !important; animation-iteration-count:infinite !important; }
 }
 
+/* Motion preference (#181). motion.js resolves the setting onto
+   <html data-motion="full|reduced|off">, and this one block carries it for
+   every component: Full is the untouched token set, Reduced shortens the
+   duration tokens and stops each loop, Off removes transitions and animations.
+   A component keeps its own selectors and easing either way.
+
+   The device's reduced-motion preference resolves Full to Reduced in motion.js,
+   so a reader is never shown more motion than the system asked for. Every value
+   here is still a token from tokens.css. */
+[data-motion="reduced"] {
+  --motion-fast:60ms;
+  --motion-base:80ms;
+  --motion-slow:120ms;
+}
+
+/* Reduced: quick fades, and every loop plays once. The spinner keeps turning —
+   a still ring no longer says "working" — and the thinking bolt takes the
+   still, visible form it has for prefers-reduced-motion (#171). */
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration:var(--motion-fast) !important;
+  animation-iteration-count:1 !important;
+  scroll-behavior:auto !important;
+}
+[data-motion="reduced"] .spinner { animation:spin 1.2s linear infinite !important; }
+[data-motion="reduced"] .thinking-bolt { animation:none !important; opacity:1; }
+
+/* Off: nothing moves at all. Text an animation was keeping visible stays
+   readable, so turning motion off never hides a word. */
+[data-motion="off"] *,
+[data-motion="off"] *::before,
+[data-motion="off"] *::after {
+  animation:none !important;
+  transition:none !important;
+  scroll-behavior:auto !important;
+}
+[data-motion="off"] .thinking-bolt { opacity:1; }
+[data-motion="off"] .shimmer,
+[data-motion="off"] .thinking.live summary {
+  background:none !important;
+  color:var(--fg-muted) !important;
+}
+
 .rules-dialog { width:min(640px, calc(100vw - 24px)); max-height:90dvh; overflow:auto; }
 .rules-dialog p { color:var(--fg-muted); line-height:1.5; }
 .rules-dialog label { display:grid; gap:8px; }

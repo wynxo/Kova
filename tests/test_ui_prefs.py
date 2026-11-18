@@ -70,11 +70,24 @@ def test_the_first_reasoning_switch_still_reads_as_collapsed(tmp_path):
     assert ui_prefs.Preferences(tmp_path).read()["reasoning"] == "collapsed"
 
 
+def test_motion_preference_accepts_three_values(http):
+    assert http.get("/preferences").json()["motion"] == "full", \
+        "motion is full until the reader chooses otherwise"
+
+    for value in ("reduced", "off", "full"):
+        saved = http.put("/preferences", json={"motion": value})
+
+        assert saved.status_code == 200
+        assert saved.json()["motion"] == value
+        assert http.get("/preferences").json()["motion"] == value
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
     ({"theme": "Sepia Tone"}, "must be one of"),
     ({"theme": "x"}, "installed theme id"),
     ({"reasoning": "open"}, "must be one of"),
+    ({"motion": "none"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):
@@ -107,7 +120,8 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
-        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "collapsed",
+        "theme": "light", "sidebar": "open", "notifications": "on",
+        "reasoning": "collapsed", "motion": "full",
     }
 
 
