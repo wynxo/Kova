@@ -1,5 +1,6 @@
 """PWA HTTP contract, one-use shares and native attachment handoff."""
 import json
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,24 @@ from kova.config import ensure_token, load_config
 from kova.server import create_app
 from tests.fake_model import FakeModel, text
 from tests.test_server import server  # noqa: F401  (pytest fixture)
+
+SW = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets" / "sw.js"
+
+
+def test_the_worker_declares_its_cache_name() -> None:
+    """The cache name is a constant, never a URL in the shell list.
+
+    Without it `caches.open(CACHE)` throws inside install and activate, so the
+    worker only ever waits and the app never gains an offline shell or drops an
+    old one. A name in the list is just as bad: `cache.addAll()` would try to
+    fetch `/kova-shell-vN` from the server.
+    """
+    source = SW.read_text(encoding="utf-8")
+    assert re.search(r"^const CACHE = 'kova-shell-v\d+';$", source, re.MULTILINE), \
+        "sw.js must declare CACHE before it opens the cache"
+    shell = re.search(r"^const SHELL = \[(.*?)\];$", source, re.MULTILINE | re.DOTALL)
+    assert shell, "the SHELL list moved"
+    assert "kova-shell-" not in shell.group(1), "a cache name is not a request path"
 
 
 def login(app, client, name="demo"):
