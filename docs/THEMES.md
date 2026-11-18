@@ -143,10 +143,11 @@ manifest uses the dark base for `system`, since a manifest cannot follow the dev
 
 ## Make your own
 
-Start from an example in `design/themes/`, change only semantic tokens, and let
-`kova themes check` measure the contrast against them. The examples there are complete
-files: copy one into `~/.kova/themes/`, edit the tokens you want, and re-run `check`
-until it passes. If you only want your own colours this is all you need.
+Start from an example in `design/themes/`: copy one into `~/.kova/themes/`, change only
+semantic tokens, and re-run `kova themes check` until it passes. That command checks the
+file's structure, not its contrast. To measure contrast too, run
+`uv run python scripts/validate_theme.py <file>` from a Kova checkout; it fails on any text
+or control pair below the WCAG ratios the built-in themes meet.
 
 ## Adding a built-in theme
 
