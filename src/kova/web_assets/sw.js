@@ -99,13 +99,17 @@ self.addEventListener('notificationclick', event => {
   }));
 });
 
-// The authenticated page forwards the existing /events reminder shape. No push service.
+// The authenticated page forwards a toast's own wording (reminders use the same
+// path). No push service: the page is alive, it is just hidden.
 self.addEventListener('message', event => {
-  if (event.data?.type !== 'reminder' || typeof event.data.text !== 'string') return;
+  const data = event.data;
+  const reminder = data?.type === 'reminder';
+  if ((!reminder && data?.type !== 'toast') || typeof data.text !== 'string' || !data.text) return;
   event.waitUntil(self.clients.matchAll({type: 'window'}).then(clients => {
     if (clients.some(client => client.focused)) return;
-    return self.registration.showNotification('Reminder', {
-      body: event.data.text, tag: `reminder-${event.data.id || event.data.text}`,
+    const title = !reminder && typeof data.title === 'string' && data.title ? data.title : 'Reminder';
+    return self.registration.showNotification(title, {
+      body: data.text, tag: `${reminder ? 'reminder' : 'toast'}-${data.id || data.text}`,
       icon: '/app/assets/icon-192.png'
     });
   }));

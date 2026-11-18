@@ -1765,7 +1765,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
@@ -2447,14 +2447,6 @@
       data = {plugins, skills, catalog}; render();
     }
     launch.onclick = () => safe(async () => { sidebar(false); render(); dialog.showModal(); await refresh(); });
-  }
-  async function notifyReminder(event) {
-    if (document.hasFocus?.() || localStorage.getItem('kova-notify') !== 'yes' ||
-        !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;
-    try {
-      const registration = await navigator.serviceWorker.getRegistration('/app');
-      registration?.active?.postMessage(event);
-    } catch (_) { /* In-page reminders still work when OS notifications are unavailable. */ }
   }
   {
     let installPrompt = null;
