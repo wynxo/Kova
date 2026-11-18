@@ -44,7 +44,10 @@ def active_theme(configured: str | None = None) -> str:
 
 
 def _translated_rgb(values, *, background: bool):
-    # The same light translation for Rich, prompt_toolkit and ANSI palettes.
+    # Swap the two solid accent roles; soften other colours against light surfaces.
+    accent = _LIGHT_ACCENTS.get(values)
+    if accent is not None:
+        return accent
     return tuple(round(235 + v * .06) if background else round(v * .48) for v in values)
 
 
@@ -71,6 +74,12 @@ def fg(hex_colour: str) -> str:
 def bg(hex_colour: str) -> str:
     r, g, b = rgb(hex_colour)
     return f"48;2;{r};{g};{b}"
+
+
+_LIGHT_ACCENTS = {
+    rgb(theme.ACCENT): rgb(theme.ON_ACCENT),
+    rgb(theme.ON_ACCENT): rgb(theme.ACCENT),
+}
 
 
 # Kova's roles, as SGR fragments (see kova/theme.py for what each one is for).
@@ -112,7 +121,7 @@ def _nearest_256(r: int, g: int, b: int) -> int:
 
 
 def _nearest_16(r: int, g: int, b: int, background: bool) -> int:
-    # Weight hue over brightness so a soft violet still reads as magenta.
+    # Weight hue over brightness when choosing a basic colour.
     def distance(colour):
         cr, cg, cb = colour
         return 2 * (cr - r) ** 2 + 4 * (cg - g) ** 2 + 3 * (cb - b) ** 2
@@ -123,11 +132,10 @@ def _nearest_16(r: int, g: int, b: int, background: bool) -> int:
 
 
 # Where the nearest basic colour would lose a role's meaning, pin it by hand.
-_BASIC_ROLES = {rgb(theme.ACCENT): 95, rgb(theme.ACCENT_SOFT): 95, rgb(theme.USER): 36,
+_BASIC_ROLES = {rgb(theme.ACCENT): 97, rgb(theme.ON_ACCENT): 30, rgb(theme.USER): 36,
                 rgb(theme.MUTED): 90, rgb(theme.FAINT): 90, rgb(theme.BORDER): 90,
                 rgb(theme.CODE): 33, rgb(theme.MEMORY): 94, rgb(theme.BASH): 35,
-                rgb(theme.WARNING): 33, rgb(theme.ERROR): 91, rgb(theme.SUCCESS): 32,
-                **{rgb(stop): 95 for stop in theme.GRADIENT}}
+                rgb(theme.WARNING): 33, rgb(theme.ERROR): 91, rgb(theme.SUCCESS): 32}
 
 
 def downgrade(codes: str, level: int) -> str:
@@ -197,11 +205,12 @@ class Palette:
         self.theme_name = (theme_name or active_theme()).lower()
 
     def _codes(self, codes: str) -> str:
-        if self.theme_name == "light" and self.level >= 2:
+        if self.theme_name == "light":
             def translate(match):
                 kind = match.group(1)
-                values = [int(match.group(i)) for i in (2, 3, 4)]
-                # Keep text dark and tints pale on a light terminal background.
+                values = tuple(int(match.group(i)) for i in (2, 3, 4))
+                if self.level == 1 and values not in _LIGHT_ACCENTS:
+                    return match.group(0)
                 values = _translated_rgb(values, background=kind == "48")
                 return f"{kind};2;{values[0]};{values[1]};{values[2]}"
             codes = _TRUECOLOR.sub(translate, codes)
@@ -233,16 +242,20 @@ class Palette:
     def pill(self, text: str, colour: str = theme.ACCENT, *, solid: bool = False) -> str:
         """A small label chip: `` text `` on a tinted background.
 
-        ``solid`` fills it with ``colour`` (dark text on top); otherwise the chip
+        ``solid`` fills it with ``colour`` and contrasting text; otherwise the chip
         is a soft tint of ``colour`` with the colour as its text. Without colour
         it is the bare text, so nothing reads as noise in a plain terminal.
         """
         if not self.color:
             return text
+        if solid and colour == theme.ACCENT:
+            return self.paint(f"1;{fg(theme.ON_ACCENT)};{bg(colour)}", f" {text} ")
         if self.level == 1:
             return self.paint("7;1;" + fg(colour), f" {text} ")
         if solid:
-            return self.paint(f"1;{fg(theme.ON_ACCENT)};{bg(colour)}", f" {text} ")
+            # Non-accent fills stay pale in the light theme.
+            ink = theme.SURFACE if self.theme_name == "light" else theme.ON_ACCENT
+            return self.paint(f"1;{fg(ink)};{bg(colour)}", f" {text} ")
         return self.paint(f"{fg(colour)};{bg(mix(colour, theme.SURFACE, 0.78))}", f" {text} ")
 
     def gradient(self, text: str, stops=None, *, bold: bool = False) -> str:
@@ -269,12 +282,12 @@ def blend(stops, position: float) -> str:
 
 def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
     """``text`` coloured left to right along ``stops`` (Kova's gradient by default)."""
-    stops = stops or theme.GRADIENT
     if not p.color or not text:
         return text
     weight = "1;" if bold else ""
     if p.level == 1:
-        return p.paint(weight + fg(stops[0]), text)
+        return p.paint(weight + (fg(stops[0]) if stops else ACCENT), text)
+    stops = stops or theme.GRADIENT
     visible = [index for index, char in enumerate(text) if not char.isspace()]
     if len(visible) <= 1:
         return p.paint(weight + fg(stops[0]), text)

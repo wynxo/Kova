@@ -247,7 +247,9 @@ class Store:
                 created TEXT NOT NULL,
                 mode TEXT NOT NULL DEFAULT 'work',
                 web INTEGER NOT NULL DEFAULT 1,
-                pinned INTEGER NOT NULL DEFAULT 0
+                pinned INTEGER NOT NULL DEFAULT 0,
+                model TEXT,
+                reasoning_effort TEXT
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +258,8 @@ class Store:
                 content TEXT,
                 tool_calls TEXT,
                 tool_call_id TEXT,
-                created TEXT
+                created TEXT,
+                turn_model TEXT
             );
             CREATE TABLE IF NOT EXISTS message_attachments (
                 message_id INTEGER NOT NULL,
@@ -326,6 +329,8 @@ class Store:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(messages)")}
         if "created" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN created TEXT")
+        if "turn_model" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN turn_model TEXT")
         self._conn.execute(
             "UPDATE messages SET created = "
             "(SELECT created FROM chats WHERE chats.id = messages.chat_id) "
@@ -340,6 +345,9 @@ class Store:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
         if "mode" not in columns:
             self._conn.execute(f"ALTER TABLE chats ADD COLUMN mode TEXT NOT NULL DEFAULT '{DEFAULT_MODE}'")
+        for setting in ("model", "reasoning_effort"):
+            if setting not in columns:
+                self._conn.execute(f"ALTER TABLE chats ADD COLUMN {setting} TEXT")
         if "web" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN web INTEGER NOT NULL DEFAULT 1")
         if "permission" not in columns:
@@ -456,9 +464,12 @@ class Store:
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
                     web: bool = True, permission: str = "manual", cwd: str | None = None, *,
                     ephemeral: bool = False, colour: str | None = None,
-                    icon: str | None = None) -> dict:
+                    icon: str | None = None, model: str | None = None,
+                    reasoning_effort: str | None = None) -> dict:
         if ephemeral and not self._memory_only:
-            return self._temporary_store().create_chat(title or "Incognito", "chat", False, "manual", cwd)
+            return self._temporary_store().create_chat(
+                title or "Incognito", "chat", False, "manual", cwd, model=model,
+                reasoning_effort=reasoning_effort)
         if mode not in MODES:
             raise ValueError(f"unknown mode '{mode}'")
         if permission not in PERMISSIONS:
@@ -470,11 +481,12 @@ class Store:
             cid = ("incognito-" if self._memory_only else "") + uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
-                "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (cid, title, created, mode, web, permission, cwd, colour, icon),
+                "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort),
             )
             self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "colour": colour, "icon": icon, "plan": [], "pinned": False, **({"ephemeral": True} if self._memory_only else {})}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "colour": colour, "icon": icon, "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False, **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str) -> dict | None:
         """Atomically clone a conversation, including its compacted context."""
@@ -510,16 +522,23 @@ class Store:
                     return value
 
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon, model, reasoning_effort) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
                      source['web'], source['permission'], source['cwd'], remap(source['plan']),
-                     source['capabilities'], source['colour'], source['icon']))
-                rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id, created FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
+                     source['capabilities'], source['colour'], source['icon'], source['model'],
+                     source['reasoning_effort']))
+                rows = self._conn.execute(
+                    "SELECT id, role, content, tool_calls, tool_call_id, created, "
+                    "COALESCE(turn_model, usage_model) AS turn_model "
+                    "FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
-                    cur = self._conn.execute("INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created) VALUES (?, ?, ?, ?, ?, ?)",
-                                             (cid, row['role'], remap(row['content']), remap(row['tool_calls']), row['tool_call_id'], row['created']))
+                    cur = self._conn.execute(
+                        "INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (cid, row['role'], remap(row['content']), remap(row['tool_calls']),
+                         row['tool_call_id'], row['created'], row['turn_model']))
                     ids[row['id']] = cur.lastrowid
                 links = self._conn.execute(
                     "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
@@ -583,7 +602,8 @@ class Store:
                  include_usage: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon, pinned FROM chats WHERE id = ?", (chat_id,)
+                "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
+                "colour, icon, pinned, model, reasoning_effort FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -592,6 +612,8 @@ class Store:
             "title": row["title"],
             "created": row["created"],
             "mode": row["mode"],
+            "model": row["model"],
+            "reasoning_effort": row["reasoning_effort"],
             "web": bool(row["web"]),
             "permission": row["permission"],
             "cwd": row["cwd"],
@@ -611,7 +633,8 @@ class Store:
                     web: bool | None = None, permission: str | None = None,
                     cwd: str | None = None, plan: list[dict] | None = None,
                     colour: str | None = _UNSET, icon: str | None = _UNSET,
-                    pinned: bool | None = None) -> None:
+                    pinned: bool | None = None, model: str | None = _UNSET,
+                    reasoning_effort: str | None = _UNSET) -> None:
         """Change chat settings, its pin or its latest plan; ``None`` leaves a field alone.
 
         ``colour``/``icon`` use ``_UNSET`` for "leave alone" because ``None``
@@ -629,6 +652,10 @@ class Store:
             changes["colour"] = normalize_colour(colour)
         if icon is not _UNSET:
             changes["icon"] = normalize_icon(icon)
+        if model is not _UNSET:
+            changes["model"] = model
+        if reasoning_effort is not _UNSET:
+            changes["reasoning_effort"] = reasoning_effort
         if not changes:
             return
         assignments = ", ".join(f"{name} = ?" for name in changes)
@@ -844,11 +871,13 @@ class Store:
                 except ValueError:
                     icon = None
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
                      chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
-                     colour, icon, 1 if chat.get("pinned") else 0),
+                     colour, icon, 1 if chat.get("pinned") else 0,
+                     chat["model"] if isinstance(chat.get("model"), str) else None,
+                     chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -861,8 +890,8 @@ class Store:
                         tool_calls = json.dumps(tool_calls)
                     cur = self._conn.execute(
                         "INSERT INTO messages "
-                        "(chat_id, role, content, tool_calls, tool_call_id, created) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
                             chat_id,
                             role,
@@ -870,6 +899,7 @@ class Store:
                             tool_calls,
                             message.get("tool_call_id"),
                             message.get("created") or created,
+                            message["turn_model"] if isinstance(message.get("turn_model"), str) else None,
                         ),
                     )
                     rows = message.get("attachments")
@@ -967,12 +997,14 @@ class Store:
         content: str | None = None,
         tool_calls: list[dict] | None = None,
         tool_call_id: str | None = None,
+        *,
+        turn_model: str | None = None,
     ) -> int:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO messages "
-                "(chat_id, role, content, tool_calls, tool_call_id, created) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     chat_id,
                     role,
@@ -980,6 +1012,7 @@ class Store:
                     json.dumps(tool_calls) if tool_calls is not None else None,
                     tool_call_id,
                     _utc_now_iso(),
+                    turn_model,
                 ),
             )
             self._conn.commit()
@@ -1034,12 +1067,75 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def latest_local_model_speeds(self) -> dict[str, dict]:
+        """Last timed local reply per model, excluding the incognito store."""
+        from kova.usage import tokens_per_second
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT usage_model, completion_tokens, ms_generation, usage_estimated FROM messages "
+                "WHERE id IN (SELECT MAX(id) FROM messages WHERE usage_local = 1 "
+                "AND ms_generation > 0 AND completion_tokens > 0 AND usage_model IS NOT NULL GROUP BY usage_model)"
+            ).fetchall()
+        return {row["usage_model"]: {
+            "tokens_per_second": tokens_per_second(row["completion_tokens"], row["ms_generation"]),
+            "estimated": bool(row["usage_estimated"]),
+        } for row in rows}
+
+    @_chat_scoped
+    def last_turn_model(self, chat_id: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(turn_model, usage_model) FROM messages WHERE chat_id = ? "
+                "AND (turn_model IS NOT NULL OR usage_model IS NOT NULL) ORDER BY id DESC LIMIT 1",
+                (chat_id,),
+            ).fetchone()
+        return row[0] if row else None
+
+    @_chat_scoped
+    def last_user_message(self, chat_id: str) -> dict | None:
+        """The newest message the user wrote, with the files it came with."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, content FROM messages WHERE chat_id = ? AND role = 'user' "
+                "ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            links = self._conn.execute(
+                "SELECT attachment_id FROM message_attachments WHERE message_id = ? "
+                "ORDER BY position", (row["id"],)
+            ).fetchall()
+        return {"id": row["id"], "content": row["content"] or "",
+                "attachments": [link["attachment_id"] for link in links]}
+
+    @_chat_scoped
+    def delete_messages_from(self, chat_id: str, message_id: int, *, include: bool = True) -> int:
+        """Drop the messages at and after ``message_id``, or only those after it.
+
+        Retry keeps the user's words and drops the reply; edit drops both. The
+        uploaded files stay in the chat until a later turn uses or reaps them.
+        """
+        compare = ">=" if include else ">"
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM message_attachments WHERE message_id IN "
+                f"(SELECT id FROM messages WHERE chat_id = ? AND id {compare} ?)",
+                (chat_id, message_id),
+            )
+            cur = self._conn.execute(
+                f"DELETE FROM messages WHERE chat_id = ? AND id {compare} ?",
+                (chat_id, message_id),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     @_chat_scoped
     def get_messages(self, chat_id: str, include_created: bool = False,
                      include_usage: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, role, content, tool_calls, tool_call_id, created, "
+                "SELECT id, role, content, tool_calls, tool_call_id, created, turn_model, "
                 + ", ".join(USAGE_COLUMNS) +
                 " FROM messages WHERE chat_id = ? ORDER BY id",
                 (chat_id,),
@@ -1056,6 +1152,7 @@ class Store:
                 {"id": link["attachment_id"], "name": link["name"]}
             )
         messages: list[dict] = []
+        previous_model = None
         for row in rows:
             message_id, role, content, tool_calls, tool_call_id, created = tuple(row)[:6]
             message: dict = {"role": role, "content": content}
@@ -1067,6 +1164,13 @@ class Store:
                 message["created"] = created
             if include_usage and row["prompt_tokens"] is not None:
                 message["usage"] = _usage_dict(row)
+            used_model = row["turn_model"] or row["usage_model"]
+            if used_model:
+                if include_created:
+                    message["turn_model"] = used_model
+                if include_usage and role == "user" and previous_model and used_model != previous_model:
+                    message["model_switch"] = used_model
+                previous_model = used_model
             if message_id in attached:
                 message["attachments"] = attached[message_id]
             messages.append(message)

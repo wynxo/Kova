@@ -41,6 +41,80 @@ def _parse_sse(raw):
     return events
 
 
+@pytest.mark.real_default
+def test_composer_model_and_effort_are_scoped_to_the_chat(tmp_path):
+    from kova.config import ModelEntry, ProviderEntry
+
+    cfg = load_config(tmp_path)
+    cfg.files_path = tmp_path / "files"
+    cloud = ProviderEntry("api", "Example API", "https://example.test/v1", kind="openai")
+    cfg.providers.append(cloud)
+    cfg.models[0].model = "demo-local"
+    cfg.models.append(ModelEntry("reasoning", cloud.base_url, "gpt-5.2", provider=cloud.id))
+    fake = FakeModel([text("One"), text("Two"), text("Three"), text("Four"), text("Five")])
+    headers = {"Authorization": f"Bearer {ensure_token(cfg.home)}"}
+    app = create_app(cfg, transport=fake.transport)
+    with TestClient(app) as client:
+        models = {m["name"]: m for m in client.get("/models", headers=headers).json()}
+        assert models["local"]["local"] and models["local"]["reasoning_efforts"] == []
+        assert not models["reasoning"]["local"] and models["reasoning"]["tools"]
+        assert models["reasoning"]["reasoning_efforts"] == ["off", "low", "medium", "high"]
+        chat = client.post("/chats", headers=headers, json={
+            "mode": "chat", "model": "reasoning", "reasoning_effort": "high",
+        }).json()
+        other = client.post("/chats", headers=headers, json={"model": "local"}).json()
+        path = f"/chats/{chat['id']}"
+
+        def send(target, message):
+            response = client.post(f"{target}/messages", headers=headers, json={"text": message})
+            assert response.status_code == 200
+            events = _parse_sse(response.text)
+            assert events[-1]["type"] == "done"
+            return events
+
+        assert not any(e["type"] == "model_switch" for e in send(path, "first"))
+        assert fake.requests[-1]["reasoning_effort"] == "high"
+        assert client.get("/health").json()["model"] == "local"
+        assert client.patch(path, headers=headers, json={"model": "missing"}).status_code == 404
+        assert client.patch(path, headers=headers, json={
+            "model": "local", "reasoning_effort": "high",
+        }).status_code == 422
+        assert client.patch(path, headers=headers, json={"reasoning_effort": "off"}).json()["reasoning_effort"] == "off"
+        send(path, "still this model")
+        assert fake.requests[-1]["reasoning_effort"] == "none"
+        done = send(f"/chats/{other['id']}", "another chat")[-1]
+        assert fake.requests[-1]["model"] == "demo-local"
+        assert "reasoning_effort" not in fake.requests[-1]
+        app.state.store.record_usage(other["id"], done["message_id"], {
+            "model": "local", "local": True, "completion_tokens": 30, "ms_generation": 2000,
+        })
+        models = {m["name"]: m for m in client.get("/models", headers=headers).json()}
+        assert models["local"]["last_local_speed"] == {"tokens_per_second": 15, "estimated": False}
+        assert models["reasoning"]["last_local_speed"] is None
+
+        switched = client.patch(path, headers=headers, json={"model": "local"}).json()
+        assert (switched["model"], switched["reasoning_effort"], switched["mode"]) == ("local", None, "chat")
+        events = send(path, "now local")
+        assert [e for e in events if e["type"] == "model_switch"] == [{"type": "model_switch", "model": "local"}]
+        saved = client.get(path, headers=headers).json()
+        assert [m.get("model_switch") for m in saved["messages"] if m["role"] == "user"] == [None, None, "local"]
+        fork = client.post(f"{path}/fork", headers=headers).json()
+        assert fork["model"] == "local"
+        assert fork["messages"][-2]["model_switch"] == "local"
+        assert not any({"turn_model", "model_switch"} & m.keys() for request in fake.requests for m in request["messages"])
+
+        response = client.post("/models/active", headers=headers, json={
+            "name": "reasoning", "reasoning_effort": "medium",
+        })
+        assert response.status_code == 200
+        assert load_config(cfg.home).active_model().reasoning_effort == "medium"
+        assert client.get("/health").json()["model"] == "reasoning"
+        assert client.get(path, headers=headers).json()["model"] == "local"
+        default_chat = client.post("/chats", headers=headers, json={"mode": "chat"}).json()
+        send(f"/chats/{default_chat['id']}", "use my default")
+        assert fake.requests[-1]["reasoning_effort"] == "medium"
+
+
 def test_auth_required(server):
     client, headers, cfg, fake = server
     calls = [
@@ -414,6 +488,45 @@ def test_unknown_chat_404(server):
     assert response.status_code == 404
 
 
+def test_file_mentions_stay_inside_the_chats_working_folder(server, tmp_path):
+    """@ lists relative names only, under the chat's own folder (#197)."""
+    client, headers, cfg, fake = server
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "main.py").write_text("print('hi')\n")
+    (project / "src" / "math.py").write_text("1 + 1\n")
+    (project / "readme.md").write_text("notes\n")
+    (project / ".git").mkdir()
+    (project / ".git" / "config").write_text("[core]\n")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("not this one\n")
+    (cfg.files_path).mkdir(parents=True, exist_ok=True)
+    (cfg.files_path / "default.txt").write_text("default folder\n")
+
+    chat = client.post("/chats", headers=headers, json={"cwd": str(project)}).json()
+    response = client.get(f"/chats/{chat['id']}/files", headers=headers)
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "src/main.py" in paths
+    assert "readme.md" in paths
+    assert "src/" in paths  # folders are browsable by the next @token
+    assert all(not path.startswith(("/", "..")) for path in paths)
+    assert not any("secret" in path or ".git" in path for path in paths)
+
+    filtered = client.get(f"/chats/{chat['id']}/files?q=MAIN", headers=headers).json()["paths"]
+    assert filtered == ["src/main.py"]
+    assert len(client.get(f"/chats/{chat['id']}/files?limit=1", headers=headers).json()["paths"]) == 1
+
+    # Before a chat exists the composer asks the default folder.
+    default = client.get("/files", headers=headers).json()["paths"]
+    assert "default.txt" in default
+    assert "src/main.py" not in default
+
+    assert client.get("/chats/missing/files", headers=headers).status_code == 404
+    assert client.get("/chats", headers={}).status_code == 401
+    assert client.get("/files", headers={}).status_code == 401
+
+
 def test_manual_compaction_endpoint(server):
     client, headers, cfg, fake = server
     chat_id = client.post('/chats', headers=headers).json()['id']
@@ -477,6 +590,13 @@ def test_persona_api_rejects_invalid_identity_and_persists(server):
     assert client.post('/persona', headers=headers, json={'name': 'Nova', 'tone': 'concise'}).status_code == 200
     assert client.get('/persona', headers=headers).json() == {'name': 'Nova', 'tone': 'concise', 'configured': True}
     assert load_config(cfg.home).persona_name == 'Nova'
+
+
+def test_a_fresh_app_knows_its_events_keepalive(tmp_path):
+    """create_app sets the /events ping interval itself; without it /events is a 500."""
+    from kova.server import EVENTS_KEEPALIVE
+    app = create_app(load_config(tmp_path / "home"))
+    assert app.state.events_keepalive == EVENTS_KEEPALIVE
 
 
 def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):

@@ -8,8 +8,8 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 ## Principles
 
 1. **Calm and monochrome.** Surfaces, text and borders are neutral. There is exactly one accent.
-2. **The accent means activity.** Orange is not decoration: it marks what Kova is doing right now —
-   the running spinner, the streaming caret, the active step, an unread result. If nothing is
+2. **The accent means activity.** The accent is solid white on dark and solid black on light. It
+   is not decoration: it marks what Kova is doing right now — the running spinner, the streaming caret, the active step, an unread result. If nothing is
    happening, no accent is on screen.
 3. **Every value is a token.** No hex codes, no magic pixel numbers, no `12px` written inline. If a
    value is missing, add a token in `design/tokens.json`; don't hard-code it.
@@ -94,6 +94,11 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 - Radii: `--radius-sm` (controls), `--radius-md` (panels), `--radius-lg` (sheets), `--radius-pill`.
 - Motion: `--motion-fast` (120ms) for hover/press, `--motion-base` (180ms) for popovers,
   `--motion-slow` (280ms) for view changes. `--motion-instant` for state flips with no travel.
+- Text size, density and font are settings, not component opinions: `data-text-size`,
+  `data-density` and `data-font` on `<html>` swap these tokens one step up or down.
+  `default` (and `inter`) writes no override, so it is the scale above.
+- Motion is a setting too: Full, Reduced or Off overrides the duration tokens under
+  `data-motion` on `<html>`.
 
 ## Components
 
@@ -133,6 +138,21 @@ Before you call a screen done, check it is not doing any of these:
 - [ ] Motion that plays on load, loops, or cannot be turned off
 - [ ] A hover state that only changes colour and nothing else
 
+## The app mark
+
+The mark is a rounded tile with a solid K. Its geometry lives in one place,
+[`scripts/build_icons.py`](../scripts/build_icons.py), which writes every SVG and PNG
+(favicon, PWA, Apple touch, Electron, installers). Change the shapes there and re-run it;
+never edit the icon files by hand.
+
+- **Inside the UI**, use `<span class="kova-mark" aria-hidden="true">`. It paints
+  `mark.svg` (the tile with the K cut out) in `--fg-default`, so the letter shows the
+  surface behind it and the mark follows every theme.
+- **Outside the UI** (favicon, OS icons, notifications) the static `icon.svg` and PNGs use
+  a near-black tile `#14121c` with a white K, because no theme reaches there.
+- It must read at 16px: no thin strokes, no circles, square ends. Check the 16px render
+  before changing it.
+
 ## Adding a theme
 
 A theme is **data, never code**: no CSS files, no JavaScript, no URLs. The shape is in
@@ -147,7 +167,8 @@ semantic tokens you want to change. A theme that inherits `kova-dark` and change
 
 - Text: 4.5:1 against its background. Large text and UI boundaries: 3:1.
 - Every theme must pass `python scripts/build_tokens.py --check` before it ships.
-- Reduced motion is honoured, and `data-motion="reduced"` overrides it in both directions.
+- Reduced motion is honoured: a device that asks for it resolves Full to Reduced, and the
+  Motion setting's Reduced or Off always wins. `data-motion` on `<html>` is the one switch.
 - Focus is always visible and never removed without a replacement.
 - Streaming text must not live in an `aria-live` region; announce phase changes once instead.
 

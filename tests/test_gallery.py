@@ -36,9 +36,20 @@ def test_gallery_serves_the_components_with_the_flag(client, monkeypatch):
     page = GALLERY.read_text(encoding="utf-8")
     for state in ("Default", "Hover", "Focus", "Disabled"):
         assert f">{state}<" in page
+    for stylesheet in ("tokens.css", "app.css", "toast.css", "tool-cards.css", "diff.css"):
+        assert stylesheet in page
     for class_name in ("btn primary", "btn quiet", "btn danger", "icon-button",
-                       "chip toggle", "send", "menu-button", "search", "folder-control"):
+                       "switch", "send", "menu-button", "search", "chat-option-input",
+                       "popover", "option", "compose-menu-item", "option-empty",
+                       "message user", "message assistant", "markdown", "markdown live",
+                       "table-wrap", "footnotes", "task-item", "code-bar",
+                       "tool-row failed", "tool-card", "plan-view", "plan-done",
+                       "plan-in_progress", "approval-card", "approval-status",
+                       "spinner", "activity", "diff-line add", "diff-line del",
+                       "file-diff", "toast", "turn-error", "notice-retry"):
         assert class_name in page
+    for switcher in ("data-theme-value", "data-density-value", "data-motion-value"):
+        assert switcher in page
 
 
 def test_gallery_uses_tokens_instead_of_literal_colours():

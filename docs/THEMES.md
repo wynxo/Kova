@@ -96,6 +96,59 @@ offer - a file that does not validate is listed with its error rather than hidde
 `src/kova/tokens.json`, which `scripts/build_tokens.py` generates from `design/tokens.json`
 next to `tokens.css`.
 
+## Install a theme
+
+A theme file becomes a real theme the moment it lands in Kova's home.
+
+```bash
+cp path/to/theme.json ~/.kova/themes/          # or $KOVA_HOME/themes/
+kova themes check ~/.kova/themes/theme.json     # validate; prints the tokens it resolves to
+kova themes list                                # now lists it alongside the two built-ins
+```
+
+`check` is the structural gate: it rejects unknown keys, malformed ids and non-colour
+values, then prints the tokens the theme resolves to. `list` is how you confirm Kova has
+seen it. A file that fails `check` is simply not offered - it does not affect the two
+built-ins - so fix the file and re-run it until it passes.
+
+Then pick it in the web app under **Settings > General > Theme**. It appears with its
+`name`, alongside **System**, **Light** and **Dark**. Choosing it sets the `theme`
+preference, so a paired device with the same Kova gets the same choice.
+
+Until the file is present on a device, the choice falls back to the device's own
+light/dark setting: the preference is remembered, but nothing is applied until the file
+arrives. Installing the file is the step that makes the theme real.
+
+## Choosing a theme
+
+Settings > General > Theme offers **System**, **Light** and **Dark**, then every
+theme file Kova found that validates. The command palette lists the same choices
+("Theme: Midnight Teal"), and the light/dark shortcut always lands on the built-in
+opposite of what is on screen.
+
+The choice is one value in the shared UI preferences (`theme`: `system`, `light`,
+`dark` or a theme id), so a phone paired with the same Kova shows the same theme, and
+`kova prefs export` carries it. `system` is the default and follows the device's
+light/dark setting live. A preference naming a theme that is not installed on this
+machine is kept; until the file appears the page follows the device.
+
+In the browser, `web_assets/theme.js` applies it. A built-in only sets
+`data-theme`, and `tokens.css` does the rest. A theme file is fetched resolved from
+`GET /themes/<id>`, and each of its semantic tokens becomes the matching custom
+property on `<html>` (`accent.default` -> `--accent-default`); anything that is not a
+semantic token with a plain colour value is dropped even though the server already
+checked it. The browser's `theme-color`, the desktop window and the installed app's
+manifest (`theme_color`, `background_color`) all take the theme's `bg.base`; the
+manifest uses the dark base for `system`, since a manifest cannot follow the device.
+
+## Make your own
+
+Start from an example in `design/themes/`: copy one into `~/.kova/themes/`, change only
+semantic tokens, and re-run `kova themes check` until it passes. That command checks the
+file's structure, not its contrast. To measure contrast too, run
+`uv run python scripts/validate_theme.py <file>` from a Kova checkout; it fails on any text
+or control pair below the WCAG ratios the built-in themes meet.
+
 ## Adding a built-in theme
 
 A built-in theme is different work: it goes into `design/tokens.json` under `semantic`,

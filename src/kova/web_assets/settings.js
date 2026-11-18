@@ -14,12 +14,25 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark sounds startup sign out keyboard reasoning',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation',
       items: [
-        {title: 'Theme', help: 'Dark or light.',
-         keywords: 'appearance colour color light dark mode', control: 'theme'},
-        {title: 'Reasoning', help: 'Show how Kova thought before each answer.',
-         keywords: 'thinking thought chain show hide collapsed thinking rows',
+        {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
+         control: 'theme'},
+        {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
+         keywords: 'text size font typography small large bigger read legible zoom scale',
+         control: 'text_size'},
+        {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
+         keywords: 'density spacing compact comfortable padding layout tight roomy air',
+         control: 'density'},
+        {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
+         keywords: 'font typeface inter system monospace mono code readable',
+         control: 'font'},
+        {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
+         keywords: 'motion animation animate transition reduce reduced still accessibility',
+         control: 'motion'},
+        {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
+         keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
         {title: 'Sounds', help: 'Quiet cues for finished replies, reminders and approvals.',
          keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
@@ -232,82 +245,257 @@
     });
   }
 
-  // Light and dark as a two-option radio group. app.js owns the theme (and its
-  // Ctrl+Shift+L toggle) through #theme; this only reflects and flips it.
-  const themeRadios = [];
+  // The theme as one radio group: System, Light and Dark, then any theme files
+  // installed in Kova's home (#174). theme.js owns the choice, its shared copy in
+  // the server preferences and the tokens it applies; this only reflects and sets
+  // it. Without theme.js it falls back to the #theme light/dark toggle.
+  const themeGroups = [];
+  const FIXED_THEMES = [['system', 'System', 'settings'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']];
+  function themeOptions() {
+    const engine = window.KovaTheme;
+    if (!engine) return FIXED_THEMES.filter(([value]) => value !== 'system').map(([id, name, glyph]) => ({id, name, glyph}));
+    return engine.choices().map(option => {
+      const fixed = FIXED_THEMES.find(([value]) => value === option.id);
+      return {id: option.id, name: option.name, glyph: fixed ? fixed[2] : (option.appearance === 'light' ? 'sun' : 'moon')};
+    });
+  }
   function currentTheme() {
+    if (window.KovaTheme) return window.KovaTheme.choice();
     return document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark';
   }
   function themeControl() {
-    const group = element('div', 'settings-segmented');
+    const group = element('div', 'settings-segmented settings-theme');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Theme');
-    for (const [value, label, glyph] of [['dark', 'Dark', 'moon'], ['light', 'Light', 'sun']]) {
+    themeGroups.push(group);
+    fillTheme(group);
+    return group;
+  }
+  function fillTheme(group) {
+    const options = themeOptions();
+    const radios = options.map(({id, name, glyph}, index) => {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = id;
+      radio.setAttribute('role', 'radio');
+      radio.append(icon(glyph), element('span', '', name));
+      radio.addEventListener('click', () => chooseTheme(id));
+      radio.addEventListener('keydown', event => {
+        const step = {ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1}[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const next = options[(index + step + options.length) % options.length].id;
+        chooseTheme(next);
+        [...(group.children || [])].find(item => item.dataset.value === next)?.focus();
+      });
+      return radio;
+    });
+    group.dataset.options = options.map(option => option.id).join(' ');
+    group.replaceChildren(...radios);
+  }
+  function chooseTheme(value) {
+    if (window.KovaTheme) window.KovaTheme.set(value);
+    else if (currentTheme() !== value) byId('theme')?.click();
+    syncTheme();
+  }
+  function syncTheme() {
+    const ids = themeOptions().map(option => option.id).join(' ');
+    const value = currentTheme();
+    for (const group of themeGroups) {
+      // A theme file added or removed since the group was drawn redraws it.
+      if (group.dataset.options !== ids) fillTheme(group);
+      const radios = [...(group.children || [])];
+      const any = radios.some(radio => radio.dataset.value === value);
+      radios.forEach((radio, index) => {
+        const checked = radio.dataset.value === value;
+        radio.setAttribute('aria-checked', String(checked));
+        radio.tabIndex = checked || (!any && index === 0) ? 0 : -1;
+      });
+    }
+  }
+  document.addEventListener?.('kova:theme', () => syncTheme());
+
+  // Rows follow their target: a control another script hides (Connect your
+  // phone, on the phone itself) or disables (while offline) does the same here.
+  const actionButtons = [];
+
+  // Reasoning is a three-way choice: folded rows (the default), rows that
+  // open as they arrive, or no reasoning at all. KovaReasoning owns the value,
+  // its local copy and the server-side UI preferences, so this only reflects
+  // and changes it.
+  const REASONING = [
+    ['collapsed', 'Collapsed', 'Fold each thought row until it is opened'],
+    ['expanded', 'Expanded', 'Open each thought row as it finishes'],
+    ['hidden', 'Hidden', 'Never show the reasoning text'],
+  ];
+  const reasoningRadios = [];
+  function reasoningMode() {
+    return window.KovaReasoning ? window.KovaReasoning.mode() : 'collapsed';
+  }
+  function reasoningControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Reasoning');
+    for (const [value, label, hint] of REASONING) {
       const radio = element('button', 'settings-segment');
       radio.type = 'button';
       radio.dataset.value = value;
+      radio.title = hint;
       radio.setAttribute('role', 'radio');
-      radio.append(icon(glyph), element('span', '', label));
-      radio.addEventListener('click', () => chooseTheme(value));
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseReasoning(value));
       radio.addEventListener('keydown', event => {
         if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
         event.preventDefault();
-        const next = value === 'dark' ? 'light' : 'dark';
-        chooseTheme(next);
-        themeRadios.find(item => item.dataset.value === next)?.focus();
+        const at = REASONING.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = REASONING[(at + step + REASONING.length) % REASONING.length][0];
+        chooseReasoning(next);
+        reasoningRadios.find(item => item.dataset.value === next)?.focus();
       });
-      themeRadios.push(radio);
+      reasoningRadios.push(radio);
       group.append(radio);
     }
     return group;
   }
-  function chooseTheme(value) {
-    if (currentTheme() !== value) byId('theme')?.click();
-    syncTheme();
+  function chooseReasoning(value) {
+    window.KovaReasoning?.setMode(value);
+    syncReasoning();
   }
-  function syncTheme() {
-    const value = currentTheme();
-    for (const radio of themeRadios) {
+  function syncReasoning() {
+    const value = reasoningMode();
+    for (const radio of reasoningRadios) {
       const checked = radio.dataset.value === value;
       radio.setAttribute('aria-checked', String(checked));
       radio.tabIndex = checked ? 0 : -1;
     }
   }
 
-  // Rows follow their target: a control another script hides (Connect your
-  // phone, on the phone itself) or disables (while offline) does the same here.
-  const actionButtons = [];
-
-  // Reasoning is one checkbox: on shows the folded "Thought for Ns" rows after
-  // each thinking burst. KovaReasoning owns the value, its local copy and the
-  // server-side UI preferences, so this only reflects and flips it.
-  const reasoningInputs = [];
-  function reasoningShown() {
-    return window.KovaReasoning ? window.KovaReasoning.shown() : true;
+  // Motion is a three-way choice: Full follows this device's reduced-motion
+  // setting, Reduced keeps quick fades and stops every loop but the spinner,
+  // and Off removes movement entirely. KovaMotion owns the value, the server
+  // copy and <html data-motion>; this only reflects and changes it.
+  const MOTION = [
+    ['full', 'Full', "Follow this device's reduced-motion setting"],
+    ['reduced', 'Reduced', 'Quick fades, and no looping animation except the spinner'],
+    ['off', 'Off', 'No transitions or animations at all'],
+  ];
+  const motionRadios = [];
+  function motionMode() {
+    return window.KovaMotion ? window.KovaMotion.mode() : 'full';
   }
-  function reasoningControl() {
-    const label = element('label', 'reasoning-setting');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.className = 'reasoning-setting-input';
-    input.setAttribute('aria-label', 'Show reasoning');
-    input.checked = reasoningShown();
-    input.addEventListener('change', () => {
-      window.KovaReasoning?.setShown(input.checked);
-      input.checked = reasoningShown();
-    });
-    reasoningInputs.push(input);
-    label.append(input, element('span', '', 'Show reasoning'));
-    return label;
+  function motionControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Motion');
+    for (const [value, label, hint] of MOTION) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseMotion(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = MOTION.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = MOTION[(at + step + MOTION.length) % MOTION.length][0];
+        chooseMotion(next);
+        motionRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      motionRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
   }
-  function syncReasoning() {
-    const visible = reasoningShown();
-    for (const input of reasoningInputs) input.checked = visible;
+  function chooseMotion(value) {
+    window.KovaMotion?.setMode(value);
+    syncMotion();
+  }
+  function syncMotion() {
+    const value = motionMode();
+    for (const radio of motionRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
+  }
+  // Text size, density and font are the same three-way choice (#179).
+  // KovaTypography owns each value, the server copy and the three attributes on
+  // <html>; this only reflects and changes them. "default" and "inter" are the
+  // shipped look, so the fallback matches what the page paints without the module.
+  const TYPOGRAPHY = [
+    {name: 'text_size', label: 'Text size', read: 'textSize', write: 'setTextSize', fallback: 'default',
+     items: [['small', 'Small', 'A step down from the shipped sizes'],
+             ['default', 'Default', 'The shipped type scale'],
+             ['large', 'Large', 'A step up for reading at a distance']]},
+    {name: 'density', label: 'Density', read: 'density', write: 'setDensity', fallback: 'default',
+     items: [['compact', 'Compact', 'Tighter gaps, for more on screen'],
+             ['default', 'Default', 'The shipped spacing'],
+             ['comfortable', 'Comfortable', 'More air between rows and messages']]},
+    {name: 'font', label: 'Font', read: 'font', write: 'setFont', fallback: 'inter',
+     items: [['inter', 'Inter', 'The bundled typeface'],
+             ['system', 'System', "This device's interface font"],
+             ['mono', 'Monospace', 'Set the conversation in the bundled mono face']]},
+  ];
+  const typographyRadios = {};
+  function typographyChoice(name) {
+    return TYPOGRAPHY.find(choice => choice.name === name);
+  }
+  function typographyValue(choice) {
+    const engine = window.KovaTypography;
+    return (engine && typeof engine[choice.read] === 'function' && engine[choice.read]()) || choice.fallback;
+  }
+  function typographyControl(choice) {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', choice.label);
+    const radios = [];
+    for (const [value, label, hint] of choice.items) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseTypography(choice, value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = choice.items.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = choice.items[(at + step + choice.items.length) % choice.items.length][0];
+        chooseTypography(choice, next);
+        radios.find(item => item.dataset.value === next)?.focus();
+      });
+      radios.push(radio);
+      group.append(radio);
+    }
+    typographyRadios[choice.name] = radios;
+    return group;
+  }
+  function chooseTypography(choice, value) {
+    window.KovaTypography?.[choice.write]?.(value);
+    syncTypography();
+  }
+  function syncTypography() {
+    for (const choice of TYPOGRAPHY) {
+      const value = typographyValue(choice);
+      for (const radio of typographyRadios[choice.name] || []) {
+        const checked = radio.dataset.value === value;
+        radio.setAttribute('aria-checked', String(checked));
+        radio.tabIndex = checked ? 0 : -1;
+      }
+    }
   }
 
   function syncControls() {
     syncTheme();
     syncReasoning();
+    syncMotion();
+    syncTypography();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
       button.disabled = Boolean(target?.disabled);
@@ -335,6 +523,10 @@
       row.append(themeControl());
     } else if (item.control === 'reasoning') {
       row.append(reasoningControl());
+    } else if (item.control === 'motion') {
+      row.append(motionControl());
+    } else if (typographyChoice(item.control)) {
+      row.append(typographyControl(typographyChoice(item.control)));
     } else if (item.host) {
       const hosted = byId(item.host);
       if (hosted) {
