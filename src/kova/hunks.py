@@ -46,18 +46,59 @@ def file_hash(data: bytes | None) -> str | None:
     return None if data is None else hashlib.sha256(data).hexdigest()
 
 
+def _ending(line: str) -> str:
+    """A line's ending: ``"\r\n"``, ``"\n"`` or ``""`` for a last line without one."""
+    if line.endswith("\r\n"):
+        return "\r\n"
+    return "\n" if line.endswith("\n") else ""
+
+
 def _display(line: str) -> str:
-    """A line without its line ending, for showing."""
-    return (line.splitlines() or [""])[0]
+    """A line without its line ending, for showing and for comparing."""
+    return line[:len(line) - len(_ending(line))]
 
 
 def _lines(text: str) -> list[str]:
-    """Lines with their endings kept, so joining them gives back the exact text."""
-    return text.splitlines(keepends=True)
+    """Lines with their endings kept, so joining them gives back the exact text.
+
+    Only ``\n`` ends a line, as in git: a form feed or a lone ``\r`` inside a
+    line stays part of it.
+    """
+    lines = text.split("\n")
+    last = lines.pop()
+    return [line + "\n" for line in lines] + ([last] if last else [])
+
+
+def _newline(lines: list[str]) -> str | None:
+    """The line ending most lines use, or None when no line has one."""
+    crlf = sum(line.endswith("\r\n") for line in lines)
+    lf = sum(line.endswith("\n") for line in lines) - crlf
+    if not crlf and not lf:
+        return None
+    return "\r\n" if crlf > lf else "\n"
+
+
+def _restyle(lines: list[str], source: list[str], target: list[str]) -> list[str]:
+    """``lines`` from ``source``'s side, with the line endings ``target`` uses.
+
+    An editor or ``git`` with ``core.autocrlf`` may rewrite every line ending of
+    a file after a turn. Lines put back must then take the file's new ending, or
+    the undo would leave one block with the other style. When both sides use
+    the same ending, the lines go back exactly as they were.
+    """
+    wanted, had = _newline(target), _newline(source)
+    if wanted is None or had is None or wanted == had:
+        return lines
+    return [_display(line) + wanted if _ending(line) else line for line in lines]
 
 
 def _matcher(a: list[str], b: list[str]) -> difflib.SequenceMatcher:
     return difflib.SequenceMatcher(None, a, b, autojunk=False)
+
+
+def _content(lines: list[str]) -> list[str]:
+    """Lines without their endings: a file whose endings were rewritten still matches."""
+    return [_display(line) for line in lines]
 
 
 # -- the working folder -------------------------------------------------------
@@ -144,7 +185,7 @@ def _reads_as_before(ops: list[tuple], after: list[str], current: list[str], hun
     low, high = min(first[1], j1), max(last[2], j2)
     start = first[3] - (first[1] - low)
     end = last[4] + (high - last[2])
-    return current[start:end] == after[low:j1] + hunk["removed"] + after[j2:high]
+    return _content(current[start:end]) == _content(after[low:j1] + hunk["removed"] + after[j2:high])
 
 
 def _hunk_id(removed: list[str], added: list[str], seen: dict[str, int]) -> str:
@@ -158,8 +199,13 @@ def _hunk_id(removed: list[str], added: list[str], seen: dict[str, int]) -> str:
 def _analyse(before: list[str], after: list[str], current: list[str] | None) -> list[dict]:
     """Each hunk between ``before`` and ``after``, with its state against ``current``."""
     ops = [op for op in _matcher(before, after).get_opcodes() if op[0] != "equal"]
-    later = _matcher(after, current).get_opcodes() if current is not None else []
-    same = current == after
+    # The turn's own hunks compare whole lines, endings included. The file as
+    # it is now is compared by content only, so a file whose line endings were
+    # rewritten since (an editor, git's autocrlf) still offers its hunks.
+    after_content = _content(after)
+    current_content = None if current is None else _content(current)
+    later = _matcher(after_content, current_content).get_opcodes() if current is not None else []
+    same = current_content == after_content
     seen: dict[str, int] = {}
     hunks = []
     for _, i1, i2, j1, j2 in ops:
@@ -260,7 +306,8 @@ def undo(blobs: BlobStore, root: Path, path: str, entry: dict, hunk_id: str,
             raise HunkError(409, "That change was already undone or edited since, "
                                  "so it cannot be undone on its own.")
         start, end = (index + hunk["offset"] for index in hunk["new"])
-        updated = "".join(current[:start] + hunk["removed"] + current[end:]).encode("utf-8")
+        restored = _restyle(hunk["removed"], after, current)
+        updated = "".join(current[:start] + restored + current[end:]).encode("utf-8")
         # The file must not move under us between the check and the write.
         if file_hash(read_current(contained(root, path))) != expected_hash:
             raise HunkError(409, f"{path} changed while undoing. Reopen it and try again.")
