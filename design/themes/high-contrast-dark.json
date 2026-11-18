@@ -8,10 +8,14 @@
   "extends": "kova-dark",
   "tokens": {
     "bg": {
-      "base": "#000000"
+      "base": "#000000",
+      "surface": "#0a0a0a",
+      "raised": "#1a1a1a"
     },
     "fg": {
-      "default": "#ffffff"
+      "default": "#ffffff",
+      "muted": "#d0d0d0",
+      "faint": "#b0b0b0"
     },
     "border": {
       "subtle": "#6b6b6b",
@@ -19,8 +23,8 @@
     },
     "accent": {
       "default": "#ffffff",
-      "hover": "#ffffff",
-      "pressed": "#e6e6e6",
+      "hover": "#d9d9d9",
+      "pressed": "#bfbfbf",
       "on": "#000000",
       "soft": "rgba(255, 255, 255, 0.12)"
     }
