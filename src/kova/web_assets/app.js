@@ -1365,6 +1365,11 @@
     add('Actions', {title:'Sign out of this window', hint:'End this browser session', keywords:'logout sign out leave disconnect', run:() => $('disconnect').onclick?.()});
 
     add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKeys('toggle-theme'), run:() => $('theme').onclick?.()});
+    const themes = globalThis.KovaTheme;
+    for (const option of themes?.choices?.() || []) {
+      if (option.id === themes.choice()) continue;
+      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, run:() => themes.set(option.id)});
+    }
 
     if (current) {
       add('This conversation', {title:'Compact now', hint:'Summarise older turns to free context', keywords:'summarise summarize shorten context', run:() => safe(compactChat)});
@@ -1637,17 +1642,20 @@
   // The Settings view links here without owning the dialog; keep one stable
   // trigger so the view never reaches into this closure.
   $('open-model-settings').onclick = () => safe(openModelSettings);
-  function theme(value) {
-    document.documentElement.dataset.theme = value;
-    const next = value === 'light' ? 'Dark theme' : 'Light theme';
+  // theme.js (#174) owns the theme, its shared preference and the window colour;
+  // #theme stays the light/dark toggle the shortcut and Settings click.
+  function themeButton() {
+    const light = (globalThis.KovaTheme?.appearance?.() || document.documentElement.dataset.theme) === 'light';
+    const next = light ? 'Dark theme' : 'Light theme';
     $('theme').lastElementChild.textContent = next; $('theme').title = next;
-    $('theme-icon').className = `icon i-${value === 'light' ? 'moon' : 'sun'}`;
-    // The desktop shell follows this colour for its window background.
-    $('theme-color').setAttribute('content', value === 'light' ? '#faf9f7' : '#0d0d10');
-    try { localStorage.setItem('kova-theme', value); } catch (_) {}
+    $('theme-icon').className = `icon i-${light ? 'moon' : 'sun'}`;
   }
-  $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-  try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
+  $('theme').onclick = () => {
+    if (globalThis.KovaTheme) globalThis.KovaTheme.toggle();
+    else document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    themeButton();
+  };
+  document.addEventListener('kova:theme', themeButton); themeButton();
   $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   async function setupIdentity() {
     state.persona = await json('/persona');
@@ -1745,6 +1753,8 @@
       // A phone that scanned a pairing QR code trades its one-use secret for a device cookie.
       if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toastSuccess('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true; clearNotice();
+      // Signed in now: the shared theme choice and installed themes are readable.
+      globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);

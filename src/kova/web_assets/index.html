@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
-  <meta id="theme-color" name="theme-color" content="#0d0d10">
+  <!-- theme.js replaces this with the chosen theme's bg.base before the first frame. -->
+  <meta id="theme-color" name="theme-color" content="#14121c">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <title>Kova</title>
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
@@ -12,6 +13,8 @@
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
+  <!-- Not deferred: the theme is on <html> before the body paints (#174). -->
+  <script src="/app/assets/theme.js"></script>
   <link rel="stylesheet" href="/app/assets/app.css">
   <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/palette.css">
