@@ -28,6 +28,11 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "sidebar": ("open", "collapsed"),
     "notifications": ("on", "off"),
     "reasoning": ("collapsed", "expanded", "hidden"),
+    # Typography and density (#179). "default" is today's look exactly, so an
+    # older preferences.json without these keys keeps the shipped type scale.
+    "text_size": ("small", "default", "large"),
+    "density": ("compact", "default", "comfortable"),
+    "font": ("inter", "system", "mono"),
 }
 
 DEFAULTS: dict[str, str] = {
@@ -35,6 +40,9 @@ DEFAULTS: dict[str, str] = {
     "sidebar": "open",
     "notifications": "off",
     "reasoning": "collapsed",
+    "text_size": "default",
+    "density": "default",
+    "font": "inter",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the

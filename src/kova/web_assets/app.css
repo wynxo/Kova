@@ -31,6 +31,8 @@
 :root {
   --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* What chat text is set in: the UI font unless "Monospace for chat" is chosen. */
+  --font-chat:var(--font);
 
   --r-xs:6px;
   --r-sm:8px;
@@ -57,7 +59,7 @@ body {
   overflow:hidden;
   background:var(--bg-base);
   color:var(--fg-default);
-  font:14px/1.5 var(--font);
+  font:var(--type-size-body)/1.5 var(--font);
   font-feature-settings:"cv11", "ss03";
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
@@ -566,6 +568,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .message.user .message-body {
   padding:var(--space-2) var(--space-4); border-radius:var(--radius-lg); background:var(--bg-raised);
   white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body);
+  font-family:var(--font-chat);
 }
 .message.assistant .message-body { display:flex; flex-direction:column; gap:var(--space-3); min-width:0; }
 .message.assistant .message-body > * { min-width:0; }
@@ -584,7 +587,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .usage-meter { align-self:center; margin-left:6px; color:var(--fg-faint); font-size:var(--type-size-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; cursor:default; }
 @media (hover:none) { .message.assistant .message-actions { opacity:1; } #open-shortcuts { display:none; } }
 
-.markdown { font-size:var(--type-size-body-comfortable); line-height:1.65; overflow-wrap:anywhere; }
+.markdown { font-family:var(--font-chat); font-size:var(--type-size-body-comfortable); line-height:1.65; overflow-wrap:anywhere; }
 .markdown > :first-child { margin-top:0; }
 .markdown > :last-child { margin-bottom:0; }
 /* The reply being written ends in a soft pulsing dot. */
@@ -924,3 +927,66 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 .privacy-switch input { width: auto; }
 .privacy-report { max-height: 45vh; overflow: auto; }
 .privacy-row { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+
+/* ---------- Typography, density and font (#179) ----------
+   typography.js resolves the three Settings > General choices onto
+   <html data-text-size data-density data-font>, and these blocks carry them for
+   every component by swapping the scale tokens, so no selector below repeats a
+   size or a gap. "default" and "inter" have no rule: they are the values
+   tokens.css already ships, so an untouched install looks exactly as before.
+   A theme may override the semantic colour layer only; these stay settings.
+
+   The values are the shipped 12/14/16/18/24 types and the 4px space grid, a
+   step up or down. tokens.css is generated, so the swap lives here with the
+   rest of the shell geometry. */
+[data-text-size="small"] {
+  --type-size-label:12px;
+  --type-size-body:13px;
+  --type-size-body-comfortable:14px;
+  --type-size-title:16px;
+  --type-size-heading:20px;
+}
+[data-text-size="large"] {
+  --type-size-label:13px;
+  --type-size-body:16px;
+  --type-size-body-comfortable:18px;
+  --type-size-title:20px;
+  --type-size-heading:28px;
+}
+
+/* Density: the message list, sidebar rows and the composer all take their
+   padding and gaps from --space-*, so one block tightens or opens them all.
+   Fixed heights (controls, row height) are left alone: a 32px button stays a
+   32px button, only the air around it changes. */
+[data-density="compact"] {
+  --space-1:2px;
+  --space-2:6px;
+  --space-3:8px;
+  --space-4:12px;
+  --space-5:16px;
+  --space-6:18px;
+  --space-8:24px;
+  --space-10:32px;
+  --space-12:40px;
+}
+[data-density="comfortable"] {
+  --space-1:4px;
+  --space-2:10px;
+  --space-3:14px;
+  --space-4:20px;
+  --space-5:24px;
+  --space-6:30px;
+  --space-8:40px;
+  --space-10:48px;
+  --space-12:56px;
+}
+
+/* Font: the bundled Inter stays the default, System leaves the choice to the
+   device, and Monospace for chat sets the conversation in the bundled mono
+   face while the surrounding UI keeps --font. Code blocks are already mono. */
+[data-font="system"] {
+  --font:ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+[data-font="mono"] {
+  --font-chat:var(--mono);
+}

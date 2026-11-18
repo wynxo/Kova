@@ -94,6 +94,9 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 - Radii: `--radius-sm` (controls), `--radius-md` (panels), `--radius-lg` (sheets), `--radius-pill`.
 - Motion: `--motion-fast` (120ms) for hover/press, `--motion-base` (180ms) for popovers,
   `--motion-slow` (280ms) for view changes. `--motion-instant` for state flips with no travel.
+- Text size, density and font are settings, not component opinions: `data-text-size`,
+  `data-density` and `data-font` on `<html>` swap these tokens one step up or down.
+  `default` (and `inter`) writes no override, so it is the scale above.
 
 ## Components
 
