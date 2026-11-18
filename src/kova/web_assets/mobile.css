@@ -1,0 +1,201 @@
+/* Phone polish (#202): safe areas, the on-screen keyboard, bottom sheets and
+   gestures. mobile.js measures the viewport and adds the sheet handles; this
+   file only places and styles what is there.
+
+   Everything below reads tokens.css. On a device without a notch env() resolves
+   to 0, so the desktop layout is unchanged; the sheet rules only apply on phone
+   widths. */
+
+:root {
+  /* 44px is the smallest comfortable touch target: platform data, not a design
+     step, so density never shrinks it and comfortable density still opens it. */
+  --touch-target:max(44px, calc(var(--space-10) + var(--space-1)));
+  /* The grab handle at the top of a phone sheet. */
+  --sheet-handle-height:var(--space-6);
+  --sheet-handle-width:calc(var(--space-8) + var(--space-1));
+}
+
+/* ---------- Safe areas ----------
+   viewport-fit=cover lets the app paint under the notch and the home bar, so
+   the chrome that sits on those edges pads itself back into view instead. */
+.topbar {
+  height:auto;
+  min-height:calc(var(--space-12) + var(--space-1));  /* the shipped 52px */
+  padding-top:env(safe-area-inset-top);
+  padding-left:max(calc(var(--space-2) + var(--space-0-5)), env(safe-area-inset-left));
+  padding-right:max(var(--space-4), env(safe-area-inset-right));
+}
+@media (max-width:720px) {
+  .topbar {
+    padding-left:max(var(--space-2), env(safe-area-inset-left));
+    padding-right:max(calc(var(--space-2) + var(--space-0-5)), env(safe-area-inset-right));
+  }
+}
+#sidebar {
+  padding-top:max(var(--space-3), env(safe-area-inset-top));
+  padding-bottom:max(var(--space-2), env(safe-area-inset-bottom));
+  padding-left:max(var(--space-2), env(safe-area-inset-left));
+  padding-right:max(var(--space-2), env(safe-area-inset-right));
+}
+.compose-wrap {
+  padding-left:max(var(--space-5), env(safe-area-inset-left));
+  padding-right:max(var(--space-5), env(safe-area-inset-right));
+  padding-bottom:max(var(--space-4), env(safe-area-inset-bottom));
+}
+
+@media (max-width:720px) {
+  /* mobile.js resolves the visual viewport onto --app-viewport-height. The
+     height, not a padding, so the composer stays above the on-screen keyboard
+     without moving the conversation under the reader's finger. */
+  body { height:var(--app-viewport-height, 100dvh); }
+  /* 16px is the iOS focus threshold, not a design step: below it the page zooms
+     when a field takes focus. A larger Text size setting still wins. */
+  #prompt,
+  #search,
+  .history-rename,
+  .chat-option-input,
+  .popover-search,
+  dialog input:not([type="checkbox"]),
+  dialog textarea {
+    font-size:max(16px, var(--type-size-body-comfortable));
+  }
+}
+
+/* The audit in scripts/audit_ui.py asks every stylesheet that styles an
+   interactive element for both of these. mobile.css keeps the shared rules from
+   app.css; they are restated here so this sheet stands on its own. */
+:focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet-scrim { animation:none; }
+}
+
+/* ---------- Popovers and menus become bottom sheets ----------
+   The same markup app.js already builds, placed at the bottom edge of the
+   phone. The scrim and the handle are added by mobile.js, so no menu grows a
+   second code path for the phone. */
+@media (max-width:720px) {
+  .sheet-scrim {
+    position:fixed; inset:0; z-index:65;
+    background:color-mix(in srgb, var(--bg-overlay) 55%, transparent);
+    animation:sheet-fade var(--motion-base) var(--motion-ease-standard);
+    touch-action:none;
+  }
+  .compose-menu:not([hidden]),
+  .chat-options:not([hidden]),
+  .chat-menu-list,
+  .activity-panel:not([hidden]),
+  .popover {
+    position:fixed;
+    left:0; right:0; top:auto;
+    bottom:var(--app-keyboard-inset, 0px);
+    z-index:80;
+    width:auto; min-width:0; max-width:none;
+    max-height:calc(78dvh - var(--app-keyboard-inset, 0px));
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    padding:0
+      max(var(--space-3), env(safe-area-inset-right))
+      max(var(--space-4), env(safe-area-inset-bottom))
+      max(var(--space-3), env(safe-area-inset-left));
+    border:1px solid var(--border-strong);
+    border-bottom:0;
+    border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    background:var(--bg-surface);
+    box-shadow:0 calc(var(--space-1) * -1) var(--space-8)
+      color-mix(in srgb, var(--bg-overlay) 45%, transparent);
+    animation:sheet-rise var(--motion-base) var(--motion-ease-standard);
+    touch-action:pan-y;
+  }
+  /* app.js places the model picker with inline coordinates; on a phone the
+     bottom edge wins over each of them. */
+  .popover {
+    left:0 !important; right:0 !important; top:auto !important;
+    bottom:var(--app-keyboard-inset, 0px) !important;
+    width:auto !important; min-width:0 !important; max-width:none !important;
+    max-height:calc(78dvh - var(--app-keyboard-inset, 0px)) !important;
+  }
+  /* One drag handle, a real element so it can take the gesture without the
+     sheet's content fighting it. It stays put while the sheet scrolls. */
+  .sheet-handle {
+    position:sticky; top:0; z-index:1;
+    display:grid; place-items:center;
+    height:var(--sheet-handle-height);
+    margin:0 calc(var(--space-3) * -1);
+    border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    background:var(--bg-surface);
+    touch-action:none;
+    cursor:grab;
+  }
+  .sheet-handle::before {
+    content:"";
+    width:var(--sheet-handle-width);
+    height:var(--space-1);
+    border-radius:var(--radius-pill);
+    background:var(--border-strong);
+  }
+  .sheet-dragging { animation:none; }
+  .sheet-closing { transition:transform var(--motion-base) var(--motion-ease-standard); }
+
+  /* A menu row is a full-width sheet row now: no rounded local corners, one
+     line per action, and the touch target the platform expects. */
+  .compose-menu-item { min-height:var(--touch-target); border-radius:var(--radius-md); }
+  .option { min-height:var(--touch-target); }
+}
+
+@keyframes sheet-rise { from { transform:translateY(100%); } }
+@keyframes sheet-fade { from { opacity:0; } }
+
+/* ---------- Touch targets ----------
+   44px is the platform floor. The control keeps its 32px shape — density and
+   the visual baselines stay put — and an invisible 44px square sits over it, so
+   a thumb never has to aim. A pseudo-element on the control forwards every tap
+   to the control itself. Rows that hold a control are left alone: their buttons
+   carry the expanded area, and a full-width row was already wide enough. */
+@media (max-width:720px) {
+  .icon-button,
+  .compose-icon,
+  .model-chip,
+  .send,
+  .stop,
+  .jump,
+  .menu-button,
+  .new-chat,
+  .nav-row,
+  .history-open,
+  .history-actions > summary,
+  .history-actions > .btn,
+  .compose-menu-item,
+  .segmented button,
+  .btn,
+  .option,
+  .message-action,
+  .starter,
+  .switch {
+    position:relative;
+  }
+  .icon-button::after,
+  .compose-icon::after,
+  .model-chip::after,
+  .send::after,
+  .stop::after,
+  .jump::after,
+  .menu-button::after,
+  .new-chat::after,
+  .nav-row::after,
+  .history-open::after,
+  .history-actions > summary::after,
+  .history-actions > .btn::after,
+  .compose-menu-item::after,
+  .segmented button::after,
+  .btn::after,
+  .option::after,
+  .message-action::after,
+  .starter::after,
+  .switch::after {
+    content:"";
+    position:absolute; top:50%; left:50%;
+    width:var(--touch-target); height:var(--touch-target);
+    transform:translate(-50%, -50%);
+  }
+}
+
