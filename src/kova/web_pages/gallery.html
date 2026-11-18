@@ -8,6 +8,8 @@
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/markdown.css">
+  <link rel="stylesheet" href="/app/assets/code-header.css">
   <link rel="stylesheet" href="/app/assets/toast.css">
   <link rel="stylesheet" href="/app/assets/tool-cards.css">
   <link rel="stylesheet" href="/app/assets/diff.css">
@@ -372,18 +374,30 @@
               <div class="message-body">
                 <div class="markdown">
                   <h2>Notes</h2>
-                  <p>Three points, with <code>inline code</code> and a <a href="/app/gallery">link</a>:</p>
+                  <p>Three points, with <code>inline code</code> and a <a href="/app/gallery">link</a><sup class="fn-ref" id="demo-fnref-1"><a href="#demo-fn-1" aria-label="Footnote 1">1</a></sup>:</p>
+                  <h3>A subheading</h3>
                   <ul>
                     <li>First point with <strong>strong</strong> text</li>
                     <li>Second point with <em>emphasis</em></li>
                   </ul>
+                  <ul>
+                    <li class="task-item">Done <input class="task-box" type="checkbox" checked disabled aria-label="Done"></li>
+                    <li class="task-item">Next <input class="task-box" type="checkbox" disabled aria-label="Not done"></li>
+                  </ul>
                   <blockquote><p>Quoted context stays indented and muted.</p></blockquote>
-                  <pre><code><span class="hljs-keyword">const</span> <span class="hljs-title">total</span> = <span class="hljs-number">3</span>;
+                  <pre><div class="code-bar"><span class="code-lang">js</span><div class="code-actions"><button class="code-action wrap-code" type="button" aria-label="Wrap long lines" aria-pressed="false"><span>Wrap</span></button><button class="code-action copy-code" type="button" aria-label="Copy code"><span class="icon i-copy" aria-hidden="true"></span><span>Copy</span></button></div></div><code><span class="hljs-keyword">const</span> <span class="hljs-title">total</span> = <span class="hljs-number">3</span>;
 <span class="hljs-title">total</span>.<span class="hljs-title">toFixed</span>(<span class="hljs-number">1</span>); <span class="hljs-comment">// one decimal</span></code></pre>
-                  <div class="table-wrap"><table>
-                    <thead><tr><th>Point</th><th>Status</th></tr></thead>
-                    <tbody><tr><td>First</td><td>Done</td></tr><tr><td>Second</td><td>Next</td></tr></tbody>
-                  </table></div>
+                  <div class="table-wrap" role="region" aria-label="Table" tabindex="0">
+                    <table>
+                      <thead><tr><th>Point</th><th>Status</th></tr></thead>
+                      <tbody><tr><td>First</td><td>Done</td></tr><tr><td>Second</td><td>Next</td></tr></tbody>
+                    </table>
+                  </div>
+                  <section class="footnotes" aria-label="Footnotes">
+                    <ol>
+                      <li id="demo-fn-1"><p>A note under a hairline. <a class="fn-back" href="#demo-fnref-1" aria-label="Back to reference 1">↩</a></p></li>
+                    </ol>
+                  </section>
                 </div>
                 <div class="message-actions">
                   <button class="message-action" type="button" aria-label="Copy reply"><span class="icon i-copy" aria-hidden="true"></span></button>
