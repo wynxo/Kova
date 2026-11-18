@@ -540,6 +540,7 @@
   }
   function setChat(chat) {
     state.chat = chat;
+    chatAppearance()?.decorateTopbar(chat);
     renderAttachments();
     pageTitle();
     $('mode').value = chat?.mode || 'work';
@@ -681,7 +682,7 @@
     const patch = await chatAppearance().openDialog(chat);
     if (!patch) return;
     const updated = await json(`/chats/${chat.id}`, write('PATCH', patch));
-    if (state.chat?.id === chat.id) Object.assign(state.chat, updated);
+    if (state.chat?.id === chat.id) { Object.assign(state.chat, updated); chatAppearance()?.decorateTopbar(state.chat); }
     await refreshChats();
   }
   // A cached health answer is still useful, so say when it was measured.
