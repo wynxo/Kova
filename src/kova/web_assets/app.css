@@ -296,7 +296,13 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-actions > .btn:hover:not(:disabled) { background:var(--bg-raised); }
 .history-actions > .btn:last-child:hover:not(:disabled) { color:var(--status-danger); }
 .history-row { min-height:36px; }
-.history-empty { padding:var(--space-3); color:var(--fg-faint); font-size:var(--type-size-body); }
+.history-empty { display:grid; gap:var(--space-2); justify-items:start; padding:var(--space-3); color:var(--fg-faint); font-size:var(--type-size-body); }
+.history-empty .btn { color:var(--fg-muted); }
+/* A still skeleton, not a shimmer: the first list is a moment, not activity. */
+.history-skeleton { display:grid; gap:var(--space-2); padding:var(--space-2) var(--space-3); }
+.history-skeleton-row { display:grid; gap:var(--space-2); padding:var(--space-2) 0; }
+.history-skeleton-bar { display:block; width:72%; height:var(--space-2); border-radius:var(--radius-sm); background:var(--bg-raised); }
+.history-skeleton-bar + .history-skeleton-bar { width:45%; }
 
 .sidebar-footer { flex:none; padding-top:var(--space-2); border-top:1px solid var(--border-subtle); }
 .nav-row {

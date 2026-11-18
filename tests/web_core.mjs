@@ -106,7 +106,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, loadingChats, disconnected};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -819,6 +819,34 @@ assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
 assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
+
+// The first list shows a still skeleton with one polite status line; an empty
+// list offers the action that fills it, and stale bones never survive a
+// failed connection (#199).
+state.chats = [];
+sandbox.test.loadingChats();
+const bones = $('chat-list');
+assert.equal(bones.getAttribute('aria-busy'), 'true');
+assert.equal(byClass(bones, 'history-skeleton-row').length, 4);
+assert.ok(walk(bones).some(node => node.className === 'sr-only' && node.textContent.includes('Loading conversations')));
+assert.ok(byClass(bones, 'history-skeleton')[0].getAttribute('aria-hidden') === 'true',
+          'bones are decoration, not content');
+sandbox.test.history([]);
+assert.ok(!bones.getAttribute('aria-busy'), 'the first answer ends the busy state');
+const emptyState = byClass(bones, 'history-empty')[0];
+assert.ok(emptyState.textContent.includes('No chats yet.'));
+const startButton = buttons(emptyState).find(button => button.textContent === 'Start a chat');
+assert.ok(startButton, 'an empty list names the action that fills it');
+const beforeFocus = spaceFocused;
+startButton.onclick();
+assert.equal(spaceFocused, beforeFocus + 1, 'the action puts the cursor in the composer');
+sandbox.test.loadingChats();
+sandbox.test.disconnected('offline');
+assert.equal(byClass(bones, 'history-skeleton-row').length, 0, 'a failed start clears the bones');
+assert.ok(!bones.getAttribute('aria-busy'));
+state.connected = true;
+console.log('Chat-list skeleton and empty action passed');
+
 
 // Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
 await sandbox.test.newChat(); controls();

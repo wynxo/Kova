@@ -175,6 +175,7 @@
   function disconnected(message) {
     state.connected = false;
     state.events?.close();
+    $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
       : 'Open kova-web on this computer to connect. No token or account needed.'));
     controls();
@@ -334,10 +335,34 @@
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
   // working when it is missing, so every hook below guards its presence.
   const chatAppearance = () => window.KovaChatAppearance || null;
+  // A short, still skeleton while the first list arrives (#199). It is
+  // decoration: the polite status line says what is happening, and a failed
+  // first load clears the list instead of leaving it looking busy forever.
+  function loadingChats() {
+    const list = $('chat-list');
+    list.setAttribute('aria-busy', 'true');
+    list.replaceChildren(el('p', 'sr-only', 'Loading conversations…'));
+    const skeleton = el('div', 'history-skeleton');
+    skeleton.setAttribute('aria-hidden', 'true');
+    for (let index = 0; index < 4; index += 1) {
+      const row = el('div', 'history-skeleton-row');
+      row.append(el('span', 'history-skeleton-bar'), el('span', 'history-skeleton-bar'));
+      skeleton.append(row);
+    }
+    list.append(skeleton);
+  }
   function history(chats) {
     const list = $('chat-list');
     list.replaceChildren();
-    if (!chats.length) list.append(el('div', 'history-empty', $('search').value ? 'No chats found.' : 'No chats yet.'));
+    list.removeAttribute?.('aria-busy');
+    if (!chats.length) {
+      const empty = el('div', 'history-empty');
+      if ($('search').value) { empty.append(el('span', '', 'No chats found.')); list.append(empty); return; }
+      empty.append(el('span', '', 'No chats yet.'));
+      const begin = el('button', 'btn quiet', 'Start a chat'); begin.type = 'button';
+      begin.onclick = () => { $('prompt').focus(); };
+      empty.append(begin); list.append(empty);
+    }
     // Pinned chats first, then date groups; app.js only renders what the module
     // decided, so the grouping stays testable without a DOM (chat_list.js).
     const groups = globalThis.KovaChatList?.groups(chats) || [{label: '', chats}];
@@ -1616,6 +1641,7 @@
   async function start() {
     if (state.starting) return;
     state.starting = true; state.events?.close();
+    if (!state.chats.length) loadingChats();
     // Strip before any asynchronous work, so a consumed ticket never stays in history.
     const fragment = new URLSearchParams(location.hash.slice(1));
     const ticket = fragment.get('ticket'), pairing = fragment.get('pair'), share = fragment.get('share');
