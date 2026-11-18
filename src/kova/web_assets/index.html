@@ -48,7 +48,7 @@
   <button id="backdrop" aria-label="Close sidebar" hidden></button>
   <aside id="sidebar" aria-label="Conversations">
     <div class="sidebar-head">
-      <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
+      <a class="brand" href="/app" aria-label="Kova home"><span class="kova-mark" aria-hidden="true"></span><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
     <button id="new-chat" type="button" class="new-chat" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
@@ -67,7 +67,7 @@
     <p id="incognito-note" class="incognito-note" role="status" hidden><span class="icon i-eye-off" aria-hidden="true"></span>Incognito: not saved on this PC. Your provider still receives messages, and tools and attachments are off.</p>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
-        <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="40" height="40">
+        <span class="kova-mark welcome-mark" aria-hidden="true"></span>
         <h1>What are you working on?</h1>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>

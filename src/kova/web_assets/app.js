@@ -321,7 +321,7 @@
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode(heading || 'You'));
-    else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode(heading || state.persona.name)); }
+    else { const mark = el('span', 'kova-mark avatar'); mark.setAttribute('aria-hidden', 'true'); label.append(mark, document.createTextNode(heading || state.persona.name)); }
     const body = el('div', 'message-body');
     if (role === 'user') {
       body.textContent = content || '';
