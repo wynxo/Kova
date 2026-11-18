@@ -1,8 +1,9 @@
-// Quiet header row for rendered code blocks (#189): the language name, a Wrap
-// toggle and a Copy button. Self-contained classic script (no module scope): it
-// loads after highlight.js, so `hljs` exists, but before app.js, so it does not
-// see app.js's local `hljs` or `toast`. It uses the page's toast component when
-// there is one and keeps a small fallback for tests and older shells.
+// Decorations for a rendered reply (#189): the quiet header row on code blocks
+// (language, Wrap, Copy, panel) and GitHub-style alerts (`> [!NOTE]`).
+// Self-contained classic script (no module scope): it loads after highlight.js,
+// so `hljs` exists, but before app.js, so it does not see app.js's local `hljs`
+// or `toast`. It uses the page's toast component when there is one and keeps a
+// small fallback for tests and older shells.
 (function () {
   const COPIED_MS = 2000;
   // The wrap choice is a reading preference, per browser, like the theme.
@@ -120,6 +121,34 @@
     return button;
   }
 
+  // GitHub-style alerts: a blockquote whose first line is `[!NOTE]`, `[!TIP]`,
+  // `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`. The marker becomes a visible
+  // label, so the kind never relies on colour alone, and the rest of the quote
+  // keeps its own Markdown. Runs after the transcript builds each block, so a
+  // streaming reply gets its callout as soon as the first line is complete.
+  const CALLOUTS = {NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution'};
+  function callouts(root) {
+    root.querySelectorAll('blockquote').forEach((quote) => {
+      const first = quote.firstElementChild;
+      if (!first || first.tagName !== 'p') return;
+      const lead = first.firstChild;
+      if (!lead || lead.tagName !== '#text') return;
+      const match = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:\n|$)/i.exec(lead.textContent);
+      if (!match) return;
+      const kind = match[1].toLowerCase();
+      const rest = lead.textContent.slice(match[0].length);
+      if (rest.trim()) lead.textContent = rest;
+      else lead.remove();
+      // The marker's own line leaves a break behind; drop it with the marker.
+      const after = first.firstChild;
+      if (after && after.tagName === 'br') after.remove();
+      quote.classList.add('callout');
+      quote.classList.add(`callout-${kind}`);
+      quote.setAttribute('role', 'note');
+      quote.insertBefore(el('p', 'callout-label', CALLOUTS[kind.toUpperCase()]), quote.firstChild);
+    });
+  }
+
   // Attach (or re-attach) a header row to every `pre code` inside `root`.
   // `final` says the reply has finished; `openFence` says the last block is a
   // code fence that is still being written, so it stays plain text and its Copy
@@ -129,6 +158,7 @@
   function attach(root, final = false, openFence = false) {
     if (!root || root.classList.contains('code-header-ready')) return;
     root.classList.add('code-header-ready');
+    callouts(root);
     const blocks = [...root.querySelectorAll('pre code')];
     const streamingIndex = !final && openFence ? blocks.length - 1 : -1;
     const wrap = wrapEnabled();
