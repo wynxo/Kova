@@ -71,7 +71,10 @@ class Element {
     const names = () => this.className.split(' ').filter(Boolean);
     return {
       contains: c => names().includes(c),
-      add: c => { if (!names().includes(c)) this.className = [...names(), c].join(' '); },
+      // The DOM's classList.add takes several names; the double must too.
+      add: (...classes) => {
+        for (const c of classes) if (!names().includes(c)) this.className = [...names(), c].join(' ');
+      },
       remove: c => { this.className = names().filter(n => n !== c).join(' '); },
       toggle: c => { if (names().includes(c)) this.classList.remove(c); else this.classList.add(c); },
     };
