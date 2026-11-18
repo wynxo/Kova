@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from unittest.mock import patch
 
+import pytest
+
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -42,18 +44,19 @@ def test_colour_level_reads_the_environment():
 def test_theme_colours_degrade_to_the_terminal_depth():
     accent = fg(theme.ACCENT)
     assert downgrade(accent, 3) == accent
-    assert re.fullmatch(r"38;5;\d+", downgrade(accent, 2))
-    assert downgrade(accent, 1) == "95"                       # brand violet stays magenta
+    assert downgrade(accent, 2) == "38;5;231"
+    assert downgrade(accent, 1) == "97"
     assert downgrade("1;" + fg(theme.USER), 1) == "1;36"
     assert downgrade("48;2;30;29;40", 1) in {str(n) for n in [*range(40, 48), *range(100, 108)]}
-    assert Palette(1).paint(ACCENT, "x") == "\x1b[95mx\x1b[0m"
+    assert Palette(1, theme_name="dark").paint(ACCENT, "x") == "\x1b[97mx\x1b[0m"
     assert Palette(0).paint(ACCENT, "x") == "x" and Palette(False).pill("Bash") == "Bash"
 
 
 def test_gradient_blends_per_letter_and_vanishes_without_colour():
     shaded = gradient("Kova", Palette(3))
     assert plain(shaded) == "Kova" and shaded.count("\x1b[38;2;") == 4
-    assert gradient("Kova", Palette(1)).count("\x1b[") == 2   # one colour, one reset
+    assert gradient("Kova", Palette(1, theme_name="dark")) == "\x1b[97mKova\x1b[0m"
+    assert gradient("Kova", Palette(1, theme_name="light")) == "\x1b[30mKova\x1b[0m"
     assert gradient("Kova", Palette(0)) == "Kova"
 
 
@@ -147,11 +150,25 @@ def test_light_palette_changes_foreground_and_background_before_downscaling():
     assert light.gradient('Kova') != dark.gradient('Kova')
 
 
-def test_light_palette_at_16_colours_keeps_the_pinned_roles():
-    # Hand-pinned basic colours stay meaningful; the translation would only
-    # turn dark text into unreadable near-black, so it waits for 256+.
-    pinned = Palette(1, theme_name='light').paint(fg(theme.ACCENT), 'x')
-    assert pinned == Palette(1, theme_name='dark').paint(fg(theme.ACCENT), 'x')
+@pytest.mark.parametrize("level, foreground, chip", [
+    (1, "30", "1;97;40"),
+    (2, "38;5;233", "1;38;5;231;48;5;233"),
+    (3, "38;2;20;18;28", "1;38;2;246;246;248;48;2;20;18;28"),
+])
+def test_light_palette_uses_dark_accent_and_reverses_text_on_solid_chips(level, foreground, chip):
+    p = Palette(level, theme_name="light")
+    assert p.accent("x") == f"\x1b[{foreground}mx\x1b[0m"
+    assert p.pill("x", solid=True) == f"\x1b[{chip}m x \x1b[0m"
+
+
+@pytest.mark.parametrize("level, chip", [
+    (1, "1;30;107"),
+    (2, "1;38;5;233;48;5;231"),
+    (3, "1;38;2;20;18;28;48;2;246;246;248"),
+])
+def test_dark_palette_uses_dark_text_on_solid_accent_chips(level, chip):
+    p = Palette(level, theme_name="dark")
+    assert p.pill("x", solid=True) == f"\x1b[{chip}m x \x1b[0m"
 
 
 def test_brand_uses_the_chosen_assistant_name(tmp_path):
