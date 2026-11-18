@@ -39,7 +39,7 @@ def _tool_input(arguments) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def anthropic_request(model, messages, tools):
+def anthropic_request(model, messages, tools, reasoning_by_call=None):
     system, converted = [], []
     for message in messages:
         role = message['role']
@@ -50,7 +50,8 @@ def anthropic_request(model, messages, tools):
             blocks = [{'type': 'tool_result', 'tool_use_id': message['tool_call_id'], 'content': message.get('content') or ''}]
             role = 'user'
         else:
-            blocks = []
+            blocks = [block for call in message.get('tool_calls') or []
+                      for block in (reasoning_by_call or {}).get(call['id'], ())]
             if message.get('content'):
                 if isinstance(message['content'], list):
                     for part in message['content']:
@@ -78,7 +79,7 @@ def anthropic_request(model, messages, tools):
     return 'messages', payload
 
 
-def responses_request(model, messages, tools):
+def responses_request(model, messages, tools, reasoning_by_call=None):
     instructions, items = [], []
     for message in messages:
         role = message['role']
@@ -87,6 +88,8 @@ def responses_request(model, messages, tools):
         elif role == 'tool':
             items.append({'type': 'function_call_output', 'call_id': message['tool_call_id'], 'output': message.get('content') or ''})
         else:
+            for call in message.get('tool_calls') or []:
+                items.extend((reasoning_by_call or {}).get(call['id'], ()))
             if message.get('content'):
                 content = message['content']
                 if isinstance(content, list):
@@ -101,10 +104,11 @@ def responses_request(model, messages, tools):
     return 'responses', payload
 
 
-async def stream_native(client, url, payload, adapter):
+async def stream_native(client, url, payload, adapter, reasoning_by_call=None):
     from kova.models import ModelError, ModelEvent
     from kova.usage import normalize_usage
     calls = {}
+    reasoning = {}
     complete = False
     has_text = False
     usage: dict = {}
@@ -140,6 +144,8 @@ async def stream_native(client, url, payload, adapter):
                 delta = event.get('delta') or {}
                 if kind == 'content_block_start' and block.get('type') == 'tool_use':
                     calls[index] = {'id': block['id'], 'name': block['name'], 'arguments': '', '_input': block.get('input', {})}
+                if kind == 'content_block_start' and block.get('type') in ('thinking', 'redacted_thinking'):
+                    reasoning[index] = dict(block)
                 if delta.get('type') == 'input_json_delta' and index in calls:
                     calls[index]['arguments'] += delta.get('partial_json', '')
                     yield ModelEvent('tool_call_delta', tool_call={'index': index, **calls[index]})
@@ -148,6 +154,10 @@ async def stream_native(client, url, payload, adapter):
                     yield ModelEvent('text', delta.get('text', ''))
                 if delta.get('type') == 'thinking_delta':
                     yield ModelEvent('reasoning', delta.get('thinking', ''))
+                if index in reasoning:
+                    for field in ('thinking', 'signature'):
+                        if delta.get('type') == field + '_delta':
+                            reasoning[index][field] = reasoning[index].get(field, '') + delta.get(field, '')
             else:
                 if kind == 'response.completed' and isinstance(event.get('response'), dict):
                     usage = normalize_usage(event['response'].get('usage')) or usage
@@ -160,6 +170,8 @@ async def stream_native(client, url, payload, adapter):
                     yield ModelEvent('tool_call_delta', tool_call={'index': index, **calls[index]})
                 elif kind == 'response.output_item.done' and item.get('type') == 'function_call':
                     calls[index] = {'id': item['call_id'], 'name': item['name'], 'arguments': item.get('arguments', '{}')}
+                elif kind == 'response.output_item.done' and item.get('type') == 'reasoning' and item.get('encrypted_content'):
+                    reasoning[index] = item
                 elif kind == 'response.output_text.delta':
                     has_text = has_text or bool(event.get('delta', '').strip())
                     yield ModelEvent('text', event.get('delta', ''))
@@ -169,6 +181,9 @@ async def stream_native(client, url, payload, adapter):
         raise ModelError('Provider stream ended before the response completed. Please retry.')
     if not has_text and not calls:
         raise ModelError('Provider returned an empty reply. Choose a chat model with kova setup, then retry.')
+    if reasoning_by_call is not None and calls and reasoning:
+        first = calls[min(calls)]['id']
+        reasoning_by_call[first] = [reasoning[index] for index in sorted(reasoning)]
     for call in calls.values():
         initial = call.pop('_input', {})
         if not call['arguments']:

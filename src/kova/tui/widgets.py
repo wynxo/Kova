@@ -211,7 +211,7 @@ def input_box(text: str, cursor: int, width: int, p: Palette, *, placeholder: st
               busy: bool = False) -> tuple[list[str], tuple[int, int]]:
     """The prompt box. A leading ``!`` or ``#`` becomes the prompt glyph and
     tints the frame (shell and memory modes); otherwise the frame lights up in
-    Kova's violet while there is text in it. Returns lines and the caret."""
+    Kova's accent while there is text in it. Returns lines and the caret."""
     mode = text[:1] if text[:1] in ("!", "#") else ""
     colour = {"!": BASH, "#": MEMORY}.get(mode) or (ACCENT if text and not busy else FAINT)
     shown, caret = (text[1:], max(0, cursor - 1)) if mode else (text, cursor)
