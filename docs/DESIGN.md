@@ -134,6 +134,21 @@ Before you call a screen done, check it is not doing any of these:
 - [ ] Motion that plays on load, loops, or cannot be turned off
 - [ ] A hover state that only changes colour and nothing else
 
+## The app mark
+
+The mark is a rounded tile with a solid K. Its geometry lives in one place,
+[`scripts/build_icons.py`](../scripts/build_icons.py), which writes every SVG and PNG
+(favicon, PWA, Apple touch, Electron, installers). Change the shapes there and re-run it;
+never edit the icon files by hand.
+
+- **Inside the UI**, use `<span class="kova-mark" aria-hidden="true">`. It paints
+  `mark.svg` (the tile with the K cut out) in `--fg-default`, so the letter shows the
+  surface behind it and the mark follows every theme.
+- **Outside the UI** (favicon, OS icons, notifications) the static `icon.svg` and PNGs use
+  a near-black tile `#14121c` with a white K, because no theme reaches there.
+- It must read at 16px: no thin strokes, no circles, square ends. Check the 16px render
+  before changing it.
+
 ## Adding a theme
 
 A theme is **data, never code**: no CSS files, no JavaScript, no URLs. The shape is in

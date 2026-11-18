@@ -1,8 +1,8 @@
 /* Only public shell resources belong here. Never cache authenticated API data. */
 const CACHE = 'kova-shell-v1';
-const SHELL = ['/app/assets/tool-cards.js', '/app/assets/tool-cards.css', '/app/assets/code-header.js', '/app/assets/code-header.css', '/app', '/app/assets/app.css', '/app/assets/toast.css', '/app/assets/status-bar.css', '/app/assets/app.js', '/app/assets/theme.js', '/app/assets/motion.js', '/app/assets/toast.js', '/app/assets/status-bar.js', '/app/assets/sounds.js', '/app/assets/diff.js', '/app/assets/diff.css', '/app/assets/thinking.css', '/app/assets/reasoning.css', '/app/assets/reasoning.js', '/app/assets/bolt.svg', '/app/assets/chat-appearance.css', '/app/assets/chat-appearance.js', '/app/assets/chat_list.css', '/app/assets/chat_list.js', '/app/assets/shortcuts.js',
+const SHELL = ['/app/assets/tool-cards.js', '/app/assets/tool-cards.css', '/app/assets/code-header.js', '/app/assets/code-header.css', '/app', '/app/assets/app.css', '/app/assets/toast.css', '/app/assets/status-bar.css', '/app/assets/app.js', '/app/assets/theme.js', '/app/assets/motion.js', '/app/assets/toast.js', '/app/assets/status-bar.js', '/app/assets/sounds.js', '/app/assets/diff.js', '/app/assets/diff.css', '/app/assets/thinking.css', '/app/assets/reasoning.css', '/app/assets/reasoning.js', '/app/assets/bolt.svg', '/app/assets/chat-appearance.css', '/app/assets/chat-appearance.js', '/app/assets/chat_list.css', '/app/assets/chat_list.js', '/app/assets/shortcuts.js', '/app/assets/composer-history.js', '/app/assets/composer-mentions.js', '/app/assets/markdown.css', '/app/assets/markdown-view.js', '/app/assets/panes.js', '/app/assets/panes.css', '/app/assets/drafts.js',
   '/app/assets/vendor/marked.js', '/app/assets/vendor/purify.js', '/app/assets/vendor/highlight.js',
-  '/app/assets/fonts/InterVariable.woff2', '/app/assets/fonts/InterVariable-Italic.woff2', '/app/assets/fonts/JetBrainsMonoVariable.woff2', '/app/assets/icon.svg',
+  '/app/assets/fonts/InterVariable.woff2', '/app/assets/fonts/InterVariable-Italic.woff2', '/app/assets/fonts/JetBrainsMonoVariable.woff2', '/app/assets/icon.svg', '/app/assets/mark.svg',
   '/app/assets/icon-32.png', '/app/assets/icon-180.png', '/app/assets/icon-192.png', '/app/assets/icon-512.png'];
 // Share-sheet files wait here for the page, which uploads them through the
 // normal authenticated attachment API. They never become cached API data.
@@ -99,13 +99,17 @@ self.addEventListener('notificationclick', event => {
   }));
 });
 
-// The authenticated page forwards the existing /events reminder shape. No push service.
+// The authenticated page forwards a toast's own wording (reminders use the same
+// path). No push service: the page is alive, it is just hidden.
 self.addEventListener('message', event => {
-  if (event.data?.type !== 'reminder' || typeof event.data.text !== 'string') return;
+  const data = event.data;
+  const reminder = data?.type === 'reminder';
+  if ((!reminder && data?.type !== 'toast') || typeof data.text !== 'string' || !data.text) return;
   event.waitUntil(self.clients.matchAll({type: 'window'}).then(clients => {
     if (clients.some(client => client.focused)) return;
-    return self.registration.showNotification('Reminder', {
-      body: event.data.text, tag: `reminder-${event.data.id || event.data.text}`,
+    const title = !reminder && typeof data.title === 'string' && data.title ? data.title : 'Reminder';
+    return self.registration.showNotification(title, {
+      body: data.text, tag: `${reminder ? 'reminder' : 'toast'}-${data.id || data.text}`,
       icon: '/app/assets/icon-192.png'
     });
   }));
