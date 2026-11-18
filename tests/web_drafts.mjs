@@ -57,8 +57,9 @@ assert.equal([...store.keys()].some(key => key.includes('incognito')), false);
 // to the session.
 failing = true;
 assert.equal(drafts.write(chat, 'kept in memory'), false);
-assert.equal(drafts.read(chat), '');
+assert.equal(drafts.read(chat), 'kept in memory');
 assert.equal(drafts.write(chat, ''), false);
+assert.equal(drafts.read(chat), '');
 assert.equal(drafts.read(incognito), '');
 
 console.log('drafts ok');

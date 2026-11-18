@@ -71,10 +71,19 @@ for (const id of triggers) launch(id);
 const autostart = launch('settings', 'details');
 autostart.append(new Element('summary'), new Element('input'), new Element('p'), new Element('button'));
 
-const reasoning = {value: 'shown',
-  shown() { return this.value === 'shown'; },
-  setShown(visible) { this.value = visible ? 'shown' : 'hidden'; }};
-const window = {KovaReasoning: reasoning};
+const reasoning = {value: 'collapsed',
+  mode() { return this.value; },
+  setMode(next) { this.value = next; }};
+// A stand-in for theme.js: the choice, the picker's options and set().
+const themeEngine = {value: 'system', sets: [],
+  installed: [{id: 'midnight-teal', name: 'Midnight Teal', appearance: 'dark'}],
+  choice() { return this.value; },
+  choices() {
+    return [{id: 'system', name: 'System', appearance: 'dark'}, {id: 'light', name: 'Light', appearance: 'light'},
+      {id: 'dark', name: 'Dark', appearance: 'dark'}, ...this.installed.map(theme => ({...theme, source: 'file'}))];
+  },
+  set(value) { this.sets.push(value); this.value = value; }};
+const window = {KovaReasoning: reasoning, KovaTheme: themeEngine};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -196,32 +205,69 @@ for (const [index, target] of [[3, 'open-reminders'], [4, 'open-extensions'], [4
   assert.equal($(target).clicked, before + 1, `${target} is reachable from ${SECTIONS[index]}`);
 }
 
-// Theme is a real Dark/Light radio group that flips app.js's theme control.
-const radios = byClass(panels[0], 'settings-segment');
-assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio']);
-assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'dark is current');
+// Theme is one radio group: System, Light, Dark, then installed theme files (#174).
+const themeRadios = () => byClass(byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Theme')), 'settings-segment');
+let radios = themeRadios();
+assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio', 'radio', 'radio']);
+assert.deepEqual(radios.map(radio => radio.textContent), ['System', 'Light', 'Dark', 'Midnight Teal']);
+assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'System is the default choice');
+assert.equal(radios[0].tabIndex, 0, 'the checked radio is the tab stop');
+assert.equal(radios[2].tabIndex, -1);
 const themeClicks = $('theme').clicked;
-radios[0].click();
-assert.equal($('theme').clicked, themeClicks, 'choosing the current theme does nothing');
 radios[1].click();
-assert.equal($('theme').clicked, themeClicks + 1, 'choosing Light asks app.js to switch');
-
-// Reasoning is a real checkbox that flips the shared setting and reflects it
-// back from the module, never a value duplicated in this file.
-const reasoningRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Reasoning'));
-assert.ok(reasoningRow, 'the Reasoning setting is in General');
-const reasoningToggle = walk(reasoningRow).find(node => node.tagName === 'INPUT');
-assert.equal(reasoningToggle.type, 'checkbox');
-assert.equal(reasoningToggle.checked, true, 'reasoning is shown by default');
-assert.equal(reasoningToggle.getAttribute('aria-label'), 'Show reasoning');
-reasoningToggle.checked = false;
-reasoningToggle.dispatch('change', {});
-assert.equal(reasoning.value, 'hidden', 'unchecking hides reasoning');
-assert.equal(reasoningToggle.checked, false);
-reasoning.value = 'shown';
+assert.deepEqual(themeEngine.sets, ['light'], 'choosing Light sets it through theme.js');
+assert.equal($('theme').clicked, themeClicks, 'the engine is used, not the old toggle');
+assert.equal(radios[1].getAttribute('aria-checked'), 'true');
+assert.equal(radios[0].getAttribute('aria-checked'), 'false');
+radios[1].dispatch('keydown', {key: 'ArrowRight'});
+assert.equal(themeEngine.value, 'dark', 'arrow keys move through the choices');
+assert.equal(document.activeElement, radios[2], 'and take focus with them');
+radios[3].dispatch('keydown', {key: 'ArrowRight'});
+assert.equal(themeEngine.value, 'system', 'the arrows wrap around');
+radios[3].click();
+assert.equal(themeEngine.value, 'midnight-teal', 'an installed theme is a choice like any other');
+// A theme file installed while Settings is open shows up the next time it syncs.
+themeEngine.installed.push({id: 'paper', name: 'Paper', appearance: 'light'});
 document.activeElement = sidebar;
 $('open-settings').click();
-assert.equal(reasoningToggle.checked, true, 'reopening Settings reflects the current value');
+radios = themeRadios();
+assert.deepEqual(radios.map(radio => radio.textContent), ['System', 'Light', 'Dark', 'Midnight Teal', 'Paper']);
+assert.equal(radios[3].getAttribute('aria-checked'), 'true', 'the redrawn group keeps the choice');
+// A choice the picker does not list (a theme file missing here) leaves one tab stop.
+themeEngine.value = 'not-installed';
+$('open-settings').click();
+radios = themeRadios();
+assert.equal(radios.filter(radio => radio.getAttribute('aria-checked') === 'true').length, 0);
+assert.equal(radios.filter(radio => radio.tabIndex === 0).length, 1, 'still reachable from the keyboard');
+themeEngine.value = 'system';
+
+// Reasoning is a three-way radio group that changes the shared setting and
+// reflects it back from the module, never a value duplicated in this file.
+const reasoningRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Reasoning'));
+assert.ok(reasoningRow, 'the Reasoning setting is in General');
+const reasoningGroup = byClass(reasoningRow, 'settings-segmented')[0];
+assert.equal(reasoningGroup.getAttribute('role'), 'radiogroup');
+assert.equal(reasoningGroup.getAttribute('aria-label'), 'Reasoning');
+const reasoningRadios = byClass(reasoningRow, 'settings-segment');
+assert.deepEqual(reasoningRadios.map(radio => radio.textContent), ['Collapsed', 'Expanded', 'Hidden']);
+assert.deepEqual(reasoningRadios.map(radio => radio.getAttribute('role')), ['radio', 'radio', 'radio']);
+assert.equal(reasoningRadios[0].getAttribute('aria-checked'), 'true', 'collapsed is the default');
+reasoningRadios[1].click();
+assert.equal(reasoning.value, 'expanded', 'Expanded opens each finished row');
+assert.equal(reasoningRadios[1].getAttribute('aria-checked'), 'true');
+assert.equal(reasoningRadios[0].getAttribute('aria-checked'), 'false');
+reasoningRadios[2].click();
+assert.equal(reasoning.value, 'hidden', 'Hidden drops the reasoning text');
+// Arrow keys move through the three choices, like the theme group.
+reasoningRadios[2].dispatch('keydown', {key: 'ArrowRight', preventDefault() {}});
+assert.equal(reasoning.value, 'collapsed', 'ArrowRight wraps to the first choice');
+assert.equal(document.activeElement, reasoningRadios[0], 'focus follows the choice');
+reasoning.value = 'expanded';
+document.activeElement = sidebar;
+$('open-settings').click();
+assert.equal(reasoningRadios[1].getAttribute('aria-checked'), 'true',
+  'reopening Settings reflects the current value');
+reasoning.value = 'collapsed';
 
 // Startup is hosted in General: open, keeping its own ids and handlers.
 const hosted = $('settings');

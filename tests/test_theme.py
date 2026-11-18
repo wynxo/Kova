@@ -21,15 +21,16 @@ def test_named_colours_are_six_digit_hex():
 
 def test_brand_values_are_stable():
     # Callers pin to these exact values; a drift breaks the whole product's look.
-    assert theme.ACCENT == "#8b7cff"
-    assert theme.ACCENT_SOFT == "#b4a9ff"
+    assert theme.ACCENT == "#f6f6f8"
+    assert theme.ACCENT_SOFT == "#b4b4c0"
+    assert theme.ON_ACCENT == "#14121c"
     assert theme.USER == "#5fd7af"
     assert theme.SUCCESS == "#5fd787"
     assert theme.ERROR == "#ff5f6d"
 
 
 def test_gradient_has_four_logo_stops():
-    assert theme.GRADIENT == ("#7aa2ff", "#8b7cff", "#c77dff", "#ff7eb6")
+    assert theme.GRADIENT == ("#ffffff", "#d8d8e0", "#b4b4c0", "#8a8f98")
     assert len(theme.GRADIENT) == 4
     assert all(_HEX6.match(stop) for stop in theme.GRADIENT)
 

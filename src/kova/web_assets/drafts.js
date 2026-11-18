@@ -14,6 +14,7 @@
   'use strict';
 
   const PREFIX = 'kova-draft:';
+  const fallback = new Map();
 
   // Only a saved chat owns a draft. A blank start screen has no id yet and an
   // incognito id is deliberately excluded.
@@ -25,6 +26,7 @@
   function read(chat) {
     const name = key(chat);
     if (!name) return '';
+    if (fallback.has(name)) return fallback.get(name);
     try {
       const value = localStorage.getItem(name);
       return typeof value === 'string' ? value : '';
@@ -36,11 +38,14 @@
   function write(chat, text) {
     const name = key(chat);
     if (!name) return false;
+    const value = typeof text === 'string' && text.trim() ? text : '';
     try {
-      if (typeof text === 'string' && text.trim()) localStorage.setItem(name, text);
+      if (value) localStorage.setItem(name, value);
       else localStorage.removeItem(name);
+      fallback.delete(name);
       return true;
     } catch (_) {
+      fallback.set(name, value);
       return false;
     }
   }

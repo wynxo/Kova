@@ -199,6 +199,14 @@ entries without changing the active model or the old aliases. Keys, custom
 headers and owned OAuth tokens stay in this file and are never copied into a
 backup.
 
+The composer's **Make default** saves the selected model alias as `active`
+and its optional default `reasoning_effort` on that model entry. For a
+local or custom Chat Completions endpoint, Kova cannot infer supported
+values from the model ID. If the endpoint accepts `reasoning_effort`,
+declare only the values it supports, for example
+`reasoning_efforts = ["low", "medium", "high"]` under its `[[models]]` entry.
+Include `"off"` only if the endpoint accepts the wire value `"none"`.
+
 ## MCP servers
 
 Kova can use the tools of any [Model Context Protocol](https://modelcontextprotocol.io)
