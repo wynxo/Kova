@@ -334,6 +334,37 @@
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
   // working when it is missing, so every hook below guards its presence.
   const chatAppearance = () => window.KovaChatAppearance || null;
+  // Inline rename (#195): double-click a row title, type, Enter saves, Escape
+  // restores. The title updates in place through the same PATCH the menu uses.
+  function inlineRename(chat, button) {
+    if (state.busy || !button) return;
+    const input = el('input', 'history-rename');
+    input.value = chat.title || '';
+    input.maxLength = 200; input.autocomplete = 'off'; input.spellcheck = false;
+    input.setAttribute('enterkeyhint', 'done');
+    input.setAttribute('aria-label', `Rename ${chat.title || 'New conversation'}`);
+    button.replaceWith(input);
+    input.focus(); input.select();
+    let settled = false;
+    const finish = save => {
+      if (settled) return;
+      settled = true;
+      const title = input.value.trim();
+      if (!save || !title || title === (chat.title || '')) { history(state.chats); return; }
+      safe(async () => {
+        try {
+          await json(`/chats/${chat.id}`, write('PATCH', {title}));
+          chat.title = title;
+          if (state.chat?.id === chat.id) { state.chat.title = title; pageTitle(); }
+        } finally { history(state.chats); }
+      });
+    };
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
   function history(chats) {
     const list = $('chat-list');
     list.replaceChildren();
@@ -350,12 +381,14 @@
         const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
         const titleRow = el('span', 'history-title');
         if (chat.pinned) titleRow.append(icon('pin'));
+        if (chat.ephemeral) titleRow.append(icon('eye-off'));
         titleRow.append(document.createTextNode(title));
         button.append(titleRow); button.title = title;
         // A row is its title. A second line appears only while the chat needs
         // attention (working, or waiting on an approval); the date groups say when.
         if (chat.state && chat.state !== 'done') button.append(el('span', 'history-date', chat.state.replaceAll('-', ' ')));
         button.onclick = () => safe(() => openChat(chat.id));
+        button.addEventListener('dblclick', event => { event.preventDefault(); inlineRename(chat, button); });
         const actions = el('details', 'history-actions'), more = el('summary');
         more.append(icon('ellipsis')); more.title = `Actions for ${title}`; more.setAttribute('aria-label', `Actions for ${title}`);
         actions.append(more); actions.setAttribute('aria-label', `Actions for ${title}`);
@@ -367,6 +400,8 @@
           const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
           action.onclick = () => safe(fn); actions.append(action);
         }
+        // A right-click opens the same menu the ellipsis does (#195).
+        row.addEventListener('contextmenu', event => { event.preventDefault(); actions.open = true; });
         row.append(button, actions); list.append(row);
       }
     }
