@@ -66,3 +66,13 @@ def test_ui_draws_the_mark_with_the_theme_colour() -> None:
 
 def test_mark_is_cached_for_offline_use() -> None:
     assert "'/app/assets/mark.svg'" in (ASSETS / "sw.js").read_text(encoding="utf-8")
+
+
+def test_the_start_screen_shows_the_mark_once():
+    """Two merges once left both the old <img> logo and the new mark on the start screen."""
+    import re
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets" / "index.html").read_text(encoding="utf-8")
+    welcome = re.search(r'<div id="welcome".*?</div>', page, re.S).group(0)
+    assert welcome.count("welcome-mark") == 1
+    assert welcome.index("welcome-mark") < welcome.index("welcome-greeting"), "the greeting sits under the mark"
