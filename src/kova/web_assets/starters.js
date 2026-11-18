@@ -23,6 +23,7 @@
   ];
   const doc = typeof document !== 'undefined' ? document : null;
   let values = stored();
+  let revision = 0;
 
   // Trimmed, single-line, de-duplicated and bounded exactly as the server
   // validates it, so a local edit can never be refused after it was shown.
@@ -30,7 +31,7 @@
     const out = [];
     for (const item of Array.isArray(list) ? list : []) {
       if (typeof item !== 'string') continue;
-      const text = item.replace(/\s+/g, ' ').trim().slice(0, LIMIT);
+      const text = Array.from(item.replace(/\s+/g, ' ').trim()).slice(0, LIMIT).join('');
       if (text && !out.includes(text)) out.push(text);
       if (out.length >= MAX) break;
     }
@@ -77,24 +78,28 @@
   }
 
   function load() {
+    const version = revision;
     const pending = request('/preferences', {headers: {'Accept': 'application/json'}});
     if (!pending || typeof pending.then !== 'function') return;
     pending
       .then(response => (response && response.ok ? response.json() : null))
-      .then(payload => { if (payload) adopt(payload); })
+      .then(payload => { if (version === revision) adopt(payload); })
       .catch(() => {});
   }
 
   async function save(list) {
-    values = clean(list);
-    remember();
-    announce();
-    const pending = request('/preferences', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({starters: values}),
-    });
-    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+    const version = ++revision;
+    const next = clean(list);
+    let response;
+    try {
+      response = await request('/preferences', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({starters: next}),
+      });
+    } catch (_) { /* Offline: keep the edit in this browser. */ }
+    if (response && !response.ok) throw new Error('Could not save suggestions. Try again.');
+    if (version === revision) adopt({starters: next});
     return current();
   }
 
@@ -156,10 +161,10 @@
     doc.body.append(dialog);
 
     return new Promise(resolve => {
-      const done = value => { dialog.remove(); resolve(value); };
+      const done = value => { dialog.close(); dialog.remove(); resolve(value); };
       off.onclick = () => done([]);
       cancel.onclick = () => done(null);
-      dialog.addEventListener('cancel', () => done(null));
+      dialog.addEventListener('cancel', event => { event.preventDefault(); done(null); });
       saveButton.onclick = () => done(clean(inputs.map(input => input.value)));
       dialog.showModal();
       inputs[0].focus();

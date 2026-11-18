@@ -196,8 +196,8 @@ or keep `./cli serve` running in another terminal while you work.
 `src/kova/theme.py` is the palette for the terminal:
 
 ```python
-ACCENT = "#8b7cff"
-ACCENT_SOFT = "#b4a9ff"
+ACCENT = "#f6f6f8"
+ACCENT_SOFT = "#b4b4c0"
 USER = "#5fd7af"
 MUTED = "#8a8f98"
 FAINT = "#5c616b"
@@ -205,13 +205,14 @@ BORDER = "#3a3d45"
 SUCCESS = "#5fd787"
 WARNING = "#ffaf5f"
 ERROR = "#ff5f6d"
-GRADIENT = ("#7aa2ff", "#8b7cff", "#c77dff", "#ff7eb6")  # the logo
+GRADIENT = ("#ffffff", "#d8d8e0", "#b4b4c0", "#8a8f98")  # the logo
 CODE_THEME = "monokai"
 ```
 
 (plus `SURFACE`, `ON_ACCENT`, `BASH`, `MEMORY` and `CODE`). The CLI, setup
-wizard and chat all use these names, and `ui._CHAT_STYLE` mirrors them for the
-input line and completion menu. The full-screen chat converts them for 256- and
+wizard and chat all use these names, including the input line and completion
+menu. The terminal uses a near-white accent in the dark theme and a near-black
+accent in the light theme. The full-screen chat converts them for 256- and
 16-colour terminals by itself (`kova.tui.style`); run `KOVA_COLORS=16 ./cli` or
 `NO_COLOR=1 ./cli` to check a change on a simpler terminal.
 `CODE_THEME` is the Pygments theme for code blocks in the terminal.

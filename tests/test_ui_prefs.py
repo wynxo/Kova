@@ -40,7 +40,8 @@ def runner(home, http, monkeypatch):
 
 def test_defaults_are_served_and_updates_merge(http):
     assert http.get("/preferences").json() == ui_prefs.DEFAULTS
-    assert ui_prefs.DEFAULTS["reasoning"] == "shown", "reasoning rows are visible by default"
+    assert ui_prefs.DEFAULTS["reasoning"] == "collapsed", \
+        "reasoning rows are folded by default"
 
     saved = http.put("/preferences", json={"theme": "light"})
 
@@ -50,17 +51,33 @@ def test_defaults_are_served_and_updates_merge(http):
 
 
 def test_reasoning_preference_is_shared_with_the_ui(http):
-    saved = http.put("/preferences", json={"reasoning": "hidden"})
+    saved = http.put("/preferences", json={"reasoning": "expanded"})
 
     assert saved.status_code == 200
-    assert saved.json()["reasoning"] == "hidden"
-    assert http.get("/preferences").json()["reasoning"] == "hidden"
+    assert saved.json()["reasoning"] == "expanded"
+    assert http.get("/preferences").json()["reasoning"] == "expanded"
+
+    hidden = http.put("/preferences", json={"reasoning": "hidden"})
+
+    assert hidden.json()["reasoning"] == "hidden"
+
+
+def test_the_first_reasoning_switch_still_reads_as_collapsed(tmp_path):
+    """The setting shipped as shown/hidden before it gained expanded."""
+    saved = ui_prefs.write_file({**ui_prefs.DEFAULTS, "reasoning": "shown"}, tmp_path / "prefs.json")
+
+    assert ui_prefs.read_file(saved)["reasoning"] == "collapsed"
+    assert ui_prefs.Preferences(tmp_path).read()["reasoning"] == "collapsed"
 
 
 def test_start_screen_suggestions_are_a_shared_bounded_list(http):
     assert http.get("/preferences").json()["starters"] == ui_prefs.DEFAULTS["starters"]
 
-    saved = http.put("/preferences", json={"starters": ["  Plan a trip ", "Plan a trip", "Write it up"]})
+    saved = http.put("/preferences", json={
+        "theme": "demo-theme",
+        "reasoning": "expanded",
+        "starters": ["  Plan a trip ", "Plan a trip", "Write it up"],
+    })
 
     assert saved.status_code == 200
     assert saved.json()["starters"] == ["Plan a trip", "Write it up"]
@@ -69,6 +86,8 @@ def test_start_screen_suggestions_are_a_shared_bounded_list(http):
     off = http.put("/preferences", json={"starters": []})
     assert off.status_code == 200
     assert off.json()["starters"] == [], "an empty list turns the suggestions off"
+    assert off.json()["theme"] == "demo-theme"
+    assert off.json()["reasoning"] == "expanded"
 
 
 @pytest.mark.parametrize("value, needle", [
@@ -99,8 +118,9 @@ def test_an_older_preferences_file_gains_the_new_defaults(tmp_path):
 
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
-    ({"theme": "sepia"}, "must be one of"),
-    ({"reasoning": "expanded"}, "must be one of"),
+    ({"theme": "Sepia Tone"}, "must be one of"),
+    ({"theme": "x"}, "installed theme id"),
+    ({"reasoning": "open"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):
@@ -172,7 +192,7 @@ def test_import_rejects_an_unknown_version(runner, tmp_path):
 def test_import_refuses_a_bad_value_without_changing_anything(runner, http, tmp_path):
     http.put("/preferences", json={"theme": "light"})
     target = tmp_path / "bad-value.json"
-    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "sepia"}}),
+    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "Sepia Tone"}}),
                       encoding="utf-8")
 
     result = runner.invoke(cli.app, ["prefs", "import", str(target)])

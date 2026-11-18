@@ -221,6 +221,7 @@ body.settings-open { overflow: hidden; }
   }
   .settings-tab { width: auto; white-space: nowrap; }
   .settings-row { flex-wrap: wrap; }
+  .settings-segmented { flex-wrap: wrap; }
   .settings-content { padding: var(--space-4); }
 }
 
@@ -228,3 +229,6 @@ body.settings-open { overflow: hidden; }
   .settings-page { animation: none; }
   .settings-tab, .settings-segment { transition: none; }
 }
+
+/* The theme picker grows with installed theme files; it wraps instead of overflowing. */
+.settings-theme { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }

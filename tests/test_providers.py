@@ -115,6 +115,89 @@ async def test_anthropic_history_with_bad_tool_arguments_still_streams():
     assert tool_use['type'] == 'tool_use' and tool_use['input'] == {}
 
 
+@pytest.mark.parametrize("kind,adapter,model", [
+    ("anthropic", "anthropic", "claude-sonnet-4-6"),
+    ("openai", "responses", "gpt-5.2"),
+])
+async def test_native_effort_keeps_tool_reasoning_protocol_in_memory(kind, adapter, model):
+    from kova.config import ProviderEntry, ModelEntry
+
+    provider = ProviderEntry("example", "Example API", "https://example.test/v1",
+                             kind=kind, adapter=adapter)
+    entry = ModelEntry("demo", provider.base_url, model, _provider=provider)
+    tool = {"id": "call_demo", "name": "lookup", "arguments": "{}"}
+    block = {"type": "thinking", "thinking": "summary", "signature": "signature"}
+    item = {"type": "reasoning", "id": "rs_demo", "summary": [], "encrypted_content": "opaque"}
+    requests = []
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        first = len(requests) == 1
+        if adapter == "anthropic":
+            assert payload["thinking"] == {"type": "adaptive"}
+            assert payload["output_config"] == {"effort": "high"}
+            if first:
+                events = [
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "summary"}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "signature"}},
+                    {"type": "content_block_start", "index": 1, "content_block": {
+                        "type": "tool_use", "id": tool["id"], "name": tool["name"], "input": {},
+                    }},
+                ]
+            else:
+                assert payload["messages"][1]["content"][0] == block
+                events = [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}}]
+            events.append({"type": "message_stop"})
+        else:
+            assert payload["reasoning"] == {"effort": "high"}
+            assert payload["include"] == ["reasoning.encrypted_content"]
+            if first:
+                events = [
+                    {"type": "response.output_item.done", "item": item},
+                    {"type": "response.output_item.done", "output_index": 1, "item": {
+                        "type": "function_call", "call_id": tool["id"], "name": tool["name"],
+                        "arguments": tool["arguments"],
+                    }},
+                ]
+            else:
+                assert payload["input"][1] == item
+                events = [{"type": "response.output_text.delta", "delta": "done"}]
+            events.append({"type": "response.completed"})
+        return httpx.Response(200, text="".join(f"data: {json.dumps(event)}\n\n" for event in events))
+
+    client = ModelClient(entry, transport=httpx.MockTransport(handle), reasoning_effort="high")
+    messages = [{"role": "user", "content": "Look it up"}]
+    first = [event async for event in client.stream(messages)]
+    assert [event.tool_call for event in first if event.type == "tool_call"] == [tool]
+    messages += [
+        {"role": "assistant", "tool_calls": [{
+            "id": tool["id"], "function": {"name": tool["name"], "arguments": tool["arguments"]},
+        }]},
+        {"role": "tool", "tool_call_id": tool["id"], "content": "result"},
+    ]
+    assert [event.text async for event in client.stream(messages) if event.type == "text"] == ["done"]
+
+
+async def test_custom_model_can_declare_compatible_effort_without_a_probe(tmp_path):
+    from kova.config import load_config, save_config
+    from kova.reasoning_effort import choices
+    from tests.fake_model import FakeModel, text
+
+    cfg = load_config(tmp_path)
+    cfg.active_model().reasoning_efforts = ["high", "low"]
+    save_config(cfg)
+    entry = load_config(tmp_path).active_model()
+    assert choices(entry) == ("low", "high")
+    fake = FakeModel([text("First"), text("Second")])
+    for effort in ("low", "off"):
+        client = ModelClient(entry, transport=fake.transport, reasoning_effort=effort)
+        assert [event async for event in client.stream([{"role": "user", "content": "Hi"}])][-1].type == "done"
+    assert fake.requests[0]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in fake.requests[1]
+
+
 def test_harness_reuse_requires_consent_and_does_not_copy_tokens(tmp_path, monkeypatch):
     from kova import provider_auth
     from kova.providers import make_provider, headers_for, ProviderError

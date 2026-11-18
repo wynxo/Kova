@@ -20,6 +20,7 @@ class Element {
   focus() { document.activeElement = this; }
   click() { if (typeof this.onclick === 'function') this.onclick(); this.dispatch('click'); }
   showModal() { this.open = true; }
+  close() { this.open = false; }
 }
 
 const events = [];
@@ -36,6 +37,7 @@ const document = {
 };
 const store = new Map();
 let error = null;
+let rejectSave = false;
 const sandbox = {
   document, window: {}, console, CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
   localStorage: {
@@ -48,6 +50,7 @@ const sandbox = {
     }
     if (options.method === 'PUT') {
       if (error) throw error;
+      if (rejectSave) return {ok: false, status: 422};
       return {ok: true, json: async () => JSON.parse(options.body)};
     }
     throw new TypeError('offline');
@@ -109,6 +112,10 @@ third.children.at(-1).children.find(button => button.textContent === 'Cancel').c
 assert.equal(await cancelled, null);
 
 // A failed write still leaves the local list usable offline.
+rejectSave = true;
+await assert.rejects(starters.save(['Not saved']), /Could not save suggestions/);
+assert.equal(starters.current().length, 0, 'a rejected shared write keeps the previous list');
+rejectSave = false;
 error = new TypeError('offline');
 await starters.save(['Offline prompt']);
 assert.deepEqual([...starters.current()], ['Offline prompt']);

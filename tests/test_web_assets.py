@@ -237,9 +237,11 @@ def test_reasoning_script_folds_text_and_never_builds_markup() -> None:
     for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(",
                       "new Function"):
         assert forbidden not in text, f"reasoning.js must not use {forbidden}"
-    for needed in ("textContent", "'shown'", "'hidden'", "localStorage",
+    for needed in ("textContent", "'collapsed'", "'expanded'", "'hidden'",
                    "'/preferences'", "Thought for", "window.KovaReasoning"):
         assert needed in text, f"reasoning.js lost {needed}"
+    assert "localStorage" in text, "the setting must paint before the server answers"
+    assert "LEGACY" in text, "the first shown/hidden release must keep reading as collapsed"
 
 
 def test_app_js_delegates_reasoning_rows_to_the_module() -> None:

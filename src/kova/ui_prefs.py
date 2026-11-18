@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -24,10 +25,10 @@ DEFAULT_PREFIX = "Kova-ui-preferences-"
 # Every preference a client can change, with the values it accepts. Add a key
 # here (and bump PREFS_VERSION if the meaning changes) when the UI gains one.
 SCHEMA: dict[str, tuple[str, ...]] = {
-    "theme": ("dark", "light"),
+    "theme": ("system", "dark", "light"),
     "sidebar": ("open", "collapsed"),
     "notifications": ("on", "off"),
-    "reasoning": ("shown", "hidden"),
+    "reasoning": ("collapsed", "expanded", "hidden"),
 }
 
 # Short free-text lists: name -> (most items, longest item). Used by the start
@@ -37,16 +38,30 @@ TEXT_LISTS: dict[str, tuple[int, int]] = {
 }
 
 DEFAULTS: dict[str, Any] = {
-    "theme": "dark",
+    "theme": "system",
     "sidebar": "open",
     "notifications": "off",
-    "reasoning": "shown",
+    "reasoning": "collapsed",
     "starters": [
         "Plan a small project with me",
         "Summarise a file I send",
         "Help me write a tricky email",
     ],
 }
+
+# Preferences that also accept an open-ended id. ``theme`` names one of the
+# fixed choices above or an installed theme file (``KOVA_HOME/themes/<id>.json``),
+# using the same id rule as ``kova.themes``. The file is not required to exist:
+# preferences travel to machines that may not have it yet, and the client falls
+# back to the system appearance when it cannot load the theme.
+PATTERNS: dict[str, re.Pattern[str]] = {
+    "theme": re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$"),
+}
+
+# The reasoning switch first shipped as "shown"/"hidden". "shown" is now
+# "collapsed", so an older preferences.json, export or open window keeps
+# working instead of failing validation.
+LEGACY = {"reasoning": {"shown": "collapsed"}}
 
 _KNOWN = ", ".join(sorted({*SCHEMA, *TEXT_LISTS}))
 
@@ -99,10 +114,18 @@ def _check_values(values: Any) -> dict[str, Any]:
         if name in TEXT_LISTS:
             checked[name] = _check_text_list(name, value)
             continue
+        if isinstance(value, str):
+            value = LEGACY.get(name, {}).get(value, value)
         allowed = SCHEMA[name]
-        if value not in allowed:
+        pattern = PATTERNS.get(name)
+        if value in allowed:
+            pass
+        elif pattern is not None and isinstance(value, str) and pattern.match(value):
+            pass
+        else:
+            extra = " or an installed theme id" if pattern is not None else ""
             raise UiPrefsError(
-                f"Preference {name!r} must be one of {', '.join(allowed)}; "
+                f"Preference {name!r} must be one of {', '.join(allowed)}{extra}; "
                 f"got {value!r}."
             )
         checked[name] = value

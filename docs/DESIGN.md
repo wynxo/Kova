@@ -8,8 +8,8 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 ## Principles
 
 1. **Calm and monochrome.** Surfaces, text and borders are neutral. There is exactly one accent.
-2. **The accent means activity.** Orange is not decoration: it marks what Kova is doing right now —
-   the running spinner, the streaming caret, the active step, an unread result. If nothing is
+2. **The accent means activity.** The accent is solid white on dark and solid black on light. It
+   is not decoration: it marks what Kova is doing right now — the running spinner, the streaming caret, the active step, an unread result. If nothing is
    happening, no accent is on screen.
 3. **Every value is a token.** No hex codes, no magic pixel numbers, no `12px` written inline. If a
    value is missing, add a token in `design/tokens.json`; don't hard-code it.
