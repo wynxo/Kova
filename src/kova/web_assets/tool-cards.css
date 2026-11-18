@@ -1,13 +1,103 @@
+/* Grouped tool cards (#186). Semantic tokens only; no literal colour, size or
+   timing lives here. The row itself is a real button, so keyboard and screen
+   readers get the disclosure pattern with aria-expanded. */
 .tool-card { margin-block: var(--space-3); color: var(--fg-muted); min-width: 0; }
-.tool-card-summary, .tool-card-title { cursor: pointer; padding: var(--space-2); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
-.tool-card summary:hover { background: var(--bg-raised); text-decoration: underline; }
-.tool-card summary:focus-visible, .tool-card button:focus-visible { outline: var(--space-0-5) solid var(--border-strong); outline-offset: var(--space-0-5); }
-.tool-card-rows { padding-inline-start: var(--space-3); border-inline-start: var(--space-0-5) solid var(--border-subtle); }
-.tool-card-status, .tool-card-time { margin-inline-start: var(--space-3); }
-.tool-card pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: var(--type-measure-prose); padding: var(--space-3); background: var(--bg-surface); color: var(--fg-default); font-family: var(--mono); }
-.tool-card-error { color: var(--status-danger); overflow-wrap: anywhere; margin: var(--space-2); }
-.tool-card-all { color: var(--fg-muted); background: var(--bg-surface); border: var(--space-0-5) solid var(--border-strong); border-radius: var(--radius-sm); padding: var(--space-2); cursor: pointer; }
-/* Native disclosure needs no animation, including with reduced motion. */
-@media (prefers-reduced-motion: reduce) {
-  .tool-card { scroll-behavior: auto; }
+
+.tool-card-summary,
+.tool-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  overflow-wrap: anywhere;
 }
+.tool-card-summary {
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
+}
+.tool-card-title {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
+}
+.tool-card-summary:hover,
+.tool-card-title:hover { background: var(--bg-raised); color: var(--fg-default); }
+.tool-card-summary:focus-visible,
+.tool-card-title:focus-visible,
+.tool-card button:focus-visible { outline: var(--space-0-5) solid var(--border-strong); outline-offset: var(--space-0-5); }
+
+.tool-card-summary-text { min-width: 0; font-weight: 500; }
+.tool-card-name { flex: none; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-default); font-weight: 550; }
+.tool-card-hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-faint); font-family: var(--mono); font-size: var(--type-size-label); }
+.tool-card-time { flex: none; margin-inline-start: auto; color: var(--fg-faint); font-size: var(--type-size-label); font-variant-numeric: tabular-nums; }
+.tool-card-chevron { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); color: var(--fg-faint); transition: transform var(--motion-fast) var(--motion-ease-standard); }
+.tool-card.open > .tool-card-summary > .tool-card-chevron,
+.tool-card-step.open > .tool-card-title > .tool-card-chevron { transform: rotate(90deg); }
+
+/* The status mark: quiet while running, a tick when done, an alert when failed. */
+.tool-card-mark { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
+.tool-card-mark.running { background: var(--accent-default); animation: tool-card-breathe 1.2s var(--motion-ease-standard) infinite; }
+.tool-card-mark.ok { color: var(--status-success); }
+.tool-card-mark.failed { color: var(--status-danger); }
+.tool-card-mark.unknown { background: var(--fg-faint); }
+.tool-card-step.failed > .tool-card-title > .tool-card-name { color: var(--status-danger); }
+
+.tool-card-rows {
+  display: grid;
+  gap: var(--space-0-5);
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--space-0-5) solid var(--border-subtle);
+}
+.tool-card-rows[hidden], .tool-card-body[hidden] { display: none; }
+
+.tool-card-body { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-3) var(--space-5); }
+.tool-card pre {
+  max-height: calc(var(--space-12) * 6);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  font-family: var(--mono);
+  font-size: var(--type-size-label);
+  line-height: var(--type-leading-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tool-card-input { color: var(--fg-muted); }
+.tool-card-all {
+  justify-self: start;
+  padding: var(--space-1) var(--space-2);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--type-size-label);
+  cursor: pointer;
+}
+.tool-card-all:hover { background: var(--bg-raised); color: var(--fg-default); }
+
+.tool-card-failures { display: grid; gap: var(--space-1); padding-inline: var(--space-2); }
+.tool-card-error { margin: 0; color: var(--status-danger); font-size: var(--type-size-label); overflow-wrap: anywhere; }
+
+/* Motion explains the fold; it never loops for attention and is optional. */
+@keyframes tool-card-breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .tool-card-mark.running { animation: none; opacity: .8; }
+  .tool-card-chevron { transition: none; }
+}
+[data-motion="reduced"] .tool-card-mark.running { animation: none; opacity: .8; }
+[data-motion="reduced"] .tool-card-chevron { transition: none; }
