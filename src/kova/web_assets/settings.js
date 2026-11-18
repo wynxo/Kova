@@ -14,10 +14,11 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark sounds startup sign out keyboard reasoning',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning',
       items: [
-        {title: 'Theme', help: 'Dark or light.',
-         keywords: 'appearance colour color light dark mode', control: 'theme'},
+        {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
+         control: 'theme'},
         {title: 'Reasoning', help: 'Show how Kova thought before each answer.',
          keywords: 'thinking thought chain show hide collapsed thinking rows',
          control: 'reasoning'},
@@ -232,47 +233,75 @@
     });
   }
 
-  // Light and dark as a two-option radio group. app.js owns the theme (and its
-  // Ctrl+Shift+L toggle) through #theme; this only reflects and flips it.
-  const themeRadios = [];
+  // The theme as one radio group: System, Light and Dark, then any theme files
+  // installed in Kova's home (#174). theme.js owns the choice, its shared copy in
+  // the server preferences and the tokens it applies; this only reflects and sets
+  // it. Without theme.js it falls back to the #theme light/dark toggle.
+  const themeGroups = [];
+  const FIXED_THEMES = [['system', 'System', 'settings'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']];
+  function themeOptions() {
+    const engine = window.KovaTheme;
+    if (!engine) return FIXED_THEMES.filter(([value]) => value !== 'system').map(([id, name, glyph]) => ({id, name, glyph}));
+    return engine.choices().map(option => {
+      const fixed = FIXED_THEMES.find(([value]) => value === option.id);
+      return {id: option.id, name: option.name, glyph: fixed ? fixed[2] : (option.appearance === 'light' ? 'sun' : 'moon')};
+    });
+  }
   function currentTheme() {
+    if (window.KovaTheme) return window.KovaTheme.choice();
     return document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark';
   }
   function themeControl() {
-    const group = element('div', 'settings-segmented');
+    const group = element('div', 'settings-segmented settings-theme');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Theme');
-    for (const [value, label, glyph] of [['dark', 'Dark', 'moon'], ['light', 'Light', 'sun']]) {
-      const radio = element('button', 'settings-segment');
-      radio.type = 'button';
-      radio.dataset.value = value;
-      radio.setAttribute('role', 'radio');
-      radio.append(icon(glyph), element('span', '', label));
-      radio.addEventListener('click', () => chooseTheme(value));
-      radio.addEventListener('keydown', event => {
-        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
-        event.preventDefault();
-        const next = value === 'dark' ? 'light' : 'dark';
-        chooseTheme(next);
-        themeRadios.find(item => item.dataset.value === next)?.focus();
-      });
-      themeRadios.push(radio);
-      group.append(radio);
-    }
+    themeGroups.push(group);
+    fillTheme(group);
     return group;
   }
+  function fillTheme(group) {
+    const options = themeOptions();
+    const radios = options.map(({id, name, glyph}, index) => {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = id;
+      radio.setAttribute('role', 'radio');
+      radio.append(icon(glyph), element('span', '', name));
+      radio.addEventListener('click', () => chooseTheme(id));
+      radio.addEventListener('keydown', event => {
+        const step = {ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1}[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const next = options[(index + step + options.length) % options.length].id;
+        chooseTheme(next);
+        [...(group.children || [])].find(item => item.dataset.value === next)?.focus();
+      });
+      return radio;
+    });
+    group.dataset.options = options.map(option => option.id).join(' ');
+    group.replaceChildren(...radios);
+  }
   function chooseTheme(value) {
-    if (currentTheme() !== value) byId('theme')?.click();
+    if (window.KovaTheme) window.KovaTheme.set(value);
+    else if (currentTheme() !== value) byId('theme')?.click();
     syncTheme();
   }
   function syncTheme() {
+    const ids = themeOptions().map(option => option.id).join(' ');
     const value = currentTheme();
-    for (const radio of themeRadios) {
-      const checked = radio.dataset.value === value;
-      radio.setAttribute('aria-checked', String(checked));
-      radio.tabIndex = checked ? 0 : -1;
+    for (const group of themeGroups) {
+      // A theme file added or removed since the group was drawn redraws it.
+      if (group.dataset.options !== ids) fillTheme(group);
+      const radios = [...(group.children || [])];
+      const any = radios.some(radio => radio.dataset.value === value);
+      radios.forEach((radio, index) => {
+        const checked = radio.dataset.value === value;
+        radio.setAttribute('aria-checked', String(checked));
+        radio.tabIndex = checked || (!any && index === 0) ? 0 : -1;
+      });
     }
   }
+  document.addEventListener?.('kova:theme', () => syncTheme());
 
   // Rows follow their target: a control another script hides (Connect your
   // phone, on the phone itself) or disables (while offline) does the same here.

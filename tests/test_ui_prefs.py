@@ -59,7 +59,8 @@ def test_reasoning_preference_is_shared_with_the_ui(http):
 
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
-    ({"theme": "sepia"}, "must be one of"),
+    ({"theme": "Sepia Tone"}, "must be one of"),
+    ({"theme": "x"}, "installed theme id"),
     ({"reasoning": "expanded"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
@@ -132,7 +133,7 @@ def test_import_rejects_an_unknown_version(runner, tmp_path):
 def test_import_refuses_a_bad_value_without_changing_anything(runner, http, tmp_path):
     http.put("/preferences", json={"theme": "light"})
     target = tmp_path / "bad-value.json"
-    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "sepia"}}),
+    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "Sepia Tone"}}),
                       encoding="utf-8")
 
     result = runner.invoke(cli.app, ["prefs", "import", str(target)])

@@ -74,7 +74,16 @@ autostart.append(new Element('summary'), new Element('input'), new Element('p'),
 const reasoning = {value: 'shown',
   shown() { return this.value === 'shown'; },
   setShown(visible) { this.value = visible ? 'shown' : 'hidden'; }};
-const window = {KovaReasoning: reasoning};
+// A stand-in for theme.js: the choice, the picker's options and set().
+const themeEngine = {value: 'system', sets: [],
+  installed: [{id: 'midnight-teal', name: 'Midnight Teal', appearance: 'dark'}],
+  choice() { return this.value; },
+  choices() {
+    return [{id: 'system', name: 'System', appearance: 'dark'}, {id: 'light', name: 'Light', appearance: 'light'},
+      {id: 'dark', name: 'Dark', appearance: 'dark'}, ...this.installed.map(theme => ({...theme, source: 'file'}))];
+  },
+  set(value) { this.sets.push(value); this.value = value; }};
+const window = {KovaReasoning: reasoning, KovaTheme: themeEngine};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -196,15 +205,40 @@ for (const [index, target] of [[3, 'open-reminders'], [4, 'open-extensions'], [4
   assert.equal($(target).clicked, before + 1, `${target} is reachable from ${SECTIONS[index]}`);
 }
 
-// Theme is a real Dark/Light radio group that flips app.js's theme control.
-const radios = byClass(panels[0], 'settings-segment');
-assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio']);
-assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'dark is current');
+// Theme is one radio group: System, Light, Dark, then installed theme files (#174).
+let radios = byClass(panels[0], 'settings-segment');
+assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio', 'radio', 'radio']);
+assert.deepEqual(radios.map(radio => radio.textContent), ['System', 'Light', 'Dark', 'Midnight Teal']);
+assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'System is the default choice');
+assert.equal(radios[0].tabIndex, 0, 'the checked radio is the tab stop');
+assert.equal(radios[2].tabIndex, -1);
 const themeClicks = $('theme').clicked;
-radios[0].click();
-assert.equal($('theme').clicked, themeClicks, 'choosing the current theme does nothing');
 radios[1].click();
-assert.equal($('theme').clicked, themeClicks + 1, 'choosing Light asks app.js to switch');
+assert.deepEqual(themeEngine.sets, ['light'], 'choosing Light sets it through theme.js');
+assert.equal($('theme').clicked, themeClicks, 'the engine is used, not the old toggle');
+assert.equal(radios[1].getAttribute('aria-checked'), 'true');
+assert.equal(radios[0].getAttribute('aria-checked'), 'false');
+radios[1].dispatch('keydown', {key: 'ArrowRight'});
+assert.equal(themeEngine.value, 'dark', 'arrow keys move through the choices');
+assert.equal(document.activeElement, radios[2], 'and take focus with them');
+radios[3].dispatch('keydown', {key: 'ArrowRight'});
+assert.equal(themeEngine.value, 'system', 'the arrows wrap around');
+radios[3].click();
+assert.equal(themeEngine.value, 'midnight-teal', 'an installed theme is a choice like any other');
+// A theme file installed while Settings is open shows up the next time it syncs.
+themeEngine.installed.push({id: 'paper', name: 'Paper', appearance: 'light'});
+document.activeElement = sidebar;
+$('open-settings').click();
+radios = byClass(panels[0], 'settings-segment');
+assert.deepEqual(radios.map(radio => radio.textContent), ['System', 'Light', 'Dark', 'Midnight Teal', 'Paper']);
+assert.equal(radios[3].getAttribute('aria-checked'), 'true', 'the redrawn group keeps the choice');
+// A choice the picker does not list (a theme file missing here) leaves one tab stop.
+themeEngine.value = 'not-installed';
+$('open-settings').click();
+radios = byClass(panels[0], 'settings-segment');
+assert.equal(radios.filter(radio => radio.getAttribute('aria-checked') === 'true').length, 0);
+assert.equal(radios.filter(radio => radio.tabIndex === 0).length, 1, 'still reachable from the keyboard');
+themeEngine.value = 'system';
 
 // Reasoning is a real checkbox that flips the shared setting and reflects it
 // back from the module, never a value duplicated in this file.

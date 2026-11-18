@@ -228,3 +228,6 @@ body.settings-open { overflow: hidden; }
   .settings-page { animation: none; }
   .settings-tab, .settings-segment { transition: none; }
 }
+
+/* The theme picker grows with installed theme files; it wraps instead of overflowing. */
+.settings-theme { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }

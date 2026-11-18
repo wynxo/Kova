@@ -134,10 +134,15 @@ def install_web(app, require_bearer) -> None:
 
     @app.get("/app/manifest.webmanifest", include_in_schema=False)
     async def manifest():
-        from . import theme
+        from . import themes, ui_prefs
         data = json.loads((ASSETS / "manifest.webmanifest").read_text())
+        # The installed app's title bar and splash follow the chosen theme (#174).
+        try:
+            choice = app.state.preferences.read().get("theme")
+        except (AttributeError, ui_prefs.UiPrefsError):
+            choice = None
         data.update(name=app.state.config.persona_name, short_name=app.state.config.persona_name,
-                    theme_color=theme.ACCENT, background_color=theme.SURFACE)
+                    **themes.chrome_colours(choice, app.state.config.home))
         return JSONResponse(data, media_type="application/manifest+json")
 
     @app.get("/app/sw.js", include_in_schema=False)

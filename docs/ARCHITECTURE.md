@@ -341,8 +341,13 @@ only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows reasoning folded into "Thought for Ns" rows (hideable in Settings) and
 live tool rows, and listens to `/events` with
-`EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
+`EventSource` for reminders. The theme (`web_assets/theme.js`, #174) is one
+choice - `system`, `light`, `dark` or an installed theme file's id - kept in the
+shared `/preferences` document and cached in `localStorage`; it runs from `<head>`
+so the first frame is already right, sets `data-theme` for the built-in palette, and
+writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
+properties on `<html>`. The `theme-color` meta tag and the web manifest take the
+theme's `bg.base`. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
