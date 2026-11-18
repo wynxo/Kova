@@ -932,6 +932,20 @@ console.log('Inline rename, row menu and incognito mark passed');
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
 
+// The hairline follows the selected chat and clears when the next chat has
+// only an icon. An older cached appearance helper must not break opening chats.
+const topbar = new Element();
+sandbox.document.querySelector = selector => selector === '.topbar' ? topbar : null;
+sandbox.window.KovaChatAppearance = {};
+sandbox.test.setChat({id: 'demo', colour: 'accent'});
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat-appearance.js', import.meta.url), 'utf8'), sandbox);
+sandbox.test.setChat({id: 'demo', colour: 'accent'});
+assert.equal(topbar.dataset.chatColour, 'accent');
+sandbox.test.setChat({id: 'other', icon: 'moon'});
+assert.equal(topbar.dataset.chatColour, undefined);
+delete sandbox.window.KovaChatAppearance;
+delete sandbox.document.querySelector;
+
 // Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
 await sandbox.test.newChat(); controls();
 assert.equal($('new-incognito').hidden, false, 'the start screen offers an incognito chat');

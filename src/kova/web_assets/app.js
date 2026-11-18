@@ -550,6 +550,7 @@
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
   }
   function pageTitle() {
+    chatAppearance()?.decorateTopbar?.(state.chat);
     $('incognito-note').hidden = !state.chat?.ephemeral;
     $('chat-menu').hidden = !state.chat;
     $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New chat';
@@ -758,7 +759,7 @@
     const patch = await chatAppearance().openDialog(chat);
     if (!patch) return;
     const updated = await json(`/chats/${chat.id}`, write('PATCH', patch));
-    if (state.chat?.id === chat.id) Object.assign(state.chat, updated);
+    if (state.chat?.id === chat.id) { Object.assign(state.chat, updated); pageTitle(); }
     await refreshChats();
   }
   // A cached health answer is still useful, so say when it was measured.

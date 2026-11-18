@@ -2,14 +2,18 @@
  * theme token from tokens.css, so themes and the theme gallery recolour chat
  * rows without a code change. This file never hard-codes a colour. */
 
-.history-row[data-chat-colour="accent"] { --chat-colour: var(--accent-default); }
-.history-row[data-chat-colour="success"] { --chat-colour: var(--status-success); }
-.history-row[data-chat-colour="warning"] { --chat-colour: var(--status-warning); }
-.history-row[data-chat-colour="danger"] { --chat-colour: var(--status-danger); }
-.history-row[data-chat-colour="info"] { --chat-colour: var(--status-info); }
-.history-row[data-chat-colour="keyword"] { --chat-colour: var(--syntax-keyword); }
-.history-row[data-chat-colour="string"] { --chat-colour: var(--syntax-string); }
-.history-row[data-chat-colour="function"] { --chat-colour: var(--syntax-function); }
+[data-chat-colour="accent"] { --chat-colour: var(--accent-default); }
+[data-chat-colour="success"] { --chat-colour: var(--status-success); }
+[data-chat-colour="warning"] { --chat-colour: var(--status-warning); }
+[data-chat-colour="danger"] { --chat-colour: var(--status-danger); }
+[data-chat-colour="info"] { --chat-colour: var(--status-info); }
+[data-chat-colour="keyword"] { --chat-colour: var(--syntax-keyword); }
+[data-chat-colour="string"] { --chat-colour: var(--syntax-string); }
+[data-chat-colour="function"] { --chat-colour: var(--syntax-function); }
+
+/* One hairline under the title, in the chat's own colour. The sidebar row
+ * keeps the same token, so both change together with the theme. */
+.topbar[data-chat-colour] { border-bottom-color: var(--chat-colour); }
 
 /* The row is flex, so a leading mark lines up beside the open button. */
 .history-row > .chat-mark {
