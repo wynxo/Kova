@@ -800,3 +800,29 @@ def test_piped_cli_is_plain_with_ci_color_environment(args):
     assert result.returncode == 0, result.stderr
     assert result.stdout
     assert '\x1b[' not in result.stdout
+
+
+def test_projects_commands(runner, tmp_path):
+    cli_runner, client, _, _ = runner
+
+    def run(*args, **kwargs):
+        return cli_runner.invoke(cli.app, ["projects", *args], **kwargs)
+
+    empty = run("list")
+    assert empty.exit_code == 0 and "No projects yet" in empty.output
+    created = run("create", "Desk research", "--instructions", "Prefer primary sources.",
+                  "--folder", str(tmp_path))
+    assert created.exit_code == 0, created.output
+    [project] = client.list_projects()
+    project_id = project["id"]
+    assert project_id in created.output
+    listed = run("list")
+    assert listed.exit_code == 0 and "Desk research" in listed.output and project_id in listed.output
+    shown = run("show", project_id)
+    assert shown.exit_code == 0 and project["name"] in shown.output
+    assert "Prefer primary sources." in shown.output and str(tmp_path) in shown.output
+    cancelled = run("rm", project_id, input="n\n")
+    assert cancelled.exit_code == 0 and len(client.list_projects()) == 1
+    assert run("rm", project_id, "--yes").exit_code == 0
+    missing = run("show", project_id)
+    assert missing.exit_code == 1 and "No project" in missing.output

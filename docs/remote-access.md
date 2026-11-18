@@ -49,7 +49,7 @@ $ kova devices allow 3f9a1c2e models:write
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
 | `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder and start at login | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/… |
 | `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
-| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access | POST /jobs, DELETE /jobs/…, plus the agent rules below |
+| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access, manage shared project instructions | POST /jobs, DELETE /jobs/…, POST /projects, PATCH /projects/…, DELETE /projects/…, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
 command to run. Some things no capability unlocks, because they choose programs
@@ -105,6 +105,8 @@ same thing for the phone, so the limits follow the phone into the agent:
   for example through `core.fsmonitor`. Writing or restoring either (any letter
   case, also through a link) needs `host:exec`, even inside Kova Files. The
   terminal app also lists files with `core.fsmonitor` turned off.
+  Saved project instructions are shared with all chats in a project; phones
+  also need `host:exec` to create, edit or remove a project.
 - **The memory folder** is never a shared folder: if it sits inside Kova Files,
   file tools there need `host:exec`, like memory writes need `memory:write`.
 - **Recall:** searching past chats never returns a chat a phone wrote in to a

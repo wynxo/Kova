@@ -98,6 +98,9 @@ EXPECTED = {
     ("PATCH", "/memory/settings"): "settings:write",
     ("POST", "/jobs"): "host:exec",
     ("DELETE", "/jobs/{jid}"): "host:exec",
+    ("POST", "/projects"): "host:exec",
+    ("PATCH", "/projects/{project_id}"): "host:exec",
+    ("DELETE", "/projects/{project_id}"): "host:exec",
     ("POST", "/memory"): "memory:write",
     ("DELETE", "/memory/{slug}"): "memory:write",
     ("PATCH", "/memory/{slug}"): "memory:write",
@@ -787,3 +790,25 @@ def test_kova_devices_allow_and_deny(monkeypatch):
     assert runner.invoke(cli.app, ["devices", "allow", "nope", "models:write"]).exit_code != 0
     listing = runner.invoke(cli.app, ["devices"], env={"COLUMNS": "200"})
     assert listing.exit_code == 0 and "chat" in listing.output
+
+
+def test_phone_cannot_edit_shared_project_guidance_or_inherit_unshared_folder(kova, tmp_path):
+    client, app, local, phone, _ = kova
+    folder = tmp_path / "private-workspace"
+    folder.mkdir()
+    made = client.post("/projects", headers=local, json={"name": "Example", "cwd": str(folder)})
+    assert made.status_code == 200, made.text
+    project_id = made.json()["id"]
+    path = f"/projects/{project_id}"
+    assert client.post("/projects", headers=phone, json={"name": "Phone project"}).status_code == 403
+    assert client.patch(path, headers=phone, json={"instructions": "Untrusted"}).status_code == 403
+    assert client.delete(path, headers=phone).status_code == 403
+    assert client.post("/chats", headers=phone, json={"project_id": project_id}).status_code == 403
+
+    # An explicit shared cwd passes the normal chat settings check, and a
+    # project membership does not give a chat any more phone capabilities.
+    result = client.post("/chats", headers=phone, json={
+        "project_id": project_id, "cwd": str(app.state.config.files_path),
+    })
+    assert result.status_code == 200, result.text
+    assert app.state.store.chat_capabilities(result.json()["id"]) == {"chat", "models:read"}

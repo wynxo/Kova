@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 116 endpoints: 115 route handlers plus the static asset mount.
+The app exposes 122 endpoints: 121 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -116,7 +116,9 @@ cookie, so a route added to the router is authenticated by construction.
 | --- | --- | --- |
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
-| `GET/POST /chats` | token or session | list / create chats |
+| `GET/POST /projects` | token or session | list / create projects; writes need `host:exec` from a paired phone |
+| `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
+| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` when creating a persistent chat |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
@@ -289,7 +291,7 @@ writes need `memory:write`. The matrix is in
 A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
+`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
 `uv run kova "$@"` from the checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
@@ -456,19 +458,45 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
-- `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon
+- `projects` — id, name, instructions, optional cwd, created, updated
+- `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
+  optional project_id
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
   nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`)
+`colour`, `icon`, `project_id`)
 so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
 split into at most 12 de-duplicated words, and each chat contributes only its
 best hit, with a short snippet.
+
+### Projects
+
+Existing chats start ungrouped. New persistent chats can set `project_id` with
+`POST /chats`. An explicit chat `cwd` wins over the project folder; without
+either, the normal Kova Files default applies. The selected folder is stored on
+the chat, so changing or removing a project does not change existing working
+folders. Forks keep their project; deleting a project unsets the chat links
+without deleting transcripts or files. Incognito chats do not join projects.
+
+Each turn reads the current saved instructions from its project, including in
+Chat mode. Work mode also reads the usual folder guidance (`KOVA.md` and
+`AGENTS.md`). The two share the existing prompt budget, and neither grants
+tool permissions. A paired phone still needs the same permissions to inherit
+a folder as it would to select that folder explicitly.
+
+In the web sidebar, projects are collapsed by default above ungrouped chats.
+Use **New project** to set up shared instructions and an optional folder, then
+**New chat in project** inside that group. The CLI supports
+`kova projects list|create|show|rm`; show and rm take the ID from list.
+
+Project-scoped memory files, pinned files and moving existing chats between
+groups are follow-ups. Backup restore currently imports the chats ungrouped;
+round-tripping project definitions and membership is also a follow-up.
 
 ### Usage and cost
 
