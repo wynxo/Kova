@@ -32,8 +32,9 @@ def test_splitters_are_keyboard_operable_separators() -> None:
 
 
 def test_saved_widths_never_break_the_page_when_storage_is_blocked() -> None:
-    uses = len(re.findall(r"localStorage\.", PANES_JS))
-    guarded = re.findall(r"try\s*\{[^}]*localStorage\.[^}]*\}\s*catch", PANES_JS)
+    code = re.sub(r"//[^\n]*", "", PANES_JS)  # prose in comments mentions it too
+    uses = len(re.findall(r"localStorage\.", code))
+    guarded = re.findall(r"try\s*\{[^}]*localStorage\.[^}]*\}\s*catch", code)
     assert uses and sum(block.count("localStorage.") for block in guarded) == uses
 
 
