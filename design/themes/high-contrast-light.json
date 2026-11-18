@@ -1,0 +1,28 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "high-contrast-light",
+  "name": "High Contrast Light",
+  "version": "1.0.0",
+  "description": "Pure-white, black-text high-contrast light theme for low-vision and bright-room use. An untinted white background, black text, dark borders and a black accent chip.",
+  "appearance": "light",
+  "extends": "kova-light",
+  "tokens": {
+    "bg": {
+      "base": "#ffffff"
+    },
+    "fg": {
+      "default": "#000000"
+    },
+    "border": {
+      "subtle": "#9a9a9a",
+      "strong": "#4a4a4a"
+    },
+    "accent": {
+      "default": "#000000",
+      "hover": "#000000",
+      "pressed": "#1a1a1a",
+      "on": "#ffffff",
+      "soft": "rgba(0, 0, 0, 0.12)"
+    }
+  }
+}

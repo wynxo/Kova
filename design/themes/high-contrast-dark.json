@@ -1,0 +1,28 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "high-contrast-dark",
+  "name": "High Contrast Dark",
+  "version": "1.0.0",
+  "description": "Pure-black, pure-white high-contrast dark theme for low-vision and dim-room use. A flat black background, crisp white text, high-visibility borders and a white accent chip.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "bg": {
+      "base": "#000000"
+    },
+    "fg": {
+      "default": "#ffffff"
+    },
+    "border": {
+      "subtle": "#6b6b6b",
+      "strong": "#9a9a9a"
+    },
+    "accent": {
+      "default": "#ffffff",
+      "hover": "#ffffff",
+      "pressed": "#e6e6e6",
+      "on": "#000000",
+      "soft": "rgba(255, 255, 255, 0.12)"
+    }
+  }
+}
