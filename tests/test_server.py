@@ -592,6 +592,13 @@ def test_persona_api_rejects_invalid_identity_and_persists(server):
     assert load_config(cfg.home).persona_name == 'Nova'
 
 
+def test_a_fresh_app_knows_its_events_keepalive(tmp_path):
+    """create_app sets the /events ping interval itself; without it /events is a 500."""
+    from kova.server import EVENTS_KEEPALIVE
+    app = create_app(load_config(tmp_path / "home"))
+    assert app.state.events_keepalive == EVENTS_KEEPALIVE
+
+
 def test_events_stream_pings_so_a_dead_stream_can_be_noticed(tmp_path):
     """/events pings at once and on every quiet keepalive interval (#93)."""
     import socket

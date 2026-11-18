@@ -39,6 +39,29 @@ def without_comments(text: str) -> str:
     return re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 
 
+def test_markdown_module_ships_with_the_shell() -> None:
+    """markdown-view.js owns reply Markdown and defines window.KovaMarkdown, so
+    it must run before app.js; its stylesheet wins over the transcript shell and
+    both files are part of the offline shell."""
+    html = INDEX.read_text(encoding="utf-8")
+    worker = (ASSETS / "sw.js").read_text(encoding="utf-8")
+    assert html.index("markdown.css") > html.index("app.css"), \
+        "markdown.css must win the cascade over app.css"
+    assert html.index("markdown-view.js") < html.index("app.js"), \
+        "markdown-view.js must define window.KovaMarkdown before app.js"
+    assert "/app/assets/markdown.css" in worker and "/app/assets/markdown-view.js" in worker
+    css = (ASSETS / "markdown.css").read_text(encoding="utf-8")
+    assert COLOUR_LITERAL.findall(without_comments(css)) == [], \
+        "markdown.css hard-codes a colour; use a token"
+    for rule in ("position:sticky", ":nth-child(even)", "overflow:auto", "li.task-item"):
+        assert rule in css, f"markdown.css lost {rule}"
+    script = (ASSETS / "markdown-view.js").read_text(encoding="utf-8")
+    assert "window.KovaMarkdown" in script
+    assert "hasOpenFence" in script, "the streaming fence check moved or vanished"
+    app = APP_JS.read_text(encoding="utf-8")
+    assert "window.KovaMarkdown?.render" in app, "app.js does not delegate Markdown rendering"
+
+
 def test_popover_search_has_a_visible_keyboard_focus_ring() -> None:
     css = (ASSETS / "app.css").read_text(encoding="utf-8")
     focus = re.search(r"\.popover-search:focus-visible\s*\{([^}]+)\}", css)

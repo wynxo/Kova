@@ -1,0 +1,36 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "description": "A classic green-phosphor terminal: near-black neutral surfaces, a soft green for body text, dimmer greens for secondary copy, and a bright green accent with black-on text. Status colours keep their own meanings.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "bg": {
+      "base": "#0c0d0c",
+      "surface": "#161817",
+      "raised": "#1f2120"
+    },
+    "fg": {
+      "default": "#38c15a",
+      "muted": "#2f9e4f",
+      "faint": "#267d40"
+    },
+    "border": {
+      "subtle": "#204f2e",
+      "strong": "#2a8643"
+    },
+    "accent": {
+      "default": "#22ff5c",
+      "hover": "#55ff8f",
+      "pressed": "#1ae34d",
+      "on": "#0d0c13",
+      "soft": "rgba(34, 255, 92, 0.14)"
+    },
+    "syntax": {
+      "keyword": "#7ee28a",
+      "comment": "#357f4e"
+    }
+  }
+}

@@ -8,9 +8,12 @@
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/markdown.css">
+  <link rel="stylesheet" href="/app/assets/code-header.css">
   <link rel="stylesheet" href="/app/assets/toast.css">
   <link rel="stylesheet" href="/app/assets/tool-cards.css">
   <link rel="stylesheet" href="/app/assets/diff.css">
+  <link rel="stylesheet" href="/app/assets/panes.css">
   <style>
     /* Layout only. Every colour comes from the semantic tokens in tokens.css;
        this page only pins the states that CSS otherwise reads from the
@@ -118,6 +121,18 @@
     .gallery-toasts .toast { animation:none; }
     .gallery-messages { display:grid; gap:16px; width:100%; max-width:var(--type-measure-chat); }
     .gallery-messages .message-actions { opacity:1; }
+    /* The pane samples sit in a frame instead of across the whole window. */
+    .gallery-panes {
+      display:grid; grid-template-columns:var(--space-12) var(--pane-splitter-hit) minmax(0, 1fr) var(--pane-splitter-hit) minmax(0, 1.4fr);
+      height:calc(var(--space-12) * 5); overflow:hidden;
+      border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-base);
+    }
+    .gallery-panes .gallery-pane-stub { background:var(--bg-surface); }
+    .gallery-panes .gallery-pane-chat { padding:var(--space-3); color:var(--fg-muted); font-size:var(--type-size-label); }
+    .gallery-panes .pane-splitter { position:relative; inset:auto; height:100%; }
+    .gallery-panes .side-panel { grid-column:auto; grid-row:auto; animation:none; }
+    .gallery-panes .pane-splitter[data-state="hover"]::after { background:var(--border-strong); }
+    .gallery-panes .pane-splitter[data-state="focus"]::after { background:var(--accent-default); }
     .gallery-spinner-row { display:flex; align-items:center; gap:8px; color:var(--fg-faint); font-size:14px; }
   </style>
 </head>
@@ -372,18 +387,30 @@
               <div class="message-body">
                 <div class="markdown">
                   <h2>Notes</h2>
-                  <p>Three points, with <code>inline code</code> and a <a href="/app/gallery">link</a>:</p>
+                  <p>Three points, with <code>inline code</code> and a <a href="/app/gallery">link</a><sup class="fn-ref" id="demo-fnref-1"><a href="#demo-fn-1" aria-label="Footnote 1">1</a></sup>:</p>
+                  <h3>A subheading</h3>
                   <ul>
                     <li>First point with <strong>strong</strong> text</li>
                     <li>Second point with <em>emphasis</em></li>
                   </ul>
+                  <ul>
+                    <li class="task-item">Done <input class="task-box" type="checkbox" checked disabled aria-label="Done"></li>
+                    <li class="task-item">Next <input class="task-box" type="checkbox" disabled aria-label="Not done"></li>
+                  </ul>
                   <blockquote><p>Quoted context stays indented and muted.</p></blockquote>
-                  <pre><code><span class="hljs-keyword">const</span> <span class="hljs-title">total</span> = <span class="hljs-number">3</span>;
+                  <pre><div class="code-bar"><span class="code-lang">js</span><div class="code-actions"><button class="code-action wrap-code" type="button" aria-label="Wrap long lines" aria-pressed="false"><span>Wrap</span></button><button class="code-action copy-code" type="button" aria-label="Copy code"><span class="icon i-copy" aria-hidden="true"></span><span>Copy</span></button></div></div><code><span class="hljs-keyword">const</span> <span class="hljs-title">total</span> = <span class="hljs-number">3</span>;
 <span class="hljs-title">total</span>.<span class="hljs-title">toFixed</span>(<span class="hljs-number">1</span>); <span class="hljs-comment">// one decimal</span></code></pre>
-                  <div class="table-wrap"><table>
-                    <thead><tr><th>Point</th><th>Status</th></tr></thead>
-                    <tbody><tr><td>First</td><td>Done</td></tr><tr><td>Second</td><td>Next</td></tr></tbody>
-                  </table></div>
+                  <div class="table-wrap" role="region" aria-label="Table" tabindex="0">
+                    <table>
+                      <thead><tr><th>Point</th><th>Status</th></tr></thead>
+                      <tbody><tr><td>First</td><td>Done</td></tr><tr><td>Second</td><td>Next</td></tr></tbody>
+                    </table>
+                  </div>
+                  <section class="footnotes" aria-label="Footnotes">
+                    <ol>
+                      <li id="demo-fn-1"><p>A note under a hairline. <a class="fn-back" href="#demo-fnref-1" aria-label="Back to reference 1">↩</a></p></li>
+                    </ol>
+                  </section>
                 </div>
                 <div class="message-actions">
                   <button class="message-action" type="button" aria-label="Copy reply"><span class="icon i-copy" aria-hidden="true"></span></button>
@@ -430,17 +457,65 @@
 
         <article class="gallery-item">
           <h3>Tool cards <code>.tool-card</code></h3>
-          <div class="gallery-demo block"><span class="gallery-label">Done</span>
-            <details class="tool-card" open>
-              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">done</span></summary>
-              <div class="tool-card-rows"><pre>2 results in 1.2s</pre></div>
-            </details>
+          <div class="gallery-demo block"><span class="gallery-label">Running, then done</span>
+            <div class="tool-card open" role="group" aria-label="Tool calls">
+              <button type="button" class="tool-card-summary" aria-expanded="true" aria-controls="gallery-tools-done">
+                <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                <span class="tool-card-summary-text">Ran 2 tools · 1.4s</span>
+                <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="tool-card-rows" id="gallery-tools-done">
+                <div class="tool-card-step open">
+                  <button type="button" class="tool-card-title" aria-expanded="true" aria-controls="gallery-step-search">
+                    <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                    <span class="tool-card-name">Web search</span>
+                    <span class="tool-card-hint">quiet kettle</span>
+                    <span class="tool-card-time">1.2s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-search">
+                    <pre class="tool-card-input">query: quiet kettle</pre>
+                    <pre class="tool-card-output">2 results in 1.2s</pre>
+                  </div>
+                </div>
+                <div class="tool-card-step">
+                  <button type="button" class="tool-card-title" aria-expanded="false" aria-controls="gallery-step-read">
+                    <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                    <span class="tool-card-name">Read file</span>
+                    <span class="tool-card-hint">notes.md</span>
+                    <span class="tool-card-time">0.2s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-read" hidden>
+                    <pre class="tool-card-output">Oat flat white, no sugar.</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="gallery-demo block"><span class="gallery-label">Error</span>
-            <details class="tool-card" open>
-              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">failed</span></summary>
-              <div class="tool-card-rows"><p class="tool-card-error">The search did not answer. Retry.</p></div>
-            </details>
+          <div class="gallery-demo block"><span class="gallery-label">Failed, stays visible when folded</span>
+            <div class="tool-card" role="group" aria-label="Tool calls">
+              <button type="button" class="tool-card-summary" aria-expanded="false" aria-controls="gallery-tools-failed">
+                <span class="icon i-triangle-alert tool-card-mark failed" aria-hidden="true"></span>
+                <span class="tool-card-summary-text">Ran 2 tools · 3.8s · 1 failed</span>
+                <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="tool-card-rows" id="gallery-tools-failed" hidden>
+                <div class="tool-card-step failed">
+                  <button type="button" class="tool-card-title" aria-expanded="false" aria-controls="gallery-step-fetch">
+                    <span class="icon i-triangle-alert tool-card-mark failed" aria-hidden="true"></span>
+                    <span class="tool-card-name">Web fetch</span>
+                    <span class="tool-card-hint">example.com</span>
+                    <span class="tool-card-time">3.6s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-fetch" hidden>
+                    <pre class="tool-card-output">The page did not answer.</pre>
+                  </div>
+                </div>
+              </div>
+              <div class="tool-card-failures"><p class="tool-card-error">web_fetch: The page did not answer.</p></div>
+            </div>
           </div>
         </article>
 
@@ -488,6 +563,32 @@
           </div>
           <div class="gallery-demo"><span class="gallery-label">Activity</span>
             <div class="activity"><span class="spinner" aria-hidden="true"></span><span class="shimmer">Thinking…</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-panes">
+      <h2 id="gallery-panes">Panes</h2>
+      <p>The sidebar and side panel splitters (<code>panes.css</code>) and the side panel
+        that <code>window.KovaPanel.open({title, node})</code> shows. In the app a splitter is a
+        hairline until it is hovered, dragged or focused. On phones there are no splitters and
+        the panel is a full-screen sheet.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>Sidebar, chat and side panel <code>.pane-splitter .side-panel</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Sidebar splitter hovered, panel splitter focused</span>
+            <div class="gallery-panes">
+              <div class="gallery-pane-stub" aria-hidden="true"></div>
+              <div class="pane-splitter" data-state="hover" aria-hidden="true"></div>
+              <div class="gallery-pane-chat">Conversation</div>
+              <div class="pane-splitter" data-state="focus" aria-hidden="true"></div>
+              <aside class="side-panel" aria-label="Sample side panel">
+                <header class="side-panel-head"><h2 class="side-panel-title">python · 240 lines</h2><button type="button" class="icon-button side-panel-close" aria-label="Close panel"><span class="icon i-x" aria-hidden="true"></span></button></header>
+                <div class="side-panel-body"><div class="markdown side-panel-code"><pre><code class="language-python">def brew(cup):
+    return cup.fill("oat flat white")</code></pre></div></div>
+              </aside>
+            </div>
           </div>
         </article>
       </div>

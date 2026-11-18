@@ -30,6 +30,8 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   removeAttribute(key) { delete this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
+  dispatch(type, event = {}) { this.listeners[type]?.(event); }
+  select() {}
   querySelectorAll(selector) {
     return selector === '.option-group' ? walk(this).filter(n => n.className === 'option-group') : [];
   }
@@ -67,7 +69,11 @@ const sandbox = {
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
   performance, URLSearchParams, TextDecoder, AbortController, console, FormData, File, innerWidth: 1200, innerHeight: 800,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
-  localStorage: {getItem(key) {return prefs.get(key) ?? 'dark';}, setItem(key, value) {prefs.set(key, value);}},
+  localStorage: {
+    getItem: key => prefs.get(key) ?? (key === 'kova-theme' ? 'dark' : null),
+    setItem: (key, value) => { prefs.set(key, String(value)); },
+    removeItem: key => { prefs.delete(key); },
+  },
   fetch: async (path, options = {}) => {
     const form = options.body instanceof FormData ? options.body : null;
     const body = !form && options.body ? JSON.parse(options.body) : null;
@@ -120,7 +126,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, inlineRename};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -134,6 +140,7 @@ vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/composer-history
   readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/code-header.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/drafts.js', import.meta.url), 'utf8') + '\n' +
   source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -900,8 +907,70 @@ buttons(rowFor('Older')).find(button => button.textContent === 'Unpin').onclick(
 await tick(); await tick();
 assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
 assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+
+// Inline rename and the row menu (#195). Double-click swaps only the title for
+// an input; Enter saves through the same PATCH the menu uses, Escape sends
+// nothing, and a right-click opens the menu the ellipsis owns.
+const todayChat = groupedChats.find(chat => chat.id === 'today');
+const todayRow = rowFor('Today');
+const todayOpen = buttons(todayRow).find(button => button.className === 'history-open');
+const originalSetTimeout = sandbox.setTimeout, originalClearTimeout = sandbox.clearTimeout;
+const clickTimers = new Map();
+let nextClickTimer = 0;
+sandbox.setTimeout = fn => { clickTimers.set(++nextClickTimer, fn); return nextClickTimer; };
+sandbox.clearTimeout = id => clickTimers.delete(id);
+const beforeDoubleClick = requests.length;
+todayOpen.onclick({detail: 1});
+await tick();
+assert.equal(requests.length, beforeDoubleClick, 'the first click waits for a possible double-click');
+todayOpen.onclick({detail: 2});
+todayOpen.dispatch('dblclick', {preventDefault() {}});
+assert.equal(clickTimers.size, 0, 'double-click cancels navigation');
+sandbox.setTimeout = originalSetTimeout;
+sandbox.clearTimeout = originalClearTimeout;
+const rename = walk(todayRow).find(node => node.className === 'history-rename');
+assert.ok(rename, 'the title becomes one editable input');
+assert.equal(rename.value, 'Today');
+rename.value = '  Renamed today  ';
+rename.listeners.keydown({key: 'Enter', preventDefault() {}});
+await tick(); await tick();
+assert.deepEqual(requests.at(-1), {path: '/chats/today', body: {title: 'Renamed today'}});
+assert.ok(rowFor('Renamed today'), 'the sidebar shows the new title');
+sandbox.test.history(groupedChats);
+const escaped = buttons(rowFor('Renamed today')).find(button => button.className === 'history-open');
+const before = requests.length;
+const renamedRow = rowFor('Renamed today');
+sandbox.test.inlineRename(todayChat, escaped);
+walk(renamedRow).find(node => node.className === 'history-rename')
+  .listeners.keydown({key: 'Escape', preventDefault() {}});
+await tick();
+assert.equal(requests.length, before, 'Escape saves nothing');
+assert.ok(rowFor('Renamed today'), 'Escape restores the previous title');
+const menuRow = rowFor('Yesterday');
+menuRow.dispatch('contextmenu', {preventDefault() {}});
+assert.equal(byClass(menuRow, 'history-actions')[0].open, true, 'right-click opens the row menu');
+state.chats = [...groupedChats, {id: 'secret', title: 'Incognito', ephemeral: true, last_message: at(0)}];
+sandbox.test.history(state.chats);
+assert.ok(walk(rowFor('Incognito')).some(node => node.className === 'icon i-eye-off'),
+          'an incognito row carries its icon');
+console.log('Inline rename, row menu and incognito mark passed');
+
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
+
+// The hairline follows the selected chat and clears when the next chat has
+// only an icon. An older cached appearance helper must not break opening chats.
+const topbar = new Element();
+sandbox.document.querySelector = selector => selector === '.topbar' ? topbar : null;
+sandbox.window.KovaChatAppearance = {};
+sandbox.test.setChat({id: 'demo', colour: 'accent'});
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat-appearance.js', import.meta.url), 'utf8'), sandbox);
+sandbox.test.setChat({id: 'demo', colour: 'accent'});
+assert.equal(topbar.dataset.chatColour, 'accent');
+sandbox.test.setChat({id: 'other', icon: 'moon'});
+assert.equal(topbar.dataset.chatColour, undefined);
+delete sandbox.window.KovaChatAppearance;
+delete sandbox.document.querySelector;
 
 // Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
 await sandbox.test.newChat(); controls();
@@ -932,6 +1001,34 @@ assert.equal($('incognito-note').hidden, true);
 assert.ok(requests.slice(beforeClose).filter(r => r.path === `/chats/${closedId}`).length >= 2);
 console.log('Incognito entry, marking, upload prevention, fork refusal and cleanup passed');
 
+// An unsent message belongs to its chat and comes back when it is reopened;
+// incognito text never reaches browser storage (#197).
+state.busy = false; state.chat = null;
+const draftChat = {id: 'draft-a', title: 'Draft A', mode: 'work', permission: 'manual', messages: []};
+const draftOther = {id: 'draft-b', title: 'Draft B', mode: 'work', permission: 'manual', messages: []};
+setChat(draftChat);
+$('prompt').value = 'keep this until I return';
+setChat(draftOther);
+assert.equal($('prompt').value, '', 'another chat starts on its own draft');
+$('prompt').value = 'second draft';
+setChat(draftChat);
+assert.equal($('prompt').value, 'keep this until I return', 'the first draft comes back');
+setChat(draftOther);
+assert.equal($('prompt').value, 'second draft');
+setChat({id: 'incognito-draft', ephemeral: true, title: 'Incognito', mode: 'chat', web: false, messages: []});
+$('prompt').value = 'private draft';
+setChat(null);
+assert.equal(sandbox.KovaDrafts.read({id: 'incognito-draft', ephemeral: true}), '',
+             'an incognito draft is never stored');
+setChat(draftChat);
+assert.equal($('prompt').value, 'keep this until I return', 'other drafts survive the excursion');
+$('prompt').value = '/new';
+$('prompt').listeners.input();
+await sandbox.test.send({preventDefault() {}});
+assert.equal(sandbox.KovaDrafts.read(draftChat), '', 'a submitted slash command does not become a draft on navigation');
+setChat(null); $('prompt').value = '';
+console.log('Per-chat drafts and the incognito exclusion passed');
+
 // Sending a message: earlier checks only sent while busy (the queue path) or a
 // slash command, so a broken sendText went unnoticed. Errors inside it become a
 // toast, so this asserts the request itself went out.
@@ -948,9 +1045,22 @@ console.log('Incognito entry, marking, upload prevention, fork refusal and clean
   assert.equal('queued' in sent[0].body, false);
   assert.equal(state.busy, false, 'the turn finished cleanly');
 
+  state.chat = {id: 'send-chat'};
+  $('prompt').value = 'try this again';
+  $('prompt').listeners.input();
+  sandbox.fetch = async (path, options) => path === '/chats/send-chat/messages'
+    ? {ok: false, status: 409, json: async () => ({detail: 'Try again'})}
+    : oldFetch(path, options);
+  await sandbox.test.send({preventDefault() {}});
+  assert.equal($('prompt').value, 'try this again', 'a rejected send restores the unsent text');
+  assert.equal(sandbox.KovaDrafts.read({id: 'send-chat'}), 'try this again');
+  sandbox.fetch = oldFetch;
+
   // A message a paired phone queued is sent exactly as queued, bound to its row,
   // without this window's pending attachments or command parsing.
   state.chat = {id: 'send-chat'};
+  $('prompt').value = 'still writing';
+  $('prompt').listeners.input();
   sandbox.test.pendingAttachments.push({id: 'local-file', chat_id: 'send-chat', name: 'mine.txt', size: 1, pages: null});
   nextQueued.push({id: 41, text: '/model other', remote: true});
   const beforeQueued = requests.length;
@@ -959,6 +1069,8 @@ console.log('Incognito entry, marking, upload prevention, fork refusal and clean
   assert.equal(queued.length, 1, 'a remote queued row is sent, not dispatched as a slash command');
   assert.deepEqual([queued[0].body.text, queued[0].body.queued, queued[0].body.attachments], ['/model other', 41, []]);
   assert.equal(sandbox.test.pendingAttachments.length, 1, 'local attachments stay for the user');
+  assert.equal($('prompt').value, 'still writing', 'processing the queue does not take over the composer');
+  assert.equal(sandbox.KovaDrafts.read({id: 'send-chat'}), 'still writing');
   sandbox.test.pendingAttachments.splice(0);
   console.log('Sending a message and a phone-queued message passed');
 }
