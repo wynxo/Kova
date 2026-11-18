@@ -344,7 +344,11 @@ live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
 stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
-`pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
+`pinned` lives on the chat, so every client shows the same order. The header
+carries one activity entry: a dot and count while any chat is `working` or
+`blocked-on-approval`, fed by the same `conversation_state` events, with Open
+and Stop for each row and a short recently-finished list; it hides when nothing
+runs. Model downloads stay in their own panel. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
 finished reply only chimes while the window is unfocused.

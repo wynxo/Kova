@@ -59,6 +59,10 @@
     <header class="topbar">
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New chat</strong>
+      <div class="activity-wrap">
+        <button id="activity" type="button" class="icon-button activity-button" aria-label="Activity" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-panel" hidden><span id="activity-dot" class="activity-dot" aria-hidden="true"></span><span id="activity-count" class="activity-count" hidden></span></button>
+        <div id="activity-panel" class="activity-panel" role="dialog" aria-label="Activity" hidden></div>
+      </div>
       <details id="chat-menu" class="chat-menu" hidden><summary class="icon-button" aria-label="Chat actions" title="Chat actions"><span class="icon i-ellipsis" aria-hidden="true"></span></summary><div class="chat-menu-list"><button id="compact-now" type="button" class="nav-row">Compact now</button></div></details>
     </header>
     <p id="incognito-note" class="incognito-note" role="status" hidden><span class="icon i-eye-off" aria-hidden="true"></span>Incognito: not saved on this PC. Your provider still receives messages, and tools and attachments are off.</p>

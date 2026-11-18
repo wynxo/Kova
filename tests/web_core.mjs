@@ -106,7 +106,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, noteChatState, renderActivity, activityPanel};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -819,6 +819,51 @@ assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
 assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
+
+// The activity center sees replies that run outside this window, offers Stop,
+// and keeps a short recently-finished list (#191).
+state.activity.clear(); state.finishedActivity = []; state.activityStarted = {};
+state.chats = [];
+sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.renderActivity();
+assert.equal($('activity').hidden, false, 'a running reply shows the indicator');
+assert.equal($('activity').dataset.active, 'true');
+assert.equal($('activity-count').textContent, '1');
+assert.equal($('activity').getAttribute('aria-label'), 'Activity: 1 running');
+sandbox.test.activityPanel(true);
+assert.equal($('activity-panel').hidden, false);
+assert.equal($('activity').getAttribute('aria-expanded'), 'true');
+assert.ok($('activity-panel').textContent.includes('Background reply'));
+assert.ok($('activity-panel').textContent.includes('Working'));
+const activityStop = buttons($('activity-panel')).find(button => button.textContent === 'Stop');
+assert.ok(activityStop, 'a running reply can be stopped from the panel');
+activityStop.onclick();
+await tick(); await tick();
+assert.ok(requests.slice(-3).some(row => row.path === '/chats/background-1/stop'), 'Stop reaches the server');
+sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.renderActivity();
+// An approval that waits is said in words, because it needs the person.
+sandbox.test.noteChatState('background-2', 'blocked-on-approval', 'Needs a decision');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').textContent, '2');
+assert.ok($('activity-panel').textContent.includes('Needs your answer'));
+// A finished reply leaves the count but stays visible for a while.
+sandbox.test.noteChatState('background-1', 'done');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').textContent, '1');
+assert.equal($('activity').dataset.active, 'true');
+sandbox.test.noteChatState('background-2', 'done');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').hidden, true);
+assert.equal($('activity').dataset.active, 'false');
+assert.equal($('activity').hidden, false, 'recent results keep the entry reachable');
+assert.ok($('activity-panel').textContent.includes('Recently finished'));
+sandbox.test.activityPanel(false);
+assert.equal($('activity-panel').hidden, true);
+state.activity.clear(); state.finishedActivity = []; state.activityStarted = {};
+sandbox.test.renderActivity();
+assert.equal($('activity').hidden, true, 'nothing running and nothing recent hides it again');
+console.log('Activity center for background replies and waiting approvals passed');
 
 // Incognito starts from the + menu on the start screen; inside a chat the item steps aside.
 await sandbox.test.newChat(); controls();

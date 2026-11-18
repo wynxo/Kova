@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false};
   let autostartBusy = false;
   async function refreshAutostart(action) {
     if (autostartBusy) return;
@@ -334,6 +334,101 @@
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
   // working when it is missing, so every hook below guards its presence.
   const chatAppearance = () => window.KovaChatAppearance || null;
+  // Activity center (#191): every reply running outside this window and every
+  // chat that needs an answer, in one place. It is fed by the same
+  // conversation_state events as the sidebar dots, so a turn started in another
+  // client appears here too. Downloads stay in their own panel.
+  function activityAge(started) {
+    const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+    return seconds < 90 ? `${Math.max(1, seconds)}s` : `${Math.round(seconds / 60)} min`;
+  }
+  function noteChatState(id, next, title = '', ephemeral = false) {
+    const previous = state.activity.get(id);
+    const wasRunning = previous && (previous.state === 'working' || previous.state === 'blocked-on-approval');
+    const running = next === 'working' || next === 'blocked-on-approval';
+    if (running && !state.activityStarted[id]) state.activityStarted[id] = Date.now();
+    if (!running && wasRunning) {
+      state.finishedActivity.unshift({id, title: previous.title || title || 'Conversation', at: Date.now()});
+      state.finishedActivity = state.finishedActivity.slice(0, 3);
+      delete state.activityStarted[id];
+    }
+    state.activity.set(id, {title: title || previous?.title || '', state: next, ephemeral: Boolean(ephemeral || previous?.ephemeral)});
+  }
+  function activityRows() {
+    return [...state.activity.entries()]
+      .filter(([, item]) => item.state === 'working' || item.state === 'blocked-on-approval')
+      .map(([id, item]) => ({id, ...item}));
+  }
+  function activityName(row) {
+    return row.title || (row.ephemeral ? 'Incognito' : 'New conversation');
+  }
+  function renderActivity() {
+    const button = $('activity'), count = $('activity-count'), panel = $('activity-panel');
+    const now = Date.now();
+    state.finishedActivity = state.finishedActivity.filter(item => now - item.at < 120000);
+    const rows = activityRows();
+    button.hidden = !rows.length && !state.finishedActivity.length;
+    button.dataset.active = String(rows.length > 0);
+    button.setAttribute('aria-label', rows.length ? `Activity: ${rows.length} running` : 'Activity: recent results');
+    count.hidden = !rows.length;
+    count.textContent = rows.length ? String(rows.length) : '';
+    if (!state.activityOpen) return;
+    panel.replaceChildren();
+    const head = el('div', 'activity-head');
+    head.append(el('strong', '', 'Activity'));
+    const close = iconButton('x', 'Close activity');
+    close.onclick = () => activityPanel(false);
+    head.append(close);
+    panel.append(head);
+    if (!rows.length && !state.finishedActivity.length) panel.append(el('p', 'panel-empty', 'Nothing is running.'));
+    for (const row of rows) {
+      const item = el('div', 'activity-row');
+      const info = el('div', 'activity-info');
+      const title = el('strong', 'activity-name', activityName(row));
+      const stateLine = el('span', 'activity-state', row.state === 'blocked-on-approval'
+        ? 'Needs your answer'
+        : `Working · ${activityAge(state.activityStarted[row.id] || now)}`);
+      info.append(title, stateLine);
+      const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
+      open.setAttribute('aria-label', `Open ${activityName(row)}`);
+      open.onclick = () => { activityPanel(false); safe(() => openChat(row.id)); };
+      const stop = el('button', 'btn quiet small', 'Stop'); stop.type = 'button';
+      stop.setAttribute('aria-label', `Stop ${activityName(row)}`);
+      stop.onclick = () => safe(async () => {
+        await json(`/chats/${row.id}/stop`, {method: 'POST'});
+        await refreshChats();
+      });
+      const actions = el('div', 'activity-actions'); actions.append(open, stop);
+      item.append(info, actions); panel.append(item);
+    }
+    if (state.finishedActivity.length) {
+      panel.append(el('div', 'activity-group', 'Recently finished'));
+      for (const item of state.finishedActivity) {
+        const row = el('div', 'activity-row');
+        const info = el('div', 'activity-info');
+        info.append(el('strong', 'activity-name', item.title), el('span', 'activity-state', 'Finished'));
+        const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
+        open.setAttribute('aria-label', `Open ${item.title}`);
+        open.onclick = () => { activityPanel(false); safe(() => openChat(item.id)); };
+        row.append(info, open); panel.append(row);
+      }
+    }
+  }
+  let activityTimer = null;
+  function activityPanel(open) {
+    state.activityOpen = open;
+    $('activity-panel').hidden = !open;
+    $('activity').setAttribute('aria-expanded', String(open));
+    if (open) renderActivity();
+    if (open && !activityTimer && typeof globalThis.setInterval === 'function') activityTimer = setInterval(renderActivity, 1000);
+    if (!open && activityTimer) { globalThis.clearInterval?.(activityTimer); activityTimer = null; }
+  }
+  $('activity').onclick = () => activityPanel(!state.activityOpen);
+  // A pin/search only changes the sidebar list; activity keeps the last state
+  // of every chat it has seen, so filtering cannot hide a running reply.
+  function absorbChatState(chat) {
+    noteChatState(chat.id, chat.state, chat.title, chat.ephemeral);
+  }
   function history(chats) {
     const list = $('chat-list');
     list.replaceChildren();
@@ -386,7 +481,17 @@
     const query = $('search').value.trim();
     const chats = await json(query ? `/chats/search?q=${encodeURIComponent(query)}` : '/chats');
     if (version !== state.searchVersion) return;
-    state.chats = chats; history(chats);
+    state.chats = chats;
+    // A full list is also the moment a chat deleted elsewhere disappears from
+    // activity; a search result must not hide the others.
+    if (!query) {
+      const live = new Set(chats.map(chat => chat.id));
+      for (const id of [...state.activity.keys()]) {
+        if (!live.has(id)) { state.activity.delete(id); delete state.activityStarted[id]; }
+      }
+    }
+    for (const chat of chats) absorbChatState(chat);
+    history(chats); renderActivity();
   }
   (function privacyPanel() {
     const dialog = el('dialog', 'panel privacy-dialog');
@@ -638,6 +743,7 @@
   async function discardIncognito() {
     if (state.chat?.ephemeral) {
       await json(`/chats/${state.chat.id}`, {method: 'DELETE'});
+      state.activity.delete(state.chat.id); delete state.activityStarted[state.chat.id]; renderActivity();
       // Never carry an unsent private draft into a saved conversation.
       $('prompt').value = ''; resize();
     }
@@ -668,6 +774,7 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
+      state.activity.delete(chat.id); delete state.activityStarted[chat.id]; renderActivity();
       if (state.chat?.id === chat.id) setChat(null);
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
@@ -1402,7 +1509,8 @@
     'toggle-theme': () => $('theme').onclick?.(),
     'focus-composer': () => $('prompt').focus(),
     'stop-reply': () => {
-      if (document.body.classList.contains('sidebar-open')) sidebar(false);
+      if (state.activityOpen) activityPanel(false);
+      else if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
       else return false;
     },
@@ -1576,7 +1684,7 @@
       if (live.lost) { live.lost = false; safe(resync); }
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
-    source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
+    source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } noteChatState(update.chat_id, update.state, chat?.title, chat?.ephemeral); renderActivity(); } catch (_) {} });
     source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
@@ -2609,6 +2717,7 @@
     if (next && !optionsPanel.contains(next) && next !== optionsButton && !next.closest?.('.popover')) options(false);
   });
   document.addEventListener('pointerdown', event => {
+    if (state.activityOpen && !event.target.closest?.('.activity-wrap')) activityPanel(false);
     if (popup && !popup.node.contains(event.target) && !popup.owner.button.contains(event.target)) closeMenu();
     const inside = node => node.contains(event.target);
     if (!moreMenu.hidden && !inside(moreMenu) && !inside(moreButton)) more(false);
