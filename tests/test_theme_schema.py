@@ -87,6 +87,14 @@ def test_a_theme_that_hides_its_text_fails_contrast() -> None:
     assert all("4.5:1" in f for f in failures), failures
 
 
+def test_theme_override_cannot_hide_status_text_on_a_raised_card() -> None:
+    # This grey passes on bg.surface (4.94:1) but fails on bg.raised (4.35:1).
+    theme = _theme(tokens={"status": {"success": "#8a8a8a"}})
+    failures = validator.check_theme(theme)
+    assert any("status.success on bg.raised" in error for error in failures)
+    assert not any("status.success on bg.surface" in error for error in failures)
+
+
 def test_a_readable_override_passes_contrast() -> None:
     theme = _theme(tokens={"accent": {"default": "#2dd4bf", "on": "#04201c"}})
     assert validator.check_theme(theme) == []
