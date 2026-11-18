@@ -521,6 +521,12 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 Skills are Kova's procedural memory: one Markdown file each, with a one-line description that sits in the prompt and instructions loaded only when needed. Kova writes the ones it learns into `~/.kova/skills/Kova/`; files you put elsewhere in `~/.kova/skills/` are read but never rewritten by the model. `kova skills list|show|rm`, or **Extensions → Installed** in the app, shows every skill with where it came from, and lets you read, edit and delete it. More skills and plugins come from the catalog: `kova catalog search`, then `kova catalog install NAME`. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
+## Themes
+
+Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark** in the app's Settings. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones.
+
+Four example themes live in `design/themes/`: **Forest**, **Graphite**, **Midnight Teal** and **Paper**. Copy one into `~/.kova/themes/` to use it, or make your own as a JSON file; see [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
+
 ## Where your data lives
 
 Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.

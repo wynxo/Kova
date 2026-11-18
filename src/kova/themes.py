@@ -301,8 +301,31 @@ def get(theme_id: str, home: Path | str) -> dict[str, Any]:
     return {**_summary(theme), "source": str(path), "tokens": tokens, "terminal": terminal}
 
 
+# ------------------------------------------------------------------ the browser chrome
+#: The theme preference's fixed choices and the built-in each one paints with.
+#: ``system`` follows the device, which a web manifest cannot express, so the
+#: manifest uses the dark base: the same one ``index.html`` paints first.
+CHOICES: dict[str, str] = {"system": "kova-dark", "dark": "kova-dark", "light": "kova-light"}
+
+
+def chrome_colours(choice: str | None, home: Path | str) -> dict[str, str]:
+    """The window colours for a theme preference: ``theme_color`` and ``background_color``.
+
+    Both are the theme's ``bg.base``, so the title bar, the splash screen and the page
+    behind them are one surface. A preference naming a theme file that is missing or
+    broken falls back to the dark base rather than failing the manifest.
+    """
+    theme_id = CHOICES.get(choice or "system", choice or "kova-dark")
+    try:
+        tokens = get(theme_id, home)["tokens"]
+    except ThemeError:
+        tokens = get("kova-dark", home)["tokens"]
+    base = tokens["bg.base"]
+    return {"theme_color": base, "background_color": base}
+
+
 __all__ = [
-    "APPEARANCES", "BUILTIN", "GROUPS", "TOKENS_PATH", "ThemeError",
-    "base_tokens", "builtin_data", "default_base", "discover", "display_name",
-    "get", "load_file", "resolve", "theme_dir", "validate",
+    "APPEARANCES", "BUILTIN", "CHOICES", "GROUPS", "TOKENS_PATH", "ThemeError",
+    "base_tokens", "builtin_data", "chrome_colours", "default_base", "discover",
+    "display_name", "get", "load_file", "resolve", "theme_dir", "validate",
 ]

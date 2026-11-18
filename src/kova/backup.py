@@ -96,6 +96,8 @@ def _config_bytes(cfg: Config) -> bytes:
                     "base_url": model.base_url,
                     "model": model.model,
                     "context": model.context,
+                    **({"reasoning_effort": model.reasoning_effort} if model.reasoning_effort else {}),
+                    **({"reasoning_efforts": model.reasoning_efforts} if model.reasoning_efforts else {}),
                 }
                 for model in cfg.models
             ],
@@ -291,6 +293,8 @@ def _restore_models(cfg: Config, data: dict) -> bool:
             model=str(raw.get("model", "")),
             api_key=None,
             context=context,
+            reasoning_effort=raw.get("reasoning_effort"),
+            reasoning_efforts=raw.get("reasoning_efforts", []),
             provider=provider_ids.get(str(raw.get('provider', '')), str(raw.get('provider', ''))),
         )
         local = current.get(entry.name)

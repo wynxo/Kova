@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
-  <meta id="theme-color" name="theme-color" content="#0d0d10">
+  <!-- theme.js replaces this with the chosen theme's bg.base before the first frame. -->
+  <meta id="theme-color" name="theme-color" content="#14121c">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <title>Kova</title>
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
@@ -12,6 +13,8 @@
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
+  <!-- Not deferred: the theme is on <html> before the body paints (#174). -->
+  <script src="/app/assets/theme.js"></script>
   <link rel="stylesheet" href="/app/assets/app.css">
   <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/palette.css">
@@ -94,10 +97,12 @@
           <label class="sr-only" for="prompt">Message Kova</label>
           <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000"></textarea>
           <div class="chat-options-wrap">
-            <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
+            <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span id="chat-options-effort" class="model-chip-effort" hidden></span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
             <div id="chat-options-panel" class="chat-options" role="dialog" aria-label="Chat options" hidden>
               <div class="chat-option"><span id="model-label" class="chat-option-label">Model</span><span id="model-slot" class="chat-option-control"></span></div>
               <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
+              <div id="reasoning-effort-row" class="chat-option" hidden><span id="reasoning-effort-label" class="chat-option-label">Reasoning effort</span><span id="reasoning-effort-slot" class="chat-option-control"></span></div>
+              <select id="reasoning-effort" hidden tabindex="-1" aria-hidden="true"></select>
               <div class="chat-option"><span id="mode-label" class="chat-option-label">Mode</span>
                 <div id="mode-switch" class="segmented" role="radiogroup" aria-labelledby="mode-label">
                   <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
@@ -109,6 +114,10 @@
               <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
               <label class="chat-option work-only"><span class="chat-option-label">Folder</span><input id="cwd" class="chat-option-input" placeholder="Kova files folder" title="Absolute path to an existing working folder" autocomplete="off" spellcheck="false"></label>
               <div class="chat-option"><span id="web-label" class="chat-option-label">Web search</span><button id="web" type="button" class="switch" role="switch" aria-checked="true" aria-labelledby="web-label"><span class="switch-thumb" aria-hidden="true"></span><span class="sr-only">On</span></button></div>
+              <div class="chat-option model-picker-actions">
+                <button id="model-favourite" class="btn quiet" type="button" aria-pressed="false">Favourite</button>
+                <button id="model-make-default" class="btn quiet" type="button" title="Use this model and effort for new chats">Make default</button>
+              </div>
             </div>
           </div>
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>

@@ -40,7 +40,8 @@ def runner(home, http, monkeypatch):
 
 def test_defaults_are_served_and_updates_merge(http):
     assert http.get("/preferences").json() == ui_prefs.DEFAULTS
-    assert ui_prefs.DEFAULTS["reasoning"] == "shown", "reasoning rows are visible by default"
+    assert ui_prefs.DEFAULTS["reasoning"] == "collapsed", \
+        "reasoning rows are folded by default"
 
     saved = http.put("/preferences", json={"theme": "light"})
 
@@ -50,17 +51,30 @@ def test_defaults_are_served_and_updates_merge(http):
 
 
 def test_reasoning_preference_is_shared_with_the_ui(http):
-    saved = http.put("/preferences", json={"reasoning": "hidden"})
+    saved = http.put("/preferences", json={"reasoning": "expanded"})
 
     assert saved.status_code == 200
-    assert saved.json()["reasoning"] == "hidden"
-    assert http.get("/preferences").json()["reasoning"] == "hidden"
+    assert saved.json()["reasoning"] == "expanded"
+    assert http.get("/preferences").json()["reasoning"] == "expanded"
+
+    hidden = http.put("/preferences", json={"reasoning": "hidden"})
+
+    assert hidden.json()["reasoning"] == "hidden"
+
+
+def test_the_first_reasoning_switch_still_reads_as_collapsed(tmp_path):
+    """The setting shipped as shown/hidden before it gained expanded."""
+    saved = ui_prefs.write_file({**ui_prefs.DEFAULTS, "reasoning": "shown"}, tmp_path / "prefs.json")
+
+    assert ui_prefs.read_file(saved)["reasoning"] == "collapsed"
+    assert ui_prefs.Preferences(tmp_path).read()["reasoning"] == "collapsed"
 
 
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
-    ({"theme": "sepia"}, "must be one of"),
-    ({"reasoning": "expanded"}, "must be one of"),
+    ({"theme": "Sepia Tone"}, "must be one of"),
+    ({"theme": "x"}, "installed theme id"),
+    ({"reasoning": "open"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):
@@ -93,7 +107,7 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
-        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "shown",
+        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "collapsed",
     }
 
 
@@ -132,7 +146,7 @@ def test_import_rejects_an_unknown_version(runner, tmp_path):
 def test_import_refuses_a_bad_value_without_changing_anything(runner, http, tmp_path):
     http.put("/preferences", json={"theme": "light"})
     target = tmp_path / "bad-value.json"
-    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "sepia"}}),
+    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"theme": "Sepia Tone"}}),
                       encoding="utf-8")
 
     result = runner.invoke(cli.app, ["prefs", "import", str(target)])

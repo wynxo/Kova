@@ -3,6 +3,8 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false};
+  let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
+  const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
   let autostartBusy = false;
   async function refreshAutostart(action) {
     if (autostartBusy) return;
@@ -130,13 +132,20 @@
     controls();
   }
   async function refreshCapabilities(model = '') {
-    try { applyCapabilities(await json(model ? `/capabilities?model=${encodeURIComponent(model)}` : '/capabilities')); }
-    catch (_) { state.offered = null; controls(); }  // an older server declares nothing
+    const version = ++capabilitiesVersion;
+    try {
+      const contract = await json(model ? `/capabilities?model=${encodeURIComponent(model)}` : '/capabilities');
+      if (version === capabilitiesVersion) applyCapabilities(contract);
+    } catch (_) {
+      if (version === capabilitiesVersion) { state.offered = null; controls(); }
+    }
   }
   function controls() {
     const busy = state.busy;
+    for (const button of activityOpenButtons) button.disabled = busy;
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
+    for (const id of ['model', 'mode', 'reasoning-effort']) $(id).disabled = busy || pickerSaving || !state.connected;
     // Incognito belongs to starting a chat, so the + menu offers it on the start screen.
     $('new-incognito').hidden = !!state.chat;
     for (const id of ['mode', 'web', 'permission', 'cwd']) $(id).disabled ||= !!state.chat?.ephemeral;
@@ -150,8 +159,8 @@
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
-    $('send').disabled = readingAttachments || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
-    $('attach').disabled = !!state.chat?.ephemeral || state.busy || readingAttachments || !state.connected;
+    $('send').disabled = readingAttachments || pickerSaving || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
+    $('attach').disabled = !!state.chat?.ephemeral || state.busy || pickerSaving || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
     $('attach').title = offers('vision') ? 'Attach files or images' : 'Attach documents; images need Vision turned on in Model settings';
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
@@ -175,6 +184,10 @@
   function disconnected(message) {
     state.connected = false;
     state.events?.close();
+    state.activity.clear();
+    state.activityStarted = {};
+    state.finishedActivity = [];
+    renderActivity();
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
       : 'Open kova-web on this computer to connect. No token or account needed.'));
     controls();
@@ -338,21 +351,38 @@
   // chat that needs an answer, in one place. It is fed by the same
   // conversation_state events as the sidebar dots, so a turn started in another
   // client appears here too. Downloads stay in their own panel.
+  const ACTIVITY_RECENT_MS = 120000;
+  const activityAges = new Map();
+  const activityOpenButtons = new Set();
+  const activityActions = new Map();
+  let activityTimer = null;
   function activityAge(started) {
     const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
     return seconds < 90 ? `${Math.max(1, seconds)}s` : `${Math.round(seconds / 60)} min`;
   }
   function noteChatState(id, next, title = '', ephemeral = false) {
+    if (typeof id !== 'string' || !id) return;
     const previous = state.activity.get(id);
+    const isPrivate = ephemeral || previous?.ephemeral || id.startsWith('incognito-');
     const wasRunning = previous && (previous.state === 'working' || previous.state === 'blocked-on-approval');
     const running = next === 'working' || next === 'blocked-on-approval';
-    if (running && !state.activityStarted[id]) state.activityStarted[id] = Date.now();
+    if (running && !wasRunning) {
+      state.activityStarted[id] = Date.now();
+      state.finishedActivity = state.finishedActivity.filter(item => item.id !== id);
+    }
     if (!running && wasRunning) {
-      state.finishedActivity.unshift({id, title: previous.title || title || 'Conversation', at: Date.now()});
-      state.finishedActivity = state.finishedActivity.slice(0, 3);
+      if (!isPrivate) {
+        state.finishedActivity.unshift({id, title: title || previous.title || 'Conversation', at: Date.now()});
+        state.finishedActivity = state.finishedActivity.slice(0, 3);
+      }
       delete state.activityStarted[id];
     }
-    state.activity.set(id, {title: title || previous?.title || '', state: next, ephemeral: Boolean(ephemeral || previous?.ephemeral)});
+    state.activity.set(id, {title: isPrivate ? '' : title || previous?.title || '', state: next, ephemeral: Boolean(isPrivate)});
+  }
+  function removeActivity(id) {
+    state.activity.delete(id);
+    delete state.activityStarted[id];
+    state.finishedActivity = state.finishedActivity.filter(item => item.id !== id);
   }
   function activityRows() {
     return [...state.activity.entries()]
@@ -362,25 +392,60 @@
   function activityName(row) {
     return row.title || (row.ephemeral ? 'Incognito' : 'New conversation');
   }
+  function tickActivity() {
+    if (state.finishedActivity.some(item => Date.now() - item.at >= ACTIVITY_RECENT_MS)) {
+      renderActivity();
+      return;
+    }
+    for (const [line, started] of activityAges) line.textContent = `Working · ${activityAge(started)}`;
+  }
+  function syncActivityTimer() {
+    if (activityAges.size || state.finishedActivity.length) {
+      if (activityTimer == null) activityTimer = setInterval(tickActivity, 1000);
+    } else if (activityTimer != null) {
+      clearInterval(activityTimer);
+      activityTimer = null;
+    }
+  }
+  function activityOpenButton(id, name, kind = 'open') {
+    const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
+    open.setAttribute('aria-label', `Open ${name}`);
+    open.disabled = state.busy;
+    open.onclick = () => {
+      if (state.busy) return;
+      activityPanel(false, true);
+      safe(() => openChat(id));
+    };
+    activityOpenButtons.add(open);
+    activityActions.set(`${kind}:${id}`, open);
+    return open;
+  }
   function renderActivity() {
     const button = $('activity'), count = $('activity-count'), panel = $('activity-panel');
+    if (!button || !count || !panel) return;
     const now = Date.now();
-    state.finishedActivity = state.finishedActivity.filter(item => now - item.at < 120000);
+    state.finishedActivity = state.finishedActivity.filter(item => now - item.at < ACTIVITY_RECENT_MS);
     const rows = activityRows();
     button.hidden = !rows.length && !state.finishedActivity.length;
     button.dataset.active = String(rows.length > 0);
     button.setAttribute('aria-label', rows.length ? `Activity: ${rows.length} running` : 'Activity: recent results');
     count.hidden = !rows.length;
     count.textContent = rows.length ? String(rows.length) : '';
-    if (!state.activityOpen) return;
+    if (button.hidden && state.activityOpen) { activityPanel(false, true); return; }
+    if (!state.activityOpen) { syncActivityTimer(); return; }
+    const active = document.activeElement;
+    const focused = [...activityActions].find(([, node]) => node === active)?.[0];
+    activityAges.clear();
+    activityOpenButtons.clear();
+    activityActions.clear();
     panel.replaceChildren();
     const head = el('div', 'activity-head');
     head.append(el('strong', '', 'Activity'));
     const close = iconButton('x', 'Close activity');
-    close.onclick = () => activityPanel(false);
+    close.onclick = () => activityPanel(false, true);
+    activityActions.set('close', close);
     head.append(close);
     panel.append(head);
-    if (!rows.length && !state.finishedActivity.length) panel.append(el('p', 'panel-empty', 'Nothing is running.'));
     for (const row of rows) {
       const item = el('div', 'activity-row');
       const info = el('div', 'activity-info');
@@ -388,17 +453,17 @@
       const stateLine = el('span', 'activity-state', row.state === 'blocked-on-approval'
         ? 'Needs your answer'
         : `Working · ${activityAge(state.activityStarted[row.id] || now)}`);
+      if (row.state === 'working') activityAges.set(stateLine, state.activityStarted[row.id] || now);
       info.append(title, stateLine);
-      const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
-      open.setAttribute('aria-label', `Open ${activityName(row)}`);
-      open.onclick = () => { activityPanel(false); safe(() => openChat(row.id)); };
-      const stop = el('button', 'btn quiet small', 'Stop'); stop.type = 'button';
-      stop.setAttribute('aria-label', `Stop ${activityName(row)}`);
-      stop.onclick = () => safe(async () => {
+      const stopButton = el('button', 'btn quiet small', 'Stop'); stopButton.type = 'button';
+      stopButton.setAttribute('aria-label', `Stop ${activityName(row)}`);
+      stopButton.onclick = () => safe(async () => {
+        if (state.busy && state.chat?.id === row.id) return stop();
         await json(`/chats/${row.id}/stop`, {method: 'POST'});
         await refreshChats();
       });
-      const actions = el('div', 'activity-actions'); actions.append(open, stop);
+      activityActions.set(`stop:${row.id}`, stopButton);
+      const actions = el('div', 'activity-actions'); actions.append(activityOpenButton(row.id, activityName(row)), stopButton);
       item.append(info, actions); panel.append(item);
     }
     if (state.finishedActivity.length) {
@@ -407,23 +472,37 @@
         const row = el('div', 'activity-row');
         const info = el('div', 'activity-info');
         info.append(el('strong', 'activity-name', item.title), el('span', 'activity-state', 'Finished'));
-        const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
-        open.setAttribute('aria-label', `Open ${item.title}`);
-        open.onclick = () => { activityPanel(false); safe(() => openChat(item.id)); };
-        row.append(info, open); panel.append(row);
+        row.append(info, activityOpenButton(item.id, item.title, 'recent')); panel.append(row);
       }
     }
+    if (focused) {
+      const next = activityActions.get(focused);
+      (next && !next.disabled ? next : close).focus({preventScroll: true});
+    }
+    syncActivityTimer();
   }
-  let activityTimer = null;
-  function activityPanel(open) {
+  function activityPanel(open, restoreFocus = false) {
+    const button = $('activity'), panel = $('activity-panel');
+    if (!button || !panel) return;
+    const focused = document.activeElement;
     state.activityOpen = open;
-    $('activity-panel').hidden = !open;
-    $('activity').setAttribute('aria-expanded', String(open));
-    if (open) renderActivity();
-    if (open && !activityTimer && typeof globalThis.setInterval === 'function') activityTimer = setInterval(renderActivity, 1000);
-    if (!open && activityTimer) { globalThis.clearInterval?.(activityTimer); activityTimer = null; }
+    panel.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (open) {
+      renderActivity();
+      activityActions.get('close')?.focus();
+    } else {
+      if (restoreFocus && (focused === button || [...activityActions.values()].includes(focused))) {
+        (button.hidden ? $('menu') : button).focus({preventScroll: true});
+      }
+      activityAges.clear();
+      activityOpenButtons.clear();
+      activityActions.clear();
+      panel.replaceChildren();
+      syncActivityTimer();
+    }
   }
-  $('activity').onclick = () => activityPanel(!state.activityOpen);
+  $('activity')?.addEventListener('click', () => activityPanel(!state.activityOpen, true));
   // A pin/search only changes the sidebar list; activity keeps the last state
   // of every chat it has seen, so filtering cannot hide a running reply.
   function absorbChatState(chat) {
@@ -487,7 +566,7 @@
     if (!query) {
       const live = new Set(chats.map(chat => chat.id));
       for (const id of [...state.activity.keys()]) {
-        if (!live.has(id)) { state.activity.delete(id); delete state.activityStarted[id]; }
+        if (!live.has(id)) removeActivity(id);
       }
     }
     for (const chat of chats) absorbChatState(chat);
@@ -645,6 +724,8 @@
   }
   function setChat(chat) {
     state.chat = chat;
+    draftModel = null;
+    syncComposerModel();
     renderAttachments();
     pageTitle();
     $('mode').value = chat?.mode || 'work';
@@ -656,7 +737,10 @@
     // A saved turn reads like a live one: every round of it sits under one heading.
     const turns = []; let turn = null, savedTools = null;
     for (const msg of chat?.messages || []) {
-      if (msg.role === 'user') { message('user', msg.content, undefined, msg.attachments || []); turn = null; savedTools = null; }
+      if (msg.role === 'user') {
+        message('user', msg.content, undefined, msg.attachments || []); turn = null; savedTools = null;
+        if (msg.model_switch) modelSwitch(msg.model_switch);
+      }
       else if (msg.role === 'assistant') {
         if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
         if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
@@ -674,6 +758,11 @@
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
+  }
+  function modelSwitch(name, before = null) {
+    const text = `Switched to ${modelByName(name)?.model || name}`;
+    const divider = el('div', 'model-switch', text);
+    if (before) $('messages').insertBefore(divider, before); else $('messages').append(divider);
   }
   async function loadChanges(chatId) {
     const version = state.navigationVersion;
@@ -742,8 +831,9 @@
   }
   async function discardIncognito() {
     if (state.chat?.ephemeral) {
-      await json(`/chats/${state.chat.id}`, {method: 'DELETE'});
-      state.activity.delete(state.chat.id); delete state.activityStarted[state.chat.id]; renderActivity();
+      const id = state.chat.id;
+      await json(`/chats/${id}`, {method: 'DELETE'});
+      removeActivity(id); renderActivity();
       // Never carry an unsent private draft into a saved conversation.
       $('prompt').value = ''; resize();
     }
@@ -753,7 +843,7 @@
     if (state.busy || !state.connected) return;
     ++state.navigationVersion;
     await discardIncognito();
-    setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false})));
+    setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false, ...modelForNewChat()})));
     $('prompt').value = ''; $('prompt').focus(); await refreshChats();
   }
   // No transcript or draft goes into browser storage. A normal tab close or
@@ -774,7 +864,7 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
-      state.activity.delete(chat.id); delete state.activityStarted[chat.id]; renderActivity();
+      removeActivity(chat.id); renderActivity();
       if (state.chat?.id === chat.id) setChat(null);
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
@@ -803,6 +893,9 @@
   async function health() {
     try {
       const status = await json('/health');
+      if ((status.model || '') !== defaultModel) {
+        defaultModel = status.model || ''; syncComposerModel();
+      }
       state.localOnly = Boolean(status.local_only);
       $('local-only-status').hidden = !state.localOnly;
       controls();
@@ -876,7 +969,7 @@
         if (entry.id < checkpoint.id) continue;
         for (const file of entry.files || []) if (!affected.has(file.path)) affected.set(file.path, file.status);
       }
-      const dialog = el('dialog', 'restore-dialog');
+      const dialog = el('dialog', 'restore-dialog'); dialog.setAttribute('aria-label', `Restore to change set ${checkpoint.id}`);
       dialog.append(el('h2', '', `Restore to change set ${checkpoint.id}?`));
       dialog.append(el('p', '', 'Files Kova changed since then are put back the way they were, and files it created are removed. Your git repository is never touched.'));
       const list = el('ul', 'restore-list');
@@ -1203,9 +1296,7 @@
     } else if (name === 'web' && ['on', 'off'].includes(args)) {
       await chatSetting({web: args === 'on'}); setWeb(args === 'on'); controls();
     } else if (name === 'model' && args) {
-      if (!state.models.some(model => model.name === args)) throw new Error('Unknown model. Choose a configured model.');
-      await json('/models/active', write('POST', {name: args}));
-      $('model').value = args; selectedModel = args; await health(); await refreshCapabilities(selectedModel);
+      await chooseComposerModel(args);
     } else if (name === 'model' && !args) { options(true); $('model-slot').querySelector('button')?.click(); }
     else if (name === 'memory' && (!args || args === 'list')) $('open-memory').onclick();
     else throw new Error(`Usage: ${commands[name]}`);
@@ -1225,7 +1316,12 @@
     picker.hidden = !picker.children.length;
   }
   $('commands').onclick = () => { $('prompt').value = '/'; commandPicker(); $('prompt').focus(); };
-  $('compact-now').onclick = () => safe(compactChat);
+  $('compact-now').onclick = () => { $('chat-menu').open = false; safe(compactChat); };
+  // Escape closes the chat actions menu and gives focus back to its toggle.
+  $('chat-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !$('chat-menu').open) return;
+    event.preventDefault(); event.stopPropagation(); $('chat-menu').open = false; $('chat-menu').querySelector('summary').focus();
+  });
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
@@ -1240,21 +1336,31 @@
     await sendText(text || 'Please read the attached files.');
   }
   async function sendText(text, sendOptions = {}) {
-    if (!text || state.busy || !state.connected) return;
+    if (!text || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn, terminal = false;
     try {
-      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: webOn(), permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
+      if (!state.chat) state.chat = await createComposerChat();
       const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
-      nearBottom = true; turn = turnView(message('assistant')); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
+      const reply = message('assistant');
+      nearBottom = true; turn = turnView(reply); follow();
+      // Send to the model the chip showed, even if another window just changed
+      // the default or the saved chat settings.
+      const model = composerModel().model || null;
+      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model,
+        attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
       if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
       await readEvents(response, data => {
         if (terminal) return;
+        if (data.type === 'model_switch') { modelSwitch(data.model, reply.parentNode); follow(); return; }
+        if (data.type === 'done' && !state.chat?.ephemeral && data.usage?.local && data.usage.tokens_per_second) {
+          const entry = modelByName(data.model);
+          if (entry) entry.last_local_speed = data.usage;
+        }
         terminal = ['done', 'error', 'stopped'].includes(data.type);
         turn.accept(data);
       });
@@ -1269,7 +1375,12 @@
       if (state.connected) {
         try {
           // Update title/history without replacing the live reasoning and tool rows.
-          if (state.chat) { state.chat = await json(`/chats/${state.chat.id}`); pageTitle(); }
+          if (state.chat) {
+            const previous = composerModel();
+            state.chat = await json(`/chats/${state.chat.id}`); pageTitle();
+            const current = composerModel();
+            if (current.model !== previous.model || current.reasoning_effort !== previous.reasoning_effort) syncComposerModel();
+          }
           await refreshChats(); await health();
         } catch (error) { report(error); }
       }
@@ -1366,7 +1477,7 @@
   }
   async function attachFiles(files) {
     if (state.chat?.ephemeral) return toast('Attachments are disabled in incognito.');
-    if (readingAttachments || state.busy || !state.connected) return;
+    if (readingAttachments || state.busy || pickerSaving || !state.connected) return;
     const accepted = [];
     for (const file of files) {
       if (looksLikeImage(file) && !offers('vision')) { toast('This model cannot read images. Turn on Vision for it in Model settings.'); continue; }
@@ -1377,7 +1488,7 @@
     if (pendingAttachments.length + accepted.length > 3) return toast('Attach at most three files per turn.');
     readingAttachments = true; $('attachment-chips').append(el('span', '', 'reading…')); controls();
     try {
-      if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value}));
+      if (!state.chat) state.chat = await createComposerChat();
       const chatId = state.chat.id;
       for (const file of accepted) {
         const form = new FormData(); form.append('file', file);
@@ -1433,6 +1544,11 @@
     add('Actions', {title:'Sign out of this window', hint:'End this browser session', keywords:'logout sign out leave disconnect', run:() => $('disconnect').onclick?.()});
 
     add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKeys('toggle-theme'), run:() => $('theme').onclick?.()});
+    const themes = globalThis.KovaTheme;
+    for (const option of themes?.choices?.() || []) {
+      if (option.id === themes.choice()) continue;
+      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, run:() => themes.set(option.id)});
+    }
 
     if (current) {
       add('This conversation', {title:'Compact now', hint:'Summarise older turns to free context', keywords:'summarise summarize shorten context', run:() => safe(compactChat)});
@@ -1509,7 +1625,7 @@
     'toggle-theme': () => $('theme').onclick?.(),
     'focus-composer': () => $('prompt').focus(),
     'stop-reply': () => {
-      if (state.activityOpen) activityPanel(false);
+      if (state.activityOpen) activityPanel(false, true);
       else if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
       else return false;
@@ -1533,16 +1649,20 @@
   let searchTimer;
   $('search').addEventListener('input', () => { clearTimeout(searchTimer); ++state.searchVersion; searchTimer = setTimeout(() => safe(refreshChats), 200); });
   async function chatSetting(value) {
-    if (!state.chat) return;
-    const chat = await json(`/chats/${state.chat.id}`, write('PATCH', value));
-    Object.assign(state.chat, chat); await refreshChats();
+    const chat = state.chat;
+    if (!chat) return;
+    const updated = await json(`/chats/${chat.id}`, write('PATCH', value));
+    if (state.chat?.id === chat.id) Object.assign(state.chat, updated);
+    safe(refreshChats);
   }
   $('mode').onchange = () => safe(async () => {
-    try { await chatSetting({mode: $('mode').value}); controls(); }
-    catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
+    await savePicker(async () => {
+      try { await chatSetting({mode: $('mode').value}); }
+      catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
+    });
   });
   const openRules = () => safe(async () => {
-    const dialog = el('dialog', 'rules-dialog');
+    const dialog = el('dialog', 'rules-dialog'); dialog.setAttribute('aria-label', 'Permission rules');
     const title = el('h2', '', 'Permission rules');
     const help = el('p', '', 'Deny beats ask beats allow. Patterns are case-sensitive globs. Session rules expire on restart. Exact grants include all arguments and the working folder.');
     const label = el('label', '', 'Rules (JSON array: action, tool, pattern, scope, optional message)');
@@ -1574,11 +1694,88 @@
     const web = !webOn();
     await chatSetting({web}); setWeb(web);
   });
-  let selectedModel = '';
-  $('model').onchange = () => safe(async () => {
-    try { await json('/models/active', write('POST', {name: $('model').value})); selectedModel = $('model').value; await health(); await refreshCapabilities(selectedModel); }
-    catch (error) { $('model').value = selectedModel; throw error; }
-  });
+  const modelByName = name => state.models.find(model => model.name === name);
+  function composerModel() {
+    if (state.chat?.model) return {model: state.chat.model, reasoning_effort: state.chat.reasoning_effort ?? null};
+    if (!state.chat && draftModel) return draftModel;
+    return {model: defaultModel, reasoning_effort: modelByName(defaultModel)?.reasoning_effort ?? null};
+  }
+  function modelForNewChat() {
+    const selection = composerModel();
+    return modelByName(selection.model)?.model ? selection : {};
+  }
+  function createComposerChat() {
+    const folder = $('cwd').value.trim();
+    return json('/chats', write('POST', {mode: $('mode').value, web: webOn(),
+      permission: $('permission').value, ...(folder ? {cwd: folder} : {}), ...modelForNewChat()}));
+  }
+  function syncComposerModel() {
+    const selection = composerModel(), select = $('model'), effort = $('reasoning-effort');
+    const supported = modelByName(selection.model)?.reasoning_efforts || [];
+    select.value = selection.model;
+    effort.replaceChildren(...['', ...supported].map(level => {
+      const option = el('option', '', effortLabels[level]); option.value = level; return option;
+    }));
+    effort.value = supported.includes(selection.reasoning_effort) ? selection.reasoning_effort : '';
+    $('reasoning-effort-row').hidden = !supported.length;
+    controls();
+    return refreshCapabilities(selection.model);
+  }
+  async function savePicker(change) {
+    if (pickerSaving || state.busy) return;
+    const focused = document.activeElement;
+    pickerSaving = true; controls();
+    try { await change(); }
+    finally {
+      pickerSaving = false; controls();
+      if (focused && !focused.disabled && document.activeElement === document.body
+          && !optionsPanel.hidden && optionsPanel.contains(focused)) focused.focus();
+    }
+  }
+  async function chooseComposerModel(name, effort = modelByName(name)?.reasoning_effort ?? null) {
+    if (!modelByName(name)?.model) throw new Error('Unknown model. Choose a configured model.');
+    await savePicker(async () => {
+      const next = {model: name, reasoning_effort: effort};
+      try {
+        if (state.chat) await chatSetting(next);
+        else draftModel = next;
+      } finally { await syncComposerModel(); }
+    });
+  }
+  $('model').onchange = () => {
+    const name = $('model').value;
+    safe(() => chooseComposerModel(name));
+  };
+  $('reasoning-effort').onchange = () => {
+    const name = $('model').value, effort = $('reasoning-effort').value || null;
+    safe(() => chooseComposerModel(name, effort));
+  };
+  $('model-make-default').onclick = () => safe(() => savePicker(async () => {
+    const {model} = composerModel();
+    const reasoning_effort = $('reasoning-effort').value || null;
+    const entry = modelByName(model);
+    if (!entry) return;
+    await json('/models/active', write('POST', {name: model, reasoning_effort}));
+    entry.reasoning_effort = reasoning_effort;
+    defaultModel = model;
+    state.modelStatus = '';
+    syncMenus();
+    toastSuccess('Default saved for new chats.');
+    await health();
+  }));
+  const favouritesKey = 'kova-model-favourites';
+  const favourites = new Set();
+  try {
+    const saved = JSON.parse(localStorage.getItem(favouritesKey) || '[]');
+    if (Array.isArray(saved)) for (const name of saved) if (typeof name === 'string') favourites.add(name);
+  } catch (_) { /* this window can still remember favourites while it is open */ }
+  $('model-favourite').onclick = () => {
+    const {model} = composerModel();
+    if (!modelByName(model)) return;
+    if (favourites.has(model)) favourites.delete(model); else favourites.add(model);
+    try { localStorage.setItem(favouritesKey, JSON.stringify([...favourites])); } catch (_) {}
+    renderModels(state.models);
+  };
   async function openModelSettings() {
     const name = $('model').value;
     const model = state.models.find(entry => entry.name === name);
@@ -1625,22 +1822,25 @@
   // The Settings view links here without owning the dialog; keep one stable
   // trigger so the view never reaches into this closure.
   $('open-model-settings').onclick = () => safe(openModelSettings);
-  function theme(value) {
-    document.documentElement.dataset.theme = value;
-    const next = value === 'light' ? 'Dark theme' : 'Light theme';
+  // theme.js (#174) owns the theme, its shared preference and the window colour;
+  // #theme stays the light/dark toggle the shortcut and Settings click.
+  function themeButton() {
+    const light = (globalThis.KovaTheme?.appearance?.() || document.documentElement.dataset.theme) === 'light';
+    const next = light ? 'Dark theme' : 'Light theme';
     $('theme').lastElementChild.textContent = next; $('theme').title = next;
-    $('theme-icon').className = `icon i-${value === 'light' ? 'moon' : 'sun'}`;
-    // The desktop shell follows this colour for its window background.
-    $('theme-color').setAttribute('content', value === 'light' ? '#faf9f7' : '#0d0d10');
-    try { localStorage.setItem('kova-theme', value); } catch (_) {}
+    $('theme-icon').className = `icon i-${light ? 'moon' : 'sun'}`;
   }
-  $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-  try { theme(localStorage.getItem('kova-theme') || 'dark'); } catch (_) { theme('dark'); }
+  $('theme').onclick = () => {
+    if (globalThis.KovaTheme) globalThis.KovaTheme.toggle();
+    else document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    themeButton();
+  };
+  document.addEventListener('kova:theme', themeButton); themeButton();
   $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
   async function setupIdentity() {
     state.persona = await json('/persona');
     if (!state.persona.configured) {
-      const dialog = el('dialog');
+      const dialog = el('dialog'); dialog.setAttribute('aria-label', 'Meet your assistant');
       const form = el('form'); form.method = 'dialog';
       const title = el('h2', '', 'Meet your assistant');
       const nameLabel = el('label', '', 'Name');
@@ -1684,7 +1884,21 @@
       if (live.lost) { live.lost = false; safe(resync); }
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
-    source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } noteChatState(update.chat_id, update.state, chat?.title, chat?.ephemeral); renderActivity(); } catch (_) {} });
+    source.addEventListener('conversation_state', event => {
+      if (state.events !== source) return;
+      alive();
+      try {
+        const {chat_id: id, state: next} = JSON.parse(event.data);
+        const chat = state.chats.find(item => item.id === id);
+        const current = state.chat?.id === id ? state.chat : null;
+        const previous = current?.state;
+        if (chat) { chat.state = next; history(state.chats); }
+        else safe(refreshChats);
+        if (current) { current.state = next; chatStateChanged(id, next, previous); }
+        noteChatState(id, next, (chat || current)?.title, (chat || current)?.ephemeral);
+        renderActivity();
+      } catch (_) {}
+    });
     source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
@@ -1733,14 +1947,14 @@
       // A phone that scanned a pairing QR code trades its one-use secret for a device cookie.
       if (pairing) { await json('/app/pair', write('POST', {secret: pairing})); toastSuccess('This phone is now paired with Kova.'); }
       await json('/chats'); state.connected = true; clearNotice();
+      // Signed in now: the shared theme choice and installed themes are readable.
+      globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
-      state.models = models;
+      state.models = models; defaultModel = status.model || '';
       renderModels(models);
-      $('model').value = status.model; selectedModel = status.model;
-      // The contract belongs to the model in the composer, not just the active one.
-      await refreshCapabilities(selectedModel);
+      await syncComposerModel();
       await refreshChats(); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       if (share) {
@@ -1753,16 +1967,43 @@
     finally { state.starting = false; }
   }
   function renderModels(models) {
-    const groups = new Map();
+    const groups = new Map(), pinned = el('optgroup');
+    pinned.label = 'Favourites';
     for (const model of models) {
+      if (!model.model) continue;
       const provider = model.provider_name || 'Custom';
-      if (!groups.has(provider)) { const group = el('optgroup'); group.label = provider; groups.set(provider, group); }
-      const option = el('option', '', model.model || model.name);
-      option.value = model.name; option.title = model.name;
-      groups.get(provider).append(option);
+      const location = model.local ? 'Local' : 'Cloud';
+      const key = `${location}:${model.provider || provider}`;
+      const option = el('option', '', model.model);
+      option.value = model.name; option.title = model.name; option.dataset.provider = provider;
+      if (favourites.has(model.name)) {
+        option.dataset.location = location;
+        pinned.append(option);
+        continue;
+      }
+      if (!groups.has(key)) {
+        const group = el('optgroup');
+        group.label = provider; group.dataset.location = location; groups.set(key, group);
+      }
+      groups.get(key).append(option);
     }
-    $('model').replaceChildren(...groups.values());
+    const ordered = [...groups.values()].sort((a, b) => Number(b.dataset.location === 'Local') - Number(a.dataset.location === 'Local'));
+    $('model').replaceChildren(...(pinned.children.length ? [pinned, ...ordered] : ordered));
+    $('model').value = composerModel().model;
     syncMenus();
+  }
+  function modelHint(option) {
+    const entry = modelByName(option.value);
+    if (!entry) return '';
+    const speed = entry.last_local_speed;
+    return [
+      option.dataset.location ? option.dataset.provider : '',
+      entry.context ? `${entry.context.toLocaleString()} token context` : '',
+      entry.vision ? 'Vision' : 'No vision',
+      entry.tools ? 'Tools' : 'No tools',
+      entry.local && speed?.tokens_per_second
+        ? `${speed.estimated ? '~' : ''}${speed.tokens_per_second} tok/s last reply` : '',
+    ].filter(Boolean).join(' · ');
   }
 
   let localRows = [], localController = null, localBackend = 'ollama';
@@ -1828,8 +2069,8 @@
   }
   async function refreshLocalSelection() {
     const [models, status] = await Promise.all([json('/models'), json('/health')]);
-    state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
-    await refreshCapabilities(); syncMenus(); await health();
+    state.models = models; defaultModel = status.model || '';
+    renderModels(models); await syncComposerModel(); await health();
   }
   async function installLocalModel() {
     if (localController || $('local-install').disabled) return;
@@ -1981,10 +2222,8 @@
         await json('/providers', write('POST', {...providerDraft, models: selected, active: $('provider-active').value}));
         if (version !== providerVersion) return;
         providerLogin = null; closeProvider();
-        const [models, status] = await Promise.all([json('/models'), json('/health')]);
-        state.models = models; renderModels(models); $('model').value = status.model; selectedModel = status.model;
-        await refreshCapabilities(selectedModel);
-        syncMenus(); await health(); toastSuccess('Provider connected. Ready when you are.'); return;
+        await refreshLocalSelection();
+        toastSuccess('Provider connected. Ready when you are.'); return;
       }
       const kind = $('provider-kind').value, caps = providerCaps();
       const body = {kind, id: $('provider-name').value, name: $('provider-name').value,
@@ -2498,9 +2737,10 @@
   function optionsOf(select) { return [...(select.options || [])]; }
   function syncMenus() {
     for (const owner of menus) {
-      const chosen = optionsOf(owner.select).find(option => option.value === owner.select.value);
+      const choices = optionsOf(owner.select);
+      const chosen = choices.find(option => option.value === owner.select.value);
       owner.text.textContent = chosen?.textContent || owner.placeholder;
-      owner.button.disabled = owner.select.disabled || !optionsOf(owner.select).length;
+      owner.button.disabled = owner.select.disabled || (!choices.length && !owner.search);
       owner.button.title = `${owner.label}: ${owner.text.textContent}`;
     }
     for (const button of modeButtons) {
@@ -2511,12 +2751,23 @@
     if (popup && popup.owner.button.disabled) closeMenu();
     // The chip says which model answers; mode, permission, folder and web sit
     // behind it, and its title spells them out for anyone who hovers or listens.
-    const model = optionsOf($('model')).find(option => option.value === $('model').value);
-    const label = model?.textContent || 'No model';
+    const selection = composerModel(), model = modelByName($('model').value);
+    const effort = $('reasoning-effort').value;
+    const label = model ? (model.model || 'No model') : (selection.model || 'No model');
     $('chat-options-label').textContent = label;
-    const detail = [label, $('mode').value === 'chat' ? 'Chat mode' : 'Work mode', state.modelStatus, state.localOnly ? 'Local only' : ''].filter(Boolean).join(', ');
+    $('chat-options-effort').hidden = !effort;
+    $('chat-options-effort').textContent = effort ? `· ${effortLabels[effort]}` : '';
+    const healthDetail = selection.model && !model ? 'Model unavailable' : selection.model === defaultModel ? state.modelStatus : '';
+    const detail = [label, effort && `Reasoning: ${effortLabels[effort]}`, model?.model ? (model.local ? 'Local' : 'Cloud') : '',
+      $('mode').value === 'chat' ? 'Chat mode' : 'Work mode', healthDetail, state.localOnly ? 'Local only' : ''].filter(Boolean).join(', ');
     $('chat-options').title = `Chat options: ${detail}`;
     $('chat-options').setAttribute('aria-label', `Chat options. ${detail}`);
+    const starred = favourites.has(selection.model);
+    $('model-favourite').setAttribute('aria-pressed', String(starred));
+    $('model-favourite').title = starred ? 'Remove from favourites' : 'Pin to favourites';
+    const noModel = !model?.model || $('model').disabled;
+    $('model-favourite').disabled = noModel;
+    $('model-make-default').disabled = noModel;
   }
   function closeMenu(refocus = false) {
     if (!popup) return;
@@ -2527,7 +2778,7 @@
   function openMenu(owner) {
     closeMenu();
     const {select, button} = owner, items = [];
-    const node = el('div', 'popover'), list = el('div', 'popover-list');
+    const node = el('div', owner.search ? 'popover model-picker-popover' : 'popover'), list = el('div', 'popover-list');
     list.id = `${select.id}-listbox`; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', owner.label); list.tabIndex = -1;
     let active = -1, typed = '', typedAt = 0;
     const choose = value => {
@@ -2539,32 +2790,39 @@
       const index = items.length, item = el('div', 'option'), text = el('span', 'option-text');
       item.id = `${select.id}-option-${index}`; item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', String(option.value === select.value));
-      text.append(el('span', 'option-title', option.textContent));
+      const title = el('span', 'option-title', option.textContent);
+      text.append(title);
+      if (option.dataset.location) text.append(el('span', 'model-location', option.dataset.location));
       const note = owner.describe?.(option);
       if (note) text.append(el('span', 'option-note', note));
       item.append(text, icon('check'));
       item.onclick = () => choose(option.value);
       item.onpointermove = () => { if (active !== index) activate(index, false); };
-      parent.append(item); items.push({item, value: option.value, label: option.textContent.toLowerCase(), group: parent === list ? null : parent});
+      const label = [option.textContent, ...(owner.search ? [option.value, option.dataset.provider, option.dataset.location || parent.dataset.location] : [])];
+      parent.append(item); items.push({item, value: option.value, label: label.join(' ').toLowerCase()});
     };
     for (const child of select.children) {
-      if (child.tagName !== 'OPTGROUP') { add(child, list); continue; }
-      const group = el('div', 'option-group'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', child.label);
-      group.append(el('div', 'option-group-label', child.label));
+      if (child.tagName.toUpperCase() !== 'OPTGROUP') { add(child, list); continue; }
+      const group = el('div', 'option-group'), heading = el('div', 'option-group-label', child.label);
+      const location = child.dataset.location;
+      group.setAttribute('role', 'group'); group.setAttribute('aria-label', location ? `${child.label}, ${location}` : child.label);
+      if (location) { group.dataset.location = location; heading.append(el('span', 'model-location', location)); }
+      group.append(heading);
       for (const option of child.children) add(option, group);
       list.append(group);
     }
     // Related actions close the list: reachable with the same arrows and Enter.
     for (const action of owner.actions || []) {
+      if (action.when && !action.when()) continue;
       const index = items.length, item = el('div', 'option option-action');
       item.id = `${select.id}-option-${index}`; item.setAttribute('role', 'option'); item.setAttribute('aria-selected', 'false');
       item.append(icon(action.glyph), el('span', 'option-title', action.label));
       item.onclick = () => { closeMenu(true); action.run(); };
       item.onpointermove = () => { if (active !== index) activate(index, false); };
-      list.append(item); items.push({item, action, value: null, label: action.label.toLowerCase(), group: null});
+      list.append(item); items.push({item, value: null, label: action.label.toLowerCase()});
     }
     const none = el('div', 'option-empty', 'No matches'); none.hidden = true; list.append(none);
-    const search = items.length > 7 ? el('input', 'popover-search') : null;
+    const search = owner.search || items.length > 7 ? el('input', 'popover-search') : null;
     const target = search || list;
     if (search) {
       search.type = 'search'; search.placeholder = `Search ${owner.label.toLowerCase()}s`; search.autocomplete = 'off'; search.spellcheck = false;
@@ -2632,17 +2890,18 @@
       node.style.left = `${Math.max(edge, Math.min(left, innerWidth - width - edge))}px`;
     }
     place();
-    activate(items.findIndex(entry => entry.value === select.value));
+    const selected = items.findIndex(entry => entry.value === select.value);
+    activate(selected >= 0 ? selected : 0);
     target.focus({preventScroll: true});
   }
-  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby, actions} = {}) {
+  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby, actions, search} = {}) {
     const select = $(id), button = el('button', 'menu-button'), text = el('span', 'menu-value', placeholder);
     button.type = 'button'; button.id = `${id}-button`;
     button.setAttribute('aria-haspopup', 'listbox'); button.setAttribute('aria-expanded', 'false');
     if (labelledby) button.setAttribute('aria-labelledby', `${labelledby} ${id}-button`); else button.setAttribute('aria-label', label);
     if (glyph) button.append(icon(glyph));
     button.append(text, icon('chevron-down'));
-    const owner = {select, button, text, label, describe, align, width, placeholder, actions};
+    const owner = {select, button, text, label, describe, align, width, placeholder, actions, search};
     button.onclick = () => { if (popup?.owner === owner) closeMenu(); else openMenu(owner); };
     button.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (popup?.owner !== owner) openMenu(owner); }
@@ -2652,8 +2911,12 @@
   const permissionNotes = {manual: 'Ask before commands and file changes', auto: 'Ask only before destructive commands', full: 'Never ask. Use with care.'};
   menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value],
     actions: [{glyph: 'sliders-horizontal', label: 'Edit permission rules…', run: openRules}]});
-  menu('model', 'Model', {align: 'end', width: 260, placeholder: 'No model', describe: option => option.textContent === option.value ? '' : option.value,
-    actions: [{glyph: 'sliders-horizontal', label: 'Model settings…', run: () => safe(openModelSettings)}]});
+  const modelMenu = menu('model', 'Model', {align: 'end', width: 260, placeholder: 'Choose model', describe: modelHint, search: true,
+    actions: [
+      {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
+      {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
+    ]});
+  menu('reasoning-effort', 'Reasoning effort', {align: 'end'});
   menu('provider-kind', 'Provider', {width: 240, labelledby: 'provider-kind-label'});
   menu('provider-active', 'Active model', {width: 240, labelledby: 'provider-active-label'});
   function setMode(value) {
@@ -2707,6 +2970,10 @@
     const open = optionsPanel.hidden; options(open);
     if (open) optionsPanel.querySelector('button:not(:disabled), input:not(:disabled)')?.focus();
   };
+  optionsButton.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowDown' || modelMenu.button.disabled) return;
+    event.preventDefault(); options(true); openMenu(modelMenu);
+  });
   optionsPanel.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     event.stopPropagation(); event.preventDefault(); options(false); optionsButton.focus();

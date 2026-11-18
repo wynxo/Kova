@@ -35,7 +35,7 @@ from kova.config import load_config
 from kova.modes import MODES
 from kova.privacy import status_text as privacy_status_text
 from kova.tui.app import COMMANDS, PERMISSIONS
-from kova.tui.style import active_theme, colour
+from kova.tui.style import colour
 
 _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
 
@@ -63,7 +63,7 @@ _PLAN_MARKS = {"done": "☑", "in_progress": "◐", "pending": "☐"}
 # Prompt_toolkit styling for the input line, the completion menu and the
 # bottom toolbar. Resolve the active theme when the input session starts.
 def _chat_style() -> Style:
-    selection_text = colour('ON_ACCENT') if active_theme() == 'light' else '#ffffff'
+    selection_text = colour('ON_ACCENT')
     return Style.from_dict({
         "prompt": f"bold {colour('USER')}",
         "bottom-toolbar": f"bg:{colour('BORDER', background=True)} {colour('MUTED')}",

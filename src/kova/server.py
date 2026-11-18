@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins, egress, themes, ui_prefs
+from kova import __version__, checkpoints, pairing, plugins, egress, reasoning_effort, themes, ui_prefs
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -25,6 +25,7 @@ from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE, MODES, capabilities as mode_capabilities
+from kova.reasoning_effort import ReasoningEffort
 from kova.reminders import ReminderLoop
 from kova.scheduler import Scheduler, parse_schedule
 from kova.store import Store
@@ -57,6 +58,8 @@ class ChatBody(BaseModel):
     ephemeral: bool | None = None
     colour: str | None = None
     icon: str | None = None
+    model: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class PersonaBody(BaseModel):
@@ -183,6 +186,7 @@ class ModelPatch(BaseModel):
 class ActiveBody(BaseModel):
     """The name of the model to activate."""
     name: str
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class CompareBody(BaseModel):
@@ -216,9 +220,15 @@ def _refresh_review(store: Store, config: Config):
 
 def _model_dict(entry: ModelEntry) -> dict:
     """The JSON shape of a model entry."""
+    from kova.providers import supports
+    from kova.usage import is_local
+    efforts = reasoning_effort.choices(entry)
     return {"name": entry.name, "base_url": entry.base_url, "model": entry.model,
             "api_key": "***" if entry.api_key else None, "context": entry.context,
             "vision": entry.vision,
+            "tools": supports(entry._provider, "tools"), "local": is_local(entry),
+            "reasoning_efforts": efforts,
+            "reasoning_effort": entry.reasoning_effort if entry.reasoning_effort in efforts else None,
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
@@ -550,6 +560,33 @@ def create_app(
             raise HTTPException(403, "This phone is not allowed to choose Full access or a working "
                                      "folder outside Kova Files. Do this on your computer.")
 
+    def validate_effort(entry: ModelEntry | None, effort: str | None) -> None:
+        if effort is not None and (entry is None or effort not in reasoning_effort.choices(entry)):
+            raise HTTPException(422, "This model does not support that reasoning effort.")
+
+    def chat_model_settings(body: ChatBody | None, chat: dict) -> dict:
+        if body is None or not body.model_fields_set & {"model", "reasoning_effort"}:
+            return {}
+        previous_model = chat.get("model")
+        model = body.model if "model" in body.model_fields_set else previous_model
+        entry = config.model_entry(model)
+        if model is not None and (entry is None or not entry.model):
+            raise HTTPException(404, f"Model '{model}' is not configured. Choose another model.")
+        if "reasoning_effort" in body.model_fields_set:
+            effort = body.reasoning_effort
+            validate_effort(entry, effort)
+        elif model == previous_model:
+            effort = chat.get("reasoning_effort")
+        else:
+            effort = (entry.reasoning_effort if model and entry
+                      and entry.reasoning_effort in reasoning_effort.choices(entry) else None)
+        # Changing only effort pins the effective model as well, so changing
+        # the default in a different chat cannot reinterpret the override.
+        if model is None and entry is not None and entry.model and (
+                effort is not None or "model" not in body.model_fields_set):
+            model = entry.name
+        return {"model": model, "reasoning_effort": effort}
+
     @api.get('/privacy')
     async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
         report = app.state.store.egress_report(days, chat_id)
@@ -694,6 +731,7 @@ def create_app(
             cwd=cwd if cwd is not None else str(config.files_path.resolve()),
             colour=colour,
             icon=icon,
+            **chat_model_settings(body, {}),
         )
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
@@ -713,7 +751,7 @@ def create_app(
             chat = app.state.store.fork_chat(chat_id)
             if chat is None:
                 raise HTTPException(status_code=404, detail="chat not found")
-            return chat
+            return app.state.store.get_chat(chat["id"], include_usage=True)
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
@@ -753,11 +791,13 @@ def create_app(
         # narrows a chat, so it needs no capability, no stopped turn and does
         # not count as a phone writing in the chat (#195).
         pinned = body.pinned
+        limit_chat_settings(request, body.permission, changes.get("cwd"))
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        changes.update(chat_model_settings(body, chat))
         if not changes and pinned is None:
             raise HTTPException(status_code=422, detail="nothing to update")
-        limit_chat_settings(request, body.permission, changes.get("cwd"))
-        if app.state.store.get_chat(chat_id) is None:
-            raise HTTPException(status_code=404, detail="chat not found")
         if changes and any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
         # A phone's title, mode or permission is the phone writing in the chat, so
@@ -770,8 +810,10 @@ def create_app(
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
         chat = app.state.store.get_chat(chat_id)
-        return {key: chat[key] for key in ("id", "title", "mode", "web", "permission",
-                                           "cwd", "colour", "icon", "pinned")}
+        keys = ("id", "title", "mode", "web", "permission", "cwd", "colour", "icon", "pinned")
+        if "model" in changes:
+            keys += ("model", "reasoning_effort")
+        return {key: chat[key] for key in keys}
 
     @api.post("/chats/{chat_id}/attachments")
     async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:
@@ -919,14 +961,11 @@ def create_app(
         from kova.compact import compact
         from kova.models import ModelClient
         async with chat_lock(chat_id):
-            if app.state.store.get_chat(chat_id) is None:
+            chat = app.state.store.get_chat(chat_id)
+            if chat is None:
                 raise HTTPException(status_code=404, detail="chat not found")
-            try:
-                entry = config.active_model()
-            except KeyError as exc:
-                raise HTTPException(status_code=422,
-                                    detail="No model is set up yet. Run: kova setup") from exc
-            if not entry.model:
+            entry = config.model_entry(chat.get("model"))
+            if entry is None or not entry.model:
                 raise HTTPException(status_code=422, detail="No model is set up yet. Run: kova setup")
             event = await compact(app.state.store, chat_id,
                                   ModelClient(entry, transport=app.state.agent.transport,
@@ -936,7 +975,8 @@ def create_app(
 
     @api.post("/chats/{chat_id}/messages")
     async def post_message(chat_id: str, body: TurnBody, request: Request) -> StreamingResponse:
-        if app.state.store.get_chat(chat_id) is None:
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         queued = None
         if body.queued is not None:
@@ -945,13 +985,15 @@ def create_app(
                 raise HTTPException(404, "That queued message was already sent or removed.")
             if body.text != queued["text"] or (queued["remote"] and body.attachments):
                 raise HTTPException(409, "Send a queued message as it was queued.")
-        if body.model is not None and not any(m.name == body.model for m in config.models):
-            raise HTTPException(status_code=404, detail=f"unknown model '{body.model}'")
+        selected = body.model if body.model is not None else chat.get("model")
+        entry = config.model_entry(selected)
+        if selected is not None and entry is None:
+            detail = (f"unknown model '{selected}'" if body.model is not None else
+                      f"Model '{selected}' is not configured. Choose another model.")
+            raise HTTPException(status_code=404, detail=detail)
         rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
         if len(set(body.attachments)) != len(body.attachments) or any(i not in rows for i in body.attachments):
             raise HTTPException(400, "Choose attachments from this chat only.")
-        config.bind_providers()
-        entry = next((m for m in config.models if m.name == (body.model or config.active)), None)
         from kova import providers
         if entry is not None:
             egress.check_url(entry.base_url, config)
@@ -1327,7 +1369,11 @@ def create_app(
     @api.get("/models")
     async def models_list() -> list[dict]:
         config.bind_providers()
-        return [_model_dict(entry) for entry in config.models]
+        speeds = app.state.store.latest_local_model_speeds()
+        models = [_model_dict(entry) for entry in config.models]
+        for model in models:
+            model["last_local_speed"] = speeds.get(model["name"]) if model["local"] else None
+        return models
 
     @api.post("/models", dependencies=providers_write)
     async def model_add(body: ModelBody) -> dict:
@@ -1352,10 +1398,19 @@ def create_app(
 
     @api.post("/models/active")
     async def model_use(body: ActiveBody) -> dict:
-        if not any(m.name == body.name for m in config.models):
+        entry = config.model_entry(body.name)
+        if entry is None:
             raise HTTPException(status_code=404, detail=f"unknown model '{body.name}'")
+        validate_effort(entry, body.reasoning_effort)
+        previous = config.active, entry.reasoning_effort
         config.active = body.name
-        save_config(config)
+        if "reasoning_effort" in body.model_fields_set:
+            entry.reasoning_effort = body.reasoning_effort
+        try:
+            save_config(config)
+        except OSError:
+            config.active, entry.reasoning_effort = previous
+            raise HTTPException(503, "Could not save the default model. Retry in Chat options.") from None
         return {"active": body.name}
 
     @api.post("/compare")

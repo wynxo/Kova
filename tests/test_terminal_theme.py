@@ -48,31 +48,31 @@ def test_rich_surfaces_use_the_light_palette(source, surface, terminal_home, mon
         renderable = turn.render()
     raw = capture(renderable)
     if surface != "status":
-        assert "38;2;67;60;122" in raw  # light accent, not dark violet
+        assert "38;2;20;18;28" in raw  # light accent, not the near-white dark-theme accent
     else:
         assert "38;2;66;69;73" in raw  # light muted labels
-    assert "38;2;139;124;255" not in raw
+    assert "38;2;246;246;248" not in raw
     assert "38;2;138;143;152" not in raw
 
 
 def test_environment_overrides_config_and_changes_without_reimport(terminal_home, monkeypatch):
     (terminal_home / "config.toml").write_text('[tui]\ntheme = "light"\n')
-    assert "38;2;67;60;122" in capture(brand.heading("Theme"))
+    assert "38;2;20;18;28" in capture(brand.heading("Theme"))
     monkeypatch.setenv("KOVA_THEME", "dark")
-    assert "38;2;139;124;255" in capture(brand.heading("Theme"))
+    assert "38;2;246;246;248" in capture(brand.heading("Theme"))
     monkeypatch.delenv("KOVA_THEME")
     (terminal_home / "config.toml").write_text('[tui]\ntheme = "dark"\n')
-    assert "38;2;139;124;255" in capture(brand.heading("Theme"))
+    assert "38;2;246;246;248" in capture(brand.heading("Theme"))
 
 
 def test_default_palette_and_setup_picker_respect_config(terminal_home):
     (terminal_home / "config.toml").write_text('[tui]\ntheme = "light"\n')
     p = Palette(3)
-    assert p.paint(ACCENT, "x") == "\x1b[38;2;67;60;122mx\x1b[0m"
+    assert p.paint(ACCENT, "x") == "\x1b[38;2;20;18;28mx\x1b[0m"
     rows = "\n".join(_List("Provider", ["Demo"], multi=False).render(60, p))
-    assert "38;2;67;60;122" in rows
+    assert "38;2;20;18;28" in rows
     assert Palette(0).paint(ACCENT, "x") == "x"
-    assert Palette(1).paint(ACCENT, "x") == "\x1b[95mx\x1b[0m"
+    assert Palette(1).paint(ACCENT, "x") == "\x1b[30mx\x1b[0m"
 
 
 def test_setup_banner_and_gradient_follow_light_theme(monkeypatch):
@@ -81,9 +81,9 @@ def test_setup_banner_and_gradient_follow_light_theme(monkeypatch):
     console = Console(file=out, force_terminal=True, color_system="truecolor", width=120)
     brand.setup_banner(console, "1.0")
     raw = out.getvalue()
-    assert "38;2;59;78;122" in raw  # first gradient stop, translated once
+    assert "38;2;122;122;122" in raw  # first gradient stop, translated once
     assert "38;2;66;69;73" in raw
-    assert "38;2;122;162;255" not in raw
+    assert "38;2;255;255;255" not in raw
 
 
 @pytest.mark.parametrize("args", [["--help"], ["model", "--help"]])
@@ -126,7 +126,7 @@ def test_status_command_themes_the_whole_card(up, terminal_home, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "38;2;66;69;73" in result.output
     assert "38;2;138;143;152" not in result.output
-    assert "38;2;67;60;122" in result.output if up else "38;2;122;46;52" in result.output
+    assert "38;2;20;18;28" in result.output if up else "38;2;122;46;52" in result.output
 
 
 def test_light_output_is_still_plain_when_piped(monkeypatch):
@@ -144,11 +144,11 @@ def test_prompt_styles_resolve_foregrounds_and_backgrounds_at_session_start(monk
     prompt = style.get_attrs_for_style_str("class:prompt", DEFAULT_ATTRS)
     menu = style.get_attrs_for_style_str("class:completion-menu.completion.current", DEFAULT_ATTRS)
     assert prompt.color == "2e6754"
-    assert menu.bgcolor == "f3f2fa"
-    assert menu.color == "0a090d"
+    assert menu.bgcolor == "14121c"
+    assert menu.color == "f6f6f8"
     monkeypatch.setenv("KOVA_THEME", "dark")
     menu = ui._chat_style().get_attrs_for_style_str("class:completion-menu.completion.current", DEFAULT_ATTRS)
-    assert menu.bgcolor == "8b7cff" and menu.color == "ffffff"
+    assert menu.bgcolor == "f6f6f8" and menu.color == "14121c"
 
 
 @pytest.mark.parametrize("contents", [None, "invalid = [", '[tui]\ntheme = "unknown"\n', 'tui = 42'])
@@ -156,7 +156,7 @@ def test_theme_falls_back_without_creating_or_rewriting_config(contents, termina
     path = terminal_home / "config.toml"
     if contents is not None:
         path.write_text(contents)
-    assert colour("ACCENT") == "#8b7cff"
+    assert colour("ACCENT") == "#f6f6f8"
     if contents is None:
         assert not path.exists()
     else:
