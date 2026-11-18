@@ -939,6 +939,7 @@
     setWeb(chat?.web ?? true);
     empty(!chat?.messages?.some(m => m.role === 'user'));
     $('messages').replaceChildren();
+    window.KovaPlanCard?.reset();
     // A saved turn reads like a live one: every round of it sits under one heading.
     const turns = []; let turn = null, savedTools = null;
     for (const msg of chat?.messages || []) {
@@ -1422,6 +1423,9 @@
           if (plan) plan.replaceWith(next);
           else { document.querySelectorAll('.plan-view').forEach(old => old.remove()); body.insertBefore(next, activity); }
           plan = next;
+          // The pinned card owns this plan until the turn ends, then it hands
+          // the same node back to the transcript (#193).
+          window.KovaPlanCard?.update(event.items, next);
         } else if (kind === 'review') {
           current = null; activity.hidden = true;
           if (event.files?.length || event.skipped?.length) {
@@ -1452,6 +1456,7 @@
         schedule();
       },
       finish() {
+        window.KovaPlanCard?.finish();
         endReasoning(); finished = true; activity.remove();
         for (const approval of approvals.values()) approval.finish();
         for (const group of toolGroups) group.finish();

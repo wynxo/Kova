@@ -115,6 +115,12 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 **Buttons.** One primary action per view. Secondary actions are quiet: text or outline, never a
 second filled accent. Destructive actions name the thing they destroy (*Delete chat*, not *OK*).
 
+**The plan card.** While a turn runs, its latest checklist stays pinned above the message box as
+one compact row: the current step, a progress bar and a disclosure for the whole list. It is fed
+by the same events as the transcript plan, takes that plan's place while pinned, and hands it
+back when the turn ends, so the two are never on screen together. It can be dismissed for the
+turn, and on a phone the disclosure opens as a bottom sheet (#193).
+
 **Copy.** Sentence case. Verbs for actions. No exclamation marks. Errors say what happened and
 what to do next, in that order, without apologising: *The model server stopped responding. Start it
 again, or switch to a local model.*
