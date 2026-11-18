@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 114 endpoints: 113 route handlers plus the static asset mount.
+The app exposes 116 endpoints: 115 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -132,6 +132,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
+| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again in place, replacing the reply it produced |
+| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run its turn again |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
 | `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
