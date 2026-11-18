@@ -938,12 +938,27 @@ def import_archive(
                "restart a foreground server if you changed its config.")
 
 
+def _installed_theme_ids(client: KovaClient) -> list[str]:
+    """Ids of the user's own theme files (built-ins are everywhere already)."""
+    try:
+        rows = client.themes()
+    except KovaError:
+        return []
+    return sorted(row["id"] for row in rows if row.get("source") != "built-in" and row.get("id"))
+
+
+def _format_changes(rows: list[tuple]) -> str:
+    """One ``name: old -> new`` line per changed preference, for --dry-run."""
+    return "  " + " · ".join(f"{name}: {old!r} -> {new!r}" for name, old, new in rows)
+
+
 @_prefs.command("export")
 def prefs_export(path: str | None = typer.Argument(
         None, help="JSON path (default: ~/Kova-ui-preferences-YYYY-MM-DD.json).")):
     """Save every UI preference to one validated JSON file."""
     try:
-        target = ui_prefs.write_file(get_client().preferences(), path)
+        client = get_client()
+        target = ui_prefs.write_file(client.preferences(), path, _installed_theme_ids(client))
     except (ui_prefs.UiPrefsError, OSError) as exc:
         _fail(str(exc))
     _ok(f"UI preferences written to {target}")
@@ -954,18 +969,40 @@ def prefs_export(path: str | None = typer.Argument(
 def prefs_import(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
                                 help="A preferences JSON file from `kova prefs export`."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Show what would change without saving anything."),
 ):
     """Restore UI preferences, refusing a file that does not validate."""
     try:
-        values = ui_prefs.read_file(path)
+        values, exported_themes = ui_prefs.read_export(path)
     except (ui_prefs.UiPrefsError, OSError) as exc:
         _fail(str(exc))
     try:
-        saved = get_client().set_preferences(values)
+        client = get_client()
+        current = client.preferences()
+    except KovaError as exc:
+        _fail(str(exc))
+    rows = ui_prefs.diff_preferences(current, {**current, **values})
+    missing = [name for name in exported_themes if name not in _installed_theme_ids(client)]
+    if dry_run:
+        if not rows:
+            _muted("No changes: preferences already match.")
+        else:
+            _muted(f"Would change {len(rows)} preference{'s' if len(rows) != 1 else ''}:")
+            _muted(_format_changes(rows))
+        if missing:
+            _muted(f"  Missing themes here: {', '.join(missing)}")
+        elif exported_themes:
+            _muted("  All installed themes are present here.")
+        return
+    try:
+        saved = client.set_preferences(values)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f"Restored {len(saved)} UI preferences")
     _muted("  " + " · ".join(f"{name} {value}" for name, value in sorted(saved.items())))
+    if missing:
+        _muted(f"  Missing themes here: {', '.join(missing)} (install the files to use them)")
 
 
 @_themes.callback(invoke_without_command=True)

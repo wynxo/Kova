@@ -154,7 +154,7 @@ assert.ok(themeRow, 'the Theme setting is shown');
 const title = byClass(themeRow, 'settings-row-title')[0];
 const mark = walk(title).find(node => node.tagName === 'MARK');
 assert.equal(mark?.textContent, 'Theme', 'the matched word is highlighted');
-assert.match($('settings-search-status').textContent, /11 settings match/);
+assert.match($('settings-search-status').textContent, /13 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.

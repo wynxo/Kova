@@ -42,6 +42,10 @@
          keywords: 'remap rebind change custom keys hotkeys record', host: 'shortcut-remap'},
         {title: 'Startup', help: 'Keep reminders and scheduled jobs running after you sign in.',
          keywords: 'start login sign in boot autostart service status bar', host: 'settings'},
+        {title: 'Export preferences', help: 'Save every UI preference and the names of your installed themes to a file, for another computer.',
+         keywords: 'export backup download preferences themes move file', control: 'prefs_export'},
+        {title: 'Import preferences', help: 'Restore preferences from a file. Shows what changes before anything is applied.',
+         keywords: 'import restore upload preferences themes file', control: 'prefs_import'},
         {title: 'Sign out', help: 'End this session in this window. On a paired phone, this unpairs it.',
          keywords: 'logout sign out disconnect unpair leave', action: 'disconnect', actionLabel: 'Sign out'},
       ],
@@ -491,6 +495,205 @@
     }
   }
 
+  // Export, import and sync of every UI preference (#212). The server holds
+  // one validated document; `kova prefs export` writes the same file the web
+  // download saves here, so either client restores on another machine.
+  const PREFS_FORMAT = 'kova-ui-preferences';
+  const PREFS_VERSION = 1;
+
+  function prefsFetch(url, options) {
+    if (typeof fetch !== 'function') return null;
+    try { return fetch(url, options); } catch (_) { return null; }
+  }
+  function prefsFileName() {
+    const day = new Date().toISOString().slice(0, 10);
+    return `Kova-ui-preferences-${day}.json`;
+  }
+  function buildPrefsDocument(preferences, themes) {
+    const payload = {format: PREFS_FORMAT, version: PREFS_VERSION, preferences: {...preferences}};
+    if (themes !== undefined) payload.themes = [...themes];
+    return payload;
+  }
+  function parsePrefsDocument(payload) {
+    if (!payload || typeof payload !== 'object') throw new Error('Not a Kova UI preferences file.');
+    if (payload.format !== PREFS_FORMAT) throw new Error('Not a Kova UI preferences file.');
+    if (payload.version !== PREFS_VERSION) throw new Error('This file needs a newer Kova. Update, then import again.');
+    if (!payload.preferences || typeof payload.preferences !== 'object') {
+      throw new Error("This file has no preferences to import.");
+    }
+    const themes = Array.isArray(payload.themes)
+      ? payload.themes.filter(name => typeof name === 'string' && name)
+      : [];
+    return {preferences: {...payload.preferences}, themes};
+  }
+  function summarizePrefs(current, incoming, localThemeIds, exportedThemes) {
+    const changes = Object.keys(incoming).filter(name => current[name] !== incoming[name]);
+    const lines = changes.map(name => `${name}: ${JSON.stringify(current[name]) ?? '—'} → ${JSON.stringify(incoming[name])}`);
+    const missing = (exportedThemes || []).filter(name => !(localThemeIds || []).includes(name));
+    return {changes, lines, missing};
+  }
+  function installedThemeIds(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(entry => entry && entry.source !== 'built-in' && typeof entry.id === 'string').map(entry => entry.id);
+  }
+  function downloadJson(payload, filename) {
+    const text = `${JSON.stringify(payload, null, 2)}\n`;
+    const blob = new Blob([text], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function prefsExportControl() {
+    const wrap = element('div', 'settings-prefs');
+    const button = element('button', 'btn small settings-action', 'Export');
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Export: download preferences');
+    const status = element('p', 'settings-row-help');
+    status.setAttribute('role', 'status');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      status.textContent = 'Preparing the file…';
+      try {
+        const [prefsRes, themesRes] = await Promise.all([
+          prefsFetch('/preferences', {headers: {'Accept': 'application/json'}}),
+          prefsFetch('/themes', {headers: {'Accept': 'application/json'}}),
+        ]);
+        if (!prefsRes || !prefsRes.ok) throw new Error('Kova is unreachable. Retry, then export again.');
+        const preferences = await prefsRes.json();
+        let themes;
+        if (themesRes && themesRes.ok) {
+          try { themes = installedThemeIds(await themesRes.json()); } catch (_) { themes = undefined; }
+        }
+        downloadJson(buildPrefsDocument(preferences, themes), prefsFileName());
+        const count = Object.keys(preferences || {}).length;
+        status.textContent = `Exported ${count} preferences${themes ? ` and ${themes.length} themes` : ''}.`;
+      } catch (error) {
+        status.textContent = (error && error.message) || 'Export failed. Retry.';
+        status.classList.add('shortcut-error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    wrap.append(button);
+    const holder = element('div', '');
+    holder.append(wrap, status);
+    return holder;
+  }
+  function prefsImportControl() {
+    const wrap = element('div', 'settings-prefs');
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.hidden = true;
+    input.setAttribute('aria-label', 'Choose a preferences file');
+    const pick = element('button', 'btn small settings-action', 'Import');
+    pick.type = 'button';
+    pick.setAttribute('aria-label', 'Import: choose a preferences file');
+    const apply = element('button', 'btn small settings-action', 'Apply');
+    apply.type = 'button';
+    apply.hidden = true;
+    const cancel = element('button', 'btn small quiet settings-action', 'Cancel');
+    cancel.type = 'button';
+    cancel.hidden = true;
+    const status = element('p', 'settings-row-help');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    let pending = null;
+    function reset(message) {
+      pending = null;
+      apply.hidden = true;
+      cancel.hidden = true;
+      input.value = '';
+      if (message !== undefined) status.textContent = message;
+    }
+    pick.addEventListener('click', () => input.click());
+    cancel.addEventListener('click', () => reset('Import cancelled. Nothing changed.'));
+    input.addEventListener('change', async () => {
+      status.classList.remove('shortcut-error');
+      const file = input.files && input.files[0];
+      if (!file) return;
+      let parsed;
+      try {
+        parsed = parsePrefsDocument(JSON.parse(await file.text()));
+      } catch (error) {
+        status.textContent = `${(error && error.message) || 'That file is not valid JSON.'} Nothing changed.`;
+        status.classList.add('shortcut-error');
+        input.value = '';
+        return;
+      }
+      try {
+        const [currentRes, themesRes] = await Promise.all([
+          prefsFetch('/preferences', {headers: {'Accept': 'application/json'}}),
+          prefsFetch('/themes', {headers: {'Accept': 'application/json'}}),
+        ]);
+        if (!currentRes || !currentRes.ok) throw new Error('Kova is unreachable. Retry, then import again.');
+        const current = await currentRes.json();
+        let localIds = [];
+        if (themesRes && themesRes.ok) {
+          try { localIds = installedThemeIds(await themesRes.json()); } catch (_) { localIds = []; }
+        }
+        const summary = summarizePrefs(current || {}, parsed.preferences, localIds, parsed.themes);
+        pending = parsed.preferences;
+        if (!summary.changes.length) {
+          status.textContent = parsed.themes.length && summary.missing.length
+            ? `Already up to date. Missing themes here: ${summary.missing.join(', ')}.`
+            : 'Already up to date. Nothing to apply.';
+          apply.hidden = true;
+          cancel.hidden = false;
+          return;
+        }
+        const preview = summary.lines.slice(0, 6).join('; ');
+        const extra = summary.changes.length > 6 ? `, and ${summary.changes.length - 6} more` : '';
+        status.textContent = `${summary.changes.length} changes: ${preview}${extra}.` +
+          (summary.missing.length ? ` Missing themes here: ${summary.missing.join(', ')}.` : '') +
+          ' Choose Apply to use them.';
+        apply.hidden = false;
+        cancel.hidden = false;
+      } catch (error) {
+        status.textContent = (error && error.message) || 'Import failed. Nothing changed.';
+        status.classList.add('shortcut-error');
+        input.value = '';
+      }
+    });
+    apply.addEventListener('click', async () => {
+      if (!pending) return;
+      apply.disabled = true;
+      try {
+        const response = await prefsFetch('/preferences', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(pending),
+        });
+        if (!response || !response.ok) {
+          let detail = 'Import failed. Nothing changed.';
+          try { detail = (await response.json()).detail || detail; } catch (_) {}
+          throw new Error(detail);
+        }
+        const count = Object.keys(pending).length;
+        reset(`Applied ${count} preferences.`);
+        syncControls();
+        window.KovaTheme?.sync?.();
+        window.KovaTheme?.refresh?.();
+      } catch (error) {
+        status.textContent = (error && error.message) || 'Import failed. Nothing changed.';
+        status.classList.add('shortcut-error');
+        apply.disabled = false;
+      }
+    });
+    wrap.append(pick, apply, cancel);
+    const holder = element('div', '');
+    holder.append(wrap, input, status);
+    return holder;
+  }
+  if (typeof window !== 'undefined') {
+    window.KovaPrefs = {buildPrefsDocument, parsePrefsDocument, summarizePrefs, installedThemeIds};
+  }
+
   function syncControls() {
     syncTheme();
     syncReasoning();
@@ -525,6 +728,10 @@
       row.append(reasoningControl());
     } else if (item.control === 'motion') {
       row.append(motionControl());
+    } else if (item.control === 'prefs_export') {
+      row.append(prefsExportControl());
+    } else if (item.control === 'prefs_import') {
+      row.append(prefsImportControl());
     } else if (typographyChoice(item.control)) {
       row.append(typographyControl(typographyChoice(item.control)));
     } else if (item.host) {
