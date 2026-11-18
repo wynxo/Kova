@@ -342,7 +342,10 @@ through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
 shows reasoning folded into "Thought for Ns" rows (hideable in Settings) and
 live tool rows, and listens to `/events` with
 `EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
+stored in `localStorage`. An unsent message is kept per saved chat
+(`web_assets/drafts.js`) so it survives a reload and returns when that chat
+opens; sending or deleting the chat clears it, and an incognito chat never gets
+a draft key. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are

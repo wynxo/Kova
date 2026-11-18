@@ -57,7 +57,11 @@ const sandbox = {
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
   performance, URLSearchParams, TextDecoder, AbortController, console, FormData, File,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
-  localStorage: {getItem() {return 'dark';}, setItem() {}},
+  localStorage: (() => { const store = new Map([['kova-theme', 'dark']]); return {
+    getItem: key => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: key => { store.delete(key); },
+  }; })(),
   fetch: async (path, options = {}) => {
     const form = options.body instanceof FormData ? options.body : null;
     const body = !form && options.body ? JSON.parse(options.body) : null;
@@ -118,6 +122,7 @@ vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', i
   readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/code-header.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/drafts.js', import.meta.url), 'utf8') + '\n' +
   source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -848,6 +853,30 @@ assert.equal($('prompt').value, '', 'an unsent incognito draft must not enter a 
 assert.equal($('incognito-note').hidden, true);
 assert.ok(requests.slice(beforeClose).filter(r => r.path === `/chats/${closedId}`).length >= 2);
 console.log('Incognito entry, marking, upload prevention, fork refusal and cleanup passed');
+
+// An unsent message belongs to its chat and comes back when it is reopened;
+// incognito text never reaches browser storage (#197).
+state.busy = false; state.chat = null;
+const draftChat = {id: 'draft-a', title: 'Draft A', mode: 'work', permission: 'manual', messages: []};
+const draftOther = {id: 'draft-b', title: 'Draft B', mode: 'work', permission: 'manual', messages: []};
+setChat(draftChat);
+$('prompt').value = 'keep this until I return';
+setChat(draftOther);
+assert.equal($('prompt').value, '', 'another chat starts on its own draft');
+$('prompt').value = 'second draft';
+setChat(draftChat);
+assert.equal($('prompt').value, 'keep this until I return', 'the first draft comes back');
+setChat(draftOther);
+assert.equal($('prompt').value, 'second draft');
+setChat({id: 'incognito-draft', ephemeral: true, title: 'Incognito', mode: 'chat', web: false, messages: []});
+$('prompt').value = 'private draft';
+setChat(null);
+assert.equal(sandbox.KovaDrafts.read({id: 'incognito-draft', ephemeral: true}), '',
+             'an incognito draft is never stored');
+setChat(draftChat);
+assert.equal($('prompt').value, 'keep this until I return', 'other drafts survive the excursion');
+setChat(null); $('prompt').value = '';
+console.log('Per-chat drafts and the incognito exclusion passed');
 
 // Sending a message: earlier checks only sent while busy (the queue path) or a
 // slash command, so a broken sendText went unnoticed. Errors inside it become a

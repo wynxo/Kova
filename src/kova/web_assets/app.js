@@ -61,6 +61,18 @@
     $('welcome').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
+  // Per-chat drafts (#197). drafts.js owns storage and the incognito exclusion;
+  // app.js saves on typing and restores when a chat opens. A saved chat only.
+  const draftComponent = () => globalThis.KovaDrafts || null;
+  const draftOf = chat => draftComponent()?.read(chat) || '';
+  const rememberDraft = (chat = state.chat, text = $('prompt').value) => draftComponent()?.write(chat, text);
+  const forgetDraft = chat => draftComponent()?.clear(chat);
+  let draftTimer = null;
+  function scheduleDraft() {
+    clearTimeout(draftTimer);
+    const chat = state.chat, text = $('prompt').value;
+    draftTimer = setTimeout(() => rememberDraft(chat, text), 300);
+  }
   // One toast component (toast.js, #198). These wrappers are the only way
   // app.js posts transient messages; the severity decides politeness and how
   // long the message waits. Errors stay until dismissed.
@@ -519,7 +531,7 @@
     if (command) return dispatchCommand(command);
     const row = await json(`/chats/${state.chat.id}/queue`, write('POST', {text}));
     state.queued.push(row); renderQueue();
-    $('prompt').value = ''; resize(); controls();
+    $('prompt').value = ''; forgetDraft(); resize(); controls();
   }
   async function steerMessage() {
     const text = $('prompt').value.trim();
@@ -527,7 +539,7 @@
     const command = parseCommand(text);
     if (command) return dispatchCommand(command);
     await json(`/chats/${state.chat.id}/steer`, write('POST', {text}));
-    $('prompt').value = ''; resize(); controls();
+    $('prompt').value = ''; forgetDraft(); resize(); controls();
     toast('Sent into the running reply.', 'Steering');
   }
   async function runNextQueued() {
@@ -539,6 +551,7 @@
     await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
+    rememberDraft();
     state.chat = chat;
     renderAttachments();
     pageTitle();
@@ -566,6 +579,7 @@
     }
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
+    $('prompt').value = draftOf(chat); resize();
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
@@ -650,9 +664,10 @@
     setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false})));
     $('prompt').value = ''; $('prompt').focus(); await refreshChats();
   }
-  // No transcript or draft goes into browser storage. A normal tab close or
-  // reload discards the server's RAM-only chat as well.
+  // An incognito chat has no draft key, so its text never enters browser
+  // storage. A normal tab close or reload discards the RAM-only chat as well.
   window.addEventListener('pagehide', () => {
+    rememberDraft();
     if (state.chat?.ephemeral) fetch(`/chats/${state.chat.id}`, {method: 'DELETE', keepalive: true}).catch(() => {});
   });
   async function editChat(chat, remove) {
@@ -668,6 +683,7 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
+      forgetDraft(chat);
       if (state.chat?.id === chat.id) setChat(null);
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
@@ -1124,7 +1140,7 @@
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
     const command = text ? parseCommand(text) : null;
     if (command) {
-      try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
+      try { await dispatchCommand(command); $('prompt').value = ''; forgetDraft(); resize(); commandPicker(); }
       catch (error) { toastError(error.message); }
       return;
     }
@@ -1140,7 +1156,7 @@
     try {
       if (!state.chat) state.chat = await json('/chats', write('POST', {mode: $('mode').value, web: webOn(), permission: $('permission').value, ...($('cwd').value.trim() ? {cwd: $('cwd').value.trim()} : {})}));
       const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
-      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
+      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; forgetDraft(state.chat); resize(); options(false);
       nearBottom = true; turn = turnView(message('assistant')); follow();
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model: $('model').value || null, attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
       if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
@@ -1288,7 +1304,7 @@
     if (files.length) { event.preventDefault(); attachFiles(files); }
   });
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
+  $('prompt').addEventListener('input', () => { resize(); commandPicker(); scheduleDraft(); });
   $('prompt').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
     // Like a shell: Up in an empty box brings back what you last said.
