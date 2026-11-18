@@ -257,3 +257,95 @@ def test_a_corrupt_saved_file_names_itself(home):
 
     with pytest.raises(ui_prefs.UiPrefsError, match="preferences.json"):
         ui_prefs.Preferences(home.home).read()
+
+
+def _write_theme(home_dir, theme_id="midnight-teal"):
+    from kova import themes
+
+    payload = {
+        "id": theme_id,
+        "name": "Midnight Teal",
+        "version": "1.0.0",
+        "appearance": "dark",
+        "extends": "kova-dark",
+        "tokens": {"accent": {"default": "#2dd4bf", "on": "#04201c"}},
+    }
+    directory = themes.theme_dir(home_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{theme_id}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_export_carries_installed_theme_ids(runner, http, tmp_path, home):
+    _write_theme(home.home)
+    http.put("/preferences", json={"theme": "midnight-teal"})
+    target = tmp_path / "exported.json"
+
+    result = runner.invoke(cli.app, ["prefs", "export", str(target)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["themes"] == ["midnight-teal"], "names only, not the files"
+    assert payload["preferences"]["theme"] == "midnight-teal"
+    assert "kova-dark" not in payload["themes"], "built-ins are everywhere already"
+
+
+def test_export_without_theme_files_writes_an_empty_list(runner, http, tmp_path):
+    target = tmp_path / "exported.json"
+
+    assert runner.invoke(cli.app, ["prefs", "export", str(target)]).exit_code == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["themes"] == []
+
+
+def test_import_dry_run_shows_changes_without_saving(runner, http, tmp_path):
+    http.put("/preferences", json={"theme": "light"})
+    target = tmp_path / "incoming.json"
+    target.write_text(json.dumps(ui_prefs.document({**ui_prefs.DEFAULTS, "theme": "dark"}, [])),
+                      encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["prefs", "import", str(target), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "Would change" in _output(result)
+    assert "theme" in _output(result) and "dark" in _output(result)
+    assert http.get("/preferences").json()["theme"] == "light", "a dry run saves nothing"
+
+
+def test_import_reports_themes_missing_here(runner, http, tmp_path):
+    target = tmp_path / "incoming.json"
+    target.write_text(json.dumps(ui_prefs.document(dict(ui_prefs.DEFAULTS), ["midnight-teal"])),
+                      encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["prefs", "import", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "Missing themes here: midnight-teal" in _output(result)
+    assert http.get("/preferences").json() == ui_prefs.DEFAULTS
+
+
+def test_import_refuses_a_bad_themes_list(runner, http, tmp_path):
+    http.put("/preferences", json={"theme": "light"})
+    target = tmp_path / "bad-themes.json"
+    target.write_text(json.dumps({"format": ui_prefs.PREFS_FORMAT, "version": ui_prefs.PREFS_VERSION,
+                                  "preferences": dict(ui_prefs.DEFAULTS), "themes": "midnight-teal"}),
+                      encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["prefs", "import", str(target)])
+
+    assert result.exit_code == 1
+    assert "must be a list" in _output(result)
+    assert http.get("/preferences").json()["theme"] == "light", "a refused file changes nothing"
+
+
+def test_an_export_without_themes_still_imports(runner, http, tmp_path):
+    http.put("/preferences", json={"theme": "light"})
+    target = tmp_path / "old.json"
+    target.write_text(json.dumps({"format": ui_prefs.PREFS_FORMAT, "version": ui_prefs.PREFS_VERSION,
+                                  "preferences": {"theme": "dark"}}),
+                      encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["prefs", "import", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert http.get("/preferences").json()["theme"] == "dark"

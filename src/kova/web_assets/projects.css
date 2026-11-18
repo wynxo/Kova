@@ -1,0 +1,81 @@
+/* Projects use the same quiet sidebar surfaces and semantic roles as chats. */
+.project-group {
+  flex: none;
+  border-radius: var(--radius-md);
+}
+
+.project-name {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--fg-default);
+  font-size: var(--type-size-body);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.project-name:hover { background: var(--bg-raised); }
+
+.project-name:focus-visible,
+#chat-list .project-action:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: calc(-1 * var(--space-0-5));
+}
+
+.project-body {
+  margin-inline-start: var(--space-3);
+  border-inline-start: var(--space-0-5) solid var(--border-subtle);
+  padding-inline-start: var(--space-1);
+}
+
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+#chat-list .project-action {
+  align-self: flex-start;
+  min-height: var(--space-8);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--type-size-label);
+  text-align: start;
+}
+
+.project-status {
+  padding-inline: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
+
+dialog.project-dialog {
+  width: min(var(--type-measure-prose), calc(100vw - var(--space-6)));
+  max-height: calc(100dvh - var(--space-8));
+  padding: var(--space-5);
+  border-width: var(--space-0-5);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+.project-dialog h2 { font-size: var(--type-size-title); }
+.project-dialog form { gap: var(--space-3); }
+.project-dialog label { gap: var(--space-1); font-size: var(--type-size-label); }
+
+dialog.project-dialog input, dialog.project-dialog textarea {
+  min-height: var(--space-8);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--type-size-body);
+}
+
+dialog.project-dialog textarea { min-height: calc(2 * var(--space-10)); }
+
+.project-dialog .dialog-actions {
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.project-error { color: var(--status-danger); font-size: var(--type-size-body); }
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.project-dialog[open] { animation: none; }
+}

@@ -468,10 +468,15 @@ class Agent:
                        "The configured model provider still receives messages.")
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {permission}"
-            instructions = await asyncio.to_thread(project_instructions, cwd,
-                                                   user_home=self.config.home)
+        project_id = (chat or {}).get('project_id')
+        project = self.store.get_project(project_id) if project_id is not None else None
+        if mode != 'chat' or project:
+            instructions = await asyncio.to_thread(
+                project_instructions, cwd if mode != 'chat' else None,
+                user_home=self.config.home, saved=project["instructions"] if project else "")
             if instructions:
                 prompt += f"\n\n{instructions}"
+        if mode != 'chat':
             if skills:
                 prompt += f"\n\n{skills}"
             if (chat or {}).get('plan'):
