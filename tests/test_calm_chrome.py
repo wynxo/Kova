@@ -73,12 +73,16 @@ def _hidden_by(parser: _Shell, element: str) -> bool:
 
 
 def test_header_is_toggle_title_and_actions_only() -> None:
-    """No connection dot, no Retry button, no banner: a healthy link says nothing."""
+    """No connection dot, no Retry button, no banner: a healthy link says nothing.
+    The activity dot (#191) is hidden until a turn runs or needs an answer."""
     parser, html = _shell()
     header = re.search(r'<header class="topbar">(.*?)</header>', html, re.S).group(1)
     ids = re.findall(r'\bid="([^"]+)"', header)
-    assert ids == ["menu", "chat-title", "chat-menu", "compact-now"], ids
+    assert ids == ["menu", "chat-title", "activity", "activity-dot", "activity-count",
+                   "activity-panel", "chat-menu", "compact-now"], ids
     assert "hidden" in parser.by_id["chat-menu"], "chat actions appear only once a chat is open"
+    assert "hidden" in parser.by_id["activity"], "activity says nothing while nothing runs"
+    assert "hidden" in parser.by_id["activity-panel"]
     for gone in ("connection", "banner", "local-only-status-header"):
         assert gone not in parser.by_id, f"#{gone} is back"
     for noise in ("Disconnected", "Retry connection", "Model connected"):
@@ -171,11 +175,17 @@ def test_options_and_extras_sit_behind_the_plus_and_the_chip() -> None:
         assert gone not in parser.by_id, f"#{gone} is back"
 
 
-def test_start_screen_is_mark_question_and_message_box() -> None:
+def test_start_screen_is_mark_greeting_question_and_message_box() -> None:
+    """The idle screen is the mark, one greeting line, the question and quiet
+    suggestions (#194). Choosing a suggestion only fills the message box."""
     parser, html = _shell()
-    assert "starters" not in parser.by_id and "data-prompt" not in html, "no starter cards"
     welcome = re.search(r'<div id="welcome".*?</div>', html, re.S).group(0)
     assert "What are you working on?" in welcome and "welcome-mark" in welcome
+    assert "welcome-greeting" in parser.by_id, "the greeting carries the assistant's name"
+    assert "starters" in parser.by_id, "suggestions sit under the question"
+    assert "hidden" in parser.by_id["starters"], "nothing shows until the client has the list"
+    assert "starters-edit" in _ids_inside(parser, "welcome", "button")
+    assert "data-prompt" not in html, "suggestion text comes from the preference, not markup"
 
 
 # ---------------------------------------------------------------- conversation
