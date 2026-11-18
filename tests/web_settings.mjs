@@ -91,7 +91,10 @@ const typography = {textSizeValue: 'default', densityValue: 'default', fontValue
   setTextSize(next) { this.textSizeValue = next; },
   setDensity(next) { this.densityValue = next; },
   setFont(next) { this.fontValue = next; }};
-const window = {KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography};
+const motion = {value: 'full',
+  mode() { return this.value; },
+  setMode(next) { this.value = next; }};
+const window = {KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography, KovaMotion: motion};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -151,7 +154,7 @@ assert.ok(themeRow, 'the Theme setting is shown');
 const title = byClass(themeRow, 'settings-row-title')[0];
 const mark = walk(title).find(node => node.tagName === 'MARK');
 assert.equal(mark?.textContent, 'Theme', 'the matched word is highlighted');
-assert.match($('settings-search-status').textContent, /10 settings match/);
+assert.match($('settings-search-status').textContent, /11 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.
@@ -173,7 +176,7 @@ assert.equal(tabs[5].getAttribute('aria-selected'), 'true');
 
 // Every row that left the sidebar is findable by the word people would type.
 for (const [word, section] of [['sounds', 'General'], ['sign out', 'General'], ['startup', 'General'],
-  ['reasoning', 'General'], ['thinking', 'General'],
+  ['reasoning', 'General'], ['thinking', 'General'], ['motion', 'General'],
   ['text size', 'General'], ['density', 'General'], ['font', 'General'],
   ['provider', 'Models and providers'], ['remember', 'Memory'], ['reminders', 'Reminders'],
   ['mcp', 'Extensions and MCP'], ['plugins', 'Extensions and MCP'], ['local only', 'Privacy'],
@@ -277,6 +280,32 @@ $('open-settings').click();
 assert.equal(reasoningRadios[1].getAttribute('aria-checked'), 'true',
   'reopening Settings reflects the current value');
 reasoning.value = 'collapsed';
+
+// Motion is the same three-way group, applied by KovaMotion onto <html>.
+const motionRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Motion'));
+assert.ok(motionRow, 'the Motion setting is in General');
+const motionGroup = byClass(motionRow, 'settings-segmented')[0];
+assert.equal(motionGroup.getAttribute('role'), 'radiogroup');
+assert.equal(motionGroup.getAttribute('aria-label'), 'Motion');
+const motionRadios = byClass(motionRow, 'settings-segment');
+assert.deepEqual(motionRadios.map(radio => radio.textContent), ['Full', 'Reduced', 'Off']);
+assert.deepEqual(motionRadios.map(radio => radio.getAttribute('role')), ['radio', 'radio', 'radio']);
+assert.equal(motionRadios[0].getAttribute('aria-checked'), 'true', 'Full is the default');
+motionRadios[1].click();
+assert.equal(motion.value, 'reduced', 'Reduced shortens the motion');
+assert.equal(motionRadios[1].getAttribute('aria-checked'), 'true');
+assert.equal(motionRadios[0].getAttribute('aria-checked'), 'false');
+motionRadios[2].click();
+assert.equal(motion.value, 'off', 'Off removes it');
+motionRadios[2].dispatch('keydown', {key: 'ArrowRight', preventDefault() {}});
+assert.equal(motion.value, 'full', 'arrow keys wrap to the first choice');
+assert.equal(document.activeElement, motionRadios[0], 'focus follows the choice');
+motion.value = 'reduced';
+document.activeElement = sidebar;
+$('open-settings').click();
+assert.equal(motionRadios[1].getAttribute('aria-checked'), 'true',
+  'reopening Settings reflects the current value');
+motion.value = 'full';
 
 // Text size, density and font are the same three-way group, applied by
 // KovaTypography onto <html> (#179). Each row reflects the module's value.

@@ -1,5 +1,5 @@
 /* Quiet header row for rendered code blocks (#189): the language name on the
-   left, a Copy button on the right. It sits inside the code block's `pre`, so
+   left, Wrap and Copy on the right. It sits inside the code block's `pre`, so
    it reads as part of the block instead of a toolbar above it. app.css owns the
    block itself; this file only styles the row. Every colour, space, radius and
    motion value comes from tokens.css. */
@@ -17,9 +17,13 @@
   line-height: var(--type-leading-tight);
 }
 
+.code-actions { display:inline-flex; flex:none; align-items:center; gap:var(--space-1); }
+
 .code-lang { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.copy-code {
+.code-actions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+
+.code-action {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -35,18 +39,26 @@
 }
 
 /* The icon set is sized in app.css; this only keeps it quiet next to the text. */
-.copy-code .icon { width: var(--space-3); height: var(--space-3); }
+.code-action .icon { width: var(--space-3); height: var(--space-3); }
 
-.copy-code:hover {
-  background: var(--bg-raised);
-  color: var(--fg-default);
+.code-action:hover { background: var(--bg-raised); color: var(--fg-default); }
+
+/* Wrap pressed: the setting reads as a held toggle, not as an accent. */
+.wrap-code[aria-pressed="true"] { background: var(--bg-raised); color: var(--fg-default); }
+
+/* A block that is still arriving cannot be copied yet. */
+.copy-code:disabled,
+.copy-code.waiting {
+  color: var(--fg-faint);
+  background: none;
+  cursor: default;
 }
 
-.copy-code:focus-visible {
+.code-action:focus-visible {
   outline: var(--space-0-5) solid var(--accent-default);
   outline-offset: var(--space-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .copy-code { transition: none; }
+  .code-action { transition: none; }
 }

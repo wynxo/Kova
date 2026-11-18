@@ -33,6 +33,7 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "text_size": ("small", "default", "large"),
     "density": ("compact", "default", "comfortable"),
     "font": ("inter", "system", "mono"),
+    "motion": ("full", "reduced", "off"),
 }
 
 DEFAULTS: dict[str, str] = {
@@ -43,6 +44,7 @@ DEFAULTS: dict[str, str] = {
     "text_size": "default",
     "density": "default",
     "font": "inter",
+    "motion": "full",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the

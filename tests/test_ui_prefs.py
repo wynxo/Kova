@@ -86,6 +86,18 @@ def test_typography_and_density_preferences_are_shared(http):
             assert http.get("/preferences").json()[name] == value
 
 
+def test_motion_preference_accepts_three_values(http):
+    assert http.get("/preferences").json()["motion"] == "full", \
+        "motion is full until the reader chooses otherwise"
+
+    for value in ("reduced", "off", "full"):
+        saved = http.put("/preferences", json={"motion": value})
+
+        assert saved.status_code == 200
+        assert saved.json()["motion"] == value
+        assert http.get("/preferences").json()["motion"] == value
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"weight": "bold"}, "Unknown preference"),
     ({"theme": "Sepia Tone"}, "must be one of"),
@@ -94,6 +106,7 @@ def test_typography_and_density_preferences_are_shared(http):
     ({"text_size": "huge"}, "must be one of"),
     ({"density": "cozy"}, "must be one of"),
     ({"font": "comic"}, "must be one of"),
+    ({"motion": "none"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):
@@ -127,7 +140,7 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
         "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "collapsed",
-        "text_size": "default", "density": "default", "font": "inter",
+        "motion": "full", "text_size": "default", "density": "default", "font": "inter",
     }
 
 

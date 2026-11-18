@@ -1093,6 +1093,44 @@ class Store:
         return row[0] if row else None
 
     @_chat_scoped
+    def last_user_message(self, chat_id: str) -> dict | None:
+        """The newest message the user wrote, with the files it came with."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, content FROM messages WHERE chat_id = ? AND role = 'user' "
+                "ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            links = self._conn.execute(
+                "SELECT attachment_id FROM message_attachments WHERE message_id = ? "
+                "ORDER BY position", (row["id"],)
+            ).fetchall()
+        return {"id": row["id"], "content": row["content"] or "",
+                "attachments": [link["attachment_id"] for link in links]}
+
+    @_chat_scoped
+    def delete_messages_from(self, chat_id: str, message_id: int, *, include: bool = True) -> int:
+        """Drop the messages at and after ``message_id``, or only those after it.
+
+        Retry keeps the user's words and drops the reply; edit drops both. The
+        uploaded files stay in the chat until a later turn uses or reaps them.
+        """
+        compare = ">=" if include else ">"
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM message_attachments WHERE message_id IN "
+                f"(SELECT id FROM messages WHERE chat_id = ? AND id {compare} ?)",
+                (chat_id, message_id),
+            )
+            cur = self._conn.execute(
+                f"DELETE FROM messages WHERE chat_id = ? AND id {compare} ?",
+                (chat_id, message_id),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    @_chat_scoped
     def get_messages(self, chat_id: str, include_created: bool = False,
                      include_usage: bool = False) -> list[dict]:
         with self._lock:
