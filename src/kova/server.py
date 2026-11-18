@@ -78,6 +78,11 @@ class QueuedBody(BaseModel):
     model: str | None = None
 
 
+class EditedTurnBody(BaseModel):
+    """New words for the last user message; its files stay attached to it."""
+    text: str = Field(min_length=1, max_length=100_000)
+
+
 def working_folder(value: str) -> str:
     if not value.strip() or "\0" in value:
         raise HTTPException(status_code=422, detail="working folder must be a non-empty path")
@@ -587,6 +592,88 @@ def create_app(
             model = entry.name
         return {"model": model, "reasoning_effort": effort}
 
+    def turn_stream(chat_id: str, text: str, *, model: str | None,
+                    attachments: list[str], capabilities: frozenset[str] | None,
+                    record_user: bool = True) -> StreamingResponse:
+        """Run one turn in its own task and stream its events to this client.
+
+        The task outlives the HTTP stream, so a reload or a closed tab never
+        loses an answer. ``record_user`` is false for a retry, whose message is
+        already in the transcript.
+        """
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        async def run_turn() -> None:
+            """Drive the turn to completion even if the client disconnects."""
+            steering = Steering(capabilities)
+            records = []
+            with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
+                try:
+                    async with chat_lock(chat_id):
+                        if app.state.store.get_chat(chat_id) is None:
+                            queue.put_nowait({"type": "error", "message": "chat was deleted"})
+                            return
+                        app.state.conversation_states.transition(chat_id, "turn_start")
+                        app.state.steering[chat_id] = steering
+                        try:
+                            async for event in app.state.agent.run_turn(
+                                    chat_id, text, model=model, steering=steering,
+                                    attachment_ids=attachments, capabilities=capabilities,
+                                    record_user=record_user):
+                                app.state.conversation_states.transition(chat_id, event.get("type", ""))
+                                if event.get('type') in {'done', 'error'} and records:
+                                    queue.put_nowait({'type': 'egress', 'items': list(records)})
+                                queue.put_nowait(event)
+                        finally:
+                            app.state.conversation_states.transition(chat_id, "turn_end")
+                except asyncio.CancelledError:
+                    queue.put_nowait({"type": "stopped"})
+                    raise
+                except Exception as exc:  # never leave the stream without an ending
+                    queue.put_nowait({"type": "error", "message": str(exc)})
+                finally:
+                    if app.state.steering.get(chat_id) is steering:
+                        app.state.steering.pop(chat_id, None)
+                    # A steer that arrived after the last model round must not be
+                    # lost: it becomes the next message in the chat's queue.
+                    for message in steering.take():
+                        app.state.store.queue_message(chat_id, message, capabilities=steering.capabilities)
+                    queue.put_nowait(None)
+
+        task = asyncio.create_task(run_turn())
+        app.state.turns.add(task)
+        tasks = app.state.chat_turns.setdefault(chat_id, set())
+        tasks.add(task)
+
+        def finished(done):
+            app.state.turns.discard(done)
+            tasks.discard(done)
+            if not tasks:
+                app.state.chat_turns.pop(chat_id, None)
+            queue.put_nowait(None)  # also handles cancellation before task startup
+
+        task.add_done_callback(finished)
+
+        async def drain() -> AsyncIterator[str]:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    return
+                yield _sse(event)
+
+        return StreamingResponse(drain(), media_type="text/event-stream")
+
+    def reject_while_turning(chat_id: str) -> None:
+        """A retry or edit rewrites history, so no turn may be writing it."""
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Wait for the reply that is running.")
+
+    def reject_if_compacted(chat_id: str, message: dict) -> None:
+        """A message inside the compacted range no longer exists in context."""
+        if app.state.store.context_snapshot(chat_id)[1] >= message["id"]:
+            raise HTTPException(status_code=409,
+                                detail="That message is part of the compacted history, so its turn cannot be rebuilt.")
+
     @api.get('/privacy')
     async def privacy_report(days: int = Query(30, ge=1, le=365), chat_id: str | None = None) -> dict:
         report = app.state.store.egress_report(days, chat_id)
@@ -1010,66 +1097,53 @@ def create_app(
         # whoever queued this message) and nothing else.
         capabilities = pairing.narrow(pairing.request_capabilities(request),
                                       app.state.store.chat_capabilities(chat_id))
-        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        return turn_stream(chat_id, body.text, model=body.model, attachments=body.attachments,
+                           capabilities=capabilities)
 
-        async def run_turn() -> None:
-            """Drive the turn to completion even if the client disconnects."""
-            steering = Steering(capabilities)
-            records = []
-            with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
-                try:
-                    async with chat_lock(chat_id):
-                        if app.state.store.get_chat(chat_id) is None:
-                            queue.put_nowait({"type": "error", "message": "chat was deleted"})
-                            return
-                        app.state.conversation_states.transition(chat_id, "turn_start")
-                        app.state.steering[chat_id] = steering
-                        try:
-                            async for event in app.state.agent.run_turn(chat_id, body.text, model=body.model,
-                                                                      steering=steering, attachment_ids=body.attachments,
-                                                                      capabilities=capabilities):
-                                app.state.conversation_states.transition(chat_id, event.get("type", ""))
-                                if event.get('type') in {'done', 'error'} and records:
-                                    queue.put_nowait({'type': 'egress', 'items': list(records)})
-                                queue.put_nowait(event)
-                        finally:
-                            app.state.conversation_states.transition(chat_id, "turn_end")
-                except asyncio.CancelledError:
-                    queue.put_nowait({"type": "stopped"})
-                    raise
-                except Exception as exc:  # never leave the stream without an ending
-                    queue.put_nowait({"type": "error", "message": str(exc)})
-                finally:
-                    if app.state.steering.get(chat_id) is steering:
-                        app.state.steering.pop(chat_id, None)
-                    # A steer that arrived after the last model round must not be
-                    # lost: it becomes the next message in the chat's queue.
-                    for message in steering.take():
-                        app.state.store.queue_message(chat_id, message, capabilities=steering.capabilities)
-                    queue.put_nowait(None)
 
-        task = asyncio.create_task(run_turn())
-        app.state.turns.add(task)
-        tasks = app.state.chat_turns.setdefault(chat_id, set())
-        tasks.add(task)
+    @api.post("/chats/{chat_id}/retry")
+    async def retry_chat(chat_id: str, request: Request) -> StreamingResponse:
+        """Run the last user turn again, replacing the reply it produced.
 
-        def finished(done):
-            app.state.turns.discard(done)
-            tasks.discard(done)
-            if not tasks:
-                app.state.chat_turns.pop(chat_id, None)
-            queue.put_nowait(None)  # also handles cancellation before task startup
+        Nothing is appended to the transcript: the stored words and their files
+        are reused, so a retry never grows the conversation with a duplicate.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        reject_while_turning(chat_id)
+        async with chat_lock(chat_id):
+            message = app.state.store.last_user_message(chat_id)
+            if message is None:
+                raise HTTPException(status_code=409, detail="There is no message to retry.")
+            reject_if_compacted(chat_id, message)
+            app.state.store.delete_messages_from(chat_id, message["id"], include=False)
+            capabilities = pairing.narrow(pairing.request_capabilities(request),
+                                          app.state.store.chat_capabilities(chat_id))
+        return turn_stream(chat_id, message["content"], model=None, attachments=message["attachments"],
+                           capabilities=capabilities, record_user=False)
 
-        task.add_done_callback(finished)
 
-        async def drain() -> AsyncIterator[str]:
-            while True:
-                event = await queue.get()
-                if event is None:
-                    return
-                yield _sse(event)
+    @api.post("/chats/{chat_id}/edit")
+    async def edit_last_message(chat_id: str, body: EditedTurnBody, request: Request) -> StreamingResponse:
+        """Replace the last user message and run its turn again.
 
-        return StreamingResponse(drain(), media_type="text/event-stream")
+        The files that message carried stay on it, so editing words never drops
+        the attachments the model was reading.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        reject_while_turning(chat_id)
+        async with chat_lock(chat_id):
+            message = app.state.store.last_user_message(chat_id)
+            if message is None:
+                raise HTTPException(status_code=409, detail="There is no message to edit.")
+            reject_if_compacted(chat_id, message)
+            app.state.store.delete_messages_from(chat_id, message["id"])
+        wrote_in(chat_id, request)
+        capabilities = pairing.narrow(pairing.request_capabilities(request),
+                                      app.state.store.chat_capabilities(chat_id))
+        return turn_stream(chat_id, body.text, model=None, attachments=message["attachments"],
+                           capabilities=capabilities)
 
 
     @api.get("/chats/{chat_id}/queue")

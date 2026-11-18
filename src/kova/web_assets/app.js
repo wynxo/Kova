@@ -298,6 +298,54 @@
     if (usage) bar.append(usageMeter(usage));
     article.append(bar);
   }
+  // Editing and retrying both rewrite the last turn, so only its message keeps
+  // the action. Older buttons would silently point at newer words.
+  function onlyNewest(selector) {
+    const found = [...document.querySelectorAll(selector)];
+    for (const node of found.slice(0, -1)) node.remove();
+  }
+  // Drop the last turn's DOM, keeping the user's words when a retry replaces
+  // only the reply. The server is the source of truth; this just stops the
+  // transcript from showing a stale reply until the new one streams in.
+  function clearLastTurn(includeUser) {
+    const nodes = [...$('messages').children];
+    let cut = -1;
+    nodes.forEach((node, index) => { if (node.classList.contains('user')) cut = index; });
+    if (cut < 0) return;
+    for (const node of nodes.slice(includeUser ? cut : cut + 1)) node.remove();
+  }
+  async function retryLastTurn() {
+    if (state.busy) return toast('Wait for the current reply to finish.');
+    if (!state.chat) return;
+    clearLastTurn(false);
+    await sendText('', {action: 'retry', omitUser: true});
+  }
+  function editLastMessage(text) {
+    if (state.busy) return toast('Wait for the current reply to finish.');
+    if (!state.chat) return;
+    const dialog = el('dialog', 'panel edit-dialog');
+    dialog.setAttribute('aria-label', 'Edit your last message');
+    const form = el('form'); form.method = 'dialog';
+    const head = el('div', 'dialog-head'), title = el('h2', '', 'Edit your last message');
+    const close = iconButton('x', 'Close'); close.type = 'button'; close.onclick = () => dialog.close();
+    head.append(title, close);
+    const label = el('label'); label.append(el('span', '', 'Your message'));
+    const field = el('textarea'); field.value = text; label.append(field);
+    const note = el('p', 'provider-footnote', 'Sending replaces this message and the reply after it. Files stay attached.');
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => dialog.close();
+    const save = el('button', 'btn primary', 'Save and resend'); save.type = 'button';
+    save.onclick = () => safe(async () => {
+      const next = field.value.trim();
+      if (!next) return toast('Write a message first.');
+      save.disabled = true; dialog.close();
+      clearLastTurn(true);
+      await sendText(next, {action: 'edit'});
+    });
+    actions.append(cancel, save); form.append(head, label, note, actions);
+    dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
+    field.focus();
+  }
   // Tool rows speak plainly: what ran, on what, and the gist of what came back.
   function toolLabel(name) {
     const words = String(name || 'tool').replaceAll('_', ' ');
@@ -348,10 +396,13 @@
       }
     } else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
-    if (role === 'user' && content) messageActions(article, () => content, 'user', null, {
-      editLabel: 'Edit as a new message',
-      onEdit: () => { $('prompt').value = content; resize(); $('prompt').focus(); },
-    });
+    if (role === 'assistant') onlyNewest('#messages .message.assistant .message-action-retry');
+    if (role === 'user' && content) {
+      messageActions(article, () => content, 'user', null, {
+        onEdit: () => editLastMessage(content),
+      });
+      onlyNewest('#messages .message.user .message-action-edit');
+    }
     return body;
   }
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
@@ -595,8 +646,10 @@
       else if (msg.role === 'tool' && savedTools) savedTools.result({id: msg.tool_call_id, output: msg.content});
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
-    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
-      saved.usage, {model: saved.usage?.model, toolCount: saved.tools});
+    const lastTurn = turns.reduce((last, saved, index) => saved.parts.length ? index : last, -1);
+    for (const [index, saved] of turns.entries()) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
+      saved.usage, {model: saved.usage?.model || chat?.model, toolCount: saved.tools,
+                    onRetry: index === lastTurn ? () => safe(retryLastTurn) : null});
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
@@ -1082,7 +1135,7 @@
         paint();
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
         if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage,
-          {model: usage?.model || model, toolCount});
+          {model: usage?.model || model, toolCount, onRetry: () => safe(retryLastTurn)});
       }
     };
   }
@@ -1177,22 +1230,28 @@
     await sendText(text || 'Please read the attached files.');
   }
   async function sendText(text, sendOptions = {}) {
-    if (!text || state.busy || pickerSaving || !state.connected) return;
+    if ((!text && !sendOptions.action) || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await createComposerChat();
-      const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
+      const outgoing = sendOptions.queued || sendOptions.action ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       // Send to the model the chip showed, even if another window just changed
       // the default or the saved chat settings.
       const model = composerModel().model || null;
-      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
+      if (sendOptions.omitUser) empty(false);
+      else {
+        empty(false); message('user', text, undefined, outgoing); options(false);
+        if (!sendOptions.action) { $('prompt').value = ''; resize(); }
+      }
       const reply = message('assistant');
       nearBottom = true; turn = turnView(reply, model); follow();
-      const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model,
-        attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
-      if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
+      const action = sendOptions.action || 'messages';
+      const payload = action === 'retry' ? {} : {text, model,
+        attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})};
+      const response = await api(`/chats/${state.chat.id}/${action}`, write('POST', payload));
+      if (!sendOptions.queued && !sendOptions.action) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
       await readEvents(response, data => {

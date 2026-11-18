@@ -71,7 +71,9 @@
 
   function detailsAction(info) {
     const rows = detailRows(info);
-    if (!rows.length) return null;
+    // An answer with no recorded usage and no model has nothing to open; a
+    // lone "Tools 0" is noise, not detail.
+    if (!rows.length || (!info.usage && !info.model && !info.toolCount)) return null;
     const card = node('details', 'message-details');
     const summary = node('summary', 'message-details-toggle');
     summary.append(icon('info'), document.createTextNode('Details'));
@@ -83,12 +85,12 @@
     return card;
   }
 
-  function copyAction(text, note, onError) {
+  function copyAction(text, note, label, onError) {
     const glyph = icon('copy');
     const button = node('button', 'message-action-copy message-action');
     button.type = 'button';
-    button.title = 'Copy as Markdown';
-    button.setAttribute('aria-label', 'Copy as Markdown');
+    button.title = label;
+    button.setAttribute('aria-label', label);
     button.append(glyph);
     let timer = null;
     button.onclick = async () => {
@@ -106,8 +108,8 @@
       clearTimeout(timer);
       timer = setTimeout(() => {
         glyph.className = 'icon i-copy';
-        button.title = 'Copy as Markdown';
-        button.setAttribute('aria-label', 'Copy as Markdown');
+        button.title = label;
+        button.setAttribute('aria-label', label);
         note.textContent = '';
       }, RESET);
     };
@@ -122,7 +124,7 @@
     const bar = node('div', 'message-actions');
     const note = node('span', 'message-action-note');
     note.setAttribute('role', 'status');
-    bar.append(copyAction(text, note, onError));
+    bar.append(copyAction(text, note, role === 'user' ? 'Copy your message' : 'Copy as Markdown', onError));
     if (role === 'user' && onEdit) bar.append(action('pencil', editLabel, 'message-action-edit', onEdit));
     if (role === 'assistant' && onRetry) bar.append(action('refresh', 'Retry this reply', 'message-action-retry', onRetry));
     if (role === 'assistant') {
