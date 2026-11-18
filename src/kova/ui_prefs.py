@@ -9,6 +9,7 @@ of silently changing nothing.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -29,32 +30,75 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "reasoning": ("shown", "hidden"),
 }
 
-DEFAULTS: dict[str, str] = {
+# Short free-text lists: name -> (most items, longest item). Used by the start
+# screen's suggestion chips; an empty list means "show no suggestions".
+TEXT_LISTS: dict[str, tuple[int, int]] = {
+    "starters": (4, 120),
+}
+
+DEFAULTS: dict[str, Any] = {
     "theme": "dark",
     "sidebar": "open",
     "notifications": "off",
     "reasoning": "shown",
+    "starters": [
+        "Plan a small project with me",
+        "Summarise a file I send",
+        "Help me write a tricky email",
+    ],
 }
 
-_KNOWN = ", ".join(sorted(SCHEMA))
+_KNOWN = ", ".join(sorted({*SCHEMA, *TEXT_LISTS}))
 
 
 class UiPrefsError(ValueError):
     """A preferences document or file did not validate."""
 
 
-def _check_values(values: Any) -> dict[str, str]:
+def _check_text_list(name: str, value: Any) -> list[str]:
+    """Validate a short list of prompts: trimmed, de-duplicated, bounded."""
+    limit, length = TEXT_LISTS[name]
+    if not isinstance(value, list):
+        raise UiPrefsError(
+            f"Preference {name!r} must be a list of at most {limit} short "
+            f"texts, each at most {length} characters."
+        )
+    checked: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise UiPrefsError(f"Preference {name!r} accepts text items only.")
+        text = " ".join(item.split())
+        if not text:
+            continue
+        if len(text) > length:
+            raise UiPrefsError(
+                f"Preference {name!r} accepts items up to {length} characters; "
+                f"got {len(text)}."
+            )
+        if text not in checked:
+            checked.append(text)
+    if len(checked) > limit:
+        raise UiPrefsError(
+            f"Preference {name!r} accepts at most {limit} items; got {len(checked)}."
+        )
+    return checked
+
+
+def _check_values(values: Any) -> dict[str, Any]:
     """Validate a plain mapping of preference names to accepted values."""
     if not isinstance(values, dict):
         raise UiPrefsError("Preferences must be a JSON object.")
-    unknown = sorted(set(values) - set(SCHEMA))
+    unknown = sorted(set(values) - set(SCHEMA) - set(TEXT_LISTS))
     if unknown:
         raise UiPrefsError(
             f"Unknown preference{'s' if len(unknown) > 1 else ''}: "
             f"{', '.join(unknown)}. Known preferences: {_KNOWN}."
         )
-    checked: dict[str, str] = {}
+    checked: dict[str, Any] = {}
     for name, value in values.items():
+        if name in TEXT_LISTS:
+            checked[name] = _check_text_list(name, value)
+            continue
         allowed = SCHEMA[name]
         if value not in allowed:
             raise UiPrefsError(
@@ -65,7 +109,7 @@ def _check_values(values: Any) -> dict[str, str]:
     return checked
 
 
-def document(values: dict[str, str]) -> dict[str, Any]:
+def document(values: dict[str, Any]) -> dict[str, Any]:
     """The export shape: a named, versioned envelope around the preferences."""
     return {
         "format": PREFS_FORMAT,
@@ -74,7 +118,7 @@ def document(values: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def parse(payload: Any) -> dict[str, str]:
+def parse(payload: Any) -> dict[str, Any]:
     """Validate an exported document, returning only its preferences.
 
     Raises :class:`UiPrefsError` with a sentence naming what is wrong, so a
@@ -115,7 +159,7 @@ def target_path(path: Path | str | None) -> Path:
     return target
 
 
-def read_file(path: Path | str) -> dict[str, str]:
+def read_file(path: Path | str) -> dict[str, Any]:
     """Read and validate one preferences file."""
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -133,7 +177,7 @@ def read_file(path: Path | str) -> dict[str, str]:
         raise UiPrefsError(f"{path}: {exc}") from exc
 
 
-def write_file(values: dict[str, str], path: Path | str | None = None) -> Path:
+def write_file(values: dict[str, Any], path: Path | str | None = None) -> Path:
     """Write the versioned document atomically and return the path used."""
     target = target_path(path)
     text = json.dumps(document(_check_values(values)), indent=2) + "\n"
@@ -157,19 +201,20 @@ class Preferences:
     def __init__(self, home: Path | str):
         self.path = Path(home) / "preferences.json"
 
-    def read(self) -> dict[str, str]:
-        """Current preferences; defaults when nothing has been saved yet."""
+    def read(self) -> dict[str, Any]:
+        """Current preferences, with defaults filled in for keys it predates."""
         if not self.path.exists():
-            return dict(DEFAULTS)
+            return copy.deepcopy(DEFAULTS)
         try:
-            return read_file(self.path)
+            saved = read_file(self.path)
         except UiPrefsError as exc:
             raise UiPrefsError(
                 f"The saved UI preferences are not valid ({exc}). "
                 f"Fix or delete {self.path.name}."
             ) from exc
+        return {**copy.deepcopy(DEFAULTS), **saved}
 
-    def update(self, patch: Any) -> dict[str, str]:
+    def update(self, patch: Any) -> dict[str, Any]:
         """Merge validated changes over the current values and save them."""
         changes = _check_values(patch)
         values = {**self.read(), **changes}

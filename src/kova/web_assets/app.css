@@ -344,6 +344,18 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .welcome { flex:none; max-width:var(--column); width:100%; margin:0 auto; padding:var(--space-4) var(--space-5) var(--space-6); text-align:center; }
 .welcome-mark { display:block; width:40px; height:40px; margin:0 auto var(--space-4); border-radius:var(--radius-md); }
 .welcome h1 { font-size:var(--type-size-heading); line-height:var(--type-leading-tight); font-weight:600; letter-spacing:-.02em; text-wrap:balance; }
+.welcome-greeting { color:var(--fg-muted); font-size:var(--type-size-body); margin-bottom:var(--space-1); }
+/* Suggested prompts are quiet text, not cards: no border, no fill, no accent.
+   They wrap into as many rows as the width needs. */
+.starters { display:flex; flex-wrap:wrap; justify-content:center; gap:var(--space-2); margin-top:var(--space-5); }
+.starter { padding:var(--space-2) var(--space-3); border-radius:var(--radius-md); color:var(--fg-muted); font-size:var(--type-size-body); line-height:var(--type-leading-tight); text-align:center; transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard); }
+.starter:hover { background:var(--bg-raised); color:var(--fg-default); }
+.starters-edit { display:inline-flex; align-items:center; gap:var(--space-1); margin-top:var(--space-3); color:var(--fg-faint); font-size:var(--type-size-label); }
+.starters-edit .icon { width:14px; height:14px; }
+.starters-edit:hover { color:var(--fg-muted); }
+.starters-dialog { width:min(440px, calc(100vw - 24px)); }
+.starters-intro { color:var(--fg-muted); font-size:var(--type-size-body); line-height:var(--type-leading-body); margin-bottom:var(--space-3); }
+.starters-fields { display:grid; gap:var(--space-2); }
 
 /* ---------- Composer ---------- */
 .compose-wrap { container:composer / inline-size; position:relative; flex:none; width:100%; max-width:var(--column); margin:0 auto; padding:0 20px max(var(--space-4), env(safe-area-inset-bottom)); }

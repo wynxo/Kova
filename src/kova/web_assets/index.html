@@ -30,6 +30,7 @@
   <script defer src="/app/assets/diff.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
   <script defer src="/app/assets/toast.js"></script>
+  <script defer src="/app/assets/starters.js"></script>
   <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/chat-appearance.js"></script>
   <script defer src="/app/assets/shortcuts.js"></script>
@@ -65,7 +66,10 @@
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="40" height="40">
+        <p id="welcome-greeting" class="welcome-greeting"></p>
         <h1>What are you working on?</h1>
+        <div id="starters" class="starters" aria-label="Suggested prompts" hidden></div>
+        <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>

@@ -170,11 +170,17 @@ def test_options_and_extras_sit_behind_the_plus_and_the_chip() -> None:
         assert gone not in parser.by_id, f"#{gone} is back"
 
 
-def test_start_screen_is_mark_question_and_message_box() -> None:
+def test_start_screen_is_mark_greeting_question_and_message_box() -> None:
+    """The idle screen is the mark, one greeting line, the question and quiet
+    suggestions (#194). Choosing a suggestion only fills the message box."""
     parser, html = _shell()
-    assert "starters" not in parser.by_id and "data-prompt" not in html, "no starter cards"
     welcome = re.search(r'<div id="welcome".*?</div>', html, re.S).group(0)
     assert "What are you working on?" in welcome and "welcome-mark" in welcome
+    assert "welcome-greeting" in parser.by_id, "the greeting carries the assistant's name"
+    assert "starters" in parser.by_id, "suggestions sit under the question"
+    assert "hidden" in parser.by_id["starters"], "nothing shows until the client has the list"
+    assert "starters-edit" in _ids_inside(parser, "welcome", "button")
+    assert "data-prompt" not in html, "suggestion text comes from the preference, not markup"
 
 
 # ---------------------------------------------------------------- conversation

@@ -61,6 +61,30 @@
     $('welcome').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
+  // Start screen suggestions and greeting (#194). starters.js owns the list,
+  // its editor and its shared preference; app.js only fills the message box.
+  const starterComponent = () => globalThis.KovaStarters || null;
+  function renderStarters() {
+    const host = $('starters'), edit = $('starters-edit'), module = starterComponent();
+    if (!module || !host) { if (host) host.hidden = true; if (edit) edit.hidden = true; return; }
+    module.render(host, text => {
+      $('prompt').value = text; resize(); $('prompt').focus({preventScroll: true});
+    });
+    // The editor stays reachable when the list is empty; that is how it is
+    // turned back on after "Turn off".
+    if (edit) edit.hidden = false;
+  }
+  function renderGreeting() {
+    const line = $('welcome-greeting');
+    if (line) line.textContent = state.persona?.name ? `Hi, I’m ${state.persona.name}.` : '';
+  }
+  $('starters-edit').onclick = () => safe(async () => {
+    const module = starterComponent(); if (!module) return;
+    const next = await module.openEditor();
+    if (next === null) return;
+    await module.save(next);
+  });
+  document.addEventListener('kova:starters', renderStarters);
   // One toast component (toast.js, #198). These wrappers are the only way
   // app.js posts transient messages; the severity decides politeness and how
   // long the message waits. Errors stay until dismissed.
@@ -1557,7 +1581,7 @@
       });
       dialog.remove();
     }
-    pageTitle();
+    pageTitle(); renderGreeting();
   }
 
   // The /events stream carries reminders and chat states. A non-200 reply (a 401
@@ -1627,6 +1651,7 @@
       await json('/chats'); state.connected = true; clearNotice();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
+      renderStarters();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models;
       renderModels(models);

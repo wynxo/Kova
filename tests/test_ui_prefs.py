@@ -57,6 +57,46 @@ def test_reasoning_preference_is_shared_with_the_ui(http):
     assert http.get("/preferences").json()["reasoning"] == "hidden"
 
 
+def test_start_screen_suggestions_are_a_shared_bounded_list(http):
+    assert http.get("/preferences").json()["starters"] == ui_prefs.DEFAULTS["starters"]
+
+    saved = http.put("/preferences", json={"starters": ["  Plan a trip ", "Plan a trip", "Write it up"]})
+
+    assert saved.status_code == 200
+    assert saved.json()["starters"] == ["Plan a trip", "Write it up"]
+    assert http.get("/preferences").json()["starters"] == ["Plan a trip", "Write it up"]
+
+    off = http.put("/preferences", json={"starters": []})
+    assert off.status_code == 200
+    assert off.json()["starters"] == [], "an empty list turns the suggestions off"
+
+
+@pytest.mark.parametrize("value, needle", [
+    ("Plan a trip", "must be a list"),
+    (["one", 2], "text items only"),
+    (["a", "b", "c", "d", "e"], "at most 4"),
+    (["x" * 121], "up to 120"),
+])
+def test_a_bad_suggestion_list_is_refused(http, value, needle):
+    response = http.put("/preferences", json={"starters": value})
+
+    assert response.status_code == 422
+    assert needle in response.json()["detail"]
+
+
+def test_an_older_preferences_file_gains_the_new_defaults(tmp_path):
+    """A file saved before the suggestion list existed still reads as complete."""
+    path = tmp_path / "preferences.json"
+    path.write_text(json.dumps({"format": ui_prefs.PREFS_FORMAT, "version": ui_prefs.PREFS_VERSION,
+                                "preferences": {"theme": "light"}}), encoding="utf-8")
+
+    values = ui_prefs.Preferences(tmp_path).read()
+
+    assert values["theme"] == "light"
+    assert values["starters"] == ui_prefs.DEFAULTS["starters"]
+    assert values["starters"] is not ui_prefs.DEFAULTS["starters"], "a caller cannot mutate the defaults"
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"density": "cozy"}, "Unknown preference"),
     ({"theme": "sepia"}, "must be one of"),
@@ -93,7 +133,7 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
-        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "shown",
+        **ui_prefs.DEFAULTS, "theme": "light", "sidebar": "open", "notifications": "on",
     }
 
 
