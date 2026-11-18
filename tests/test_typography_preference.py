@@ -96,8 +96,9 @@ def test_font_switches_the_stacks_and_leaves_chat_configurable() -> None:
     css = without_comments(STYLESHEET.read_text(encoding="utf-8"))
     assert ":root {" in css and "--font-chat:var(--font)" in css, \
         "chat text follows the UI font until another is chosen"
-    assert re.search(r"^\.markdown \{ font-family:var\(--font-chat\);", css, re.MULTILINE), \
-        "a reply is set in the chat font"
+    replies = without_comments((ASSETS / "markdown.css").read_text(encoding="utf-8"))
+    assert re.search(r"^\.markdown \{ font-family:var\(--font-chat\);", replies, re.MULTILINE), \
+        "a reply is set in the chat font (reply styles live in markdown.css)"
     assert "font-family:var(--font-chat)" in re.search(r"^\.message\.user \.message-body \{[^}]*\}",
                                                        css, re.MULTILINE).group(0), \
         "your own message is set in the chat font"
