@@ -43,6 +43,50 @@
 }
 .markdown blockquote > :last-child { margin-bottom:0; }
 .markdown blockquote blockquote { border-left-color:var(--border-subtle); background:none; }
+.markdown blockquote.callout blockquote { background:none; }
+
+/* Callouts (#189): GitHub's `> [!NOTE]` alerts, one quiet tint per kind. The
+   visible label carries the meaning, so colour is never the only signal. */
+.markdown .callout {
+  --callout-accent:var(--status-info);
+  padding:var(--space-3) var(--space-4);
+  border-left:var(--space-0-5) solid var(--callout-accent);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  background:color-mix(in srgb, var(--callout-accent) 7%, transparent);
+  color:var(--fg-default);
+}
+.markdown .callout-label {
+  margin:0 0 var(--space-1); color:var(--callout-accent);
+  font-size:var(--type-size-label); font-weight:600; letter-spacing:.02em;
+}
+.markdown .callout-note { --callout-accent:var(--status-info); }
+.markdown .callout-tip { --callout-accent:var(--status-success); }
+.markdown .callout-important { --callout-accent:var(--accent-default); }
+.markdown .callout-warning { --callout-accent:var(--status-warning); }
+.markdown .callout-caution { --callout-accent:var(--status-danger); }
+.markdown .callout > :last-child { margin-bottom:0; }
+
+/* Collapsible blocks written as plain HTML in a reply (#189). */
+.markdown details {
+  margin:0 0 var(--space-3); overflow:hidden;
+  border:1px solid var(--border-subtle); border-radius:var(--radius-md);
+  background:color-mix(in srgb, var(--bg-raised) 45%, transparent);
+}
+.markdown summary {
+  padding:var(--space-2) var(--space-3); cursor:pointer;
+  color:var(--fg-default); font-weight:600; border-radius:var(--radius-md);
+}
+.markdown summary::marker { color:var(--fg-faint); }
+.markdown summary:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(var(--space-0-5) * -1);
+}
+.markdown details[open] summary {
+  border-bottom:1px solid var(--border-subtle);
+  border-radius:var(--radius-md) var(--radius-md) 0 0;
+}
+.markdown details > :not(summary) { margin-left:var(--space-3); margin-right:var(--space-3); }
+.markdown details > :last-child { margin-bottom:var(--space-3); }
 
 /* Task lists are read-only: the box shows what the reply recorded. */
 .markdown li.task-item { list-style:none; }
