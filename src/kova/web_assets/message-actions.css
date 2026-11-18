@@ -1,0 +1,44 @@
+/* Message actions (#188): the quiet bar under a message and its details card.
+   Colours, space, radii and motion all come from tokens.css. */
+.i-refresh { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8'/%3E%3Cpath d='M21 3v5h-5'/%3E%3C/svg%3E"); }
+
+.message-actions { align-items:center; }
+.message-action-note {
+  align-self:center; color:var(--status-success);
+  font-size:var(--type-size-label); animation:message-action-note-in var(--motion-fast) var(--motion-ease-standard);
+}
+.message-action-edit .icon, .message-action-retry .icon { width:14px; height:14px; }
+
+.message-details { position:relative; }
+.message-details-toggle {
+  display:inline-flex; align-items:center; gap:var(--space-1);
+  height:28px; margin-left:var(--space-1); padding:0 var(--space-1);
+  border-radius:var(--radius-sm); color:var(--fg-faint);
+  font-size:var(--type-size-label); list-style:none; cursor:pointer;
+  transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
+}
+.message-details-toggle::-webkit-details-marker { display:none; }
+.message-details-toggle:hover, .message-details[open] > .message-details-toggle { background:var(--bg-raised); color:var(--fg-default); }
+.message-details-toggle .icon { width:14px; height:14px; }
+.message-details-list {
+  position:absolute; z-index:6; bottom:calc(100% + var(--space-1)); left:0;
+  display:grid; grid-template-columns:auto minmax(0, 1fr); gap:var(--space-1) var(--space-3);
+  width:max-content; max-width:min(320px, calc(100vw - var(--space-8)));
+  margin:0; padding:var(--space-2) var(--space-3);
+  border:1px solid var(--border-strong); border-radius:var(--radius-md);
+  background:var(--bg-raised); color:var(--fg-default);
+  box-shadow:0 var(--space-2) var(--space-6) color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  font-size:var(--type-size-label); animation:message-details-in var(--motion-base) var(--motion-ease-standard);
+}
+.message-details-list dt { color:var(--fg-muted); }
+.message-details-list dd { margin:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+
+@keyframes message-action-note-in { from { opacity:0; } }
+@keyframes message-details-in { from { opacity:0; transform:translateY(var(--space-1)); } }
+@media (prefers-reduced-motion:reduce) {
+  .message-action-note, .message-details-list { animation:none; }
+  .message-details-toggle { transition:none; }
+}
+[data-motion="reduced"] .message-action-note,
+[data-motion="reduced"] .message-details-list { animation:none; }
+[data-motion="reduced"] .message-details-toggle { transition:none; }

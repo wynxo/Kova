@@ -267,8 +267,20 @@
     meter.setAttribute('aria-label', `${usageLine(usage)}. ${usageDetails(usage).replaceAll('\n', '. ')}`);
     return meter;
   }
-  // Quiet actions under a message: copy it, or bring your own words back to edit.
-  function messageActions(article, read, role, usage = null) {
+  // Quiet actions under a message: copy it as Markdown, edit your own words,
+  // retry the last reply, or open what the server recorded for the answer.
+  function messageActions(article, read, role, usage = null, options = {}) {
+    const module = globalThis.KovaMessageActions;
+    if (module) {
+      article.append(module.bar({
+        role, text: read, usage, model: options.model || usage?.model || '',
+        toolCount: options.toolCount, onRetry: options.onRetry, onEdit: options.onEdit,
+        editLabel: options.editLabel, onError: toastError,
+      }));
+      if (usage) article.querySelector('.message-actions').append(usageMeter(usage));
+      return;
+    }
+    // An older cached shell may not have message-actions.js yet.
     const bar = el('div', 'message-actions');
     const glyph = icon('copy'), copy = el('button', 'message-action');
     copy.type = 'button'; copy.title = 'Copy'; copy.setAttribute('aria-label', role === 'user' ? 'Copy your message' : 'Copy reply');
@@ -336,7 +348,10 @@
       }
     } else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
-    if (role === 'user' && content) messageActions(article, () => content, 'user');
+    if (role === 'user' && content) messageActions(article, () => content, 'user', null, {
+      editLabel: 'Edit as a new message',
+      onEdit: () => { $('prompt').value = content; resize(); $('prompt').focus(); },
+    });
     return body;
   }
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
@@ -566,18 +581,22 @@
         if (msg.model_switch) modelSwitch(msg.model_switch);
       }
       else if (msg.role === 'assistant') {
-        if (!turn) turns.push(turn = {body: message('assistant'), parts: []});
+        if (!turn) turns.push(turn = {body: message('assistant'), parts: [], tools: 0});
         if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
         if (msg.usage) turn.usage = msg.usage;
-        if (msg.tool_calls?.length) for (const call of msg.tool_calls) {
-          if (!savedTools) { savedTools = KovaToolCards.create({saved: true}); turn.body.append(savedTools.node); }
-          savedTools.add({id: call.id, name: call.function?.name, args: call.function?.arguments, label: toolLabel(call.function?.name), hint: toolHint(call.function?.arguments)});
+        if (msg.tool_calls?.length) {
+          turn.tools += msg.tool_calls.length;
+          for (const call of msg.tool_calls) {
+            if (!savedTools) { savedTools = KovaToolCards.create({saved: true}); turn.body.append(savedTools.node); }
+            savedTools.add({id: call.id, name: call.function?.name, args: call.function?.arguments, label: toolLabel(call.function?.name), hint: toolHint(call.function?.arguments)});
+          }
         }
       }
       else if (msg.role === 'tool' && savedTools) savedTools.result({id: msg.tool_call_id, output: msg.content});
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
-    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
+    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
+      saved.usage, {model: saved.usage?.model, toolCount: saved.tools});
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
@@ -923,8 +942,8 @@
     return {card, input, resolve() { buttons.forEach(b => b.disabled = true); input.disabled = true; },
       finish() { buttons.forEach(b => b.disabled = true); input.disabled = true; if (!status.textContent) status.textContent = 'No longer pending'; }};
   }
-  function turnView(body) {
-    let current = null, scheduled = false, finished = false, usage = null;
+  function turnView(body, model = '') {
+    let current = null, scheduled = false, finished = false, usage = null, toolCount = 0;
     const blocks = [], approvals = new Map(), toolGroups = [];
     let toolGroup = null;
     let plan = null;
@@ -987,7 +1006,7 @@
           details.append(el('summary', '', `Compacted ${event.count} messages`), el('pre', '', event.summary));
           body.insertBefore(details, activity);
         } else if (kind === 'tool_call') {
-          current = null; activity.hidden = true;
+          current = null; activity.hidden = true; toolCount += 1;
           if (!toolGroup) { toolGroup = KovaToolCards.create(); toolGroups.push(toolGroup); body.insertBefore(toolGroup.node, activity); }
           toolGroup.add({...event, label: toolLabel(event.name), hint: toolHint(event.args)});
         } else if (kind === 'question') {
@@ -1062,7 +1081,8 @@
         for (const block of blocks) block.dirty = true;
         paint();
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
-        if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage);
+        if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage,
+          {model: usage?.model || model, toolCount});
       }
     };
   }
@@ -1164,12 +1184,12 @@
     try {
       if (!state.chat) state.chat = await createComposerChat();
       const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
-      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
-      const reply = message('assistant');
-      nearBottom = true; turn = turnView(reply); follow();
       // Send to the model the chip showed, even if another window just changed
       // the default or the saved chat settings.
       const model = composerModel().model || null;
+      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
+      const reply = message('assistant');
+      nearBottom = true; turn = turnView(reply, model); follow();
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model,
         attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
       if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
