@@ -288,7 +288,8 @@ def is_fresh(path: Path, data: bytes) -> bool:
     if not path.exists():
         return False
     current = path.read_bytes()
-    if current == data:
+    # A Windows checkout may turn the SVGs' line endings into CRLF.
+    if current == data or current.replace(b"\r\n", b"\n") == data:
         return True
     return path.suffix == ".png" and current[:8] == data[:8] and _pixels(current) == _pixels(data)
 
