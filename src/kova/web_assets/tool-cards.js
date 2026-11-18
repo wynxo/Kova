@@ -112,7 +112,7 @@ const KovaToolCards = (() => {
       chevron.setAttribute('aria-hidden', 'true');
       title.append(mark, label);
       if (event.hint) title.append(node('span', 'tool-card-hint', event.hint));
-      title.append(time, status, chevron);
+      title.append(status, time, chevron);
 
       const body = node('div', 'tool-card-body');
       body.setAttribute('id', `${uid}-step-${index}`);

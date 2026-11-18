@@ -49,8 +49,7 @@
 .tool-card-mark { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
 .tool-card-mark.running { background: var(--accent-default); animation: tool-card-breathe 1.2s var(--motion-ease-standard) infinite; }
 .tool-card-mark.ok { color: var(--status-success); }
-.tool-card-mark.failed,
-.tool-card-step.failed > .tool-card-title > .tool-card-mark.failed { color: var(--status-danger); }
+.tool-card-mark.failed { color: var(--status-danger); }
 .tool-card-mark.unknown { background: var(--fg-faint); }
 .tool-card-step.failed > .tool-card-title > .tool-card-name { color: var(--status-danger); }
 
