@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false};
   let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
   const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
   let autostartBusy = false;
@@ -190,6 +190,7 @@
   }
   function controls() {
     const busy = state.busy;
+    for (const button of activityOpenButtons) button.disabled = busy;
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     for (const id of ['model', 'mode', 'reasoning-effort']) $(id).disabled = busy || pickerSaving || !state.connected;
@@ -231,6 +232,10 @@
   function disconnected(message) {
     state.connected = false;
     state.events?.close();
+    state.activity.clear();
+    state.activityStarted = {};
+    state.finishedActivity = [];
+    renderActivity();
     $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
       : 'Open kova-web on this computer to connect. No token or account needed.'));
@@ -459,6 +464,167 @@
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
   // working when it is missing, so every hook below guards its presence.
   const chatAppearance = () => window.KovaChatAppearance || null;
+  // Activity center (#191): every reply running outside this window and every
+  // chat that needs an answer, in one place. It is fed by the same
+  // conversation_state events as the sidebar dots, so a turn started in another
+  // client appears here too. Downloads stay in their own panel.
+  const ACTIVITY_RECENT_MS = 120000;
+  const activityAges = new Map();
+  const activityOpenButtons = new Set();
+  const activityActions = new Map();
+  let activityTimer = null;
+  function activityAge(started) {
+    const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+    return seconds < 90 ? `${Math.max(1, seconds)}s` : `${Math.round(seconds / 60)} min`;
+  }
+  function noteChatState(id, next, title = '', ephemeral = false) {
+    if (typeof id !== 'string' || !id) return;
+    const previous = state.activity.get(id);
+    const isPrivate = ephemeral || previous?.ephemeral || id.startsWith('incognito-');
+    const wasRunning = previous && (previous.state === 'working' || previous.state === 'blocked-on-approval');
+    const running = next === 'working' || next === 'blocked-on-approval';
+    if (running && !wasRunning) {
+      state.activityStarted[id] = Date.now();
+      state.finishedActivity = state.finishedActivity.filter(item => item.id !== id);
+    }
+    if (!running && wasRunning) {
+      if (!isPrivate) {
+        state.finishedActivity.unshift({id, title: title || previous.title || 'Conversation', at: Date.now()});
+        state.finishedActivity = state.finishedActivity.slice(0, 3);
+      }
+      delete state.activityStarted[id];
+    }
+    state.activity.set(id, {title: isPrivate ? '' : title || previous?.title || '', state: next, ephemeral: Boolean(isPrivate)});
+  }
+  function removeActivity(id) {
+    state.activity.delete(id);
+    delete state.activityStarted[id];
+    state.finishedActivity = state.finishedActivity.filter(item => item.id !== id);
+  }
+  function activityRows() {
+    return [...state.activity.entries()]
+      .filter(([, item]) => item.state === 'working' || item.state === 'blocked-on-approval')
+      .map(([id, item]) => ({id, ...item}));
+  }
+  function activityName(row) {
+    return row.title || (row.ephemeral ? 'Incognito' : 'New conversation');
+  }
+  function tickActivity() {
+    if (state.finishedActivity.some(item => Date.now() - item.at >= ACTIVITY_RECENT_MS)) {
+      renderActivity();
+      return;
+    }
+    for (const [line, started] of activityAges) line.textContent = `Working · ${activityAge(started)}`;
+  }
+  function syncActivityTimer() {
+    if (activityAges.size || state.finishedActivity.length) {
+      if (activityTimer == null) activityTimer = setInterval(tickActivity, 1000);
+    } else if (activityTimer != null) {
+      clearInterval(activityTimer);
+      activityTimer = null;
+    }
+  }
+  function activityOpenButton(id, name, kind = 'open') {
+    const open = el('button', 'btn quiet small', 'Open'); open.type = 'button';
+    open.setAttribute('aria-label', `Open ${name}`);
+    open.disabled = state.busy;
+    open.onclick = () => {
+      if (state.busy) return;
+      activityPanel(false, true);
+      safe(() => openChat(id));
+    };
+    activityOpenButtons.add(open);
+    activityActions.set(`${kind}:${id}`, open);
+    return open;
+  }
+  function renderActivity() {
+    const button = $('activity'), count = $('activity-count'), panel = $('activity-panel');
+    if (!button || !count || !panel) return;
+    const now = Date.now();
+    state.finishedActivity = state.finishedActivity.filter(item => now - item.at < ACTIVITY_RECENT_MS);
+    const rows = activityRows();
+    button.hidden = !rows.length && !state.finishedActivity.length;
+    button.dataset.active = String(rows.length > 0);
+    button.setAttribute('aria-label', rows.length ? `Activity: ${rows.length} running` : 'Activity: recent results');
+    count.hidden = !rows.length;
+    count.textContent = rows.length ? String(rows.length) : '';
+    if (button.hidden && state.activityOpen) { activityPanel(false, true); return; }
+    if (!state.activityOpen) { syncActivityTimer(); return; }
+    const active = document.activeElement;
+    const focused = [...activityActions].find(([, node]) => node === active)?.[0];
+    activityAges.clear();
+    activityOpenButtons.clear();
+    activityActions.clear();
+    panel.replaceChildren();
+    const head = el('div', 'activity-head');
+    head.append(el('strong', '', 'Activity'));
+    const close = iconButton('x', 'Close activity');
+    close.onclick = () => activityPanel(false, true);
+    activityActions.set('close', close);
+    head.append(close);
+    panel.append(head);
+    for (const row of rows) {
+      const item = el('div', 'activity-row');
+      const info = el('div', 'activity-info');
+      const title = el('strong', 'activity-name', activityName(row));
+      const stateLine = el('span', 'activity-state', row.state === 'blocked-on-approval'
+        ? 'Needs your answer'
+        : `Working · ${activityAge(state.activityStarted[row.id] || now)}`);
+      if (row.state === 'working') activityAges.set(stateLine, state.activityStarted[row.id] || now);
+      info.append(title, stateLine);
+      const stopButton = el('button', 'btn quiet small', 'Stop'); stopButton.type = 'button';
+      stopButton.setAttribute('aria-label', `Stop ${activityName(row)}`);
+      stopButton.onclick = () => safe(async () => {
+        if (state.busy && state.chat?.id === row.id) return stop();
+        await json(`/chats/${row.id}/stop`, {method: 'POST'});
+        await refreshChats();
+      });
+      activityActions.set(`stop:${row.id}`, stopButton);
+      const actions = el('div', 'activity-actions'); actions.append(activityOpenButton(row.id, activityName(row)), stopButton);
+      item.append(info, actions); panel.append(item);
+    }
+    if (state.finishedActivity.length) {
+      panel.append(el('div', 'activity-group', 'Recently finished'));
+      for (const item of state.finishedActivity) {
+        const row = el('div', 'activity-row');
+        const info = el('div', 'activity-info');
+        info.append(el('strong', 'activity-name', item.title), el('span', 'activity-state', 'Finished'));
+        row.append(info, activityOpenButton(item.id, item.title, 'recent')); panel.append(row);
+      }
+    }
+    if (focused) {
+      const next = activityActions.get(focused);
+      (next && !next.disabled ? next : close).focus({preventScroll: true});
+    }
+    syncActivityTimer();
+  }
+  function activityPanel(open, restoreFocus = false) {
+    const button = $('activity'), panel = $('activity-panel');
+    if (!button || !panel) return;
+    const focused = document.activeElement;
+    state.activityOpen = open;
+    panel.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (open) {
+      renderActivity();
+      activityActions.get('close')?.focus();
+    } else {
+      if (restoreFocus && (focused === button || [...activityActions.values()].includes(focused))) {
+        (button.hidden ? $('menu') : button).focus({preventScroll: true});
+      }
+      activityAges.clear();
+      activityOpenButtons.clear();
+      activityActions.clear();
+      panel.replaceChildren();
+      syncActivityTimer();
+    }
+  }
+  $('activity')?.addEventListener('click', () => activityPanel(!state.activityOpen, true));
+  // A pin/search only changes the sidebar list; activity keeps the last state
+  // of every chat it has seen, so filtering cannot hide a running reply.
+  function absorbChatState(chat) {
+    noteChatState(chat.id, chat.state, chat.title, chat.ephemeral);
+  }
   // A short, still skeleton while the first list arrives (#199). It is
   // decoration: the polite status line says what is happening, and a failed
   // first load clears the list instead of leaving it looking busy forever.
@@ -594,7 +760,17 @@
     const query = $('search').value.trim();
     const chats = await json(query ? `/chats/search?q=${encodeURIComponent(query)}` : '/chats');
     if (version !== state.searchVersion) return;
-    state.chats = chats; history(chats);
+    state.chats = chats;
+    // A full list is also the moment a chat deleted elsewhere disappears from
+    // activity; a search result must not hide the others.
+    if (!query) {
+      const live = new Set(chats.map(chat => chat.id));
+      for (const id of [...state.activity.keys()]) {
+        if (!live.has(id)) removeActivity(id);
+      }
+    }
+    for (const chat of chats) absorbChatState(chat);
+    history(chats); renderActivity();
   }
   (function privacyPanel() {
     const dialog = el('dialog', 'panel privacy-dialog');
@@ -867,7 +1043,9 @@
   }
   async function discardIncognito() {
     if (state.chat?.ephemeral) {
-      await json(`/chats/${state.chat.id}`, {method: 'DELETE'});
+      const id = state.chat.id;
+      await json(`/chats/${id}`, {method: 'DELETE'});
+      removeActivity(id); renderActivity();
       // Never carry an unsent private draft into a saved conversation.
       $('prompt').value = ''; resize();
     }
@@ -899,6 +1077,7 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
+      removeActivity(chat.id); renderActivity();
       if (state.chat?.id === chat.id) {
         $('prompt').value = '';
         setChat(null);
@@ -1725,7 +1904,8 @@
     'toggle-theme': () => $('theme').onclick?.(),
     'focus-composer': () => $('prompt').focus(),
     'stop-reply': () => {
-      if (document.body.classList.contains('sidebar-open')) sidebar(false);
+      if (state.activityOpen) activityPanel(false, true);
+      else if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
       else return false;
     },
@@ -1983,7 +2163,21 @@
       if (live.lost) { live.lost = false; safe(resync); }
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
-    source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
+    source.addEventListener('conversation_state', event => {
+      if (state.events !== source) return;
+      alive();
+      try {
+        const {chat_id: id, state: next} = JSON.parse(event.data);
+        const chat = state.chats.find(item => item.id === id);
+        const current = state.chat?.id === id ? state.chat : null;
+        const previous = current?.state;
+        if (chat) { chat.state = next; history(state.chats); }
+        else safe(refreshChats);
+        if (current) { current.state = next; chatStateChanged(id, next, previous); }
+        noteChatState(id, next, (chat || current)?.title, (chat || current)?.ephemeral);
+        renderActivity();
+      } catch (_) {}
+    });
     source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
@@ -3063,6 +3257,7 @@
     if (next && !optionsPanel.contains(next) && next !== optionsButton && !next.closest?.('.popover')) options(false);
   });
   document.addEventListener('pointerdown', event => {
+    if (state.activityOpen && !event.target.closest?.('.activity-wrap')) activityPanel(false);
     if (popup && !popup.node.contains(event.target) && !popup.owner.button.contains(event.target)) closeMenu();
     const inside = node => node.contains(event.target);
     if (!moreMenu.hidden && !inside(moreMenu) && !inside(moreButton)) more(false);

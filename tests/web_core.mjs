@@ -126,7 +126,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, loadingChats, disconnected, inlineRename};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -958,6 +958,69 @@ console.log('Inline rename, row menu and incognito mark passed');
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
 
+// The activity center sees replies that run outside this window, offers Stop,
+// and keeps a short recently-finished list (#191).
+state.activity.clear(); state.finishedActivity = []; state.activityStarted = {};
+state.chats = [];
+sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.renderActivity();
+assert.equal($('activity').hidden, false, 'a running reply shows the indicator');
+assert.equal($('activity').dataset.active, 'true');
+assert.equal($('activity-count').textContent, '1');
+assert.equal($('activity').getAttribute('aria-label'), 'Activity: 1 running');
+let activityTick;
+const originalSetInterval = sandbox.setInterval;
+sandbox.setInterval = callback => { activityTick = callback; return 1; };
+sandbox.clearInterval = () => { activityTick = undefined; };
+sandbox.test.activityPanel(true);
+assert.equal($('activity-panel').hidden, false);
+assert.equal($('activity').getAttribute('aria-expanded'), 'true');
+assert.ok($('activity-panel').textContent.includes('Background reply'));
+assert.ok($('activity-panel').textContent.includes('Working'));
+const activityStop = buttons($('activity-panel')).find(button => button.textContent === 'Stop');
+assert.ok(activityStop, 'a running reply can be stopped from the panel');
+activityStop.focus();
+activityTick();
+assert.equal(buttons($('activity-panel')).find(button => button.textContent === 'Stop'), activityStop,
+             'the elapsed clock updates without replacing the focused Stop button');
+activityStop.onclick();
+await tick(); await tick();
+assert.ok(requests.slice(-3).some(row => row.path === '/chats/background-1/stop'), 'Stop reaches the server');
+sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.renderActivity();
+sandbox.test.activityPanel(true);
+// An approval that waits is said in words, because it needs the person.
+sandbox.test.noteChatState('background-2', 'blocked-on-approval', 'Needs a decision');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').textContent, '2');
+assert.ok($('activity-panel').textContent.includes('Needs your answer'));
+// A finished reply leaves the count but stays visible for a while.
+sandbox.test.noteChatState('background-1', 'done');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').textContent, '1');
+assert.equal($('activity').dataset.active, 'true');
+sandbox.test.noteChatState('background-2', 'done');
+sandbox.test.renderActivity();
+assert.equal($('activity-count').hidden, true);
+assert.equal($('activity').dataset.active, 'false');
+assert.equal($('activity').hidden, false, 'recent results keep the entry reachable');
+assert.ok($('activity-panel').textContent.includes('Recently finished'));
+sandbox.test.activityPanel(false);
+assert.equal($('activity-panel').hidden, true);
+for (const row of state.finishedActivity) row.at -= 121000;
+assert.equal(typeof activityTick, 'function', 'recent items expire even with the panel closed');
+activityTick();
+assert.equal($('activity').hidden, true, 'nothing running and nothing recent hides it again');
+sandbox.test.noteChatState('incognito-demo', 'working', 'Private title', true);
+sandbox.test.activityPanel(true);
+assert.ok($('activity-panel').textContent.includes('Incognito'));
+assert.ok(!$('activity-panel').textContent.includes('Private title'));
+sandbox.test.noteChatState('incognito-demo', 'done');
+sandbox.test.renderActivity();
+assert.equal($('activity').hidden, true, 'a finished incognito reply does not linger');
+sandbox.setInterval = originalSetInterval;
+delete sandbox.clearInterval;
+console.log('Activity center for background replies and waiting approvals passed');
 // The first list shows a still skeleton with one polite status line; an empty
 // list offers the action that fills it, and stale bones never survive a
 // failed connection (#199).

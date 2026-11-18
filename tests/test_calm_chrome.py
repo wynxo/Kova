@@ -73,12 +73,16 @@ def _hidden_by(parser: _Shell, element: str) -> bool:
 
 
 def test_header_is_toggle_title_and_actions_only() -> None:
-    """No connection dot, no Retry button, no banner: a healthy link says nothing."""
+    """No connection dot, no Retry button, no banner: a healthy link says nothing.
+    The activity dot (#191) is hidden until a turn runs or needs an answer."""
     parser, html = _shell()
     header = re.search(r'<header class="topbar">(.*?)</header>', html, re.S).group(1)
     ids = re.findall(r'\bid="([^"]+)"', header)
-    assert ids == ["menu", "chat-title", "chat-menu", "compact-now"], ids
+    assert ids == ["menu", "chat-title", "activity", "activity-dot", "activity-count",
+                   "activity-panel", "chat-menu", "compact-now"], ids
     assert "hidden" in parser.by_id["chat-menu"], "chat actions appear only once a chat is open"
+    assert "hidden" in parser.by_id["activity"], "activity says nothing while nothing runs"
+    assert "hidden" in parser.by_id["activity-panel"]
     for gone in ("connection", "banner", "local-only-status-header"):
         assert gone not in parser.by_id, f"#{gone} is back"
     for noise in ("Disconnected", "Retry connection", "Model connected"):
