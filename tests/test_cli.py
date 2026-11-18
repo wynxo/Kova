@@ -820,7 +820,9 @@ def test_projects_commands(runner, tmp_path):
     assert listed.exit_code == 0 and "Desk research" in listed.output and project_id in listed.output
     shown = run("show", project_id)
     assert shown.exit_code == 0 and project["name"] in shown.output
-    assert "Prefer primary sources." in shown.output and str(tmp_path) in shown.output
+    # Rich wraps long temp paths (macOS and Windows put them deep), so compare unwrapped.
+    flat = shown.output.replace("\n", "")
+    assert "Prefer primary sources." in flat and str(tmp_path) in flat
     cancelled = run("rm", project_id, input="n\n")
     assert cancelled.exit_code == 0 and len(client.list_projects()) == 1
     assert run("rm", project_id, "--yes").exit_code == 0
