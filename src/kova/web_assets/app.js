@@ -769,7 +769,7 @@
         if (entry.id < checkpoint.id) continue;
         for (const file of entry.files || []) if (!affected.has(file.path)) affected.set(file.path, file.status);
       }
-      const dialog = el('dialog', 'restore-dialog');
+      const dialog = el('dialog', 'restore-dialog'); dialog.setAttribute('aria-label', `Restore to change set ${checkpoint.id}`);
       dialog.append(el('h2', '', `Restore to change set ${checkpoint.id}?`));
       dialog.append(el('p', '', 'Files Kova changed since then are put back the way they were, and files it created are removed. Your git repository is never touched.'));
       const list = el('ul', 'restore-list');
@@ -1118,7 +1118,12 @@
     picker.hidden = !picker.children.length;
   }
   $('commands').onclick = () => { $('prompt').value = '/'; commandPicker(); $('prompt').focus(); };
-  $('compact-now').onclick = () => safe(compactChat);
+  $('compact-now').onclick = () => { $('chat-menu').open = false; safe(compactChat); };
+  // Escape closes the chat actions menu and gives focus back to its toggle.
+  $('chat-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !$('chat-menu').open) return;
+    event.preventDefault(); event.stopPropagation(); $('chat-menu').open = false; $('chat-menu').querySelector('summary').focus();
+  });
   async function send(event) {
     event.preventDefault(); const text = $('prompt').value.trim();
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
@@ -1434,7 +1439,7 @@
     catch (error) { $('mode').value = state.chat?.mode || 'work'; throw error; }
   });
   const openRules = () => safe(async () => {
-    const dialog = el('dialog', 'rules-dialog');
+    const dialog = el('dialog', 'rules-dialog'); dialog.setAttribute('aria-label', 'Permission rules');
     const title = el('h2', '', 'Permission rules');
     const help = el('p', '', 'Deny beats ask beats allow. Patterns are case-sensitive globs. Session rules expire on restart. Exact grants include all arguments and the working folder.');
     const label = el('label', '', 'Rules (JSON array: action, tool, pattern, scope, optional message)');
@@ -1532,7 +1537,7 @@
   async function setupIdentity() {
     state.persona = await json('/persona');
     if (!state.persona.configured) {
-      const dialog = el('dialog');
+      const dialog = el('dialog'); dialog.setAttribute('aria-label', 'Meet your assistant');
       const form = el('form'); form.method = 'dialog';
       const title = el('h2', '', 'Meet your assistant');
       const nameLabel = el('label', '', 'Name');
