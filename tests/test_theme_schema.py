@@ -63,6 +63,15 @@ def test_named_colours_are_rejected() -> None:
     assert any("tokens.fg.default" in p for p in problems), problems
 
 
+def test_hex_lengths_follow_css_for_tokens_and_terminal() -> None:
+    for invalid in ("#abcde", "#abcdef0"):
+        assert _errors(_theme(tokens={"fg": {"default": invalid}})), invalid
+        assert _errors(_theme(terminal=[invalid] * 16)), invalid
+    for valid in ("#abc", "#abcd", "#abcdef", "#abcdef01"):
+        assert _errors(_theme(tokens={"fg": {"default": valid}})) == [], valid
+        assert _errors(_theme(terminal=[valid] * 16)) == [], valid
+
+
 def test_primitive_overrides_are_rejected() -> None:
     # `tokens` accepts semantic groups only; a primitive ramp is not a group name.
     problems = _errors(_theme(tokens={"primitive": {"orange": {"500": "#ff0000"}}}))
