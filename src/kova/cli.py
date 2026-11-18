@@ -305,6 +305,9 @@ app.add_typer(_skills, name="skills")
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
+_projects = typer.Typer(no_args_is_help=True, help="Manage projects and shared chat instructions.")
+app.add_typer(_projects, name="projects")
+
 _prefs = typer.Typer(no_args_is_help=True, help="Export and import UI preferences.")
 app.add_typer(_prefs, name="prefs")
 
@@ -938,12 +941,27 @@ def import_archive(
                "restart a foreground server if you changed its config.")
 
 
+def _installed_theme_ids(client: KovaClient) -> list[str]:
+    """Ids of the user's own theme files (built-ins are everywhere already)."""
+    try:
+        rows = client.themes()
+    except KovaError:
+        return []
+    return sorted(row["id"] for row in rows if row.get("source") != "built-in" and row.get("id"))
+
+
+def _format_changes(rows: list[tuple]) -> str:
+    """One ``name: old -> new`` line per changed preference, for --dry-run."""
+    return "  " + " · ".join(f"{name}: {old!r} -> {new!r}" for name, old, new in rows)
+
+
 @_prefs.command("export")
 def prefs_export(path: str | None = typer.Argument(
         None, help="JSON path (default: ~/Kova-ui-preferences-YYYY-MM-DD.json).")):
     """Save every UI preference to one validated JSON file."""
     try:
-        target = ui_prefs.write_file(get_client().preferences(), path)
+        client = get_client()
+        target = ui_prefs.write_file(client.preferences(), path, _installed_theme_ids(client))
     except (ui_prefs.UiPrefsError, OSError) as exc:
         _fail(str(exc))
     _ok(f"UI preferences written to {target}")
@@ -954,18 +972,40 @@ def prefs_export(path: str | None = typer.Argument(
 def prefs_import(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
                                 help="A preferences JSON file from `kova prefs export`."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Show what would change without saving anything."),
 ):
     """Restore UI preferences, refusing a file that does not validate."""
     try:
-        values = ui_prefs.read_file(path)
+        values, exported_themes = ui_prefs.read_export(path)
     except (ui_prefs.UiPrefsError, OSError) as exc:
         _fail(str(exc))
     try:
-        saved = get_client().set_preferences(values)
+        client = get_client()
+        current = client.preferences()
+    except KovaError as exc:
+        _fail(str(exc))
+    rows = ui_prefs.diff_preferences(current, {**current, **values})
+    missing = [name for name in exported_themes if name not in _installed_theme_ids(client)]
+    if dry_run:
+        if not rows:
+            _muted("No changes: preferences already match.")
+        else:
+            _muted(f"Would change {len(rows)} preference{'s' if len(rows) != 1 else ''}:")
+            _muted(_format_changes(rows))
+        if missing:
+            _muted(f"  Missing themes here: {', '.join(missing)}")
+        elif exported_themes:
+            _muted("  All installed themes are present here.")
+        return
+    try:
+        saved = client.set_preferences(values)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f"Restored {len(saved)} UI preferences")
     _muted("  " + " · ".join(f"{name} {value}" for name, value in sorted(saved.items())))
+    if missing:
+        _muted(f"  Missing themes here: {', '.join(missing)} (install the files to use them)")
 
 
 @_themes.callback(invoke_without_command=True)
@@ -2250,6 +2290,76 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
         _ok(f'Deleted chat "{title}".')
     else:
         _fail(f'No chat "{ref}".')
+
+
+@_projects.command("list")
+def projects_list():
+    """List projects and their IDs."""
+    try:
+        projects = get_client().list_projects()
+    except KovaError as exc:
+        _fail(str(exc))
+    if not projects:
+        _empty("No projects yet.", "Create one with: kova projects create NAME")
+        return
+    table = _table()
+    table.add_column("Name")
+    table.add_column("ID", style=theme.MUTED, no_wrap=True)
+    for project in projects:
+        table.add_row(Text(project["name"]), project["id"])
+    console.print(table)
+
+
+@_projects.command("create")
+def projects_create(
+    name: str,
+    instructions: str = typer.Option("", "--instructions", help="Shared instructions for project chats."),
+    folder: Path | None = typer.Option(None, "--folder", exists=True, file_okay=False, resolve_path=True,
+                                       help="Default working folder for new chats in this project."),
+):
+    """Create a project."""
+    try:
+        project = get_client().create_project(name, instructions, str(folder) if folder is not None else None)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f'Created project "{project["name"]}" ({project["id"]}).')
+
+
+def _find_project(client: KovaClient, project_id: str) -> dict:
+    try:
+        return client.get_project(project_id)
+    except KovaError as exc:
+        _fail(f'No project "{project_id}".' if exc.status == 404 else str(exc))
+
+
+@_projects.command("show")
+def projects_show(project_id: str):
+    """Show a project by ID, including its folder and instructions."""
+    project = _find_project(get_client(), project_id)
+    console.print(Text(project["name"], style=f"bold {theme.ACCENT}"))
+    _muted(project["id"])
+    console.print(Text(f'Working folder: {project["cwd"] or "(default)"}'))
+    if project["instructions"]:
+        console.print()
+        console.print(Text(project["instructions"]))
+
+
+@_projects.command("rm")
+def projects_rm(project_id: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation.")):
+    """Remove a project by ID. Its chats are kept and ungrouped."""
+    client = get_client()
+    project = _find_project(client, project_id)
+    name = project["name"]
+    if not yes and not typer.confirm(f'Remove project "{name}"? Its chats will be kept.', default=False):
+        _muted("Cancelled.")
+        return
+    try:
+        removed = client.delete_project(project_id)
+    except KovaError as exc:
+        _fail(str(exc))
+    if not removed:
+        _fail(f'No project "{project_id}".')
+    _ok(f'Removed project "{name}".')
 
 
 # ---------------------------------------------------------------------------

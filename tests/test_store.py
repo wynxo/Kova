@@ -256,3 +256,32 @@ def test_fork_preserves_context_and_is_independent(store):
     store.add_message(fork['id'], 'user', 'different')
     assert len(store.get_messages(cid)) == 2
     assert store.fork_chat('missing') is None
+
+
+def test_project_migration_preserves_existing_chat(tmp_path):
+    path = tmp_path / "kova.db"
+    folder = str(tmp_path / "workspace")
+    old = Store(path)
+    chat = old.create_chat("Existing", cwd=folder)
+    old.add_message(chat["id"], "user", "Keep this message")
+    old._conn.close()
+    with sqlite3.connect(path) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(chats)")}
+        if "project_id" in columns:
+            db.execute("ALTER TABLE chats DROP COLUMN project_id")
+        db.execute("DROP TABLE IF EXISTS projects")
+
+    migrated = Store(path)
+    saved = migrated.get_chat(chat["id"])
+    assert saved["project_id"] is None
+    assert (saved["title"], saved["created"], saved["cwd"]) == ("Existing", chat["created"], folder)
+    assert saved["messages"] == [{"role": "user", "content": "Keep this message"}]
+    project = migrated.create_project("Research", cwd=folder)
+    grouped = migrated.create_chat(project_id=project["id"])
+    migrated._conn.close()
+
+    reopened = Store(path)
+    assert reopened.get_project(project["id"]) == project
+    assert reopened.get_chat(grouped["id"])["project_id"] == project["id"]
+    assert reopened.get_chat(grouped["id"])["cwd"] == folder
+    assert reopened.get_chat(chat["id"]) == saved

@@ -54,6 +54,8 @@ $('mode').value = 'work';
 const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
 const requests = [], prefs = new Map();
 let defaultModel = '';
+let sidebarProjects = [];
+let sidebarChats = [];
 const uploads = [];
 let pendingApprovals = [];
 const nextQueued = [];
@@ -78,11 +80,22 @@ const sandbox = {
     const form = options.body instanceof FormData ? options.body : null;
     const body = !form && options.body ? JSON.parse(options.body) : null;
     requests.push({path, body});
+    if (path === '/projects' && options.method === 'POST') {
+      const project = {id: 'research', ...body};
+      sidebarProjects.push(project);
+      return {ok: true, json: async () => project};
+    }
+    if (path === '/projects/research' && options.method === 'PATCH') {
+      Object.assign(sidebarProjects[0], body);
+      return {ok: true, json: async () => sidebarProjects[0]};
+    }
     if (form) uploads.push({path, file: form.get('file')});
     if (path === '/chats' && options.method === 'POST') {
-      return {ok: true, json: async () => ({id: 'new-chat', title: null, mode: body?.mode || 'work',
+      const chat = {id: 'new-chat', title: null, mode: body?.mode || 'work', project_id: body?.project_id,
         permission: 'manual', cwd: '/project', web: true, messages: [], plan: [], ephemeral: !!body?.ephemeral,
-        model: body?.model ?? null, reasoning_effort: body?.reasoning_effort ?? null})};
+        model: body?.model ?? null, reasoning_effort: body?.reasoning_effort ?? null};
+      if (body?.project_id) sidebarChats.unshift(chat);
+      return {ok: true, json: async () => chat};
     }
     if (path === '/chats/attachment-chat' && options.method === 'PATCH') return {ok: true, json: async () => body};
     if (path === '/models/active') { defaultModel = body.name; return {ok: true, json: async () => ({active: defaultModel})}; }
@@ -93,7 +106,8 @@ const sandbox = {
         mime: file.type || 'text/plain', size: file.size, pages: null})};
     }
     const payloads = {
-      '/chats': [],
+      '/chats': sidebarChats,
+      '/projects': sidebarProjects,
       // The capability contract the server declares, and the catalog with it.
       '/capabilities': {provider: 'openai', capabilities: ['api_key', 'tools'],
                         offered: {chat: ['reasoning'], work: ['api_key', 'approvals', 'tools']}},
@@ -126,7 +140,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename, refreshChats};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -141,7 +155,7 @@ vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/composer-history
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/code-header.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/drafts.js', import.meta.url), 'utf8') + '\n' +
-  source, sandbox);
+  readFileSync(new URL('../src/kova/web_assets/projects.js', import.meta.url), 'utf8') + '\n' + source, sandbox);
 const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue, applyCapabilities, providerKindChanged} = sandbox.test;
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
@@ -1184,3 +1198,65 @@ fileToolView.accept({type: 'tool_call', name: 'write_file', args: {path: 'demo.t
 fileToolView.accept({type: 'tool_result', name: 'write_file', ok: true, output: 'Written', file_change: {path: 'demo.txt', status: 'added', diff: '@@ -0,0 +1 @@\n+hello'}});
 assert.equal(byClass(fileToolBody, 'file-diff-file').length, 1);
 assert.ok(fileToolBody.textContent.includes('+hello'));
+
+
+// Project groups are quiet by default, keep a pinned member inside its own
+// project, and retain open state through a chat refresh. Search stays flat.
+sidebarProjects = [{id: 'demo', name: '<Research>', instructions: 'Cite sources.', cwd: null}];
+sidebarChats = [
+  {id: 'p', title: 'Pinned project chat', project_id: 'demo', pinned: true, last_message: at(0)},
+  {id: 'u', title: 'Ungrouped chat', last_message: at(0)},
+];
+state.chat = null;
+state.connected = true;
+state.busy = false;
+await sandbox.test.refreshChats();
+const shell = $('chat-list');
+let group = byClass(shell, 'project-group')[0];
+assert.ok(group, 'the sidebar shows a project section');
+assert.equal(group.children[0].tagName, 'summary');
+assert.equal(group.children[0].textContent, '<Research>');
+assert.ok(!group.open, 'a project starts collapsed');
+assert.equal(shell.children.indexOf(group) < shell.children.indexOf(rowFor('Ungrouped chat')), true);
+assert.equal(byClass(group, 'history-row').length, 1, 'project pin is not promoted above the group');
+assert.equal(byClass(shell, 'history-row').length, 2, 'no duplicated chats');
+group.open = true;
+sandbox.test.history(sidebarChats);
+group = byClass(shell, 'project-group')[0];
+assert.equal(group.open, true, 'refresh preserves the open project');
+
+$('search').value = 'match';
+sandbox.test.history(sidebarChats);
+assert.equal(byClass(shell, 'project-group').length, 0);
+assert.equal(byClass(shell, 'history-row').length, 2);
+$('search').value = '';
+sidebarProjects = []; sidebarChats = [];
+await sandbox.test.refreshChats();
+
+const projectButton = label => buttons(shell).find(button => button.textContent === label);
+const editProject = async (label, values) => {
+  projectButton(label).onclick();
+  const dialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+  assert.ok(dialog, 'project editor opens');
+  const fields = walk(dialog).filter(node => ['input', 'textarea'].includes(node.tagName));
+  for (const [name, value] of Object.entries(values)) fields.find(field => field.name === name).value = value;
+  await walk(dialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+};
+await editProject('New project', {name: 'Field notes', instructions: 'Keep a log.', cwd: '/workspace'});
+assert.deepEqual(requests.findLast(request => request.path === '/projects' && request.body)?.body,
+                 {name: 'Field notes', instructions: 'Keep a log.', cwd: '/workspace'});
+group = byClass(shell, 'project-group')[0];
+assert.equal(group.children[0].textContent, 'Field notes');
+await editProject('Edit project', {name: 'Lab notes', cwd: ''});
+assert.deepEqual(requests.findLast(request => request.path === '/projects/research')?.body,
+                 {name: 'Lab notes', instructions: 'Keep a log.', cwd: null});
+const startProjectChat = projectButton('New chat in project');
+const createsBefore = requests.filter(request => request.path === '/chats' && request.body?.project_id).length;
+startProjectChat.onclick();
+startProjectChat.onclick();
+await tick(); await tick();
+assert.equal(requests.filter(request => request.path === '/chats' && request.body?.project_id).length, createsBefore + 1);
+assert.equal(requests.findLast(request => request.path === '/chats' && request.body)?.body.project_id, 'research');
+assert.equal(state.chat?.project_id, 'research');
+assert.equal(byClass(byClass(shell, 'project-group')[0], 'history-row').length, 1);
+console.log('Project groups, editor and chat creation passed');

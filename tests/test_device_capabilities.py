@@ -98,6 +98,9 @@ EXPECTED = {
     ("PATCH", "/memory/settings"): "settings:write",
     ("POST", "/jobs"): "host:exec",
     ("DELETE", "/jobs/{jid}"): "host:exec",
+    ("POST", "/projects"): "host:exec",
+    ("PATCH", "/projects/{project_id}"): "host:exec",
+    ("DELETE", "/projects/{project_id}"): "host:exec",
     ("POST", "/memory"): "memory:write",
     ("DELETE", "/memory/{slug}"): "memory:write",
     ("PATCH", "/memory/{slug}"): "memory:write",
@@ -795,7 +798,7 @@ def test_a_phone_undoes_hunks_only_inside_kova_files(kova, tmp_path):
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     for folder in (outside, app.state.config.files_path):
-        (folder / "notes.txt").write_text("ONE\n")
+        (folder / "notes.txt").write_bytes(b"ONE\n")
     entry = {"before": blobs.put(b"one\n"), "after": blobs.put(b"ONE\n"), "status": "modified",
              "additions": 1, "deletions": 1}
 
@@ -809,10 +812,32 @@ def test_a_phone_undoes_hunks_only_inside_kova_files(kova, tmp_path):
     view = client.get(base, params={"path": "notes.txt"}, headers=local).json()
     undo = {"path": "notes.txt", "hunk": view["segments"][0]["id"], "expected_hash": view["current_hash"]}
     assert client.post(f"{base}/undo", json=undo, headers=phone).status_code == 403
-    assert (outside / "notes.txt").read_text() == "ONE\n"
+    assert (outside / "notes.txt").read_bytes() == b"ONE\n"
 
     shared = change_set(app.state.config.files_path)
     view = client.get(shared, params={"path": "notes.txt"}, headers=phone).json()
     undo = {"path": "notes.txt", "hunk": view["segments"][0]["id"], "expected_hash": view["current_hash"]}
     assert client.post(f"{shared}/undo", json=undo, headers=phone).status_code == 200
-    assert (app.state.config.files_path / "notes.txt").read_text() == "one\n"
+    assert (app.state.config.files_path / "notes.txt").read_bytes() == b"one\n"
+
+
+def test_phone_cannot_edit_shared_project_guidance_or_inherit_unshared_folder(kova, tmp_path):
+    client, app, local, phone, _ = kova
+    folder = tmp_path / "private-workspace"
+    folder.mkdir()
+    made = client.post("/projects", headers=local, json={"name": "Example", "cwd": str(folder)})
+    assert made.status_code == 200, made.text
+    project_id = made.json()["id"]
+    path = f"/projects/{project_id}"
+    assert client.post("/projects", headers=phone, json={"name": "Phone project"}).status_code == 403
+    assert client.patch(path, headers=phone, json={"instructions": "Untrusted"}).status_code == 403
+    assert client.delete(path, headers=phone).status_code == 403
+    assert client.post("/chats", headers=phone, json={"project_id": project_id}).status_code == 403
+
+    # An explicit shared cwd passes the normal chat settings check, and a
+    # project membership does not give a chat any more phone capabilities.
+    result = client.post("/chats", headers=phone, json={
+        "project_id": project_id, "cwd": str(app.state.config.files_path),
+    })
+    assert result.status_code == 200, result.text
+    assert app.state.store.chat_capabilities(result.json()["id"]) == {"chat", "models:read"}

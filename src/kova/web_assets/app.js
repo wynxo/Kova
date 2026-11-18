@@ -214,6 +214,7 @@
     $('queue').disabled = nothingToSend; $('steer').disabled = nothingToSend;
     $('stop').disabled = state.stopRequested;
     document.querySelectorAll('.history-row button').forEach(button => { button.disabled = busy; });
+    document.querySelectorAll('.project-action').forEach(button => { button.disabled = busy || !state.connected; });
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
     refreshStatusBar();
@@ -231,6 +232,7 @@
   window.KovaStatusRefresh = refreshStatusBar;
   function disconnected(message) {
     state.connected = false;
+    ++state.searchVersion;
     state.events?.close();
     state.activity.clear();
     state.activityStarted = {};
@@ -258,6 +260,7 @@
   }
   const json = async (path, options) => (await api(path, options)).json();
   const write = (method, value) => ({method, body: JSON.stringify(value)});
+  const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat});
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.
@@ -680,9 +683,13 @@
     const list = $('chat-list');
     list.replaceChildren();
     list.removeAttribute?.('aria-busy');
-    if (!chats.length) {
+    const searching = !!$('search').value.trim();
+    const {sections, ungrouped} = projects?.render(list, chats, {
+      searching, disabled: state.busy || !state.connected,
+    }) ?? {sections: [], ungrouped: chats};
+    if (!chats.length && !sections.length) {
       const empty = el('div', 'history-empty');
-      if ($('search').value) { empty.append(el('span', '', 'No chats found.')); list.append(empty); return; }
+      if (searching) { empty.append(el('span', '', 'No chats found.')); list.append(empty); return; }
       empty.append(el('span', '', 'No chats yet.'));
       const begin = el('button', 'btn quiet', 'Start a chat'); begin.type = 'button';
       begin.onclick = () => { $('prompt').focus(); };
@@ -690,8 +697,8 @@
     }
     // Pinned chats first, then date groups; app.js only renders what the module
     // decided, so the grouping stays testable without a DOM (chat_list.js).
-    const groups = globalThis.KovaChatList?.groups(chats) || [{label: '', chats}];
-    for (const group of groups) {
+    const groups = globalThis.KovaChatList?.groups(ungrouped) || [{label: '', chats: ungrouped}];
+    for (const group of [...sections, ...groups]) {
       if (group.label) list.append(el('div', 'history-group', group.label));
       for (const chat of group.chats) {
         const row = el('div', `history-row${state.chat?.id === chat.id ? ' active' : ''}`);
@@ -740,7 +747,7 @@
           clearTimeout(historyClick);
           actions.open = true;
         });
-        row.append(button, actions); list.append(row);
+        row.append(button, actions); (group.container || list).append(row);
         if (chat.id === focusChatId) button.focus();
       }
     }
@@ -758,8 +765,12 @@
   async function refreshChats() {
     const version = ++state.searchVersion;
     const query = $('search').value.trim();
-    const chats = await json(query ? `/chats/search?q=${encodeURIComponent(query)}` : '/chats');
+    const [chats, projectRows] = await Promise.all([
+      json(query ? `/chats/search?q=${encodeURIComponent(query)}` : '/chats'),
+      query ? null : projects?.load(),
+    ]);
     if (version !== state.searchVersion) return;
+    if (!query) projects?.setProjects(projectRows);
     state.chats = chats;
     // A full list is also the moment a chat deleted elsewhere disappears from
     // activity; a search result must not hide the others.
@@ -1052,6 +1063,25 @@
     }
   }
   async function newChat() { if (!state.busy) { ++state.navigationVersion; const wasIncognito = !!state.chat?.ephemeral; await discardIncognito(); setChat(null); $('prompt').value = ''; $('prompt').focus(); if (wasIncognito) await refreshChats(); } }
+  let startingProjectChat = false;
+  async function newProjectChat(project) {
+    if (state.busy || !state.connected || startingProjectChat) return;
+    startingProjectChat = true;
+    const version = ++state.navigationVersion;
+    try {
+      await discardIncognito();
+      if (version !== state.navigationVersion || state.busy) return;
+      const chat = await json('/chats', write('POST', {project_id: project.id}));
+      if (version === state.navigationVersion && !state.busy) {
+        projects.open(project.id);
+        setChat(chat);
+        $('prompt').focus();
+      }
+      await refreshChats();
+    } finally {
+      startingProjectChat = false;
+    }
+  }
   async function newIncognito() {
     if (state.busy || !state.connected) return;
     ++state.navigationVersion;

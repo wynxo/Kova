@@ -714,3 +714,94 @@ def test_transcribe_requires_auth(server):
     client, headers, *_ = server
     client.app.state.transcriber = _FakeTranscriber()
     assert client.post("/transcribe", files=_audio_file()).status_code == 401
+
+
+def test_projects_crud_and_chat_membership(server, tmp_path):
+    client, headers, cfg, _ = server
+    folder = tmp_path / "workspace"
+    other = tmp_path / "other"
+    folder.mkdir()
+    other.mkdir()
+
+    assert client.get("/projects").status_code == 401
+    assert client.get("/projects", headers=headers).json() == []
+    for body in ({"name": "   "}, {"name": "Example", "cwd": str(folder / "missing")}):
+        assert client.post("/projects", headers=headers, json=body).status_code == 422
+    created = client.post("/projects", headers=headers, json={
+        "name": " Research ", "instructions": "Use plain language.", "cwd": str(folder),
+    })
+    assert created.status_code == 200, created.text
+    project = created.json()
+    assert project["name"] == "Research"
+    assert project["created"] == project["updated"]
+    path = f"/projects/{project['id']}"
+    assert client.get(path, headers=headers).json() == project
+    assert client.get("/projects", headers=headers).json() == [project]
+    assert client.patch(path, headers=headers, json={"name": None}).status_code == 422
+    assert client.patch(path, headers=headers, json={}).status_code == 422
+
+    assert client.post("/chats", headers=headers, json={"project_id": "missing"}).status_code == 404
+    assert client.post("/chats", headers=headers, json={
+        "project_id": project["id"], "ephemeral": True,
+    }).status_code == 422
+    chat = client.post("/chats", headers=headers, json={"project_id": project["id"]}).json()
+    assert chat["cwd"] == str(folder)
+    chat_path = f"/chats/{chat['id']}"
+    fork = client.post(f"{chat_path}/fork", headers=headers).json()
+    assert fork["project_id"] == project["id"]
+    explicit = client.post("/chats", headers=headers, json={
+        "project_id": project["id"], "cwd": str(other),
+    }).json()
+    assert explicit["cwd"] == str(other)
+
+    edited = client.patch(path, headers=headers, json={"name": "Archive", "cwd": None}).json()
+    assert edited["name"] == "Archive"
+    assert edited["instructions"] == project["instructions"]
+    assert edited["cwd"] is None and edited["created"] == project["created"]
+    assert edited["updated"] > project["updated"]
+    new_chat = client.post("/chats", headers=headers, json={"project_id": project["id"]}).json()
+    assert new_chat["cwd"] == str(cfg.files_path)
+    assert {row["project_id"] for row in client.get("/chats", headers=headers).json()} == {project["id"]}
+    before = client.get(chat_path, headers=headers).json()
+    assert before["cwd"] == str(folder)
+
+    assert client.delete(path, headers=headers).json() == {"ok": True}
+    assert client.delete(path, headers=headers).status_code == 404
+    assert client.get(path, headers=headers).status_code == 404
+    assert client.get(chat_path, headers=headers).json() == {**before, "project_id": None}
+    assert {row["project_id"] for row in client.get("/chats", headers=headers).json()} == {None}
+    assert folder.is_dir() and other.is_dir()
+
+
+def test_project_instructions_are_live_in_chat_prompts(server, tmp_path):
+    client, headers, _, fake = server
+    fake.scripts[:] = [text("One"), text("Two"), text("Three"), text("Four")]
+    (tmp_path / "AGENTS.md").write_text("Repository rule: write a summary.", encoding="utf-8")
+    project = client.post("/projects", headers=headers, json={
+        "name": "Research", "instructions": "Project rule: use metric units.", "cwd": str(tmp_path),
+    })
+    assert project.status_code == 200, project.text
+    project_id = project.json()["id"]
+    work = client.post("/chats", headers=headers, json={"project_id": project_id}).json()
+    chat_mode = client.post("/chats", headers=headers, json={"project_id": project_id, "mode": "chat"}).json()
+    ungrouped = client.post("/chats", headers=headers, json={"cwd": str(tmp_path)}).json()
+
+    def prompt(chat):
+        result = client.post(f"/chats/{chat['id']}/messages", headers=headers, json={"text": "Hello"})
+        assert result.status_code == 200 and _parse_sse(result.text)[-1]["type"] == "done"
+        assert fake.requests[-1]["messages"][0]["role"] == "system"
+        return fake.requests[-1]["messages"][0]["content"]
+
+    work_prompt = prompt(work)
+    assert "Repository rule: write a summary." in work_prompt
+    assert "Project rule: use metric units." in work_prompt
+    assert "Project rule: use metric units." not in prompt(ungrouped)
+    assert "Project rule: use metric units." in prompt(chat_mode)
+    assert client.patch(f"/projects/{project_id}", headers=headers, json={
+        "instructions": "Project rule: round to two places.",
+    }).status_code == 200
+    updated_prompt = prompt(work)
+    assert "Project rule: round to two places." in updated_prompt
+    assert "Project rule: use metric units." not in updated_prompt
+    saved = client.get(f"/chats/{work['id']}", headers=headers).json()
+    assert all("Project rule:" not in (message["content"] or "") for message in saved["messages"])

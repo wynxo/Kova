@@ -142,13 +142,34 @@ def _check_values(values: Any) -> dict[str, Any]:
     return checked
 
 
-def document(values: dict[str, Any]) -> dict[str, Any]:
+def _check_themes(value: Any) -> list[str]:
+    """Validate the exported list of installed theme ids (names only)."""
+    if not isinstance(value, list):
+        raise UiPrefsError("Preferences file 'themes' must be a list of theme ids.")
+    if len(value) > 200:
+        raise UiPrefsError("Preferences file 'themes' holds at most 200 theme ids.")
+    checked: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise UiPrefsError("Preferences file 'themes' must be a list of theme ids.")
+        name = item.strip()
+        if len(name) > 64:
+            raise UiPrefsError(f"Theme id {name!r} is too long (at most 64 characters).")
+        if name not in checked:
+            checked.append(name)
+    return checked
+
+
+def document(values: dict[str, Any], themes: list[str] | None = None) -> dict[str, Any]:
     """The export shape: a named, versioned envelope around the preferences."""
-    return {
+    payload: dict[str, Any] = {
         "format": PREFS_FORMAT,
         "version": PREFS_VERSION,
         "preferences": dict(values),
     }
+    if themes is not None:
+        payload["themes"] = list(themes)
+    return payload
 
 
 def parse(payload: Any) -> dict[str, Any]:
@@ -171,7 +192,28 @@ def parse(payload: Any) -> dict[str, Any]:
         )
     if "preferences" not in payload:
         raise UiPrefsError("Preferences file has no 'preferences' object.")
+    if "themes" in payload:
+        _check_themes(payload["themes"])
     return _check_values(payload["preferences"])
+
+
+def parse_export(payload: Any) -> tuple[dict[str, Any], list[str]]:
+    """Validate an exported document, returning ``(preferences, theme ids)``."""
+    values = parse(payload)
+    themes: list[str] = []
+    if isinstance(payload, dict) and "themes" in payload:
+        themes = _check_themes(payload["themes"])
+    return values, themes
+
+
+def diff_preferences(current: dict[str, Any], incoming: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    """Keys that would change, as ``(name, old, new)`` sorted by name."""
+    rows: list[tuple[str, Any, Any]] = []
+    for name in sorted(set(current) | set(incoming)):
+        old, new = current.get(name), incoming.get(name)
+        if old != new:
+            rows.append((name, old, new))
+    return rows
 
 
 def default_export_path(now: datetime | None = None) -> Path:
@@ -192,28 +234,46 @@ def target_path(path: Path | str | None) -> Path:
     return target
 
 
-def read_file(path: Path | str) -> dict[str, Any]:
-    """Read and validate one preferences file."""
+def _read_payload(path: Path | str) -> Any:
+    """Read one preferences file and return its raw JSON payload."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise UiPrefsError(f"Could not read {path}: {exc.strerror or exc}") from exc
     try:
-        payload = json.loads(text)
+        return json.loads(text)
     except json.JSONDecodeError as exc:
         raise UiPrefsError(
             f"{path} is not valid JSON: {exc.msg} at line {exc.lineno} column {exc.colno}."
         ) from exc
+
+
+def read_file(path: Path | str) -> dict[str, Any]:
+    """Read and validate one preferences file."""
+    payload = _read_payload(path)
     try:
         return parse(payload)
     except UiPrefsError as exc:
         raise UiPrefsError(f"{path}: {exc}") from exc
 
 
-def write_file(values: dict[str, Any], path: Path | str | None = None) -> Path:
+def read_export(path: Path | str) -> tuple[dict[str, Any], list[str]]:
+    """Read one exported file, returning ``(preferences, theme ids)``."""
+    payload = _read_payload(path)
+    try:
+        return parse_export(payload)
+    except UiPrefsError as exc:
+        raise UiPrefsError(f"{path}: {exc}") from exc
+
+
+def write_file(
+    values: dict[str, Any], path: Path | str | None = None, themes: list[str] | None = None
+) -> Path:
     """Write the versioned document atomically and return the path used."""
     target = target_path(path)
-    text = json.dumps(document(_check_values(values)), indent=2) + "\n"
+    if themes is not None:
+        themes = _check_themes(themes)
+    text = json.dumps(document(_check_values(values), themes), indent=2) + "\n"
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".kova-prefs-", dir=target.parent)
     try:
