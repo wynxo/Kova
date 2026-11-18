@@ -173,6 +173,7 @@ const KovaToolCards = (() => {
       refresh();
     }
     function finish() {
+      if (!tools.length) return;
       for (const tool of tools.filter(item => item.end === null)) {
         tool.end = now(); tool.status = 'failed';
         tool.step.classList.toggle('failed', true);
