@@ -980,6 +980,7 @@
     const version = state.navigationVersion;
     const checkpoints = await json(`/chats/${chatId}/checkpoints`);
     if (version !== state.navigationVersion || state.chat?.id !== chatId || !checkpoints.length) return;
+    document.querySelector('.changes-view')?.remove(); // one list, even when a chat opens twice
     const section = el('section', 'changes-view');
     section.setAttribute('aria-label', 'Changes Kova made');
     section.append(el('strong', '', 'Changes Kova made'));
@@ -1153,6 +1154,11 @@
     }
     return totals;
   }
+  // A saved change set keys its files by path; a live review lists them.
+  function changeFiles(files) {
+    if (Array.isArray(files)) return files;
+    return Object.entries(files || {}).map(([path, entry]) => ({...entry, path})).sort((a, b) => a.path.localeCompare(b.path));
+  }
   function diffView(preview) {
     return KovaDiff.render(preview);
   }
@@ -1173,7 +1179,14 @@
         details.append(diffView(preview));
       } catch (error) { loaded = false; throw error; }
     }));
-    return details;
+    if (!checkpointId || typeof KovaDiffPanel === 'undefined' || !window.KovaPanel) return details;
+    // The full diff, with Undo or Keep per hunk, lives in the side panel (diff-panel.js).
+    const row = el('div', 'change-row');
+    const open = iconButton('panel-right', `Open ${file.path} from change set ${checkpointId} in the panel`);
+    open.onclick = () => KovaDiffPanel.open({chatId, checkpointId, path: file.path, request: json, returnFocus: open,
+      onChange: () => { if (state.chat?.id === chatId) safe(() => loadChanges(chatId)); }});
+    row.append(details, open);
+    return row;
   }
   function confirmRestore(checkpoint) {
     const chatId = state.chat?.id;
@@ -1184,7 +1197,7 @@
       const affected = new Map();
       for (const entry of checkpoints) {
         if (entry.id < checkpoint.id) continue;
-        for (const file of entry.files || []) if (!affected.has(file.path)) affected.set(file.path, file.status);
+        for (const file of changeFiles(entry.files)) if (!affected.has(file.path)) affected.set(file.path, file.status);
       }
       const dialog = el('dialog', 'restore-dialog'); dialog.setAttribute('aria-label', `Restore to change set ${checkpoint.id}`);
       dialog.append(el('h2', '', `Restore to change set ${checkpoint.id}?`));
@@ -1210,7 +1223,7 @@
     });
   }
   function reviewCard(checkpoint) {
-    const files = checkpoint.files || [], skipped = checkpoint.skipped || [];
+    const files = changeFiles(checkpoint.files), skipped = checkpoint.skipped || [];
     const card = el('section', 'changes-card');
     card.setAttribute('aria-label', 'Changes Kova made');
     const totals = changeTotals(files);

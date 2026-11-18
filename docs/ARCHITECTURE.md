@@ -129,6 +129,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}` | token or session | one change set's files |
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/diff` | token or session | one changed file's diff and both sides |
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/restore` | token or session | put the working folder back to this checkpoint |
+| `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks` | token or session | one changed file as hunks, each still applied, undone or edited since; contained to the chat's working folder |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo` | token or session | revert one hunk in the working file, refused if the file's hash changed or the path leaves the folder or crosses a symlink; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |

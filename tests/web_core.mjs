@@ -115,7 +115,7 @@ const sandbox = {
     if (path === '/chats/send-chat') return {ok: true, json: async () => ({id: 'send-chat', cwd: '/project', messages: []})};
     if (path.endsWith('/compact')) return {ok: true, json: async () => ({type: 'compact_skipped', message: 'Nothing to compact'})};
     if (path.endsWith('/fork')) return {ok: true, json: async () => ({id: 'blocked'})};
-    if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: [{path: 'notes.txt', status: 'modified'}]}]};
+    if (path.endsWith('/checkpoints')) return {ok: true, json: async () => [{id: 7, files: {'notes.txt': {status: 'modified', before: 'a', after: 'b'}}}]};
     // A chat whose turn is blocked on an approval that was asked before a reload.
     if (path === '/chats/blocked') return {ok: true, json: async () => ({id: 'blocked', cwd: '/project', state: 'blocked-on-approval', messages: [{role: 'user', content: 'clean up'}]})};
     if (path === '/chats/blocked/approvals') return {ok: true, json: async () => pendingApprovals};
