@@ -32,7 +32,7 @@ _TOP_LEVEL = {
 }
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
-_COLOUR = re.compile(r"^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$")
+_COLOUR = re.compile(r"^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)|rgba?\([0-9.,%\s/]+\))$")
 
 
 class ThemeError(ValueError):
