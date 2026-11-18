@@ -443,17 +443,65 @@
 
         <article class="gallery-item">
           <h3>Tool cards <code>.tool-card</code></h3>
-          <div class="gallery-demo block"><span class="gallery-label">Done</span>
-            <details class="tool-card" open>
-              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">done</span></summary>
-              <div class="tool-card-rows"><pre>2 results in 1.2s</pre></div>
-            </details>
+          <div class="gallery-demo block"><span class="gallery-label">Running, then done</span>
+            <div class="tool-card open" role="group" aria-label="Tool calls">
+              <button type="button" class="tool-card-summary" aria-expanded="true" aria-controls="gallery-tools-done">
+                <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                <span class="tool-card-summary-text">Ran 2 tools · 1.4s</span>
+                <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="tool-card-rows" id="gallery-tools-done">
+                <div class="tool-card-step open">
+                  <button type="button" class="tool-card-title" aria-expanded="true" aria-controls="gallery-step-search">
+                    <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                    <span class="tool-card-name">Web search</span>
+                    <span class="tool-card-hint">quiet kettle</span>
+                    <span class="tool-card-time">1.2s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-search">
+                    <pre class="tool-card-input">query: quiet kettle</pre>
+                    <pre class="tool-card-output">2 results in 1.2s</pre>
+                  </div>
+                </div>
+                <div class="tool-card-step">
+                  <button type="button" class="tool-card-title" aria-expanded="false" aria-controls="gallery-step-read">
+                    <span class="icon i-check tool-card-mark ok" aria-hidden="true"></span>
+                    <span class="tool-card-name">Read file</span>
+                    <span class="tool-card-hint">notes.md</span>
+                    <span class="tool-card-time">0.2s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-read" hidden>
+                    <pre class="tool-card-output">Oat flat white, no sugar.</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="gallery-demo block"><span class="gallery-label">Error</span>
-            <details class="tool-card" open>
-              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">failed</span></summary>
-              <div class="tool-card-rows"><p class="tool-card-error">The search did not answer. Retry.</p></div>
-            </details>
+          <div class="gallery-demo block"><span class="gallery-label">Failed, stays visible when folded</span>
+            <div class="tool-card" role="group" aria-label="Tool calls">
+              <button type="button" class="tool-card-summary" aria-expanded="false" aria-controls="gallery-tools-failed">
+                <span class="icon i-triangle-alert tool-card-mark failed" aria-hidden="true"></span>
+                <span class="tool-card-summary-text">Ran 2 tools · 3.8s · 1 failed</span>
+                <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="tool-card-rows" id="gallery-tools-failed" hidden>
+                <div class="tool-card-step failed">
+                  <button type="button" class="tool-card-title" aria-expanded="false" aria-controls="gallery-step-fetch">
+                    <span class="icon i-triangle-alert tool-card-mark failed" aria-hidden="true"></span>
+                    <span class="tool-card-name">Web fetch</span>
+                    <span class="tool-card-hint">example.com</span>
+                    <span class="tool-card-time">3.6s</span>
+                    <span class="icon i-chevron-right tool-card-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="tool-card-body" id="gallery-step-fetch" hidden>
+                    <pre class="tool-card-output">The page did not answer.</pre>
+                  </div>
+                </div>
+              </div>
+              <div class="tool-card-failures"><p class="tool-card-error">web_fetch: The page did not answer.</p></div>
+            </div>
           </div>
         </article>
 

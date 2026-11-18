@@ -507,6 +507,7 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     app.state.steering = {}
+    app.state.events_keepalive = EVENTS_KEEPALIVE
     app.state.transcriber = _build_transcriber(config)
     install_web(app, _require_bearer)
     pairing.install_phone(app, _require_token)
