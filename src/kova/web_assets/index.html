@@ -39,6 +39,7 @@
   <script defer src="/app/assets/diff.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
   <script defer src="/app/assets/toast.js"></script>
+  <script defer src="/app/assets/starters.js"></script>
   <script defer src="/app/assets/drafts.js"></script>
   <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/chat-appearance.js"></script>
@@ -81,8 +82,12 @@
     <p id="incognito-note" class="incognito-note" role="status" hidden><span class="icon i-eye-off" aria-hidden="true"></span>Incognito: not saved on this PC. Your provider still receives messages, and tools and attachments are off.</p>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
+        <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="40" height="40">
+        <p id="welcome-greeting" class="welcome-greeting"></p>
         <span class="kova-mark welcome-mark" aria-hidden="true"></span>
         <h1>What are you working on?</h1>
+        <div id="starters" class="starters" role="group" aria-label="Suggested prompts" hidden></div>
+        <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>

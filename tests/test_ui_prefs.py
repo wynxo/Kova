@@ -70,6 +70,52 @@ def test_the_first_reasoning_switch_still_reads_as_collapsed(tmp_path):
     assert ui_prefs.Preferences(tmp_path).read()["reasoning"] == "collapsed"
 
 
+def test_start_screen_suggestions_are_a_shared_bounded_list(http):
+    assert http.get("/preferences").json()["starters"] == ui_prefs.DEFAULTS["starters"]
+
+    saved = http.put("/preferences", json={
+        "theme": "demo-theme",
+        "reasoning": "expanded",
+        "starters": ["  Plan a trip ", "Plan a trip", "Write it up"],
+    })
+
+    assert saved.status_code == 200
+    assert saved.json()["starters"] == ["Plan a trip", "Write it up"]
+    assert http.get("/preferences").json()["starters"] == ["Plan a trip", "Write it up"]
+
+    off = http.put("/preferences", json={"starters": []})
+    assert off.status_code == 200
+    assert off.json()["starters"] == [], "an empty list turns the suggestions off"
+    assert off.json()["theme"] == "demo-theme"
+    assert off.json()["reasoning"] == "expanded"
+
+
+@pytest.mark.parametrize("value, needle", [
+    ("Plan a trip", "must be a list"),
+    (["one", 2], "text items only"),
+    (["a", "b", "c", "d", "e"], "at most 4"),
+    (["x" * 121], "up to 120"),
+])
+def test_a_bad_suggestion_list_is_refused(http, value, needle):
+    response = http.put("/preferences", json={"starters": value})
+
+    assert response.status_code == 422
+    assert needle in response.json()["detail"]
+
+
+def test_an_older_preferences_file_gains_the_new_defaults(tmp_path):
+    """A file saved before the suggestion list existed still reads as complete."""
+    path = tmp_path / "preferences.json"
+    path.write_text(json.dumps({"format": ui_prefs.PREFS_FORMAT, "version": ui_prefs.PREFS_VERSION,
+                                "preferences": {"theme": "light"}}), encoding="utf-8")
+
+    values = ui_prefs.Preferences(tmp_path).read()
+
+    assert values["theme"] == "light"
+    assert values["starters"] == ui_prefs.DEFAULTS["starters"]
+    assert values["starters"] is not ui_prefs.DEFAULTS["starters"], "a caller cannot mutate the defaults"
+
+
 def test_typography_and_density_preferences_are_shared(http):
     """Text size, density and font (#179) start at today's look."""
     served = http.get("/preferences").json()
@@ -139,6 +185,7 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
+        **ui_prefs.DEFAULTS, "theme": "light", "sidebar": "open", "notifications": "on",
         "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "collapsed",
         "motion": "full", "text_size": "default", "density": "default", "font": "inter",
     }

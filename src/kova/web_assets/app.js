@@ -65,7 +65,39 @@
   function empty(flag) {
     $('welcome').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
+    renderStarters();
   }
+  // Start screen suggestions and greeting (#194). starters.js owns the list,
+  // its editor and its shared preference; app.js only fills the message box.
+  const starterComponent = () => globalThis.KovaStarters || null;
+  function renderStarters() {
+    const host = $('starters'), edit = $('starters-edit'), module = starterComponent();
+    if (!module || !host || state.chat) {
+      if (host) host.hidden = true;
+      if (edit) edit.hidden = true;
+      return;
+    }
+    module.render(host, text => {
+      $('prompt').value = text; resize(); $('prompt').focus({preventScroll: true});
+    });
+    // The editor stays reachable when the list is empty; that is how it is
+    // turned back on after "Turn off".
+    if (edit) edit.hidden = false;
+  }
+  function renderGreeting() {
+    const line = $('welcome-greeting');
+    if (line) line.textContent = state.persona?.name ? `Hi, I’m ${state.persona.name}.` : '';
+  }
+  $('starters-edit')?.addEventListener('click', () => safe(async () => {
+    const module = starterComponent(); if (!module) return;
+    const next = await module.openEditor();
+    if (next === null) return;
+    const edit = $('starters-edit');
+    edit.disabled = true;
+    try { await module.save(next); }
+    finally { edit.disabled = false; }
+  }));
+  document.addEventListener('kova:starters', renderStarters);
   // Per-chat drafts (#197). drafts.js owns storage and the incognito exclusion;
   // app.js saves on typing and restores when a chat opens. A saved chat only.
   const draftComponent = () => globalThis.KovaDrafts || null;
@@ -1932,7 +1964,7 @@
       });
       dialog.remove();
     }
-    pageTitle();
+    pageTitle(); renderGreeting();
   }
 
   // The /events stream carries reminders and chat states. A non-200 reply (a 401
@@ -2005,6 +2037,7 @@
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
+      renderStarters();
       const [models, status] = await Promise.all([json('/models'), json('/health')]);
       state.models = models; defaultModel = status.model || '';
       renderModels(models);
