@@ -317,8 +317,7 @@
   async function retryLastTurn() {
     if (state.busy) return toast('Wait for the current reply to finish.');
     if (!state.chat) return;
-    clearLastTurn(false);
-    await sendText('', {action: 'retry', omitUser: true});
+    await sendText('', {action: 'retry', omitUser: true, clear: 'reply'});
   }
   function editLastMessage(text) {
     if (state.busy) return toast('Wait for the current reply to finish.');
@@ -339,8 +338,7 @@
       const next = field.value.trim();
       if (!next) return toast('Write a message first.');
       save.disabled = true; dialog.close();
-      clearLastTurn(true);
-      await sendText(next, {action: 'edit'});
+      await sendText(next, {action: 'edit', clear: 'turn'});
     });
     actions.append(cancel, save); form.append(head, label, note, actions);
     dialog.append(form); document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
@@ -1236,6 +1234,7 @@
     let turn, terminal = false;
     try {
       if (!state.chat) state.chat = await createComposerChat();
+      if (sendOptions.clear) clearLastTurn(sendOptions.clear === 'turn');
       const outgoing = sendOptions.queued || sendOptions.action ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       // Send to the model the chip showed, even if another window just changed
       // the default or the saved chat settings.
