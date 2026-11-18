@@ -13,9 +13,15 @@
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
-  <!-- Not deferred: the theme is on <html> before the body paints (#174). -->
+  <!-- Not deferred: the theme, text size, density and font are on <html> before
+       the body paints (#174, #179). -->
   <script src="/app/assets/theme.js"></script>
+  <script src="/app/assets/typography.js"></script>
+  <!-- Not deferred: the theme and the motion setting are on <html> before the
+       body paints (#174, #181). -->
+  <script src="/app/assets/motion.js"></script>
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/markdown.css">
   <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/palette.css">
   <link rel="stylesheet" href="/app/assets/settings.css">
@@ -33,14 +39,23 @@
   <script defer src="/app/assets/diff.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
   <script defer src="/app/assets/toast.js"></script>
+  <script defer src="/app/assets/starters.js"></script>
+  <script defer src="/app/assets/drafts.js"></script>
   <script defer src="/app/assets/palette.js"></script>
   <script defer src="/app/assets/chat-appearance.js"></script>
   <script defer src="/app/assets/shortcuts.js"></script>
   <link rel="stylesheet" href="/app/assets/tool-cards.css">
   <link rel="stylesheet" href="/app/assets/code-header.css">
+  <link rel="stylesheet" href="/app/assets/message-actions.css">
   <script defer src="/app/assets/tool-cards.js"></script>
+  <script defer src="/app/assets/message-actions.js"></script>
   <script defer src="/app/assets/reasoning.js"></script>
   <script defer src="/app/assets/code-header.js"></script>
+  <script defer src="/app/assets/composer-history.js"></script>
+  <script defer src="/app/assets/composer-mentions.js"></script>
+  <script defer src="/app/assets/markdown-view.js"></script>
+  <link rel="stylesheet" href="/app/assets/panes.css">
+  <script defer src="/app/assets/panes.js"></script>
   <script defer src="/app/assets/app.js"></script>
   <script defer src="/app/assets/settings.js"></script>
 </head>
@@ -48,7 +63,7 @@
   <button id="backdrop" aria-label="Close sidebar" hidden></button>
   <aside id="sidebar" aria-label="Conversations">
     <div class="sidebar-head">
-      <a class="brand" href="/app" aria-label="Kova home"><img src="/app/assets/icon.svg" alt="" width="28" height="28"><span>Kova</span></a>
+      <a class="brand" href="/app" aria-label="Kova home"><span class="kova-mark" aria-hidden="true"></span><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
     <button id="new-chat" type="button" class="new-chat" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
@@ -72,7 +87,11 @@
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <img class="welcome-mark" src="/app/assets/icon.svg" alt="" width="40" height="40">
+        <p id="welcome-greeting" class="welcome-greeting"></p>
+        <span class="kova-mark welcome-mark" aria-hidden="true"></span>
         <h1>What are you working on?</h1>
+        <div id="starters" class="starters" role="group" aria-label="Suggested prompts" hidden></div>
+        <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
@@ -82,6 +101,7 @@
       <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-retry" type="button" class="notice-retry">Retry</button></div>
       <form id="composer" class="composer" data-mode="work">
         <div id="command-picker" class="command-picker" aria-label="Commands" hidden></div>
+        <div id="mention-list" class="mention-list" role="listbox" aria-label="Files in this chat" hidden></div>
         <div id="attachment-chips" aria-live="polite"></div>
         <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
         <input id="attachment-input" type="file" multiple hidden>
@@ -95,7 +115,7 @@
             </div>
           </div>
           <label class="sr-only" for="prompt">Message Kova</label>
-          <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000"></textarea>
+          <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000" aria-autocomplete="list" aria-expanded="false" aria-controls="mention-list"></textarea>
           <div class="chat-options-wrap">
             <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span id="chat-options-effort" class="model-chip-effort" hidden></span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
             <div id="chat-options-panel" class="chat-options" role="dialog" aria-label="Chat options" hidden>

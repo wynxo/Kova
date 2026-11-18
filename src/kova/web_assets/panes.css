@@ -1,0 +1,143 @@
+/* Resizable three-pane layout (#182): the sidebar, the conversation and an
+   optional side panel on the right. panes.js builds the splitters and the
+   panel; this file only places and styles them. app.css owns the body grid
+   and the sidebar; this file widens that grid by one column while the panel
+   is open. Every colour, space, radius and motion value comes from tokens.css.
+
+   Pane geometry is shell state, not theme data, so it lives here beside
+   app.css's --sidebar-w (which panes.js overrides with the saved width).
+   panes.js reads the limits back from these properties: one source. */
+:root {
+  --pane-sidebar-min:200px;
+  --pane-sidebar-max:480px;
+  --pane-panel-w:480px;
+  --pane-panel-min:320px;
+  --pane-panel-max:960px;
+  /* The conversation never gets narrower than this while a pane grows. */
+  --pane-chat-min:360px;
+  /* Wide enough to grab, drawn as a hairline. */
+  --pane-splitter-hit:var(--space-2);
+}
+
+/* ---------- Splitters (wide screens only) ---------- */
+.pane-splitter {
+  position:fixed;
+  top:0;
+  bottom:0;
+  z-index:30;
+  width:var(--pane-splitter-hit);
+  margin:0;
+  padding:0;
+  border:0;
+  background:none;
+  cursor:col-resize;
+  touch-action:none;
+}
+.pane-splitter::after {
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:calc(50% - var(--space-0-5) / 2);
+  width:var(--space-0-5);
+  background:transparent;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.pane-splitter:hover::after,
+.pane-splitter.is-dragging::after { background:var(--border-strong); }
+.pane-splitter:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(var(--space-0-5) * -1);
+}
+.pane-splitter:focus-visible::after { background:var(--accent-default); }
+
+#sidebar-splitter { left:calc(var(--sidebar-w) - var(--pane-splitter-hit) / 2); }
+#side-panel-splitter { right:calc(var(--pane-panel-w) - var(--pane-splitter-hit) / 2); }
+
+/* While dragging: no grid animation, no text selection, one cursor everywhere. */
+body.panes-dragging { transition:none; cursor:col-resize; user-select:none; -webkit-user-select:none; }
+body.panes-dragging #sidebar { transition:none; }
+body.panes-dragging iframe { pointer-events:none; }
+
+/* ---------- Side panel ---------- */
+.side-panel {
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  min-height:0;
+  background:var(--bg-surface);
+  color:var(--fg-default);
+  border-left:1px solid var(--border-subtle);
+}
+.side-panel-head {
+  display:flex;
+  flex:none;
+  align-items:center;
+  gap:var(--space-2);
+  min-height:var(--space-12);
+  padding:var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom:1px solid var(--border-subtle);
+}
+.side-panel-title {
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  font-size:var(--type-size-body);
+  font-weight:600;
+  line-height:var(--type-leading-tight);
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.side-panel-close:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:var(--space-0-5);
+}
+.side-panel-body {
+  flex:1;
+  min-height:0;
+  overflow:auto;
+  padding:var(--space-4);
+  overscroll-behavior:contain;
+}
+.side-panel-body:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(var(--space-0-5) * -1);
+}
+/* A code block shown in the panel keeps app.css's block look (code-header.js). */
+.side-panel-code pre { margin:0; }
+
+@media (min-width:721px) {
+  body.panel-open { grid-template-columns:var(--sidebar-w) minmax(0, 1fr) var(--pane-panel-w); }
+  body.panel-open.sidebar-collapsed { grid-template-columns:0 minmax(0, 1fr) var(--pane-panel-w); }
+  .side-panel { grid-column:3; grid-row:1; animation:panes-panel-in var(--motion-base) var(--motion-ease-standard); }
+}
+
+/* ---------- Phones: no splitters, the panel is a full-screen sheet ---------- */
+@media (max-width:720px) {
+  .pane-splitter { display:none; }
+  .side-panel {
+    position:fixed;
+    inset:0;
+    z-index:60;
+    border-left:0;
+    padding-top:env(safe-area-inset-top);
+    padding-bottom:env(safe-area-inset-bottom);
+    animation:panes-sheet-in var(--motion-slow) var(--motion-ease-standard);
+  }
+  .side-panel-head { padding-left:var(--space-3); }
+  .side-panel-body { padding:var(--space-3); }
+}
+
+@keyframes panes-panel-in { from { opacity:0; } }
+@keyframes panes-sheet-in { from { transform:translateY(var(--space-6)); opacity:0; } }
+
+/* Motion: the setting wins in both directions, then the system preference. */
+[data-motion="reduced"] .side-panel,
+[data-motion="reduced"] .pane-splitter::after { animation:none; transition:none; }
+@media (prefers-reduced-motion:reduce) {
+  :root:not([data-motion="full"]) .side-panel,
+  :root:not([data-motion="full"]) .pane-splitter::after { animation:none; transition:none; }
+}
+
+/* Lucide panel-right (ISC; see vendor/lucide.LICENSE), drawn like app.css's set. */
+.i-panel-right { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2'/%3E%3Cpath d='M15 3v18'/%3E%3C/svg%3E"); }

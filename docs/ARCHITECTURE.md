@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 114 endpoints: 113 route handlers plus the static asset mount.
+The app exposes 116 endpoints: 115 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -117,6 +117,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
+| `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
+| `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
@@ -130,6 +132,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
+| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again in place, replacing the reply it produced |
+| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run its turn again |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
 | `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
@@ -347,7 +351,17 @@ shared `/preferences` document and cached in `localStorage`; it runs from `<head
 so the first frame is already right, sets `data-theme` for the built-in palette, and
 writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
 properties on `<html>`. The `theme-color` meta tag and the web manifest take the
-theme's `bg.base`. The sidebar keeps pinned chats on top and groups the
+theme's `bg.base`. The Motion preference (#181) uses the same shared document and
+first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
+asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
+one block in `app.css` shortens or removes motion through the duration tokens.
+Text size, density and font (#179) use the same shared document and
+first-paint pattern: `web_assets/typography.js` sets `data-text-size`, `data-density`
+and `data-font` on `<html>`, and one block in `app.css` swaps the `--type-size-*`,
+`--space-*` and `--font` tokens, so no component repeats a size or a gap. An unsent
+message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
+when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
+an incognito chat never gets a draft key. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. The header
 carries one activity entry: a dot and count while any chat is `working` or
@@ -356,7 +370,10 @@ and Stop for each row and a short recently-finished list. It hides when there
 are no active or recent replies. Model downloads stay in their own panel. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
-finished reply only chimes while the window is unfocused.
+finished reply only chimes while the window is unfocused. The same toast stack
+(`web_assets/toast.js`) forwards each message to one OS notification while the
+window is hidden, with the toast's own title and text; the *Notify me* switch
+and the service worker decide whether it appears.
 
 The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
 search field that filters chats, the chat list and a single **Settings** row.
