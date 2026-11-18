@@ -83,6 +83,9 @@ const KovaToolCards = (() => {
       if (tools.some(tool => tool.status === 'failed')) return 'failed';
       return tools.every(tool => tool.status === 'ok') ? 'ok' : 'unknown';
     }
+    function announce(text) {
+      if (announcement.textContent !== text) announcement.textContent = text;
+    }
     function refresh() {
       if (!tools.length) return;
       const status = groupStatus();
@@ -92,7 +95,6 @@ const KovaToolCards = (() => {
       const verb = status === 'running' ? 'Running' : 'Ran';
       paintMark(summaryMark, status);
       summaryText.textContent = `${verb} ${count} · ${duration(elapsed)}${failed ? ` · ${failed} failed` : ''}`;
-      announcement.textContent = summaryText.textContent;
     }
     function add(event) {
       const index = tools.length;
@@ -164,7 +166,10 @@ const KovaToolCards = (() => {
       const output = String(event.output ?? event.summary ?? '');
       if (output) addOutput(tool.body, output);
       if (event.file_change) tool.body.append(KovaDiff.file(event.file_change));
-      if (tool.status === 'failed') failures.append(node('p', 'tool-card-error', `${tool.name}: ${output.slice(0, 300) || 'Tool failed.'}`));
+      if (tool.status === 'failed') {
+        failures.append(node('p', 'tool-card-error', `${tool.name}: ${output.slice(0, 300) || 'Tool failed.'}`));
+        announce(`${tool.name} failed.`);
+      }
       refresh();
     }
     function finish() {
@@ -177,8 +182,10 @@ const KovaToolCards = (() => {
         failures.append(node('p', 'tool-card-error', `${tool.name}: Interrupted`));
       }
       refresh();
+      if (saved) return;
+      announce(summaryText.textContent);
       // A turn that ends folds its tools away, unless the reader opened them.
-      if (!saved && !touched) show(false);
+      if (!touched) show(false);
     }
     return {node: card, add, result, finish};
   }

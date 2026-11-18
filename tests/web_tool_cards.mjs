@@ -64,6 +64,7 @@ assert.match(first.body.textContent, /<script>bad<\/script>/);
 
 group.result({name: 'run', ok: false, output: 'Oops'});
 assert.equal(group.node.children[2].textContent, 'run: Oops', 'a failed call repeats above the fold');
+assert.match(group.node.children[3].textContent, /run failed\./, 'a failure is announced once');
 assert.match(group.node.textContent, /Ran 2 tools · 2.4s · 1 failed/);
 assert.ok(byClass(summary, 'tool-card-mark')[0].classList.contains('failed'), 'a failure colours the group mark');
 
@@ -73,6 +74,7 @@ assert.equal(interrupted.time.textContent, '0.0s');
 assert.equal(summary.attrs['aria-expanded'], 'false', 'a finished turn folds the group');
 assert.equal(group.node.children[1].hidden, true);
 assert.match(group.node.children[2].textContent, /read: Interrupted/, 'failed calls stay visible when folded');
+assert.match(group.node.children[3].textContent, /^Ran 3 tools/, 'the finish is announced as one summary');
 
 // A group the reader opened stays open when the turn ends.
 const kept = context.cards.create({now: () => now});
