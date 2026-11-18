@@ -508,6 +508,7 @@ def create_app(
     app.state.model_health = _ModelHealth(config, transport, now)
     app.state.token = ensure_token(config.home)
     app.state.preferences = ui_prefs.Preferences(config.home)
+    app.state.events_keepalive = EVENTS_KEEPALIVE
     app.state.turns = set()
     app.state.chat_locks = {}
     app.state.chat_turns = {}

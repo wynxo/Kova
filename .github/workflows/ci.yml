@@ -39,6 +39,36 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+  visual:
+    name: Visual (Chromium)
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.64.1-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: .python-version
+          enable-cache: true
+
+      - name: Install visual dependencies and Chromium
+        run: uv run --locked --group visual playwright install chromium
+
+      - name: Compare screenshots
+        env:
+          KOVA_VISUAL_REQUIRED: "1"
+        run: uv run --locked --group visual pytest -q -m visual tests/visual
+
+      - name: Upload screenshot differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: test-results/visual/
+          if-no-files-found: ignore
+
   smoke:
     name: Smoke (packaged web UI)
     runs-on: ubuntu-latest

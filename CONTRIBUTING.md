@@ -67,6 +67,42 @@ There is no formatter or linter configured; match the style around you (four
 spaces, type hints where the file already uses them, docstrings on public
 functions). The tests are the gate.
 
+### Visual snapshots
+
+The optional `visual` group uses Python Playwright and Chromium, with no Node
+setup or running model. It captures the component gallery, token sheet and empty
+start screen at 390 px and 1280 px in Dark, Light and the installed Forest
+example theme. A throwaway `KOVA_HOME`, offline model stub and fresh browser
+contexts keep the captures separate from your chats and settings.
+
+On x86-64 Linux, a quick local run is:
+
+```sh
+uv run --locked --group visual playwright install chromium
+KOVA_VISUAL=1 uv run --locked --group visual pytest -q -m visual tests/visual
+```
+
+The regular suite skips these opt-in tests, as does a local visual run without
+Playwright or Chromium. The visual CI job requires both.
+Use the same pinned Linux image as CI for authoritative comparisons and baseline
+updates, since font and browser rendering can differ across hosts:
+
+```sh
+docker run --rm --platform linux/amd64 --ipc=host --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp -e UV_PROJECT_ENVIRONMENT=/tmp/visual-venv \
+  -v "$PWD:/work" -w /work mcr.microsoft.com/playwright/python:v1.64.1-noble \
+  bash -euc 'set -o pipefail
+    curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/tmp/visual-tools sh
+    KOVA_VISUAL_REQUIRED=1 /tmp/visual-tools/uv run --locked --group visual pytest -q -m visual tests/visual'
+```
+
+To accept an intentional change, add `-e KOVA_UPDATE_SNAPSHOTS=1` to the
+`docker run` options. Review the PNGs in `tests/visual/chromium-linux/`, rerun
+without that flag, and commit the changed baselines. The token sheet compares
+pixels exactly; the other screens allow up to 40 changed pixels after filtering
+small channel differences. Mismatches write expected, actual and diff PNGs to
+`test-results/visual/`, uploaded by CI as `visual-diffs` on failure.
+
 ## Recipes
 
 ### Add a tool

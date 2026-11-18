@@ -44,13 +44,18 @@ build-backend = "uv_build"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["live: needs a real model server (set KOVA_LIVE=1)"]
+markers = [
+    "live: needs a real model server (set KOVA_LIVE=1)",
+    "visual: compares screenshots using optional Playwright Chromium",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
 ]
+# Match the Chromium build in the visual CI container.
+visual = ["playwright==1.64.1", "pillow>=13.0"]
 
 [tool.uv.build-backend]
 module-name = "kova"
