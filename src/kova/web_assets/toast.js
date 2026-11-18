@@ -8,8 +8,10 @@
  * action succeeds.
  *
  * app.js owns the wording and the severity; this file owns the stack, the
- * queue, the timers, the live region and the keyboard path, so it can be
- * exercised on its own in tests/web_toast.mjs. No network, no innerHTML.
+ * queue, the timers, the live region, the keyboard path and the desktop
+ * notification, so it can be exercised on its own in tests/web_toast.mjs.
+ * No network, no innerHTML: an OS notification repeats the toast's own title
+ * and text, and only while the window is hidden.
  */
 (() => {
   'use strict';
@@ -144,6 +146,26 @@
     return toast;
   }
 
+  // One notification per toast, never a second wording. Only a hidden window
+  // asks for it; the switch is the same "Notify me" setting as reminders.
+  function notify(entry) {
+    if (!entry.desktop) return;
+    try {
+      if (!doc || !doc.hidden) return;
+      if (typeof localStorage === 'undefined' || localStorage.getItem('kova-notify') !== 'yes') return;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      if (typeof navigator === 'undefined' || !navigator.serviceWorker?.getRegistration) return;
+      navigator.serviceWorker.getRegistration('/app').then(registration => {
+        registration?.active?.postMessage({
+          type: 'toast', title: entry.title, text: entry.message,
+          severity: entry.severity, icon: entry.icon || '',
+        });
+      }).catch(() => {});
+    } catch (_) {
+      // No service worker or no permission: the in-page toast still showed.
+    }
+  }
+
   function mount(entry) {
     const host = container();
     if (!host) return false;
@@ -151,6 +173,7 @@
     host.append(entry.node);
     shown.push(entry);
     if (entry.duration) startTimer(entry);
+    notify(entry);
     return true;
   }
 
@@ -194,6 +217,7 @@
       icon,
       duration: durationOf(severity, opts),
       action: opts.action && typeof opts.action === 'object' ? opts.action : null,
+      desktop: opts.desktop !== false,
       dismissed: false,
       busy: false,
       timer: null,
