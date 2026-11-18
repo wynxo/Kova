@@ -277,6 +277,7 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-row.active { background:var(--bg-raised); }
 .history-open { flex:1; min-width:0; display:grid; gap:var(--space-0-5); padding:var(--space-2) var(--space-10) var(--space-2) var(--space-3); text-align:left; border-radius:var(--r-sm); }
 .history-open:disabled { opacity:.55; }
+.history-rename { flex:1; min-width:0; margin:var(--space-1) var(--space-10) var(--space-1) var(--space-1); padding:0 var(--space-2); border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-base); color:var(--fg-default); font-size:var(--type-size-body); }
 .history-title { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-size-body); color:var(--fg-default); }
 .history-row:not(.active) .history-title { color:var(--fg-muted); }
 .history-row:hover .history-title { color:var(--fg-default); }

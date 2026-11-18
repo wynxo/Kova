@@ -30,6 +30,8 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   removeAttribute(key) { delete this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
+  dispatch(type, event = {}) { this.listeners[type]?.(event); }
+  select() {}
   querySelectorAll(selector) {
     return selector === '.option-group' ? walk(this).filter(n => n.className === 'option-group') : [];
   }
@@ -120,7 +122,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, inlineRename};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -879,6 +881,54 @@ buttons(rowFor('Older')).find(button => button.textContent === 'Unpin').onclick(
 await tick(); await tick();
 assert.equal(groupedChats.find(chat => chat.id === 'older').pinned, false);
 assert.deepEqual(groupLabels(), ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older']);
+
+// Inline rename and the row menu (#195). Double-click swaps only the title for
+// an input; Enter saves through the same PATCH the menu uses, Escape sends
+// nothing, and a right-click opens the menu the ellipsis owns.
+const todayChat = groupedChats.find(chat => chat.id === 'today');
+const todayRow = rowFor('Today');
+const todayOpen = buttons(todayRow).find(button => button.className === 'history-open');
+const originalSetTimeout = sandbox.setTimeout, originalClearTimeout = sandbox.clearTimeout;
+const clickTimers = new Map();
+let nextClickTimer = 0;
+sandbox.setTimeout = fn => { clickTimers.set(++nextClickTimer, fn); return nextClickTimer; };
+sandbox.clearTimeout = id => clickTimers.delete(id);
+const beforeDoubleClick = requests.length;
+todayOpen.onclick({detail: 1});
+await tick();
+assert.equal(requests.length, beforeDoubleClick, 'the first click waits for a possible double-click');
+todayOpen.onclick({detail: 2});
+todayOpen.dispatch('dblclick', {preventDefault() {}});
+assert.equal(clickTimers.size, 0, 'double-click cancels navigation');
+sandbox.setTimeout = originalSetTimeout;
+sandbox.clearTimeout = originalClearTimeout;
+const rename = walk(todayRow).find(node => node.className === 'history-rename');
+assert.ok(rename, 'the title becomes one editable input');
+assert.equal(rename.value, 'Today');
+rename.value = '  Renamed today  ';
+rename.listeners.keydown({key: 'Enter', preventDefault() {}});
+await tick(); await tick();
+assert.deepEqual(requests.at(-1), {path: '/chats/today', body: {title: 'Renamed today'}});
+assert.ok(rowFor('Renamed today'), 'the sidebar shows the new title');
+sandbox.test.history(groupedChats);
+const escaped = buttons(rowFor('Renamed today')).find(button => button.className === 'history-open');
+const before = requests.length;
+const renamedRow = rowFor('Renamed today');
+sandbox.test.inlineRename(todayChat, escaped);
+walk(renamedRow).find(node => node.className === 'history-rename')
+  .listeners.keydown({key: 'Escape', preventDefault() {}});
+await tick();
+assert.equal(requests.length, before, 'Escape saves nothing');
+assert.ok(rowFor('Renamed today'), 'Escape restores the previous title');
+const menuRow = rowFor('Yesterday');
+menuRow.dispatch('contextmenu', {preventDefault() {}});
+assert.equal(byClass(menuRow, 'history-actions')[0].open, true, 'right-click opens the row menu');
+state.chats = [...groupedChats, {id: 'secret', title: 'Incognito', ephemeral: true, last_message: at(0)}];
+sandbox.test.history(state.chats);
+assert.ok(walk(rowFor('Incognito')).some(node => node.className === 'icon i-eye-off'),
+          'an incognito row carries its icon');
+console.log('Inline rename, row menu and incognito mark passed');
+
 state.chats = [];
 console.log('Sidebar pin and unpin through the chat settings PATCH passed');
 
