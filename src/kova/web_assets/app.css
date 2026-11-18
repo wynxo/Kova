@@ -595,46 +595,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .usage-meter { align-self:center; margin-left:6px; color:var(--fg-faint); font-size:var(--type-size-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; cursor:default; }
 @media (hover:none) { .message.assistant .message-actions { opacity:1; } #open-shortcuts { display:none; } }
 
-.markdown { font-size:var(--type-size-body-comfortable); line-height:1.65; overflow-wrap:anywhere; }
-.markdown > :first-child { margin-top:0; }
-.markdown > :last-child { margin-bottom:0; }
-/* The reply being written ends in a soft pulsing dot. */
-.markdown.live > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.markdown.live > :is(ul, ol):last-child > li:last-child::after {
-  content:""; display:inline-block; width:.48em; height:.48em; margin-left:.32em; border-radius:50%;
-  background:var(--accent-default); animation:pulse 1s ease-in-out infinite;
-}
-/* Headings step down the type scale (24 / 18 / 16) and lean on weight, not size. */
-.markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre, .markdown .table-wrap { margin:0 0 var(--space-3); }
-.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin:var(--space-6) 0 var(--space-2); line-height:var(--type-leading-tight); font-weight:600; letter-spacing:-.01em; }
-.markdown h1 { font-size:var(--type-size-heading); }
-.markdown h2 { font-size:var(--type-size-title); }
-.markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size:var(--type-size-body-comfortable); }
-.markdown ul, .markdown ol { padding-left:var(--space-6); }
-.markdown li { margin:var(--space-1) 0; }
-.markdown li::marker { color:var(--fg-faint); }
-.markdown li > p { margin-bottom:6px; }
-.markdown blockquote { padding:var(--space-0-5) 0 var(--space-0-5) var(--space-4); border-left:2px solid var(--border-strong); color:var(--fg-muted); }
-.markdown hr { height:1px; margin:var(--space-5) 0; border:0; background:var(--border-subtle); }
-.markdown a { color:var(--accent-default); }
-.markdown a:not([href]) { color:inherit; text-decoration:none; }
-.markdown code { font:.875em/1.5 var(--mono); padding:2px 5px; border-radius:5px; background:var(--bg-raised); }
-.markdown pre { display:flex; flex-direction:column; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-base); overflow:hidden; }
-.markdown pre code { display:block; padding:var(--space-3) var(--space-4); overflow-x:auto; background:none; border-radius:0; font:var(--type-size-body)/1.6 var(--mono); white-space:pre; overflow-wrap:normal; tab-size:2; }
-.table-wrap { overflow-x:auto; border:1px solid var(--border-subtle); border-radius:var(--radius-md); }
-.markdown table { width:100%; border-collapse:collapse; font-size:var(--type-size-body); }
-.markdown th, .markdown td { padding:var(--space-2) var(--space-3); text-align:left; border-bottom:1px solid var(--border-subtle); vertical-align:top; }
-.markdown th { background:var(--bg-surface); color:var(--fg-muted); font-size:var(--type-size-label); font-weight:600; white-space:nowrap; }
-.markdown tr:last-child td { border-bottom:0; }
-
-.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-type, .hljs-doctag { color:var(--syntax-keyword); }
-.hljs-string, .hljs-regexp, .hljs-addition, .hljs-symbol, .hljs-bullet { color:var(--syntax-string); }
-.hljs-number, .hljs-meta, .hljs-deletion, .hljs-template-variable { color:var(--syntax-number); }
-.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color:var(--syntax-function); }
-.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-property, .hljs-params { color:var(--syntax-type); }
-.hljs-comment, .hljs-quote { color:var(--syntax-comment); font-style:italic; }
-.hljs-emphasis { font-style:italic; }
-.hljs-strong { font-weight:700; }
+/* Reply Markdown lives in markdown.css so this file stays the transcript shell. */
 
 /* ---------- Turn pieces: activity, reasoning, tools, plan, approvals ---------- */
 .spinner { flex:none; width:14px; height:14px; border:2px solid var(--border-strong); border-top-color:var(--accent-default); border-radius:50%; animation:spin .7s linear infinite; }

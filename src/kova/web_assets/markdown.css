@@ -1,0 +1,106 @@
+/* Reading styles for model replies (#189): prose, headings, quotes, task lists,
+   tables, footnotes and the syntax palette. app.css owns the transcript shell;
+   this file owns what a reply's Markdown looks like. Every colour, space, radius
+   and motion value comes from tokens.css. */
+
+.markdown { font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); overflow-wrap:anywhere; }
+.markdown > :first-child { margin-top:0; }
+.markdown > :last-child { margin-bottom:0; }
+/* The reply being written ends in a soft pulsing dot. */
+.markdown.live > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.markdown.live > :is(ul, ol):last-child > li:last-child::after {
+  content:""; display:inline-block; width:.48em; height:.48em; margin-left:.32em; border-radius:50%;
+  background:var(--accent-default); animation:pulse 1s ease-in-out infinite;
+}
+
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre, .markdown .table-wrap { margin:0 0 var(--space-3); }
+
+/* Headings step down the type scale (24 / 18 / 16) and lean on weight, not size.
+   Space above a heading grows with its rank, so sections read as sections. */
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
+  margin:var(--space-4) 0 var(--space-2); line-height:var(--type-leading-tight);
+  font-weight:600; letter-spacing:-.01em; scroll-margin-top:var(--space-4);
+}
+.markdown h1 { margin-top:var(--space-8); font-size:var(--type-size-heading); }
+.markdown h2 { margin-top:var(--space-6); font-size:var(--type-size-title); }
+.markdown h3 { margin-top:var(--space-5); font-size:var(--type-size-body-comfortable); }
+.markdown h4, .markdown h5, .markdown h6 { font-size:var(--type-size-body-comfortable); }
+.markdown h4 { color:var(--fg-default); }
+.markdown h5, .markdown h6 { color:var(--fg-muted); }
+
+.markdown ul, .markdown ol { padding-left:var(--space-6); }
+.markdown li { margin:var(--space-1) 0; }
+.markdown li::marker { color:var(--fg-faint); }
+.markdown li > p { margin-bottom:var(--space-2); }
+
+/* A quote is set in and tinted, so a run of them still has a reading edge. */
+.markdown blockquote {
+  padding:var(--space-2) var(--space-4);
+  border-left:var(--space-0-5) solid var(--border-strong);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  background:color-mix(in srgb, var(--bg-raised) 55%, transparent);
+  color:var(--fg-muted);
+}
+.markdown blockquote > :last-child { margin-bottom:0; }
+.markdown blockquote blockquote { border-left-color:var(--border-subtle); background:none; }
+
+/* Task lists are read-only: the box shows what the reply recorded. */
+.markdown li.task-item { list-style:none; }
+.markdown li.task-item .task-box { margin:0 var(--space-2) 0 0; vertical-align:middle; accent-color:var(--fg-muted); }
+.markdown li.task-done { color:var(--fg-muted); }
+
+.markdown hr { height:1px; margin:var(--space-5) 0; border:0; background:var(--border-subtle); }
+.markdown a { color:var(--accent-default); }
+.markdown a:not([href]) { color:inherit; text-decoration:none; }
+.markdown code { font:.875em/1.5 var(--mono); padding:2px 5px; border-radius:5px; background:var(--bg-raised); }
+.markdown pre { display:flex; flex-direction:column; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-base); overflow:hidden; }
+.markdown pre code { display:block; padding:var(--space-3) var(--space-4); overflow-x:auto; background:none; border-radius:0; font:var(--type-size-body)/1.6 var(--mono); white-space:pre; overflow-wrap:normal; tab-size:2; }
+/* The persistent Wrap setting, and the quiet state of a block that is still arriving. */
+.markdown pre.wrap-lines code { white-space:pre-wrap; overflow-wrap:anywhere; }
+.markdown pre[data-streaming] { border-style:dashed; }
+
+/* Wide tables scroll inside their frame, never the page. The frame can also
+   scroll vertically, which is what keeps the header row pinned. */
+.table-wrap {
+  overflow:auto; max-height:70vh; overscroll-behavior:contain;
+  border:1px solid var(--border-subtle); border-radius:var(--radius-md);
+}
+.table-wrap:focus-visible { outline:var(--space-0-5) solid var(--accent-default); outline-offset:var(--space-1); }
+.markdown table { width:100%; border-collapse:collapse; font-size:var(--type-size-body); }
+.markdown th, .markdown td { padding:var(--space-2) var(--space-3); text-align:left; border-bottom:1px solid var(--border-subtle); vertical-align:top; }
+.markdown th {
+  position:sticky; top:0; z-index:1;
+  background:var(--bg-surface); color:var(--fg-muted);
+  font-size:var(--type-size-label); font-weight:600; white-space:nowrap;
+}
+.markdown tbody tr:nth-child(even) { background:color-mix(in srgb, var(--fg-default) 4%, transparent); }
+.markdown tbody tr:hover { background:color-mix(in srgb, var(--fg-default) 8%, transparent); }
+.markdown tr:last-child td { border-bottom:0; }
+
+/* Footnotes sit under a hairline, quieter than the answer they belong to. */
+.markdown .footnotes {
+  margin-top:var(--space-6); padding-top:var(--space-3);
+  border-top:var(--space-0-5) solid var(--border-subtle);
+  color:var(--fg-muted); font-size:var(--type-size-body);
+}
+.markdown .footnotes ol { padding-left:var(--space-5); }
+.markdown .footnotes li { margin:var(--space-1) 0; }
+.markdown .footnotes p { margin:0; }
+.markdown .fn-ref a { text-decoration:none; }
+.markdown .fn-ref a:hover, .markdown .fn-back:hover { color:var(--fg-default); }
+.markdown .fn-back { margin-left:var(--space-1); color:var(--fg-faint); text-decoration:none; }
+
+/* Pygments-style classes from highlight.js, mapped onto the theme's syntax roles. */
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-type, .hljs-doctag { color:var(--syntax-keyword); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-symbol, .hljs-bullet { color:var(--syntax-string); }
+.hljs-number, .hljs-meta, .hljs-deletion, .hljs-template-variable { color:var(--syntax-number); }
+.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color:var(--syntax-function); }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-property, .hljs-params { color:var(--syntax-type); }
+.hljs-comment, .hljs-quote { color:var(--syntax-comment); font-style:italic; }
+.hljs-emphasis { font-style:italic; }
+.hljs-strong { font-weight:700; }
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown.live > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+  .markdown.live > :is(ul, ol):last-child > li:last-child::after { animation:none; }
+}

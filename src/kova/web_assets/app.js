@@ -217,7 +217,11 @@
   }
   const json = async (path, options) => (await api(path, options)).json();
   const write = (method, value) => ({method, body: JSON.stringify(value)});
+  // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
+  // and streaming code need more than one sanitize call. The inline fallback
+  // keeps a shell that did not ship the module readable instead of blank.
   function markdown(node, text, final = false) {
+    if (window.KovaMarkdown?.render) { window.KovaMarkdown.render(node, text, {final}); return; }
     node.innerHTML = DOMPurify.sanitize(marked.parse(text, {breaks: true, gfm: true}), {
       // No remote images, embedded content, form controls, SVG or style injection.
       ALLOWED_TAGS: ['p','br','strong','em','del','a','code','pre','blockquote','ul','ol','li','h1','h2','h3','h4','h5','h6','hr','table','thead','tbody','tr','th','td'],

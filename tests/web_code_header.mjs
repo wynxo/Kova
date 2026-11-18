@@ -137,6 +137,13 @@ const advance = (ms) => {
 // ---- Clipboard stub -------------------------------------------------------
 const clipboard = { writes: [], writeText(text) { clipboard.writes.push(text); } };
 const window = {};
+// In-memory settings store: the wrap choice is persisted per browser.
+const storage = new Map();
+const localStorage = {
+  getItem: key => (storage.has(key) ? storage.get(key) : null),
+  setItem: (key, value) => { storage.set(key, String(value)); },
+  removeItem: key => { storage.delete(key); },
+};
 
 const document = {
   createElement: tag => new Element(tag),
@@ -152,10 +159,12 @@ toasts.setAttribute('id', 'toasts');
 nodesById.set('toasts', toasts);
 const context = vm.createContext({
   Element, document, navigator: { clipboard }, setTimeout, clearTimeout, Date,
-  hljs: { highlightElement() {} },
+  localStorage,
+  hljs: { highlightElement(code) { highlighted.push(code.textContent); } },
   console, URLSearchParams, JSON,
   window,
 });
+const highlighted = [];
 const source = readFileSync(new URL('../src/kova/web_assets/code-header.js', import.meta.url), 'utf8');
 vm.runInContext(source, context);
 const CodeHeader = window.CodeHeader;
@@ -237,5 +246,71 @@ assert.equal(clipboard.writes.length, 0, 'writeText was attempted');
 const toast = brokenToasts.querySelector('.toast');
 assert.ok(toast, 'a fallback toast is shown when the clipboard fails');
 assert.ok(toast.textContent.includes('Clipboard unavailable'), 'the toast guides the user to copy manually');
+
+// ---- wrap toggle: one persisted preference, applied to later blocks ------
+const wrapRoot = new Element('div');
+const wrapPre = new Element('pre');
+const wrapCode = new Element('code');
+wrapCode.className = 'language-js';
+wrapCode.textContent = 'const wide = 1;';
+wrapPre.append(wrapCode);
+wrapRoot.append(wrapPre);
+CodeHeader.attach(wrapRoot);
+const wrap = wrapRoot.querySelector('.wrap-code');
+assert.equal(wrap.textContent, 'Wrap', 'the toggle names the setting');
+assert.equal(wrap.getAttribute('aria-pressed'), 'false', 'wrapping starts off');
+assert.equal(wrapPre.classList.contains('wrap-lines'), false, 'the block does not wrap yet');
+wrap.click();
+assert.equal(wrap.getAttribute('aria-pressed'), 'true', 'the toggle holds its pressed state');
+assert.ok(wrapPre.classList.contains('wrap-lines'), 'the block wraps after the toggle');
+assert.equal(storage.get('kova-code-wrap'), '1', 'the choice is saved for this browser');
+
+const laterRoot = new Element('div');
+const laterPre = new Element('pre');
+const laterCode = new Element('code');
+laterCode.className = 'language-js';
+laterCode.textContent = 'console.log(1);';
+laterPre.append(laterCode);
+laterRoot.append(laterPre);
+CodeHeader.attach(laterRoot);
+assert.ok(laterPre.classList.contains('wrap-lines'), 'a later block inherits the saved choice');
+assert.equal(laterRoot.querySelector('.wrap-code').getAttribute('aria-pressed'), 'true');
+
+// ---- a fence still streaming stays plain and cannot be copied -------------
+highlighted.length = 0;
+const streamRoot = new Element('div');
+const donePre = new Element('pre');
+const doneCode = new Element('code');
+doneCode.className = 'language-js';
+doneCode.textContent = 'const done = 1;';
+donePre.append(doneCode);
+const openPre = new Element('pre');
+const openCode = new Element('code');
+openCode.className = 'language-js';
+openCode.textContent = 'const open = 2;';
+openPre.append(openCode);
+streamRoot.append(donePre, openPre);
+CodeHeader.attach(streamRoot, false, true);
+assert.deepEqual(highlighted, ['const done = 1;'],
+  'the closed fence is highlighted and the open one stays plain');
+assert.equal(donePre.getAttribute('data-streaming'), null, 'a finished block is not marked');
+assert.equal(openPre.getAttribute('data-streaming'), '', 'the open block is marked as streaming');
+const streamCopies = streamRoot.querySelectorAll('.copy-code');
+assert.ok(!streamCopies[0].disabled, 'a finished block can be copied');
+assert.equal(streamCopies[1].disabled, true, 'a block still arriving cannot be copied');
+assert.equal(streamCopies[1].textContent, 'Copy', 'the waiting button keeps its label');
+
+highlighted.length = 0;
+const finalRoot = new Element('div');
+const finalPre = new Element('pre');
+const finalCode = new Element('code');
+finalCode.className = 'language-js';
+finalCode.textContent = 'const done = 1;';
+finalPre.append(finalCode);
+finalRoot.append(finalPre);
+CodeHeader.attach(finalRoot, true);
+assert.deepEqual(highlighted, ['const done = 1;'], 'the finished reply highlights its block');
+assert.ok(!finalRoot.querySelector('.copy-code').disabled, 'copy is enabled once complete');
+assert.equal(finalPre.getAttribute('data-streaming'), null, 'nothing is left marked as streaming');
 
 console.log('Code header row passed');
