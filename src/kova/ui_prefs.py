@@ -26,15 +26,20 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "theme": ("dark", "light"),
     "sidebar": ("open", "collapsed"),
     "notifications": ("on", "off"),
-    "reasoning": ("shown", "hidden"),
+    "reasoning": ("collapsed", "expanded", "hidden"),
 }
 
 DEFAULTS: dict[str, str] = {
     "theme": "dark",
     "sidebar": "open",
     "notifications": "off",
-    "reasoning": "shown",
+    "reasoning": "collapsed",
 }
+
+# The reasoning switch first shipped as "shown"/"hidden". "shown" is now
+# "collapsed", so an older preferences.json, export or open window keeps
+# working instead of failing validation.
+LEGACY = {"reasoning": {"shown": "collapsed"}}
 
 _KNOWN = ", ".join(sorted(SCHEMA))
 
@@ -55,6 +60,8 @@ def _check_values(values: Any) -> dict[str, str]:
         )
     checked: dict[str, str] = {}
     for name, value in values.items():
+        if isinstance(value, str):
+            value = LEGACY.get(name, {}).get(value, value)
         allowed = SCHEMA[name]
         if value not in allowed:
             raise UiPrefsError(
