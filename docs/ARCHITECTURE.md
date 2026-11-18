@@ -357,11 +357,11 @@ theme's `bg.base`. The Motion preference (#181) uses the same shared document an
 first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
 asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
 one block in `app.css` shortens or removes motion through the duration tokens.
-Text size, density, font and content width (#179, #205) use the same shared document and
-first-paint pattern: `web_assets/typography.js` sets `data-text-size`, `data-density`,
-`data-font` and `data-chat-width` on `<html>`, and one block in `app.css` swaps the
-`--type-size-*`, `--space-*`, `--font` and `--column` values, so no component repeats a
-size or a gap. An unsent
+Text size, density, font, content width and avatars (#179, #205) use the same shared
+document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
+`data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
+block in `app.css` swaps the `--type-size-*`, `--space-*`, `--font` and `--column`
+values, so no component repeats a size or a gap. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and

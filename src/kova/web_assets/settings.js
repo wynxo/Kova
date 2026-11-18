@@ -28,6 +28,9 @@
         {title: 'Content width', help: 'Narrow the conversation for reading, or let it use more of the window.',
          keywords: 'width narrow wide column layout margins reading measure',
          control: 'chat_width'},
+        {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
+         keywords: 'avatar image face icon label name reading',
+         control: 'avatars'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',
          control: 'font'},
@@ -451,6 +454,9 @@
      items: [['narrow', 'Narrow', 'A narrower column, easier on long answers'],
              ['normal', 'Normal', 'The shipped 768px column'],
              ['wide', 'Wide', 'Use more of the window']]},
+    {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'on',
+     items: [['on', 'On', 'Show the avatar beside each reply'],
+             ['off', 'Off', 'Hide avatars and keep the names']]},
   ];
   const typographyRadios = {};
   function typographyChoice(name) {

@@ -156,6 +156,17 @@ def test_chat_width_preference_is_shared(http):
         assert http.get("/preferences").json()["chat_width"] == value
 
 
+def test_avatars_preference_is_shared(http):
+    """Avatars (#205): on is the shipped look, off keeps the names."""
+    assert http.get("/preferences").json()["avatars"] == "on"
+
+    saved = http.put("/preferences", json={"avatars": "off"})
+
+    assert saved.status_code == 200
+    assert saved.json()["avatars"] == "off"
+    assert http.get("/preferences").json()["avatars"] == "off"
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"weight": "bold"}, "Unknown preference"),
     ({"theme": "Sepia Tone"}, "must be one of"),
@@ -166,6 +177,7 @@ def test_chat_width_preference_is_shared(http):
     ({"font": "comic"}, "must be one of"),
     ({"motion": "none"}, "must be one of"),
     ({"chat_width": "huge"}, "must be one of"),
+    ({"avatars": "maybe"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):

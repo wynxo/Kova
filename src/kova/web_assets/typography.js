@@ -27,10 +27,11 @@
      values: ['compact', 'default', 'comfortable'], fallback: 'default'},
     {key: 'kova-font', name: 'font', attr: 'data-font',
      values: ['inter', 'system', 'mono'], fallback: 'inter'},
-    // Content width (#205): "normal" is the shipped column, so it writes no
-    // rule of its own; narrow and wide move --column for the whole conversation.
+    // Room around the conversation, then the two reading details (#205).
     {key: 'kova-chat-width', name: 'chat_width', attr: 'data-chat-width',
      values: ['narrow', 'normal', 'wide'], fallback: 'normal'},
+    {name: 'avatars', key: 'kova-avatars', attr: 'data-avatars',
+     values: ['on', 'off'], fallback: 'on'},
   ];
 
   const root = document.documentElement;
@@ -126,10 +127,12 @@
     density: () => state.density,
     font: () => state.font,
     chatWidth: () => state.chat_width,
+    avatars: () => state.avatars,
     setTextSize: next => store('text_size', next),
     setDensity: next => store('density', next),
     setFont: next => store('font', next),
     setChatWidth: next => store('chat_width', next),
+    setAvatars: next => store('avatars', next),
   };
   load();
 })();

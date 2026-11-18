@@ -1076,3 +1076,9 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 [data-chat-width="wide"] {
   --column:1100px;
 }
+
+/* Avatars (#205): the name stays either way; "off" only drops the small mark
+   beside it, which is the same picture in every reply. */
+[data-avatars="off"] .avatar {
+  display:none;
+}
