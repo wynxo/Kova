@@ -1,0 +1,164 @@
+/* Pinned plan card (#193). One quiet row above the message box while a turn
+   still has open steps; the disclosure holds the whole checklist. Values come
+   from tokens.css, motion follows the global data-motion setting, and the
+   phone layout opens the list as a sheet above the pinned row. */
+
+.plan-card-slot { display:block; }
+
+.plan-card {
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-1);
+  margin:0 0 var(--space-2);
+  padding:var(--space-1) var(--space-2);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  background:var(--bg-surface);
+  animation:plan-card-in var(--motion-base) var(--motion-ease-standard);
+}
+
+@keyframes plan-card-in {
+  from { opacity:0; transform:translateY(var(--space-1)); }
+}
+
+.plan-card-head { display:flex; align-items:center; gap:var(--space-1); min-width:0; }
+
+.plan-card-toggle {
+  display:flex;
+  flex:1;
+  align-items:center;
+  gap:var(--space-1);
+  min-width:0;
+  min-height:var(--space-6);
+  padding:0 var(--space-1);
+  border-radius:var(--radius-sm);
+  color:var(--fg-default);
+  font-size:var(--type-size-label);
+  text-align:left;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.plan-card-toggle:hover { background:var(--bg-raised); }
+.plan-card-toggle > .icon {
+  flex:none;
+  width:var(--space-3);
+  height:var(--space-3);
+  color:var(--fg-faint);
+  transition:transform var(--motion-fast) var(--motion-ease-standard);
+}
+.plan-card.is-open .plan-card-toggle > .icon { transform:rotate(180deg); }
+
+.plan-card-count { flex:none; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
+.plan-card-separator { flex:none; color:var(--fg-faint); }
+.plan-card-step {
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+
+.plan-card-dismiss {
+  flex:none;
+  display:grid;
+  place-items:center;
+  width:var(--space-6);
+  height:var(--space-6);
+  border-radius:var(--radius-sm);
+  color:var(--fg-faint);
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.plan-card-dismiss .icon { width:var(--space-3); height:var(--space-3); }
+.plan-card-dismiss:hover { background:var(--bg-raised); color:var(--fg-default); }
+
+.plan-card-bar {
+  flex:none;
+  height:var(--space-0-5);
+  overflow:hidden;
+  border-radius:var(--radius-pill);
+  background:var(--bg-raised);
+}
+.plan-card-fill {
+  display:block;
+  height:100%;
+  width:0;
+  border-radius:inherit;
+  background:var(--accent-default);
+  transition:width var(--motion-slow) var(--motion-ease-standard);
+}
+
+.plan-card-list {
+  display:grid;
+  gap:var(--space-2);
+  max-height:40vh;
+  overflow:auto;
+  padding:var(--space-2) var(--space-1) 0;
+  border-top:1px solid var(--border-subtle);
+}
+.plan-card-list li {
+  display:flex;
+  align-items:flex-start;
+  gap:var(--space-2);
+  font-size:var(--type-size-label);
+  line-height:var(--type-leading-body);
+  overflow-wrap:anywhere;
+}
+.plan-card-list .plan-done { color:var(--fg-muted); }
+.plan-card-list .plan-done .plan-mark {
+  border-color:var(--status-success);
+  background:var(--status-success);
+  color:var(--bg-base);
+}
+.plan-card-list .plan-in_progress { font-weight:500; }
+.plan-card-list .plan-in_progress .plan-mark { border-color:var(--accent-default); }
+.plan-card-list .plan-in_progress .plan-mark::after {
+  content:"";
+  width:var(--space-1);
+  height:var(--space-1);
+  border-radius:50%;
+  background:var(--accent-default);
+}
+
+.plan-card-toggle:focus-visible,
+.plan-card-dismiss:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:var(--space-0-5);
+}
+
+/* The global data-motion block covers the app; this keeps the card still when
+   the device asks for less motion before the setting is applied. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .plan-card,
+  :root:not([data-motion="full"]) .plan-card-list,
+  :root:not([data-motion="full"]) .plan-card-fill,
+  :root:not([data-motion="full"]) .plan-card-toggle > .icon {
+    animation:none;
+    transition:none;
+  }
+}
+
+/* Phones: the pinned row stays one line; opening it raises the full list as a
+   sheet over the conversation. It stays inside the card because the composer's
+   size containment would otherwise become the containing block for a fixed
+   sheet. */
+@media (max-width:720px) {
+  .plan-card.is-open .plan-card-list {
+    position:absolute;
+    right:0;
+    bottom:calc(100% + var(--space-2));
+    left:0;
+    z-index:1;
+    max-height:45vh;
+    padding:var(--space-3);
+    border:1px solid var(--border-subtle);
+    border-radius:var(--radius-lg);
+    background:var(--bg-surface);
+    box-shadow:0 calc(var(--space-1) * -1) var(--space-6)
+               color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+    animation:plan-card-sheet var(--motion-base) var(--motion-ease-standard);
+  }
+}
+
+@keyframes plan-card-sheet {
+  from { opacity:0; transform:translateY(var(--space-2)); }
+}
