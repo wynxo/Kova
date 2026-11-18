@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- The primary accent is now solid black on light and solid white on dark instead of orange, finishing the monochrome palette; the built-in extra themes keep their own accents (#267).
+- The primary accent is now solid black on light and solid white on dark instead of orange, finishing the monochrome palette; the example themes keep their own accents (#267).
 - Reasoning rows are now Collapsed (default), Expanded or Hidden, set in Settings > General and shared across paired devices with the other preferences (#274).
 - The web app now applies the chosen theme on load: it paints immediately with no light-to-dark flash and takes the window and toolbar colour from it (#277).
 - The web and desktop stylesheets now resolve every colour through the semantic token layer instead of a fixed palette, with a test keeping raw colours out (#278).
 - The dev-only component gallery (/app/gallery) now covers menus, dialogs, messages, tool rows, plans, approvals, spinner, diffs, toasts and inline errors, with theme, density and motion switchers (#276).
 - The composer gains a per-chat model picker: search models by provider, pin favourites and see vision, tools and context, with the model and reasoning effort kept per chat (#279).
-- The README gains a Themes section covering appearance, the monochrome palette, the four built-in extra themes and custom theme files (#280).
+- The README gains a Themes section covering appearance, the monochrome palette, the example themes in `design/themes/` and custom theme files (#280).
 - Several web dialogs gain accessible names and the chat actions menu now closes with Escape and returns focus, improving keyboard and screen-reader use (#281).
 - The terminal accent and wordmark now match the monochrome palette, with completion selections and accent chips kept readable in both terminal themes (#282).
 - Themes apply in the web and desktop app (#174): Settings > General > Theme and the command palette offer System (the new default, following the device live), Light, Dark and every installed theme file. The choice is the `theme` UI preference, so paired devices and `kova prefs export` share it; a browser's earlier local light/dark choice is kept and synced once. A theme file's resolved tokens are written into the semantic custom properties, and the `theme-color` meta tag and the web manifest take the theme's `bg.base`.
