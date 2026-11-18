@@ -13,6 +13,24 @@ from tests.fake_model import FakeModel, text
 from tests.test_server import server  # noqa: F401  (pytest fixture)
 
 SW = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets" / "sw.js"
+INDEX = SW.with_name("index.html")
+
+
+def test_the_offline_shell_lists_every_asset_the_page_loads() -> None:
+    """Anything index.html loads must be in the shell, or offline is a blank page.
+
+    The sheet that carries every colour (`tokens.css`), Settings, the palette and
+    the message actions were all missing, so a cached page came up unstyled with
+    the keyboard and every panel broken once the server was unreachable.
+    """
+    loaded = set(re.findall(r'(?:href|src)="(/app/assets/[^"]+)"',
+                            INDEX.read_text(encoding="utf-8")))
+    shell = set(re.findall(r"'(/app/assets/[^']+)'", SW.read_text(encoding="utf-8")))
+    assert loaded, "no assets found in index.html"
+    assert loaded <= shell, (
+        "index.html loads assets the offline shell does not cache: "
+        f"{sorted(loaded - shell)}"
+    )
 
 
 def test_the_worker_declares_its_cache_name() -> None:
