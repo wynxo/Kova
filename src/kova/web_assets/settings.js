@@ -18,8 +18,8 @@
       items: [
         {title: 'Theme', help: 'Dark or light.',
          keywords: 'appearance colour color light dark mode', control: 'theme'},
-        {title: 'Reasoning', help: 'Show how Kova thought before each answer.',
-         keywords: 'thinking thought chain show hide collapsed thinking rows',
+        {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
+         keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
         {title: 'Sounds', help: 'Quiet cues for finished replies, reminders and approvals.',
          keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
@@ -278,31 +278,56 @@
   // phone, on the phone itself) or disables (while offline) does the same here.
   const actionButtons = [];
 
-  // Reasoning is one checkbox: on shows the folded "Thought for Ns" rows after
-  // each thinking burst. KovaReasoning owns the value, its local copy and the
-  // server-side UI preferences, so this only reflects and flips it.
-  const reasoningInputs = [];
-  function reasoningShown() {
-    return window.KovaReasoning ? window.KovaReasoning.shown() : true;
+  // Reasoning is a three-way choice: folded rows (the default), rows that
+  // open as they arrive, or no reasoning at all. KovaReasoning owns the value,
+  // its local copy and the server-side UI preferences, so this only reflects
+  // and changes it.
+  const REASONING = [
+    ['collapsed', 'Collapsed', 'Fold each thought row until it is opened'],
+    ['expanded', 'Expanded', 'Open each thought row as it finishes'],
+    ['hidden', 'Hidden', 'Never show the reasoning text'],
+  ];
+  const reasoningRadios = [];
+  function reasoningMode() {
+    return window.KovaReasoning ? window.KovaReasoning.mode() : 'collapsed';
   }
   function reasoningControl() {
-    const label = element('label', 'reasoning-setting');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.className = 'reasoning-setting-input';
-    input.setAttribute('aria-label', 'Show reasoning');
-    input.checked = reasoningShown();
-    input.addEventListener('change', () => {
-      window.KovaReasoning?.setShown(input.checked);
-      input.checked = reasoningShown();
-    });
-    reasoningInputs.push(input);
-    label.append(input, element('span', '', 'Show reasoning'));
-    return label;
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Reasoning');
+    for (const [value, label, hint] of REASONING) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseReasoning(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = REASONING.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = REASONING[(at + step + REASONING.length) % REASONING.length][0];
+        chooseReasoning(next);
+        reasoningRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      reasoningRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
+  }
+  function chooseReasoning(value) {
+    window.KovaReasoning?.setMode(value);
+    syncReasoning();
   }
   function syncReasoning() {
-    const visible = reasoningShown();
-    for (const input of reasoningInputs) input.checked = visible;
+    const value = reasoningMode();
+    for (const radio of reasoningRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
   }
 
   function syncControls() {

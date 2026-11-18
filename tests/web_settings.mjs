@@ -71,9 +71,9 @@ for (const id of triggers) launch(id);
 const autostart = launch('settings', 'details');
 autostart.append(new Element('summary'), new Element('input'), new Element('p'), new Element('button'));
 
-const reasoning = {value: 'shown',
-  shown() { return this.value === 'shown'; },
-  setShown(visible) { this.value = visible ? 'shown' : 'hidden'; }};
+const reasoning = {value: 'collapsed',
+  mode() { return this.value; },
+  setMode(next) { this.value = next; }};
 const window = {KovaReasoning: reasoning};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
@@ -197,7 +197,7 @@ for (const [index, target] of [[3, 'open-reminders'], [4, 'open-extensions'], [4
 }
 
 // Theme is a real Dark/Light radio group that flips app.js's theme control.
-const radios = byClass(panels[0], 'settings-segment');
+const radios = byClass(themeRow, 'settings-segment');
 assert.deepEqual(radios.map(radio => radio.getAttribute('role')), ['radio', 'radio']);
 assert.equal(radios[0].getAttribute('aria-checked'), 'true', 'dark is current');
 const themeClicks = $('theme').clicked;
@@ -206,22 +206,33 @@ assert.equal($('theme').clicked, themeClicks, 'choosing the current theme does n
 radios[1].click();
 assert.equal($('theme').clicked, themeClicks + 1, 'choosing Light asks app.js to switch');
 
-// Reasoning is a real checkbox that flips the shared setting and reflects it
-// back from the module, never a value duplicated in this file.
+// Reasoning is a three-way radio group that changes the shared setting and
+// reflects it back from the module, never a value duplicated in this file.
 const reasoningRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Reasoning'));
 assert.ok(reasoningRow, 'the Reasoning setting is in General');
-const reasoningToggle = walk(reasoningRow).find(node => node.tagName === 'INPUT');
-assert.equal(reasoningToggle.type, 'checkbox');
-assert.equal(reasoningToggle.checked, true, 'reasoning is shown by default');
-assert.equal(reasoningToggle.getAttribute('aria-label'), 'Show reasoning');
-reasoningToggle.checked = false;
-reasoningToggle.dispatch('change', {});
-assert.equal(reasoning.value, 'hidden', 'unchecking hides reasoning');
-assert.equal(reasoningToggle.checked, false);
-reasoning.value = 'shown';
+const reasoningGroup = byClass(reasoningRow, 'settings-segmented')[0];
+assert.equal(reasoningGroup.getAttribute('role'), 'radiogroup');
+assert.equal(reasoningGroup.getAttribute('aria-label'), 'Reasoning');
+const reasoningRadios = byClass(reasoningRow, 'settings-segment');
+assert.deepEqual(reasoningRadios.map(radio => radio.textContent), ['Collapsed', 'Expanded', 'Hidden']);
+assert.deepEqual(reasoningRadios.map(radio => radio.getAttribute('role')), ['radio', 'radio', 'radio']);
+assert.equal(reasoningRadios[0].getAttribute('aria-checked'), 'true', 'collapsed is the default');
+reasoningRadios[1].click();
+assert.equal(reasoning.value, 'expanded', 'Expanded opens each finished row');
+assert.equal(reasoningRadios[1].getAttribute('aria-checked'), 'true');
+assert.equal(reasoningRadios[0].getAttribute('aria-checked'), 'false');
+reasoningRadios[2].click();
+assert.equal(reasoning.value, 'hidden', 'Hidden drops the reasoning text');
+// Arrow keys move through the three choices, like the theme group.
+reasoningRadios[2].dispatch('keydown', {key: 'ArrowRight', preventDefault() {}});
+assert.equal(reasoning.value, 'collapsed', 'ArrowRight wraps to the first choice');
+assert.equal(document.activeElement, reasoningRadios[0], 'focus follows the choice');
+reasoning.value = 'expanded';
 document.activeElement = sidebar;
 $('open-settings').click();
-assert.equal(reasoningToggle.checked, true, 'reopening Settings reflects the current value');
+assert.equal(reasoningRadios[1].getAttribute('aria-checked'), 'true',
+  'reopening Settings reflects the current value');
+reasoning.value = 'collapsed';
 
 // Startup is hosted in General: open, keeping its own ids and handlers.
 const hosted = $('settings');

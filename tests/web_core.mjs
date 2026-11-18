@@ -485,7 +485,7 @@ buttons(replyActions)[0].onclick(); await tick();
 assert.deepEqual(copied, ['All done.'], 'the reply copies as the text the model wrote');
 
 // Hiding reasoning stops new folded rows and keeps the text out of the DOM.
-sandbox.window.KovaReasoning.setShown(false);
+sandbox.window.KovaReasoning.setMode('hidden');
 const hiddenBody = new Element();
 const hiddenTurn = turnView(hiddenBody);
 hiddenTurn.accept({type: 'reasoning', text: 'a private thought'});
@@ -494,7 +494,18 @@ hiddenTurn.finish();
 assert.equal(byClass(hiddenBody, 'reasoning').length, 0, 'hidden reasoning creates no row');
 assert.equal(hiddenBody.textContent.includes('a private thought'), false, 'its text never reaches the DOM');
 assert.equal(byClass(hiddenBody, 'markdown').length, 1, 'the answer still arrives');
-sandbox.window.KovaReasoning.setShown(true);
+
+// Expanded keeps every finished row open as the turn goes on.
+sandbox.window.KovaReasoning.setMode('expanded');
+const openBody = new Element();
+const openTurn = turnView(openBody);
+openTurn.accept({type: 'reasoning', text: 'Second thoughts.'});
+openTurn.accept({type: 'text', text: 'Done.'});
+openTurn.finish();
+const openRow = byClass(openBody, 'reasoning')[0];
+assert.ok(openRow, 'expanded reasoning still becomes a row');
+assert.equal(openRow.open, true, 'expanded rows arrive open');
+sandbox.window.KovaReasoning.setMode('collapsed');
 
 // A saved turn is one message, however many rounds it took.
 setChat({id: 'saved-turn', messages: [
