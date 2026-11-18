@@ -161,6 +161,7 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.execute("PRAGMA temp_store = MEMORY")
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._create_tables()
@@ -241,6 +242,10 @@ class Store:
                 sha256 TEXT NOT NULL, path TEXT NOT NULL, created TEXT,
                 used INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
+                cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -249,7 +254,8 @@ class Store:
                 web INTEGER NOT NULL DEFAULT 1,
                 pinned INTEGER NOT NULL DEFAULT 0,
                 model TEXT,
-                reasoning_effort TEXT
+                reasoning_effort TEXT,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -382,6 +388,10 @@ class Store:
         # so an existing database keeps every chat and gains an unpinned flag.
         if "pinned" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        if "project_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE chats ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL"
+            )
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -460,12 +470,56 @@ class Store:
             self._conn.commit()
             self.fts_enabled = False
 
+    # -- projects ---------------------------------------------------------
+    def list_projects(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id")
+            return [dict(row) for row in rows]
+
+    def get_project(self, project_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        return dict(row) if row else None
+
+    def create_project(self, name: str, instructions: str = "", cwd: str | None = None) -> dict:
+        timestamp = _utc_now_iso()
+        project = {"id": uuid4().hex[:12], "name": name, "instructions": instructions,
+                   "cwd": cwd, "created": timestamp, "updated": timestamp}
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated) "
+                "VALUES (:id, :name, :instructions, :cwd, :created, :updated)", project
+            )
+        return project
+
+    def update_project(self, project_id: str, *, name: str | None = None,
+                       instructions: str | None = None, cwd: str | None = _UNSET) -> dict | None:
+        changes = {"updated": _utc_now_iso()}
+        if name is not None:
+            changes["name"] = name
+        if instructions is not None:
+            changes["instructions"] = instructions
+        if cwd is not _UNSET:
+            changes["cwd"] = cwd
+        assignments = ", ".join(f"{field} = ?" for field in changes)
+        with self._lock, self._conn:
+            self._conn.execute(f"UPDATE projects SET {assignments} WHERE id = ?",
+                               (*changes.values(), project_id))
+            return self.get_project(project_id)
+
+    def delete_project(self, project_id: str) -> bool:
+        """Remove the project, ungrouping its chats without changing their cwd."""
+        with self._lock, self._conn:
+            return self._conn.execute("DELETE FROM projects WHERE id = ?", (project_id,)).rowcount > 0
+
     # -- chats ------------------------------------------------------------
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
                     web: bool = True, permission: str = "manual", cwd: str | None = None, *,
                     ephemeral: bool = False, colour: str | None = None,
                     icon: str | None = None, model: str | None = None,
-                    reasoning_effort: str | None = None) -> dict:
+                    reasoning_effort: str | None = None, project_id: str | None = None) -> dict:
+        if project_id is not None and (ephemeral or self._memory_only):
+            raise ValueError("Incognito chats cannot belong to a project.")
         if ephemeral and not self._memory_only:
             return self._temporary_store().create_chat(
                 title or "Incognito", "chat", False, "manual", cwd, model=model,
@@ -476,17 +530,24 @@ class Store:
             raise ValueError(f"unknown permission '{permission}'")
         colour = normalize_colour(colour)
         icon = normalize_icon(icon)
-        cwd = cwd or self.default_cwd or str(Path.home() / "Kova Files")
-        with self._lock:
+        with self._lock, self._conn:
+            if project_id is not None:
+                project = self.get_project(project_id)
+                if project is None:
+                    raise LookupError("project not found")
+                cwd = cwd or project["cwd"]
+            cwd = cwd or self.default_cwd or str(Path.home() / "Kova Files")
             cid = ("incognito-" if self._memory_only else "") + uuid4().hex[:12]
             created = _utc_now_iso()
             self._conn.execute(
-                "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (cid, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort),
+                "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon, "
+                "model, reasoning_effort, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort, project_id),
             )
-            self._conn.commit()
-            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web, "permission": permission, "cwd": cwd, "colour": colour, "icon": icon, "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False, **({"ephemeral": True} if self._memory_only else {})}
+            return {"id": cid, "title": title, "created": created, "mode": mode, "web": web,
+                    "permission": permission, "cwd": cwd, "colour": colour, "icon": icon,
+                    "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False,
+                    "project_id": project_id, **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str) -> dict | None:
         """Atomically clone a conversation, including its compacted context."""
@@ -522,12 +583,12 @@ class Store:
                     return value
 
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, colour, icon, model, reasoning_effort) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, "
+                    "colour, icon, model, reasoning_effort, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
                      source['web'], source['permission'], source['cwd'], remap(source['plan']),
                      source['capabilities'], source['colour'], source['icon'], source['model'],
-                     source['reasoning_effort']))
+                     source['reasoning_effort'], source['project_id']))
                 rows = self._conn.execute(
                     "SELECT id, role, content, tool_calls, tool_call_id, created, "
                     "COALESCE(turn_model, usage_model) AS turn_model "
@@ -566,7 +627,7 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
-                "c.colour, c.icon, c.pinned, COUNT(m.id) AS message_count, "
+                "c.colour, c.icon, c.pinned, c.project_id, COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "GROUP BY c.id "
@@ -582,6 +643,7 @@ class Store:
                 "web": bool(r["web"]),
                 "permission": r["permission"],
                 "cwd": r["cwd"],
+                "project_id": r["project_id"],
                 "colour": r["colour"],
                 "icon": r["icon"],
                 "pinned": bool(r["pinned"]),
@@ -603,7 +665,7 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
-                "colour, icon, pinned, model, reasoning_effort FROM chats WHERE id = ?", (chat_id,)
+                "colour, icon, pinned, model, reasoning_effort, project_id FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -617,6 +679,7 @@ class Store:
             "web": bool(row["web"]),
             "permission": row["permission"],
             "cwd": row["cwd"],
+            "project_id": row["project_id"],
             "colour": row["colour"],
             "icon": row["icon"],
             "pinned": bool(row["pinned"]),

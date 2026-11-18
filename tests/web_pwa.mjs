@@ -3,13 +3,13 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const listeners = {};
-const stores = new Map([['kova-shell-v1', new Map()], ['kova-share-v1', new Map()]]);
-const shell = stores.get('kova-shell-v1');
+const oldShell = 'kova-shell-v1';
+const stores = new Map([[oldShell, new Map()], ['kova-share-v1', new Map()]]);
 let online = true, focused = false, notices = [];
 const keyFor = (name, entry) => {
   const raw = typeof entry === 'string' ? entry : entry.url;
   const url = new URL(raw, 'https://kova.test');
-  return name === 'kova-shell-v1' ? url.pathname : url.href;
+  return name.startsWith('kova-shell-') ? url.pathname : url.href;
 };
 const makeCache = name => {
   if (!stores.has(name)) stores.set(name, new Map());
@@ -26,7 +26,8 @@ const caches = {
   open: async name => makeCache(name),
   keys: async () => [...stores.keys()],
   delete: async name => stores.delete(name),
-  match: async request => shell.get(new URL(request.url).pathname),
+  match: async request => [...stores.values()].find(cache => cache.has(new URL(request.url).pathname))
+    ?.get(new URL(request.url).pathname),
 };
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/sw.js', import.meta.url), 'utf8'), {
   self: {location: {origin: 'https://kova.test'}, addEventListener: (name, fn) => {listeners[name] = fn;}, registration: {showNotification: async (...args) => notices.push(args)}, clients: {claim: async () => {}, matchAll: async () => [{focused}]}},
@@ -35,14 +36,17 @@ vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/sw.js', import.m
 });
 let pending;
 listeners.install({waitUntil: promise => {pending = promise;}}); await pending;
+listeners.activate({waitUntil: promise => {pending = promise;}}); await pending;
+assert.ok(!stores.has(oldShell), 'a previously cached shell is removed on upgrade');
+const shell = [...stores.entries()].find(([name]) => name.startsWith('kova-shell-'))[1];
 assert.ok(shell.has('/app'));
 for (const path of shell.keys()) assert.ok(path === '/app' || path.startsWith('/app/assets/'));
 online = false;
-for (const path of ['/app', '/app/assets/app.js', '/app/assets/app.css']) {
+for (const path of ['/app', '/app/assets/app.js', '/app/assets/app.css', '/app/assets/projects.js', '/app/assets/projects.css']) {
   listeners.fetch({request: {method: 'GET', url: 'https://kova.test' + path}, respondWith: promise => {pending = promise;}});
   assert.equal((await pending).path, path);
 }
-for (const path of ['/chats', '/events', '/persona', '/app/share/token', '/app/login', '/app/assets/app.js?secret=x']) {
+for (const path of ['/chats', '/projects', '/events', '/persona', '/app/share/token', '/app/login', '/app/assets/app.js?secret=x']) {
   let intercepted = false;
   listeners.fetch({request: {method: 'GET', url: 'https://kova.test' + path}, respondWith() {intercepted = true;}});
   assert.equal(intercepted, false, path);

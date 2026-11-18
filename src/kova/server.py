@@ -60,6 +60,28 @@ class ChatBody(BaseModel):
     icon: str | None = None
     model: str | None = None
     reasoning_effort: ReasoningEffort | None = None
+    project_id: str | None = None
+
+
+class ProjectBody(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    instructions: str = Field(default="", max_length=16_384)
+    cwd: str | None = None
+
+    def settings(self) -> dict:
+        changes = self.model_dump(exclude_unset=True)
+        if "name" in changes:
+            name = (self.name or "").strip()
+            if not name:
+                raise HTTPException(422, "project name cannot be empty")
+            changes["name"] = name
+        if self.cwd is not None:
+            changes["cwd"] = working_folder(self.cwd)
+        return changes
+
+
+class NewProjectBody(ProjectBody):
+    name: str = Field(max_length=200)
 
 
 class PersonaBody(BaseModel):
@@ -795,6 +817,39 @@ def create_app(
         except themes.ThemeError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @api.get("/projects")
+    async def list_projects() -> list[dict]:
+        return app.state.store.list_projects()
+
+    # Like edits to AGENTS.md, saved guidance can reach turns in other chats,
+    # including local ones. Chat-only devices may use it, not change it.
+    @api.post("/projects", dependencies=host_exec)
+    async def create_project(body: NewProjectBody) -> dict:
+        return app.state.store.create_project(**body.settings())
+
+    @api.get("/projects/{project_id}")
+    async def get_project(project_id: str) -> dict:
+        project = app.state.store.get_project(project_id)
+        if project is None:
+            raise HTTPException(404, "project not found")
+        return project
+
+    @api.patch("/projects/{project_id}", dependencies=host_exec)
+    async def update_project(project_id: str, body: ProjectBody) -> dict:
+        changes = body.settings()
+        if not changes:
+            raise HTTPException(422, "nothing to update")
+        project = app.state.store.update_project(project_id, **changes)
+        if project is None:
+            raise HTTPException(404, "project not found")
+        return project
+
+    @api.delete("/projects/{project_id}", dependencies=host_exec)
+    async def delete_project(project_id: str) -> dict:
+        if not app.state.store.delete_project(project_id):
+            raise HTTPException(404, "project not found")
+        return {"ok": True}
+
     @api.get("/chats")
     async def list_chats() -> list[dict]:
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
@@ -809,19 +864,33 @@ def create_app(
             icon = normalize_icon(body.icon) if body else None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        cwd = working_folder(body.cwd) if body and body.cwd is not None else None
+        project_id = body.project_id if body else None
+        ephemeral = bool(body and body.ephemeral)
+        folder = body.cwd if body else None
+        if project_id is not None:
+            if ephemeral:
+                raise HTTPException(422, "Incognito chats cannot belong to a project.")
+            project = await get_project(project_id)
+            if folder is None:
+                folder = project["cwd"]
+        cwd = working_folder(folder) if folder is not None else None
         limit_chat_settings(request, body.permission if body else None, cwd)
-        chat = app.state.store.create_chat(
-            body.title if body else None,
-            ephemeral=bool(body and body.ephemeral),
-            mode=mode or DEFAULT_MODE,
-            web=body.web if body is not None and body.web is not None else True,
-            permission=body.permission if body and body.permission else "manual",
-            cwd=cwd if cwd is not None else str(config.files_path.resolve()),
-            colour=colour,
-            icon=icon,
-            **chat_model_settings(body, {}),
-        )
+        model_settings = chat_model_settings(body, {})
+        try:
+            chat = app.state.store.create_chat(
+                body.title if body else None,
+                ephemeral=ephemeral,
+                mode=mode or DEFAULT_MODE,
+                web=body.web if body is not None and body.web is not None else True,
+                permission=body.permission if body and body.permission else "manual",
+                cwd=cwd if cwd is not None else str(config.files_path.resolve()),
+                colour=colour,
+                icon=icon,
+                project_id=project_id,
+                **model_settings,
+            )
+        except LookupError as exc:
+            raise HTTPException(404, "project not found") from exc
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
         return chat
@@ -851,6 +920,8 @@ def create_app(
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
+        if "project_id" in body.model_fields_set:
+            raise HTTPException(422, "A chat's project is chosen when it is created.")
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         changes: dict[str, str | bool | None] = {}
