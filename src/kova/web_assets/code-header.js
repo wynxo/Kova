@@ -7,6 +7,8 @@
   const COPIED_MS = 2000;
   // The wrap choice is a reading preference, per browser, like the theme.
   const WRAP_KEY = 'kova-code-wrap';
+  // Blocks longer than this also get "Open in panel" (#182) when the side panel exists.
+  const PANEL_LINES = 100;
 
   // Build an element with optional class list and text content.
   function el(tag, cls, text) {
@@ -40,7 +42,7 @@
 
   // An icon from the app's own set (app.css masks these by name).
   function icon(kind) {
-    const node = el('span', `icon i-${kind === 'check' ? 'check' : 'copy'}`);
+    const node = el('span', `icon i-${kind}`);
     node.setAttribute('aria-hidden', 'true');
     return node;
   }
@@ -97,6 +99,27 @@
     return button;
   }
 
+  // Show a long block in the side panel: a copy of the highlighted code, so
+  // the message keeps its own and the panel needs no clean-up.
+  function panelButton(code, language) {
+    const button = el('button', 'code-action open-in-panel');
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Open code in panel');
+    button.append(icon('panel-right'), el('span', '', 'Open in panel'));
+    button.onclick = () => {
+      const pre = el('pre');
+      const copy = el('code', code.className);
+      copy.append(...Array.from(code.childNodes, (node) => node.cloneNode(true)));
+      pre.append(copy);
+      // `.markdown` gives the copy the same block styling as in the message.
+      const wrap = el('div', 'markdown side-panel-code');
+      wrap.append(pre);
+      const lines = code.textContent.replace(/\n$/, '').split('\n').length;
+      window.KovaPanel.open({ title: `${language} · ${lines} lines`, node: wrap, returnFocus: button });
+    };
+    return button;
+  }
+
   // Attach (or re-attach) a header row to every `pre code` inside `root`.
   // `final` says the reply has finished; `openFence` says the last block is a
   // code fence that is still being written, so it stays plain text and its Copy
@@ -145,6 +168,8 @@
           });
         };
       }
+      const lines = code.textContent.split('\n').length;
+      if (!streaming && lines > PANEL_LINES && window.KovaPanel?.open) actions.append(panelButton(code, language));
       actions.append(wrapButton(pre), copy);
       bar.append(el('span', 'code-lang', language), actions);
       code.parentNode.insertBefore(bar, code);

@@ -63,6 +63,19 @@
     $('welcome').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
+  // Per-chat drafts (#197). drafts.js owns storage and the incognito exclusion;
+  // app.js saves on typing and restores when a chat opens. A saved chat only.
+  const draftComponent = () => globalThis.KovaDrafts || null;
+  const draftOf = chat => draftComponent()?.read(chat) || '';
+  const rememberDraft = () => draftComponent()?.write(state.chat, $('prompt').value);
+  function consumeDraft(chat, text) {
+    if (state.chat?.id === chat?.id) {
+      if ($('prompt').value !== text) return;
+      $('prompt').value = '';
+      resize();
+    } else if (draftOf(chat) !== text) return;
+    draftComponent()?.clear(chat);
+  }
   // One toast component (toast.js, #198). These wrappers are the only way
   // app.js posts transient messages; the severity decides politeness and how
   // long the message waits. Errors stay until dismissed.
@@ -325,7 +338,7 @@
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode(heading || 'You'));
-    else { const mark = el('img', 'avatar'); mark.src = '/app/assets/icon.svg'; mark.alt = ''; label.append(mark, document.createTextNode(heading || state.persona.name)); }
+    else { const mark = el('span', 'kova-mark avatar'); mark.setAttribute('aria-hidden', 'true'); label.append(mark, document.createTextNode(heading || state.persona.name)); }
     const body = el('div', 'message-body');
     if (role === 'user') {
       body.textContent = content || '';
@@ -346,7 +359,42 @@
   // Per-chat colour and icon live in chat-appearance.js; the sidebar keeps
   // working when it is missing, so every hook below guards its presence.
   const chatAppearance = () => window.KovaChatAppearance || null;
-  function history(chats) {
+  // Inline rename (#195): double-click a row title, type, Enter saves, Escape
+  // restores. The title updates in place through the same PATCH the menu uses.
+  function inlineRename(chat, button) {
+    if (state.busy || !button) return;
+    const input = el('input', 'history-rename');
+    input.value = chat.title || '';
+    input.maxLength = 200; input.autocomplete = 'off'; input.spellcheck = false;
+    input.setAttribute('enterkeyhint', 'done');
+    input.setAttribute('aria-label', `Rename ${chat.title || 'New conversation'}`);
+    button.replaceWith(input);
+    input.focus(); input.select();
+    let settled = false;
+    const finish = (save, restoreFocus = false) => {
+      if (settled) return;
+      settled = true;
+      const title = input.value.trim();
+      input.replaceWith(button);
+      if (restoreFocus) button.focus();
+      if (!save || !title || title === (chat.title || '')) return;
+      safe(async () => {
+        await json(`/chats/${chat.id}`, write('PATCH', {title}));
+        const listed = state.chats.find(item => item.id === chat.id);
+        if (listed) listed.title = title;
+        if (state.chat?.id === chat.id) { state.chat.title = title; pageTitle(); }
+        history(state.chats, document.activeElement === button ? chat.id : null);
+      });
+    };
+    input.addEventListener('keydown', event => {
+      if (event.isComposing) return;
+      if (event.key === 'Enter') { event.preventDefault(); finish(true, true); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(false, true); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+  let historyClick;
+  function history(chats, focusChatId = null) {
     const list = $('chat-list');
     list.replaceChildren();
     if (!chats.length) list.append(el('div', 'history-empty', $('search').value ? 'No chats found.' : 'No chats yet.'));
@@ -362,12 +410,28 @@
         const title = chat.ephemeral ? 'Incognito' : chat.title || 'New conversation';
         const titleRow = el('span', 'history-title');
         if (chat.pinned) titleRow.append(icon('pin'));
+        if (chat.ephemeral) titleRow.append(icon('eye-off'));
         titleRow.append(document.createTextNode(title));
         button.append(titleRow); button.title = title;
         // A row is its title. A second line appears only while the chat needs
         // attention (working, or waiting on an approval); the date groups say when.
         if (chat.state && chat.state !== 'done') button.append(el('span', 'history-date', chat.state.replaceAll('-', ' ')));
-        button.onclick = () => safe(() => openChat(chat.id));
+        button.onclick = event => {
+          clearTimeout(historyClick);
+          const version = state.navigationVersion;
+          const open = () => {
+            if (version === state.navigationVersion) safe(() => openChat(chat.id));
+          };
+          // Pointer clicks need time to become a double-click. Keyboard and
+          // assistive technology activation do not.
+          if (!event?.detail) open();
+          else if (event.detail === 1) historyClick = setTimeout(open, 500);
+        };
+        button.addEventListener('dblclick', event => {
+          event.preventDefault();
+          clearTimeout(historyClick);
+          inlineRename(chat, button);
+        });
         const actions = el('details', 'history-actions'), more = el('summary');
         more.append(icon('ellipsis')); more.title = `Actions for ${title}`; more.setAttribute('aria-label', `Actions for ${title}`);
         actions.append(more); actions.setAttribute('aria-label', `Actions for ${title}`);
@@ -379,7 +443,15 @@
           const action = el('button', 'btn', name); action.type = 'button'; action.setAttribute('aria-label', `${name} ${title}`);
           action.onclick = () => safe(fn); actions.append(action);
         }
+        // A right-click opens the same menu the ellipsis does (#195).
+        row.addEventListener('contextmenu', event => {
+          if (event.target?.classList.contains('history-rename')) return;
+          event.preventDefault();
+          clearTimeout(historyClick);
+          actions.open = true;
+        });
         row.append(button, actions); list.append(row);
+        if (chat.id === focusChatId) button.focus();
       }
     }
     controls();
@@ -495,6 +567,7 @@
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
   }
   function pageTitle() {
+    chatAppearance()?.decorateTopbar?.(state.chat);
     $('incognito-note').hidden = !state.chat?.ephemeral;
     $('chat-menu').hidden = !state.chat;
     $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New chat';
@@ -529,17 +602,18 @@
     if (!text || !state.chat) return;
     const command = parseCommand(text);
     if (command) return dispatchCommand(command);
-    const row = await json(`/chats/${state.chat.id}/queue`, write('POST', {text}));
-    state.queued.push(row); renderQueue();
-    $('prompt').value = ''; resize(); controls();
+    const chat = state.chat, draft = $('prompt').value;
+    const row = await json(`/chats/${chat.id}/queue`, write('POST', {text}));
+    if (state.chat?.id === chat.id) { state.queued.push(row); renderQueue(); }
+    consumeDraft(chat, draft);
   }
   async function steerMessage() {
-    const text = $('prompt').value.trim();
-    if (!text || !state.chat) return;
+    const chat = state.chat, draft = $('prompt').value, text = draft.trim();
+    if (!text || !chat) return;
     const command = parseCommand(text);
     if (command) return dispatchCommand(command);
-    await json(`/chats/${state.chat.id}/steer`, write('POST', {text}));
-    $('prompt').value = ''; resize(); controls();
+    await json(`/chats/${chat.id}/steer`, write('POST', {text}));
+    consumeDraft(chat, draft);
     toast('Sent into the running reply.', 'Steering');
   }
   async function runNextQueued() {
@@ -551,6 +625,7 @@
     await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
+    rememberDraft();
     state.chat = chat;
     draftModel = null;
     syncComposerModel();
@@ -583,6 +658,7 @@
     }
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
+    $('prompt').value = draftOf(chat); resize();
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
@@ -672,9 +748,10 @@
     setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false, ...modelForNewChat()})));
     $('prompt').value = ''; $('prompt').focus(); await refreshChats();
   }
-  // No transcript or draft goes into browser storage. A normal tab close or
-  // reload discards the server's RAM-only chat as well.
+  // An incognito chat has no draft key, so its text never enters browser
+  // storage. A normal tab close or reload discards the RAM-only chat as well.
   window.addEventListener('pagehide', () => {
+    rememberDraft();
     if (state.chat?.ephemeral) fetch(`/chats/${state.chat.id}`, {method: 'DELETE', keepalive: true}).catch(() => {});
   });
   async function editChat(chat, remove) {
@@ -690,7 +767,11 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
-      if (state.chat?.id === chat.id) setChat(null);
+      if (state.chat?.id === chat.id) {
+        $('prompt').value = '';
+        setChat(null);
+      }
+      draftComponent()?.clear(chat);
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
       await json(`/chats/${chat.id}`, write('PATCH', {title}));
@@ -703,7 +784,7 @@
     const patch = await chatAppearance().openDialog(chat);
     if (!patch) return;
     const updated = await json(`/chats/${chat.id}`, write('PATCH', patch));
-    if (state.chat?.id === chat.id) Object.assign(state.chat, updated);
+    if (state.chat?.id === chat.id) { Object.assign(state.chat, updated); pageTitle(); }
     await refreshChats();
   }
   // A cached health answer is still useful, so say when it was measured.
@@ -1148,27 +1229,32 @@
     event.preventDefault(); event.stopPropagation(); $('chat-menu').open = false; $('chat-menu').querySelector('summary').focus();
   });
   async function send(event) {
-    event.preventDefault(); const text = $('prompt').value.trim();
+    event.preventDefault();
+    const chat = state.chat, draft = $('prompt').value, text = draft.trim();
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
     const command = text ? parseCommand(text) : null;
     if (command) {
-      try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
+      try { await dispatchCommand(command); consumeDraft(chat, draft); commandPicker(); }
       catch (error) { toastError(error.message); }
       return;
     }
     if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
-    await sendText(text || 'Please read the attached files.');
+    await sendText(text || 'Please read the attached files.', {draft});
   }
   async function sendText(text, sendOptions = {}) {
     if (!text || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
-    let turn, terminal = false;
+    let turn, terminal = false, submittedChat = null;
     try {
       if (!state.chat) state.chat = await createComposerChat();
       const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
-      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
+      if (sendOptions.draft !== undefined && $('prompt').value === sendOptions.draft) {
+        submittedChat = state.chat;
+        consumeDraft(submittedChat, sendOptions.draft);
+      }
+      empty(false); message('user', text, undefined, outgoing); options(false);
       const reply = message('assistant');
       nearBottom = true; turn = turnView(reply); follow();
       // Send to the model the chip showed, even if another window just changed
@@ -1176,6 +1262,7 @@
       const model = composerModel().model || null;
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model,
         attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
+      submittedChat = null;
       if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
@@ -1191,6 +1278,10 @@
       });
       if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
     } catch (error) {
+      if (submittedChat && submittedChat.id === state.chat?.id && !$('prompt').value) {
+        $('prompt').value = sendOptions.draft;
+        rememberDraft(); resize();
+      }
       if (error.offline) notice(error.message, 'offline');
       if (turn) turn.accept({type: 'error', message: error.message}); else if (!error.offline) toastError(error.message);
     } finally {
@@ -1331,7 +1422,7 @@
     if (files.length) { event.preventDefault(); attachFiles(files); }
   });
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
+  $('prompt').addEventListener('input', () => { resize(); commandPicker(); rememberDraft(); });
   $('prompt').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
     // Like a shell: Up in an empty box brings back what you last said.
@@ -1709,7 +1800,7 @@
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
     source.addEventListener('conversation_state', event => { alive(); try { const update = JSON.parse(event.data); const chat = state.chats.find(c => c.id === update.chat_id); if (chat) { chat.state = update.state; history(state.chats); } else safe(refreshChats); if (state.chat?.id === update.chat_id) { const previous = state.chat.state; state.chat.state = update.state; chatStateChanged(update.chat_id, update.state, previous); } } catch (_) {} });
-    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); notifyReminder(reminder); window.KovaSounds?.play('reminder'); } catch (_) {} });
+    source.addEventListener('reminder', event => { alive(); try { const reminder = JSON.parse(event.data); toast(reminder.text, 'Reminder', {sticky: true, icon: 'bell'}); window.KovaSounds?.play('reminder'); } catch (_) {} });
     source.onerror = () => {
       if (state.events !== source || !state.connected) return;
       // CONNECTING means the browser is already retrying a dropped stream itself.
@@ -2391,14 +2482,6 @@
       data = {plugins, skills, catalog}; render();
     }
     launch.onclick = () => safe(async () => { sidebar(false); render(); dialog.showModal(); await refresh(); });
-  }
-  async function notifyReminder(event) {
-    if (document.hasFocus?.() || localStorage.getItem('kova-notify') !== 'yes' ||
-        !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;
-    try {
-      const registration = await navigator.serviceWorker.getRegistration('/app');
-      registration?.active?.postMessage(event);
-    } catch (_) { /* In-page reminders still work when OS notifications are unavailable. */ }
   }
   {
     let installPrompt = null;
