@@ -1,0 +1,32 @@
+{
+  "$schema": "../../design/theme.schema.json",
+  "id": "midnight",
+  "name": "Midnight",
+  "version": "1.0.0",
+  "description": "Deep navy-blue dark theme. Three close navy-black background shades, cool off-white text, blue-grey muted text and blue-tinted borders, with a soft sky-blue accent.",
+  "appearance": "dark",
+  "extends": "kova-dark",
+  "tokens": {
+    "bg": {
+      "base": "#0d1024",
+      "surface": "#141a30",
+      "raised": "#1c2440"
+    },
+    "fg": {
+      "default": "#e6e9f3",
+      "muted": "#8f96ad",
+      "faint": "#727a90"
+    },
+    "border": {
+      "subtle": "#2e3858",
+      "strong": "#717e90"
+    },
+    "accent": {
+      "default": "#7ab4ff",
+      "hover": "#9cc8ff",
+      "pressed": "#5a9cf5",
+      "on": "#0a0e1a",
+      "soft": "rgba(122, 180, 255, 0.14)"
+    }
+  }
+}

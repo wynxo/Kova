@@ -14,6 +14,18 @@
     return {colour, icon};
   }
 
+  // The top bar carries the same colour as one thin rule under the title, so a
+  // chat is recognisable without adding another filled surface. The rule is
+  // the same semantic token the row uses; a theme recolours both.
+  function decorateTopbar(chat) {
+    if (typeof document === 'undefined') return;
+    const bar = document.querySelector?.('.topbar');
+    if (!bar) return;
+    const {colour} = appearanceOf(chat);
+    if (colour) bar.dataset.chatColour = colour;
+    else delete bar.dataset.chatColour;
+  }
+
   // Draw the row's leading mark: the chosen icon tinted with the chosen
   // colour, or a plain dot when only a colour is set.
   function decorateRow(row, chat) {
@@ -135,5 +147,5 @@
     });
   }
 
-  window.KovaChatAppearance = {COLOURS, ICONS, decorateRow, openDialog};
+  window.KovaChatAppearance = {COLOURS, ICONS, decorateRow, decorateTopbar, openDialog};
 })();

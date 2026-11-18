@@ -525,7 +525,7 @@ Skills are Kova's procedural memory: one Markdown file each, with a one-line des
 
 Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark** in the app's Settings. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones.
 
-Five example themes live in `design/themes/`: **Forest**, **Graphite**, **Midnight Teal**, **Paper** and **Terminal**. Copy one into `~/.kova/themes/` to use it, or make your own as a JSON file; see [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
+Eight example themes live in `design/themes/`: **Forest**, **Graphite**, **High Contrast Dark**, **High Contrast Light**, **Midnight**, **Midnight Teal**, **Paper** and **Terminal**. Copy one into `~/.kova/themes/` to use it, or make your own as a JSON file; see [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
 
 ## Where your data lives
 

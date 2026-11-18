@@ -45,15 +45,20 @@ class Element {
 const body = new Element('body');
 const region = new Element('div'); region.id = 'toasts'; body.append(region);
 const document = {
-  body, activeElement: null, listeners: {},
+  body, activeElement: null, listeners: {}, hidden: false,
   getElementById: id => (id === 'toasts' ? region : null),
   createElement: tag => new Element(tag),
   addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
   dispatch(type, event = {}) { for (const handler of this.listeners[type] || []) handler({preventDefault() {}, ...event}); },
 };
 
+const notifications = [];
+const navigator = {serviceWorker: {getRegistration: async () => ({active: {postMessage: data => notifications.push(data)}})}};
+const settings = new Map([['kova-notify', 'yes']]);
 const sandbox = {
-  document, window: {}, console,
+  document, window: {}, console, navigator,
+  Notification: {permission: 'granted'},
+  localStorage: {getItem: key => (settings.get(key) ?? null), setItem: (key, value) => settings.set(key, value)},
   Date: {now: () => clock},
   setTimeout: setTimeoutFake, clearTimeout: clearTimeoutFake,
 };
@@ -202,4 +207,29 @@ advance(120_000);
 assert.equal(KovaToast.visible(), 1);
 assert.ok(byClass(reminder.node, 'i-bell').length, 'a reminder keeps its own icon');
 
-console.log('Toast stack, timers, pause, keyboard and actions passed');
+// A hidden window repeats the toast's own title and text as one OS
+// notification; a visible window, the off switch and an opt-out stay quiet.
+KovaToast.clear();
+document.hidden = true;
+const before = notifications.length;
+const os = KovaToast.show('Stretch your legs.', {title: 'Reminder', sticky: true, icon: 'bell'});
+await tick();
+assert.equal(notifications.length, before + 1, 'the toast forwards one notification');
+assert.equal(notifications.at(-1).type, 'toast');
+assert.equal(notifications.at(-1).title, 'Reminder');
+assert.equal(notifications.at(-1).text, 'Stretch your legs.');
+document.hidden = false;
+KovaToast.show('Only in the page.');
+await tick();
+assert.equal(notifications.length, before + 1, 'a visible window sends nothing');
+document.hidden = true;
+KovaToast.show('Chosen quiet.', {desktop: false});
+await tick();
+assert.equal(notifications.length, before + 1, 'a toast can opt out of the desktop copy');
+settings.set('kova-notify', 'off');
+KovaToast.show('Notifications are off.');
+await tick();
+assert.equal(notifications.length, before + 1, 'the Notify me switch still owns the decision');
+assert.ok(os.node, 'the in-page toast is unaffected');
+
+console.log('Toast stack, timers, pause, keyboard, actions and desktop wording passed');
