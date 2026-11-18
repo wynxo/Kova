@@ -221,6 +221,7 @@ body.settings-open { overflow: hidden; }
   }
   .settings-tab { width: auto; white-space: nowrap; }
   .settings-row { flex-wrap: wrap; }
+  .settings-segmented { flex-wrap: wrap; }
   .settings-content { padding: var(--space-4); }
 }
 

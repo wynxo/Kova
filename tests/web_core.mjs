@@ -30,18 +30,28 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   removeAttribute(key) { delete this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
-  querySelectorAll() { return []; }
+  querySelectorAll(selector) {
+    return selector === '.option-group' ? walk(this).filter(n => n.className === 'option-group') : [];
+  }
+  querySelector(selector) {
+    return selector === '.option:not([hidden])' ? walk(this).find(n => n.classList.contains('option') && !n.hidden) : null;
+  }
+  closest() { return null; }
+  getBoundingClientRect() { return {top: 400, bottom: 432, left: 700, right: 850, width: 150}; }
+  scrollIntoView() {}
   focus() { focusedElement = this; }
   showModal() {}
   close() {}
   get lastElementChild() { return this.children.at(-1); }
+  get options() { return this.children.flatMap(child => child.tagName === 'optgroup' ? child.children : [child]); }
 }
 const elements = new Map();
 function $(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }
 for (const id of ['theme', 'web']) $(id).append(new Element('span'));
 $('mode').value = 'work';
 const footer = new Element(), actions = new Element(); footer.append(actions); actions.append($('disconnect'));
-const requests = [];
+const requests = [], prefs = new Map();
+let defaultModel = '';
 const uploads = [];
 let pendingApprovals = [];
 const nextQueued = [];
@@ -55,9 +65,9 @@ const sandbox = {
     querySelectorAll: () => [], addEventListener(type, fn) { this.listeners[type] = fn; }, body: new Element(), documentElement: new Element(),
     get activeElement() { return focusedElement; }},
   window: {listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }}, location: {hash: ''},
-  performance, URLSearchParams, TextDecoder, AbortController, console, FormData, File,
+  performance, URLSearchParams, TextDecoder, AbortController, console, FormData, File, innerWidth: 1200, innerHeight: 800,
   requestAnimationFrame: fn => { fn(); }, setTimeout() {}, clearTimeout() {}, setInterval() {},
-  localStorage: {getItem() {return 'dark';}, setItem() {}},
+  localStorage: {getItem(key) {return prefs.get(key) ?? 'dark';}, setItem(key, value) {prefs.set(key, value);}},
   fetch: async (path, options = {}) => {
     const form = options.body instanceof FormData ? options.body : null;
     const body = !form && options.body ? JSON.parse(options.body) : null;
@@ -65,8 +75,12 @@ const sandbox = {
     if (form) uploads.push({path, file: form.get('file')});
     if (path === '/chats' && options.method === 'POST') {
       return {ok: true, json: async () => ({id: 'new-chat', title: null, mode: body?.mode || 'work',
-        permission: 'manual', cwd: '/project', web: true, messages: [], plan: [], ephemeral: !!body?.ephemeral})};
+        permission: 'manual', cwd: '/project', web: true, messages: [], plan: [], ephemeral: !!body?.ephemeral,
+        model: body?.model ?? null, reasoning_effort: body?.reasoning_effort ?? null})};
     }
+    if (path === '/chats/attachment-chat' && options.method === 'PATCH') return {ok: true, json: async () => body};
+    if (path === '/models/active') { defaultModel = body.name; return {ok: true, json: async () => ({active: defaultModel})}; }
+    if (path === '/health') return {ok: true, json: async () => ({model: defaultModel, model_ok: true})};
     if (path === '/chats/new-chat/attachments' && form) {
       const file = form.get('file');
       return {ok: true, json: async () => ({id: 'uploaded', chat_id: 'new-chat', name: file.name,
@@ -274,13 +288,13 @@ console.log('Frontend approval, plan, saved settings, and control behavior passe
 
 // Provider grouping is real DOM structure, not a label prefix on a flat list.
 sandbox.test.renderModels([
-  {name:'home/a',model:'alpha',provider_name:'Home'},
-  {name:'cloud/b',model:'beta',provider_name:'Cloud'},
-  {name:'home/c',model:'gamma',provider_name:'Home'},
+  {name:'provider-a/alpha',model:'alpha',provider:'provider-a',provider_name:'Example',local:true},
+  {name:'provider-b/beta',model:'beta',provider:'provider-b',provider_name:'Example',local:false},
+  {name:'provider-a/gamma',model:'gamma',provider:'provider-a',provider_name:'Example',local:true},
 ]);
-assert.deepEqual($('model').children.map(g => [g.tagName,g.label,g.children.length]),
-                 [['optgroup','Home',2],['optgroup','Cloud',1]]);
-assert.equal($('model').children[0].children[1].value, 'home/c');
+assert.deepEqual($('model').children.map(g => [g.tagName,g.label,g.dataset.location,g.children.length]),
+                 [['optgroup','Example','Local',2],['optgroup','Example','Cloud',1]]);
+assert.equal($('model').children[0].children[1].value, 'provider-a/gamma');
 $('provider-dialog').close = () => {};
 $('provider-key').value = 'never-save-this'; $('provider-headers').value = '{"X-Secret":"private"}';
 sandbox.test.closeProvider();
@@ -485,7 +499,7 @@ buttons(replyActions)[0].onclick(); await tick();
 assert.deepEqual(copied, ['All done.'], 'the reply copies as the text the model wrote');
 
 // Hiding reasoning stops new folded rows and keeps the text out of the DOM.
-sandbox.window.KovaReasoning.setShown(false);
+sandbox.window.KovaReasoning.setMode('hidden');
 const hiddenBody = new Element();
 const hiddenTurn = turnView(hiddenBody);
 hiddenTurn.accept({type: 'reasoning', text: 'a private thought'});
@@ -494,7 +508,18 @@ hiddenTurn.finish();
 assert.equal(byClass(hiddenBody, 'reasoning').length, 0, 'hidden reasoning creates no row');
 assert.equal(hiddenBody.textContent.includes('a private thought'), false, 'its text never reaches the DOM');
 assert.equal(byClass(hiddenBody, 'markdown').length, 1, 'the answer still arrives');
-sandbox.window.KovaReasoning.setShown(true);
+
+// Expanded keeps every finished row open as the turn goes on.
+sandbox.window.KovaReasoning.setMode('expanded');
+const openBody = new Element();
+const openTurn = turnView(openBody);
+openTurn.accept({type: 'reasoning', text: 'Second thoughts.'});
+openTurn.accept({type: 'text', text: 'Done.'});
+openTurn.finish();
+const openRow = byClass(openBody, 'reasoning')[0];
+assert.ok(openRow, 'expanded reasoning still becomes a row');
+assert.equal(openRow.open, true, 'expanded rows arrive open');
+sandbox.window.KovaReasoning.setMode('collapsed');
 
 // A saved turn is one message, however many rounds it took.
 setChat({id: 'saved-turn', messages: [
@@ -631,16 +656,52 @@ assert.equal($('attachment-chips').textContent, '');
 // The composer asks for the selected model's contract, not only the active one.
 state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
 state.models = [
-  {name: 'vision-model', model: 'vision', provider_name: 'Local', context: 32768, vision: true, base_url: 'http://127.0.0.1:8080/v1'},
+  {name: 'vision-model', model: 'vision', provider_name: 'Local', context: 32768, vision: true, reasoning_efforts: ['low', 'high'], base_url: 'http://127.0.0.1:8080/v1'},
   {name: 'text-model', model: 'text', provider_name: 'Local', context: 32768, vision: false, base_url: 'http://127.0.0.1:8080/v1'},
 ];
 $('model').value = 'vision-model'; $('model').onchange();
-await tick(); await tick(); await tick();
+await new Promise(resolve => setImmediate(resolve));
 assert.ok(requests.some(r => r.path === '/capabilities?model=vision-model'));
+assert.deepEqual($('reasoning-effort').options.map(o => o.value), ['', 'low', 'high']);
+$('reasoning-effort').value = 'high'; $('reasoning-effort').onchange();
+await new Promise(resolve => setImmediate(resolve));
+const modelChip = () => `${$('chat-options-label').textContent} ${$('chat-options-effort').textContent}`.trim();
+assert.equal(modelChip(), 'vision · High');
+assert.deepEqual(requests.filter(r => r.path === '/chats/attachment-chat').at(-1).body,
+                 {model: 'vision-model', reasoning_effort: 'high'});
+assert.ok(!requests.some(r => r.path === '/models/active'));
 assert.equal($('attach').classList.contains('text-only'), false);
 $('model').value = 'text-model'; $('model').onchange();
-await tick(); await tick(); await tick();
+await new Promise(resolve => setImmediate(resolve));
 assert.ok(requests.some(r => r.path === '/capabilities?model=text-model'));
+assert.equal($('reasoning-effort-row').hidden, true);
+assert.equal(state.chat.reasoning_effort, null);
+$('model-favourite').onclick();
+assert.equal($('model').children[0].label, 'Favourites');
+assert.equal($('model').children[0].children[0].value, 'text-model');
+assert.deepEqual(JSON.parse(prefs.get('kova-model-favourites')), ['text-model']);
+setChat({id: 'switches', model: 'vision-model', reasoning_effort: 'low', messages: [
+  {role: 'user', content: 'First question'},
+  {role: 'assistant', content: 'First answer'},
+  {role: 'user', content: 'Second question', model_switch: 'vision-model'},
+]});
+assert.equal(modelChip(), 'vision · Low');
+assert.deepEqual(byClass($('messages'), 'model-switch').map(node => node.textContent), ['Switched to vision']);
+$('model-make-default').onclick();
+await new Promise(resolve => setImmediate(resolve));
+assert.deepEqual(requests.find(r => r.path === '/models/active').body, {name: 'vision-model', reasoning_effort: 'low'});
+setChat(null);
+assert.equal(modelChip(), 'vision · Low', 'new chat uses the made default');
+setChat({id: 'attachment-chat', model: 'text-model'});
+await new Promise(resolve => setImmediate(resolve));
+$('model-slot').children[0].onclick();
+const modelPicker = byClass(sandbox.document.body, 'model-picker-popover')[0];
+const modelSearch = byClass(modelPicker, 'popover-search')[0];
+assert.equal(focusedElement, modelSearch, 'model search works even with two models');
+modelSearch.value = 'vision'; modelSearch.oninput();
+assert.deepEqual(byClass(modelPicker, 'option').filter(node => !node.hidden)
+  .map(node => byClass(node, 'option-title')[0].textContent), ['vision']);
+modelPicker.listeners.keydown({key: 'Escape', stopPropagation() {}, preventDefault() {}});
 assert.equal($('attach').classList.contains('text-only'), true);
 const beforeDrop = requests.length, beforeToasts = $('toasts').children.length;
 await sandbox.test.attachFiles([{type: 'image/png', name: 'shot.png', size: 16}]);
@@ -682,7 +743,8 @@ sandbox.test.pendingAttachments.length = 0;
 const beforeImage = requests.length, beforeVisionToast = $('toasts').children.length;
 await sandbox.test.applyShare({text: '', files: [new File(['png'], 'shot.png', {type: 'image/png'})]});
 await tick();
-assert.equal(requests.length, beforeImage, 'no chat or upload request for a refused image');
+assert.ok(!requests.slice(beforeImage).some(r => r.path.startsWith('/chats')),
+          'no chat or upload request for a refused image');
 assert.equal(sandbox.test.pendingAttachments.length, 0);
 assert.equal($('toasts').children.length, beforeVisionToast + 1);
 assert.match($('toasts').textContent, /Turn on Vision for it in Model settings/);
@@ -853,7 +915,7 @@ console.log('Incognito entry, marking, upload prevention, fork refusal and clean
 // slash command, so a broken sendText went unnoticed. Errors inside it become a
 // toast, so this asserts the request itself went out.
 {
-  state.connected = true; state.busy = false; state.chat = {id: 'send-chat'};
+  state.connected = true; state.busy = false; state.chat = {id: 'send-chat', model: 'text-model'};
   sandbox.test.pendingAttachments.splice(0);
   $('prompt').value = 'hello there';
   const before = requests.length;
@@ -861,6 +923,7 @@ console.log('Incognito entry, marking, upload prevention, fork refusal and clean
   const sent = requests.slice(before).filter(r => r.path === '/chats/send-chat/messages');
   assert.equal(sent.length, 1, 'a typed message reaches the server');
   assert.equal(sent[0].body.text, 'hello there');
+  assert.equal(sent[0].body.model, 'text-model', 'the saved chat overrides the new-chat default');
   assert.equal('queued' in sent[0].body, false);
   assert.equal(state.busy, false, 'the turn finished cleanly');
 
