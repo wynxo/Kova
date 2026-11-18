@@ -63,6 +63,19 @@
     $('welcome').hidden = !flag;
     document.body.classList.toggle('is-empty', flag);
   }
+  // Per-chat drafts (#197). drafts.js owns storage and the incognito exclusion;
+  // app.js saves on typing and restores when a chat opens. A saved chat only.
+  const draftComponent = () => globalThis.KovaDrafts || null;
+  const draftOf = chat => draftComponent()?.read(chat) || '';
+  const rememberDraft = () => draftComponent()?.write(state.chat, $('prompt').value);
+  function consumeDraft(chat, text) {
+    if (state.chat?.id === chat?.id) {
+      if ($('prompt').value !== text) return;
+      $('prompt').value = '';
+      resize();
+    } else if (draftOf(chat) !== text) return;
+    draftComponent()?.clear(chat);
+  }
   // One toast component (toast.js, #198). These wrappers are the only way
   // app.js posts transient messages; the severity decides politeness and how
   // long the message waits. Errors stay until dismissed.
@@ -585,17 +598,18 @@
     if (!text || !state.chat) return;
     const command = parseCommand(text);
     if (command) return dispatchCommand(command);
-    const row = await json(`/chats/${state.chat.id}/queue`, write('POST', {text}));
-    state.queued.push(row); renderQueue();
-    $('prompt').value = ''; resize(); controls();
+    const chat = state.chat, draft = $('prompt').value;
+    const row = await json(`/chats/${chat.id}/queue`, write('POST', {text}));
+    if (state.chat?.id === chat.id) { state.queued.push(row); renderQueue(); }
+    consumeDraft(chat, draft);
   }
   async function steerMessage() {
-    const text = $('prompt').value.trim();
-    if (!text || !state.chat) return;
+    const chat = state.chat, draft = $('prompt').value, text = draft.trim();
+    if (!text || !chat) return;
     const command = parseCommand(text);
     if (command) return dispatchCommand(command);
-    await json(`/chats/${state.chat.id}/steer`, write('POST', {text}));
-    $('prompt').value = ''; resize(); controls();
+    await json(`/chats/${chat.id}/steer`, write('POST', {text}));
+    consumeDraft(chat, draft);
     toast('Sent into the running reply.', 'Steering');
   }
   async function runNextQueued() {
@@ -607,6 +621,7 @@
     await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
+    rememberDraft();
     state.chat = chat;
     draftModel = null;
     syncComposerModel();
@@ -639,6 +654,7 @@
     }
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant', saved.usage);
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
+    $('prompt').value = draftOf(chat); resize();
     if (chat?.id) safe(() => loadChanges(chat.id));
     safe(loadQueue);
     nearBottom = true; requestAnimationFrame(follow); history(state.chats); sidebar(false); controls();
@@ -728,9 +744,10 @@
     setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false, ...modelForNewChat()})));
     $('prompt').value = ''; $('prompt').focus(); await refreshChats();
   }
-  // No transcript or draft goes into browser storage. A normal tab close or
-  // reload discards the server's RAM-only chat as well.
+  // An incognito chat has no draft key, so its text never enters browser
+  // storage. A normal tab close or reload discards the RAM-only chat as well.
   window.addEventListener('pagehide', () => {
+    rememberDraft();
     if (state.chat?.ephemeral) fetch(`/chats/${state.chat.id}`, {method: 'DELETE', keepalive: true}).catch(() => {});
   });
   async function editChat(chat, remove) {
@@ -746,7 +763,11 @@
     if (choice !== 'confirm') return;
     if (remove) {
       await json(`/chats/${chat.id}`, {method: 'DELETE'});
-      if (state.chat?.id === chat.id) setChat(null);
+      if (state.chat?.id === chat.id) {
+        $('prompt').value = '';
+        setChat(null);
+      }
+      draftComponent()?.clear(chat);
     } else {
       const title = $('rename-input').value.trim(); if (!title) return toast('Give your conversation a name.');
       await json(`/chats/${chat.id}`, write('PATCH', {title}));
@@ -1204,27 +1225,32 @@
     event.preventDefault(); event.stopPropagation(); $('chat-menu').open = false; $('chat-menu').querySelector('summary').focus();
   });
   async function send(event) {
-    event.preventDefault(); const text = $('prompt').value.trim();
+    event.preventDefault();
+    const chat = state.chat, draft = $('prompt').value, text = draft.trim();
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
     const command = text ? parseCommand(text) : null;
     if (command) {
-      try { await dispatchCommand(command); $('prompt').value = ''; resize(); commandPicker(); }
+      try { await dispatchCommand(command); consumeDraft(chat, draft); commandPicker(); }
       catch (error) { toastError(error.message); }
       return;
     }
     if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
-    await sendText(text || 'Please read the attached files.');
+    await sendText(text || 'Please read the attached files.', {draft});
   }
   async function sendText(text, sendOptions = {}) {
     if (!text || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
-    let turn, terminal = false;
+    let turn, terminal = false, submittedChat = null;
     try {
       if (!state.chat) state.chat = await createComposerChat();
       const outgoing = sendOptions.queued ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
-      empty(false); message('user', text, undefined, outgoing); $('prompt').value = ''; resize(); options(false);
+      if (sendOptions.draft !== undefined && $('prompt').value === sendOptions.draft) {
+        submittedChat = state.chat;
+        consumeDraft(submittedChat, sendOptions.draft);
+      }
+      empty(false); message('user', text, undefined, outgoing); options(false);
       const reply = message('assistant');
       nearBottom = true; turn = turnView(reply); follow();
       // Send to the model the chip showed, even if another window just changed
@@ -1232,6 +1258,7 @@
       const model = composerModel().model || null;
       const response = await api(`/chats/${state.chat.id}/messages`, write('POST', {text, model,
         attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})}));
+      submittedChat = null;
       if (!sendOptions.queued) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
       if (state.stopRequested) await cancelTurn();
@@ -1247,6 +1274,10 @@
       });
       if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
     } catch (error) {
+      if (submittedChat && submittedChat.id === state.chat?.id && !$('prompt').value) {
+        $('prompt').value = sendOptions.draft;
+        rememberDraft(); resize();
+      }
       if (error.offline) notice(error.message, 'offline');
       if (turn) turn.accept({type: 'error', message: error.message}); else if (!error.offline) toastError(error.message);
     } finally {
@@ -1387,7 +1418,7 @@
     if (files.length) { event.preventDefault(); attachFiles(files); }
   });
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', () => { resize(); commandPicker(); });
+  $('prompt').addEventListener('input', () => { resize(); commandPicker(); rememberDraft(); });
   $('prompt').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
     // Like a shell: Up in an empty box brings back what you last said.
