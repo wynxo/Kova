@@ -1,5 +1,5 @@
-/* Reading styles for model replies (#189): prose, headings, quotes, task lists,
-   tables, footnotes and the syntax palette. app.css owns the transcript shell;
+/* Reading styles for model replies (#189): prose, headings, quotes, callouts,
+   task lists, tables, footnotes and the syntax palette. app.css owns the transcript shell;
    this file owns what a reply's Markdown looks like. Every colour, space, radius
    and motion value comes from tokens.css. */
 
@@ -66,27 +66,6 @@
 .markdown .callout-caution { --callout-accent:var(--status-danger); }
 .markdown .callout > :last-child { margin-bottom:0; }
 
-/* Collapsible blocks written as plain HTML in a reply (#189). */
-.markdown details {
-  margin:0 0 var(--space-3); overflow:hidden;
-  border:1px solid var(--border-subtle); border-radius:var(--radius-md);
-  background:color-mix(in srgb, var(--bg-raised) 45%, transparent);
-}
-.markdown summary {
-  padding:var(--space-2) var(--space-3); cursor:pointer;
-  color:var(--fg-default); font-weight:600; border-radius:var(--radius-md);
-}
-.markdown summary::marker { color:var(--fg-faint); }
-.markdown summary:focus-visible {
-  outline:var(--space-0-5) solid var(--accent-default);
-  outline-offset:calc(var(--space-0-5) * -1);
-}
-.markdown details[open] summary {
-  border-bottom:1px solid var(--border-subtle);
-  border-radius:var(--radius-md) var(--radius-md) 0 0;
-}
-.markdown details > :not(summary) { margin-left:var(--space-3); margin-right:var(--space-3); }
-.markdown details > :last-child { margin-bottom:var(--space-3); }
 
 /* Task lists are read-only: the box shows what the reply recorded. */
 .markdown li.task-item { list-style:none; }
