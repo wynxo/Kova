@@ -41,6 +41,8 @@
   <script defer src="/app/assets/tool-cards.js"></script>
   <script defer src="/app/assets/reasoning.js"></script>
   <script defer src="/app/assets/code-header.js"></script>
+  <script defer src="/app/assets/composer-history.js"></script>
+  <script defer src="/app/assets/composer-mentions.js"></script>
   <script defer src="/app/assets/app.js"></script>
   <script defer src="/app/assets/settings.js"></script>
 </head>
@@ -78,6 +80,7 @@
       <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-retry" type="button" class="notice-retry">Retry</button></div>
       <form id="composer" class="composer" data-mode="work">
         <div id="command-picker" class="command-picker" aria-label="Commands" hidden></div>
+        <div id="mention-list" class="mention-list" role="listbox" aria-label="Files in this chat" hidden></div>
         <div id="attachment-chips" aria-live="polite"></div>
         <small id="attachment-note" hidden>Text extracted locally. Selected content is sent only when you send the message.</small>
         <input id="attachment-input" type="file" multiple hidden>
@@ -91,7 +94,7 @@
             </div>
           </div>
           <label class="sr-only" for="prompt">Message Kova</label>
-          <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000"></textarea>
+          <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000" aria-autocomplete="list" aria-expanded="false" aria-controls="mention-list"></textarea>
           <div class="chat-options-wrap">
             <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span id="chat-options-effort" class="model-chip-effort" hidden></span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
             <div id="chat-options-panel" class="chat-options" role="dialog" aria-label="Chat options" hidden>

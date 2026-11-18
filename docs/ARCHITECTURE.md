@@ -117,6 +117,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
+| `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
+| `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
