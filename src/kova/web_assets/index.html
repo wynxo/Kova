@@ -13,9 +13,12 @@
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
+  <!-- Not deferred: the theme, text size, density and font are on <html> before
+       the body paints (#174, #179). -->
+  <script src="/app/assets/theme.js"></script>
+  <script src="/app/assets/typography.js"></script>
   <!-- Not deferred: the theme and the motion setting are on <html> before the
        body paints (#174, #181). -->
-  <script src="/app/assets/theme.js"></script>
   <script src="/app/assets/motion.js"></script>
   <link rel="stylesheet" href="/app/assets/app.css">
   <link rel="stylesheet" href="/app/assets/markdown.css">

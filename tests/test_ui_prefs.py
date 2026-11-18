@@ -70,6 +70,22 @@ def test_the_first_reasoning_switch_still_reads_as_collapsed(tmp_path):
     assert ui_prefs.Preferences(tmp_path).read()["reasoning"] == "collapsed"
 
 
+def test_typography_and_density_preferences_are_shared(http):
+    """Text size, density and font (#179) start at today's look."""
+    served = http.get("/preferences").json()
+    assert (served["text_size"], served["density"], served["font"]) == ("default", "default", "inter")
+
+    for name, values in (("text_size", ("small", "large", "default")),
+                         ("density", ("compact", "comfortable", "default")),
+                         ("font", ("system", "mono", "inter"))):
+        for value in values:
+            saved = http.put("/preferences", json={name: value})
+
+            assert saved.status_code == 200
+            assert saved.json()[name] == value
+            assert http.get("/preferences").json()[name] == value
+
+
 def test_motion_preference_accepts_three_values(http):
     assert http.get("/preferences").json()["motion"] == "full", \
         "motion is full until the reader chooses otherwise"
@@ -83,10 +99,13 @@ def test_motion_preference_accepts_three_values(http):
 
 
 @pytest.mark.parametrize("patch, needle", [
-    ({"density": "cozy"}, "Unknown preference"),
+    ({"weight": "bold"}, "Unknown preference"),
     ({"theme": "Sepia Tone"}, "must be one of"),
     ({"theme": "x"}, "installed theme id"),
     ({"reasoning": "open"}, "must be one of"),
+    ({"text_size": "huge"}, "must be one of"),
+    ({"density": "cozy"}, "must be one of"),
+    ({"font": "comic"}, "must be one of"),
     ({"motion": "none"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
@@ -120,8 +139,8 @@ def test_export_then_import_restores_preferences(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json() == {
-        "theme": "light", "sidebar": "open", "notifications": "on",
-        "reasoning": "collapsed", "motion": "full",
+        "theme": "light", "sidebar": "open", "notifications": "on", "reasoning": "collapsed",
+        "motion": "full", "text_size": "default", "density": "default", "font": "inter",
     }
 
 
@@ -172,7 +191,7 @@ def test_import_refuses_a_bad_value_without_changing_anything(runner, http, tmp_
 
 def test_import_refuses_an_unknown_preference(runner, tmp_path):
     target = tmp_path / "unknown.json"
-    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"font": "large"}}),
+    target.write_text(json.dumps({**ui_prefs.document({}), "preferences": {"leading": "loose"}}),
                       encoding="utf-8")
 
     result = runner.invoke(cli.app, ["prefs", "import", str(target)])

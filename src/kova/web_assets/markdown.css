@@ -3,7 +3,7 @@
    this file owns what a reply's Markdown looks like. Every colour, space, radius
    and motion value comes from tokens.css. */
 
-.markdown { font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); overflow-wrap:anywhere; }
+.markdown { font-family:var(--font-chat); font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); overflow-wrap:anywhere; }
 .markdown > :first-child { margin-top:0; }
 .markdown > :last-child { margin-bottom:0; }
 /* The reply being written ends in a soft pulsing dot. */

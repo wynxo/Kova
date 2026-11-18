@@ -14,11 +14,20 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning motion animation',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
          keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
          control: 'theme'},
+        {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
+         keywords: 'text size font typography small large bigger read legible zoom scale',
+         control: 'text_size'},
+        {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
+         keywords: 'density spacing compact comfortable padding layout tight roomy air',
+         control: 'density'},
+        {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
+         keywords: 'font typeface inter system monospace mono code readable',
+         control: 'font'},
         {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
          keywords: 'motion animation animate transition reduce reduced still accessibility',
          control: 'motion'},
@@ -413,11 +422,80 @@
       radio.tabIndex = checked ? 0 : -1;
     }
   }
+  // Text size, density and font are the same three-way choice (#179).
+  // KovaTypography owns each value, the server copy and the three attributes on
+  // <html>; this only reflects and changes them. "default" and "inter" are the
+  // shipped look, so the fallback matches what the page paints without the module.
+  const TYPOGRAPHY = [
+    {name: 'text_size', label: 'Text size', read: 'textSize', write: 'setTextSize', fallback: 'default',
+     items: [['small', 'Small', 'A step down from the shipped sizes'],
+             ['default', 'Default', 'The shipped type scale'],
+             ['large', 'Large', 'A step up for reading at a distance']]},
+    {name: 'density', label: 'Density', read: 'density', write: 'setDensity', fallback: 'default',
+     items: [['compact', 'Compact', 'Tighter gaps, for more on screen'],
+             ['default', 'Default', 'The shipped spacing'],
+             ['comfortable', 'Comfortable', 'More air between rows and messages']]},
+    {name: 'font', label: 'Font', read: 'font', write: 'setFont', fallback: 'inter',
+     items: [['inter', 'Inter', 'The bundled typeface'],
+             ['system', 'System', "This device's interface font"],
+             ['mono', 'Monospace', 'Set the conversation in the bundled mono face']]},
+  ];
+  const typographyRadios = {};
+  function typographyChoice(name) {
+    return TYPOGRAPHY.find(choice => choice.name === name);
+  }
+  function typographyValue(choice) {
+    const engine = window.KovaTypography;
+    return (engine && typeof engine[choice.read] === 'function' && engine[choice.read]()) || choice.fallback;
+  }
+  function typographyControl(choice) {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', choice.label);
+    const radios = [];
+    for (const [value, label, hint] of choice.items) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseTypography(choice, value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = choice.items.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = choice.items[(at + step + choice.items.length) % choice.items.length][0];
+        chooseTypography(choice, next);
+        radios.find(item => item.dataset.value === next)?.focus();
+      });
+      radios.push(radio);
+      group.append(radio);
+    }
+    typographyRadios[choice.name] = radios;
+    return group;
+  }
+  function chooseTypography(choice, value) {
+    window.KovaTypography?.[choice.write]?.(value);
+    syncTypography();
+  }
+  function syncTypography() {
+    for (const choice of TYPOGRAPHY) {
+      const value = typographyValue(choice);
+      for (const radio of typographyRadios[choice.name] || []) {
+        const checked = radio.dataset.value === value;
+        radio.setAttribute('aria-checked', String(checked));
+        radio.tabIndex = checked ? 0 : -1;
+      }
+    }
+  }
 
   function syncControls() {
     syncTheme();
     syncReasoning();
     syncMotion();
+    syncTypography();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
       button.disabled = Boolean(target?.disabled);
@@ -447,6 +525,8 @@
       row.append(reasoningControl());
     } else if (item.control === 'motion') {
       row.append(motionControl());
+    } else if (typographyChoice(item.control)) {
+      row.append(typographyControl(typographyChoice(item.control)));
     } else if (item.host) {
       const hosted = byId(item.host);
       if (hosted) {
