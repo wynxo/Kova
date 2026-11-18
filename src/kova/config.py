@@ -48,6 +48,7 @@ CONFIG_SECTION_KEYS = {
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
+    'reasoning_effort', 'reasoning_efforts',
 })
 PROVIDER_CONFIG_KEYS = frozenset({
     'id', 'name', 'base_url', 'kind', 'adapter', 'api_key', 'headers', 'auth',
@@ -143,6 +144,8 @@ class ModelEntry:
     context: int = 131072
     provider: str = ""
     vision: bool = False
+    reasoning_effort: str | None = None
+    reasoning_efforts: list[str] = field(default_factory=list)
     _provider: ProviderEntry | None = field(default=None, repr=False, compare=False)
     _bound_api_key: str | None = field(default=None, repr=False, compare=False)
 
@@ -274,11 +277,15 @@ class Config:
             m.base_url, m.api_key = p.base_url, p.api_key
             m._bound_api_key = p.api_key
 
-    def active_model(self) -> ModelEntry:
+    def model_entry(self, name: str | None = None) -> ModelEntry | None:
         self.bind_providers()
-        for m in self.models:
-            if m.name == self.active:
-                return m
+        selected = self.active if name is None else name
+        return next((m for m in self.models if m.name == selected), None)
+
+    def active_model(self) -> ModelEntry:
+        entry = self.model_entry()
+        if entry is not None:
+            return entry
         raise KeyError(self.active)
 
 
@@ -500,6 +507,8 @@ def _model_values(model: ModelEntry) -> dict[str, Any]:
         'model': model.model,
         'context': model.context,
         'vision': model.vision,
+        'reasoning_effort': model.reasoning_effort or _UNSET,
+        'reasoning_efforts': model.reasoning_efforts or _UNSET,
         # Hydrated from the provider; never duplicate the credential here.
         'api_key': _UNSET,
     }

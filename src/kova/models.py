@@ -73,12 +73,17 @@ class ModelClient:
     _rejects_usage_option: set[tuple[str, str]] = set()
 
     def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
-                 timeout: float = 300, privacy: str = "off", config: Config | None = None):
+                 timeout: float = 300, privacy: str = "off", config: Config | None = None,
+                 reasoning_effort: str | None = None):
         self.entry = entry
         self.transport = transport
         self.timeout = timeout
         self.privacy = privacy
         self.config = config
+        self.reasoning_effort = reasoning_effort
+        # Native tool continuations can require opaque reasoning blocks. Keep
+        # them in this turn's client only, never in saved messages or events.
+        self._reasoning_by_call: dict[str, list[dict]] = {}
         # Ask for token usage unless this server said it does not understand the option.
         self.include_usage = (entry.base_url, entry.model) not in self._rejects_usage_option
 
@@ -118,6 +123,7 @@ class ModelClient:
 
     async def _stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
         from kova.providers import ProviderError
+        from kova.reasoning_effort import payload_fields
         if not self.entry.model.strip():
             raise ModelError("No model is configured. Run: kova setup")
         # Scan before even resolving provider credentials: block mode must not
@@ -137,6 +143,7 @@ class ModelClient:
         if protection is not None and (protection.count or protection.incomplete):
             yield ModelEvent("privacy", privacy=protection.status())
         adapter = self.entry._provider.adapter if self.entry._provider else 'openai'
+        effort = payload_fields(self.entry, self.reasoning_effort)
         if adapter != 'openai':
             from kova.model_adapters import (
                 anthropic_request,
@@ -144,15 +151,18 @@ class ModelClient:
                 stream_native,
             )
             build = anthropic_request if adapter == 'anthropic' else responses_request
-            path, payload = build(self.entry.model, request_messages, tools)
+            path, payload = build(self.entry.model, request_messages, tools, self._reasoning_by_call)
+            payload.update(effort)
+            if adapter == 'responses' and effort.get('reasoning', {}).get('effort') not in (None, 'none'):
+                payload['include'] = ['reasoning.encrypted_content']
             try:
                 async with egress.AsyncClient(transport=self.transport, timeout=self.timeout, headers=headers, trust_env=False) as client:
-                    async for event in stream_native(client, self._url(path), payload, adapter):
+                    async for event in stream_native(client, self._url(path), payload, adapter, self._reasoning_by_call):
                         yield event
             except httpx.RequestError:
                 raise ModelError('Could not connect to the provider. Check your connection.') from None
             return
-        payload = {"model": self.entry.model, "messages": request_messages, "stream": True}
+        payload = {"model": self.entry.model, "messages": request_messages, "stream": True, **effort}
         if self.include_usage:
             payload["stream_options"] = {"include_usage": True}
         if tools is not None:

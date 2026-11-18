@@ -161,7 +161,8 @@ def test_options_and_extras_sit_behind_the_plus_and_the_chip() -> None:
     parser, _ = _shell()
     for element in ("attach", "commands", "new-incognito"):
         assert "compose-menu" in parser.ancestors[element], f"#{element} belongs in the + menu"
-    for element in ("model-slot", "mode-switch", "permission-slot", "cwd", "web"):
+    for element in ("model-slot", "reasoning-effort-slot", "mode-switch", "model-make-default",
+                    "permission-slot", "cwd", "web"):
         assert "chat-options-panel" in parser.ancestors[element], f"#{element} belongs behind the chip"
     assert "hidden" in parser.by_id["compose-menu"] and "hidden" in parser.by_id["chat-options-panel"]
     assert parser.by_id["chat-options"].get("aria-controls") == "chat-options-panel"

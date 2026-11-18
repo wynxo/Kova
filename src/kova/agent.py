@@ -332,7 +332,7 @@ class Agent:
                        capabilities: frozenset[str] | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
-        ``model`` names a configured model for this turn only; the active one otherwise.
+        ``model`` overrides the saved chat model for one turn; unset chats use the default.
         ``steering`` carries messages that arrive while the turn runs.
         ``capabilities`` limits a turn a paired phone started (kova.pairing): tools
         that need more are not offered at all, so no approval or rule can bring
@@ -353,7 +353,12 @@ class Agent:
         if attached:
             block = '\n\n'.join(attachments.block(r) for r in attached)
             model_text = f'{text}\n\n{block}' if text else block
-        user_message_id = self.store.add_message(chat_id, 'user', text)
+        chat = self.store.get_chat(chat_id)
+        chat_model = (chat or {}).get('model')
+        entry = self.config.model_entry(model if model is not None else chat_model)
+        previous_model = self.store.last_turn_model(chat_id)
+        turn_model = entry.name if entry is not None and entry.model else None
+        user_message_id = self.store.add_message(chat_id, 'user', text, turn_model=turn_model)
         if attached:
             # A saved message takes responsibility for its uploads: retain the
             # files even when the clean transcript no longer spells out an id.
@@ -362,7 +367,8 @@ class Agent:
             # The link carries no extracted text and is not part of model history.
             self.store.link_message_attachments(user_message_id, attached)
         set_current_chat(chat_id, capabilities)
-        chat = self.store.get_chat(chat_id)
+        if previous_model and turn_model and turn_model != previous_model:
+            yield {'type': 'model_switch', 'model': turn_model}
         incognito = self.store.is_ephemeral(chat_id)
         mode = 'chat' if incognito else (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
@@ -461,21 +467,13 @@ class Agent:
             # without placing attachment text or ids in the transcript.
             prompt += ("\n\nAttachments in this chat (read one with read_attachment, "
                        "using its id):\n" + attachments.index(rows.values()))
-        self.config.bind_providers()
-        if model is not None:
-            entry = next((m for m in self.config.models if m.name == model), None)
-        else:
-            try:
-                entry = self.config.active_model()
-            except KeyError:
-                # Removing the last provider empties models and active; that is a
-                # setup state, not a crash (#92).
-                entry = None
         if entry is None or not entry.model:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
+        effort = (chat or {}).get('reasoning_effort') if entry.name == chat_model else entry.reasoning_effort
         client = ModelClient(entry, transport=self.transport,
-                             privacy=getattr(self.config, "privacy_secrets", "off"), config=self.config)
+                             privacy=getattr(self.config, "privacy_secrets", "off"), config=self.config,
+                             reasoning_effort=effort)
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
