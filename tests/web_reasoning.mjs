@@ -1,6 +1,7 @@
-// Reasoning display (#187): a folded "Thought for Ns" row and its setting.
-// The module is loaded on its own, with a tiny DOM, a fake preferences store
-// and no browser, so the logic is checked without a CDN or a package install.
+// Reasoning display (#187): folded "Thought for Ns" rows and their three-way
+// setting. The module is loaded on its own, with a tiny DOM, a fake
+// preferences store and no browser, so the logic is checked without a CDN or a
+// package install.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
@@ -13,6 +14,7 @@ class Element {
     this.className = '';
     this.attrs = {};
     this.dataset = {};
+    this.open = false;
     this._text = '';
   }
   set textContent(text) { this._text = String(text); this.children = []; }
@@ -48,32 +50,47 @@ const sandbox = {document, window, localStorage, fetch, console};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8'), sandbox);
 const api = vm.runInNewContext('window.KovaReasoning', sandbox);
 
+// Collapsed is the default, so a first run folds every burst.
+assert.equal(api.KEY, 'kova-reasoning');
+assert.equal(api.mode(), 'collapsed', 'reasoning rows are folded by default');
+assert.equal(api.expanded(), false);
+assert.equal(documentElement.getAttribute('data-reasoning'), 'collapsed');
+
 // The preference arrives from the shared server document, not only this tab.
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(calls[0].url, '/preferences');
 assert.equal(calls[0].method, 'GET', 'the module reads the shared preferences');
-assert.equal(api.KEY, 'kova-reasoning');
-assert.equal(api.shown(), false, 'the server preference hides reasoning');
+assert.equal(api.mode(), 'hidden', 'the server preference hides reasoning');
+assert.equal(api.shown(), false);
 assert.equal(documentElement.getAttribute('data-reasoning'), 'hidden');
 assert.equal(store.get('kova-reasoning'), 'hidden', 'the shared value is cached locally');
 assert.equal(api.row(0, 12000, 'Let me think.'), null, 'a hidden setting creates no row');
 
-// Showing reasoning is one checked switch, saved both locally and server-side.
-api.setShown(true);
+// Expanded rows open as they arrive; collapsed ones wait for a click.
+api.setMode('expanded');
+assert.equal(api.mode(), 'expanded');
+assert.equal(api.expanded(), true);
 assert.equal(api.shown(), true);
-assert.equal(documentElement.getAttribute('data-reasoning'), 'shown');
-assert.equal(store.get('kova-reasoning'), 'shown');
-const put = calls.at(-1);
+assert.equal(documentElement.getAttribute('data-reasoning'), 'expanded');
+assert.equal(store.get('kova-reasoning'), 'expanded');
+let put = calls.at(-1);
 assert.equal(put.url, '/preferences');
 assert.equal(put.method, 'PUT');
-assert.deepEqual(JSON.parse(put.body), {reasoning: 'shown'});
+assert.deepEqual(JSON.parse(put.body), {reasoning: 'expanded'});
+const opened = api.row(0, 12000, 'Step one.');
+assert.equal(opened.open, true, 'an expanded setting opens the row');
 
-// A finished burst is one collapsed row, in muted text with a left rule.
+api.setMode('collapsed');
+assert.equal(documentElement.getAttribute('data-reasoning'), 'collapsed');
+put = calls.at(-1);
+assert.deepEqual(JSON.parse(put.body), {reasoning: 'collapsed'});
+
+// A finished burst is one row, in muted text with a left rule.
 const reasoning = api.row(1000, 13000, 'Step one.\n<script>alert(1)</script>');
 assert.ok(reasoning, 'a shown burst becomes a row');
 assert.equal(reasoning.tagName, 'DETAILS');
 assert.equal(reasoning.className, 'reasoning');
-assert.equal(Boolean(reasoning.open), false, 'the row starts collapsed');
+assert.equal(reasoning.open, false, 'the row starts collapsed');
 const summary = reasoning.children[0];
 const body = reasoning.children[1];
 assert.equal(summary.tagName, 'SUMMARY');
@@ -93,10 +110,19 @@ assert.equal(api.seconds(12400), 12);
 assert.equal(api.seconds(12600), 13);
 assert.match(api.row(0, 12000, 'x').textContent, /^Thought for 12s/);
 
-// An empty burst and a hidden switch produce no row at all.
+// An empty burst and a hidden setting produce no row at all.
 assert.equal(api.row(0, 5000, '   '), null);
-api.setShown(false);
+api.setMode('hidden');
 assert.equal(api.row(0, 5000, 'still here'), null, 'hiding stops new rows');
 assert.equal(documentElement.getAttribute('data-reasoning'), 'hidden');
+assert.equal(api.shown(), false);
 
-console.log('Reasoning rows, duration and the shared show/hide setting passed');
+// The switch's first release saved "shown"/"hidden"; "shown" still means
+// collapsed, so an older tab or a preferences file does not lose the rows.
+store.set('kova-reasoning', 'shown');
+const legacy = vm.createContext({document, window: {}, localStorage, fetch, console});
+vm.runInContext(readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8'), legacy);
+const older = vm.runInContext('window.KovaReasoning', legacy);
+assert.equal(older.mode(), 'collapsed', 'the first release of the setting reads as collapsed');
+
+console.log('Reasoning rows, duration and the three-way shared setting passed');
