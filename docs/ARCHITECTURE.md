@@ -117,6 +117,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /chats` | token or session | list / create chats |
+| `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
+| `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
@@ -349,12 +351,18 @@ shared `/preferences` document and cached in `localStorage`; it runs from `<head
 so the first frame is already right, sets `data-theme` for the built-in palette, and
 writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
 properties on `<html>`. The `theme-color` meta tag and the web manifest take the
-theme's `bg.base`. The sidebar keeps pinned chats on top and groups the
+theme's `bg.base`. An unsent message is kept per saved chat
+(`web_assets/drafts.js`) so it survives a reload and returns when that chat
+opens. Sending, queueing, steering or deleting the chat clears its draft, and
+an incognito chat never gets a draft key. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
 synthesized with WebAudio, so no audio file ships and nothing is fetched; a
-finished reply only chimes while the window is unfocused.
+finished reply only chimes while the window is unfocused. The same toast stack
+(`web_assets/toast.js`) forwards each message to one OS notification while the
+window is hidden, with the toast's own title and text; the *Notify me* switch
+and the service worker decide whether it appears.
 
 The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
 search field that filters chats, the chat list and a single **Settings** row.

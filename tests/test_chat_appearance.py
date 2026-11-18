@@ -7,8 +7,10 @@ shown in list/get responses, set through PATCH with validation, and cosmetic
 changes never mark a chat as written in by a phone.
 """
 
+import re
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,6 +48,32 @@ def test_normalize_accepts_trims_and_clears():
     assert normalize_icon(" Folder ") == "folder"
     assert normalize_icon("") is None
     assert normalize_icon(None) is None
+
+
+# ----------------------------------------------------- web assets
+ASSETS = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets"
+
+
+def test_web_client_mirrors_the_palette_and_icons():
+    """The JS mirrors the server tables; drift would show one thing and save another."""
+    source = (ASSETS / "chat-appearance.js").read_text(encoding="utf-8")
+    colours = re.search(r"const COLOURS = \[(.*?)\];", source, re.S).group(1)
+    icons = re.search(r"const ICONS = \[(.*?)\];", source, re.S).group(1)
+    assert set(re.findall(r"'([a-z0-9-]+)'", colours)) == set(CHAT_COLOURS)
+    assert set(re.findall(r"'([a-z0-9-]+)'", icons)) == set(CHAT_ICONS)
+    assert "decorateTopbar" in source, "the top bar takes the same appearance"
+
+
+def test_every_colour_is_a_semantic_token_in_the_stylesheet():
+    """The same eight keys resolve to the server's tokens, and the top bar uses
+    one hairline of it rather than a second filled surface."""
+    css = (ASSETS / "chat-appearance.css").read_text(encoding="utf-8")
+    for key, variable in CHAT_COLOURS.items():
+        assert f'[data-chat-colour="{key}"] {{ --chat-colour: {variable}; }}' in css, key
+    rule = css[css.index(".topbar[data-chat-colour]"):]
+    rule = rule[:rule.index("}")]
+    assert "border-bottom-color: var(--chat-colour)" in rule
+    assert "background" not in rule, "the top bar keeps its surface"
 
 
 def test_normalize_rejects_hex_and_unknown_names():
