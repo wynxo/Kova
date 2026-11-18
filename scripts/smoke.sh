@@ -201,6 +201,7 @@ check_asset() { # check_asset PATH EXPECTED_CONTENT_TYPE
 check_asset "app.js" "javascript"
 check_asset "app.css" "text/css"
 check_asset "icon.svg" "image/svg+xml"
+check_asset "mark.svg" "image/svg+xml"
 check_asset "vendor/marked.js" "javascript"
 check_asset "vendor/purify.js" "javascript"
 check_asset "vendor/highlight.js" "javascript"
