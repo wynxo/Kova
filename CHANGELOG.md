@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Replies gain GitHub-flavored callouts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) that render as labelled asides with the status tokens, and collapsible `<details>`/`<summary>` blocks keep their native keyboard behaviour (#189). The sanitizer's allowlist now admits only those two extra tags and `open`.
 - A plan with open steps is pinned above the message box while the turn runs (#193): the current step, a progress bar and a disclosure for the whole checklist, fed by the same plan events as the transcript. It hands the plan back to the transcript when the turn ends (never both at once), can be dismissed for that turn, stays one line on phone widths and opens as a sheet there.
 - Composer polish (#197): Up in an empty message box browses the messages you sent in that chat (Down moves forward, Escape restores the draft), and it only starts while the caret is on the first line. Typing `@` lists files in the chat's working folder, chosen with the arrow keys and inserted as `@path`; the list is a labelled listbox and the list request returns names only, never contents. Attachment chips show the name and size next to a named remove button, and a pasted screenshot is attached even when the clipboard exposes it as an unnamed item.
 - The primary accent is now solid black on light and solid white on dark instead of orange, finishing the monochrome palette; the example themes keep their own accents (#267).

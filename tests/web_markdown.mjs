@@ -255,12 +255,37 @@ assert.equal(finishedNotes.querySelectorAll('.fn-ref').length, 1, 'the finished 
 
 // ---- Sanitizer keeps what the renderer needs ------------------------------
 const options = sanitizeOptions.at(-1);
-for (const tag of ['sup', 'section', 'input', 'table']) {
+for (const tag of ['sup', 'section', 'input', 'table', 'details', 'summary']) {
   assert.ok(options.ALLOWED_TAGS.includes(tag), `the allowlist keeps <${tag}>`);
 }
-for (const attr of ['id', 'href', 'type', 'checked', 'disabled', 'aria-label']) {
+for (const attr of ['id', 'href', 'type', 'checked', 'disabled', 'aria-label', 'open']) {
   assert.ok(options.ALLOWED_ATTR.includes(attr), `the allowlist keeps ${attr}`);
 }
+
+// ---- Callouts and collapsible blocks (#189) -------------------------------
+const callout = render('> [!NOTE]\n> The build is green.');
+const quote = callout.querySelector('blockquote');
+assert.ok(quote.classList.contains('callout'), 'a marker turns a quote into a callout');
+assert.ok(quote.classList.contains('callout-note'), 'the kind is on the element');
+assert.equal(quote.getAttribute('role'), 'note');
+assert.equal(quote.querySelector('.callout-label').textContent, 'Note', 'the kind is said in words');
+assert.ok(quote.textContent.includes('The build is green.'), 'the body is kept');
+assert.equal(quote.textContent.includes('[!NOTE]'), false, 'the marker itself is gone');
+
+const warning = render('> [!WARNING]\n> Deleting this cannot be undone.');
+assert.ok(warning.querySelector('blockquote').classList.contains('callout-warning'));
+assert.equal(warning.querySelector('.callout-label').textContent, 'Warning');
+
+const plainQuote = render('> Just a quote.');
+assert.equal(plainQuote.querySelector('blockquote').classList.contains('callout'), false,
+  'a quote without a marker stays a quote');
+
+const details = render('<details>\n<summary>More</summary>\n\nThe body.\n\n</details>');
+const disclosure = details.querySelector('details');
+assert.ok(disclosure, 'a details block survives rendering');
+assert.equal(disclosure.querySelector('summary').textContent, 'More');
+assert.ok(disclosure.textContent.includes('The body.'), 'the body is kept');
+assert.equal(details.querySelectorAll('details').length, 1, 'one block, not a second wrapper');
 
 // ---- Streaming code is plain until it closes -----------------------------
 highlights.length = 0;
