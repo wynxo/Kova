@@ -1,15 +1,17 @@
-/* Typography and density (#179): text size, density and font, each one
-   attribute on <html>.
+/* Typography, density and content width (#179, #205): one attribute each on
+   <html>.
 
    The stylesheet does the work in one block: `data-text-size` swaps the
-   --type-size-* tokens, `data-density` the --space-* tokens, and `data-font`
-   the font stack, so no component needs a rule of its own. This module only
-   decides the three values.
+   --type-size-* tokens, `data-density` the --space-* tokens, `data-font` the
+   font stack and `data-chat-width` the --column the conversation, composer and
+   start screen share, so no component needs a rule of its own. This module only
+   decides the four values.
 
    The choices live in the shared server UI preferences document, so every
    paired device and `kova prefs export` see them, and in localStorage for an
-   instant first paint. "default" and "inter" are the defaults and leave the
-   shipped token values alone, so an untouched install looks exactly as before.
+   instant first paint. "default", "inter" and "normal" are the defaults and
+   leave the shipped token values alone, so an untouched install looks exactly
+   as before.
 
    It runs from <head>, before the body is parsed, so the first frame is already
    at the right size and density; it touches only <html>. */
@@ -25,6 +27,10 @@
      values: ['compact', 'default', 'comfortable'], fallback: 'default'},
     {key: 'kova-font', name: 'font', attr: 'data-font',
      values: ['inter', 'system', 'mono'], fallback: 'inter'},
+    // Content width (#205): "normal" is the shipped column, so it writes no
+    // rule of its own; narrow and wide move --column for the whole conversation.
+    {key: 'kova-chat-width', name: 'chat_width', attr: 'data-chat-width',
+     values: ['narrow', 'normal', 'wide'], fallback: 'normal'},
   ];
 
   const root = document.documentElement;
@@ -119,9 +125,11 @@
     textSize: () => state.text_size,
     density: () => state.density,
     font: () => state.font,
+    chatWidth: () => state.chat_width,
     setTextSize: next => store('text_size', next),
     setDensity: next => store('density', next),
     setFont: next => store('font', next),
+    setChatWidth: next => store('chat_width', next),
   };
   load();
 })();

@@ -35,6 +35,8 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "density": ("compact", "default", "comfortable"),
     "font": ("inter", "system", "mono"),
     "motion": ("full", "reduced", "off"),
+    # Content width (#205). "normal" is the shipped 768px column.
+    "chat_width": ("narrow", "normal", "wide"),
 }
 
 # Short free-text lists: name -> (most items, longest item). Used by the start
@@ -57,6 +59,7 @@ DEFAULTS: dict[str, Any] = {
     "density": "default",
     "font": "inter",
     "motion": "full",
+    "chat_width": "normal",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the

@@ -144,6 +144,18 @@ def test_motion_preference_accepts_three_values(http):
         assert http.get("/preferences").json()["motion"] == value
 
 
+def test_chat_width_preference_is_shared(http):
+    """Content width (#205): "normal" is the shipped 768px column."""
+    assert http.get("/preferences").json()["chat_width"] == "normal"
+
+    for value in ("narrow", "wide", "normal"):
+        saved = http.put("/preferences", json={"chat_width": value})
+
+        assert saved.status_code == 200
+        assert saved.json()["chat_width"] == value
+        assert http.get("/preferences").json()["chat_width"] == value
+
+
 @pytest.mark.parametrize("patch, needle", [
     ({"weight": "bold"}, "Unknown preference"),
     ({"theme": "Sepia Tone"}, "must be one of"),
@@ -153,6 +165,7 @@ def test_motion_preference_accepts_three_values(http):
     ({"density": "cozy"}, "must be one of"),
     ({"font": "comic"}, "must be one of"),
     ({"motion": "none"}, "must be one of"),
+    ({"chat_width": "huge"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),
 ])
 def test_a_bad_update_is_refused(http, patch, needle):

@@ -1,10 +1,12 @@
-"""Text size, density and font (#179): three attributes, one block, no per-component rules.
+"""Text size, density, font and content width (#179, #205): one attribute each.
 
-``typography.js`` resolves the Text size / Density / Font preferences — shared with
-the server's UI preferences document — onto ``<html data-text-size data-density
-data-font>``, and one block in ``app.css`` swaps the type, space and font tokens for
-every component. ``default`` and ``inter`` write no override, so an untouched install
-keeps the shipped token values. These checks run in the normal suite and need no browser.
+``typography.js`` resolves the Text size / Density / Font / Content width
+preferences — shared with the server's UI preferences document — onto
+``<html data-text-size data-density data-font data-chat-width>``, and one block
+in ``app.css`` swaps the type, space, font and column values for every
+component. ``default``, ``inter`` and ``normal`` write no override, so an
+untouched install keeps the shipped token values. These checks run in the normal
+suite and need no browser.
 """
 
 from __future__ import annotations
@@ -71,6 +73,18 @@ def test_default_writes_no_override() -> None:
         "default is the shipped scale, so it needs no rule"
     assert '[data-density="default"]' not in text
     assert '[data-font="inter"]' not in text
+    assert '[data-chat-width="normal"]' not in text, \
+        "normal is the shipped column, so it needs no rule"
+
+
+def test_content_width_moves_the_shared_column() -> None:
+    """Content width (#205): one attribute moves the conversation and composer."""
+    narrow = int(re.search(r"--column:(\d+)px", block('[data-chat-width="narrow"]')).group(1))
+    wide = int(re.search(r"--column:(\d+)px", block('[data-chat-width="wide"]')).group(1))
+    shipped = int(re.search(r"--column:(\d+)px",
+                            without_comments(STYLESHEET.read_text(encoding="utf-8"))).group(1))
+    assert 0 < narrow < shipped < wide, \
+        "narrow must read narrower than the shipped column, and wide broader"
 
 
 def test_density_swaps_the_space_tokens_the_conversation_uses() -> None:
@@ -118,8 +132,9 @@ def test_the_typography_block_is_token_only() -> None:
 
 def test_the_script_reads_the_shared_preferences_and_paints_every_attribute() -> None:
     text = without_comments(SCRIPT.read_text(encoding="utf-8"))
-    for needed in ("'data-text-size'", "'data-density'", "'data-font'",
+    for needed in ("'data-text-size'", "'data-density'", "'data-font'", "'data-chat-width'",
                    "'small'", "'large'", "'compact'", "'comfortable'",
-                   "'inter'", "'system'", "'mono'", "'/preferences'", "window.KovaTypography"):
+                   "'inter'", "'system'", "'mono'", "'narrow'", "'wide'",
+                   'chatWidth', 'setChatWidth', "'/preferences'", "window.KovaTypography"):
         assert needed in text, f"typography.js lost {needed}"
     assert "localStorage" in text, "the choices must paint before the server answers"
