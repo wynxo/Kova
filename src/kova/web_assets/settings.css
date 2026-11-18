@@ -232,3 +232,6 @@ body.settings-open { overflow: hidden; }
 
 /* The theme picker grows with installed theme files; it wraps instead of overflowing. */
 .settings-theme { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+
+/* Export/import controls: buttons in a row, the summary under them. */
+.settings-prefs { display: flex; flex: none; gap: var(--space-2); }

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from urllib.parse import quote
 
 import httpx
 
@@ -145,10 +146,26 @@ class KovaClient:
         except ValueError:
             raise KovaError(502, 'This port is not serving Kova. Choose another port in config.toml, then retry.') from None
 
+    def list_projects(self) -> list[dict]:
+        return self._request("GET", "/projects").json()
+
+    def create_project(self, name: str, instructions: str = "", cwd: str | None = None) -> dict:
+        return self._request("POST", "/projects", json={
+            "name": name, "instructions": instructions, "cwd": cwd,
+        }).json()
+
+    def get_project(self, project_id: str) -> dict:
+        return self._request("GET", f"/projects/{quote(project_id, safe='')}").json()
+
+    def delete_project(self, project_id: str) -> bool:
+        return self._request("DELETE", f"/projects/{quote(project_id, safe='')}", missing_ok=True).status_code == 200
+
     def create_chat(self, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
-                    cwd: str | None = None, ephemeral: bool = False) -> dict:
-        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd}
+                    cwd: str | None = None, ephemeral: bool = False, *,
+                    project_id: str | None = None) -> dict:
+        body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
+                "project_id": project_id}
         if ephemeral:
             body["ephemeral"] = True
         body = {field: value for field, value in body.items() if value is not None}
