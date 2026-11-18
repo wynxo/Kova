@@ -488,6 +488,45 @@ def test_unknown_chat_404(server):
     assert response.status_code == 404
 
 
+def test_file_mentions_stay_inside_the_chats_working_folder(server, tmp_path):
+    """@ lists relative names only, under the chat's own folder (#197)."""
+    client, headers, cfg, fake = server
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "main.py").write_text("print('hi')\n")
+    (project / "src" / "math.py").write_text("1 + 1\n")
+    (project / "readme.md").write_text("notes\n")
+    (project / ".git").mkdir()
+    (project / ".git" / "config").write_text("[core]\n")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("not this one\n")
+    (cfg.files_path).mkdir(parents=True, exist_ok=True)
+    (cfg.files_path / "default.txt").write_text("default folder\n")
+
+    chat = client.post("/chats", headers=headers, json={"cwd": str(project)}).json()
+    response = client.get(f"/chats/{chat['id']}/files", headers=headers)
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "src/main.py" in paths
+    assert "readme.md" in paths
+    assert "src/" in paths  # folders are browsable by the next @token
+    assert all(not path.startswith(("/", "..")) for path in paths)
+    assert not any("secret" in path or ".git" in path for path in paths)
+
+    filtered = client.get(f"/chats/{chat['id']}/files?q=MAIN", headers=headers).json()["paths"]
+    assert filtered == ["src/main.py"]
+    assert len(client.get(f"/chats/{chat['id']}/files?limit=1", headers=headers).json()["paths"]) == 1
+
+    # Before a chat exists the composer asks the default folder.
+    default = client.get("/files", headers=headers).json()["paths"]
+    assert "default.txt" in default
+    assert "src/main.py" not in default
+
+    assert client.get("/chats/missing/files", headers=headers).status_code == 404
+    assert client.get("/chats", headers={}).status_code == 401
+    assert client.get("/files", headers={}).status_code == 401
+
+
 def test_manual_compaction_endpoint(server):
     client, headers, cfg, fake = server
     chat_id = client.post('/chats', headers=headers).json()['id']

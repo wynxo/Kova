@@ -133,7 +133,9 @@ source = source.replace('controls(); start();', 'globalThis.test = {parseCommand
 // block headers against the same document.
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/palette.js', import.meta.url), 'utf8'), sandbox);
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/shortcuts.js', import.meta.url), 'utf8'), sandbox);
-vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
+vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/composer-history.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/composer-mentions.js', import.meta.url), 'utf8') + '\n' +
+  readFileSync(new URL('../src/kova/web_assets/chat_list.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\n' +
   readFileSync(new URL('../src/kova/web_assets/reasoning.js', import.meta.url), 'utf8') + '\n' +
@@ -656,10 +658,29 @@ assert.equal(typeof $('composer').listeners.drop, 'function');
 assert.equal(typeof $('prompt').listeners.paste, 'function');
 sandbox.test.pendingAttachments.push({id: 'a', chat_id: 'attachment-chat', name: 'demo.txt', size: 1024, pages: 2});
 sandbox.test.renderAttachments();
-assert.match($('attachment-chips').textContent, /demo.txt.*1.0 KB.*2 pages.*ready/);
+assert.match($('attachment-chips').textContent, /demo.txt.*1.0 KB.*2 pages/);
+const chip = byClass($('attachment-chips'), 'attachment-chip')[0];
+assert.equal(byClass(chip, 'attachment-chip-name')[0].textContent, 'demo.txt');
+assert.equal(byClass(chip, 'attachment-chip-meta')[0].textContent, '1.0 KB · 2 pages');
+assert.equal(buttons(chip)[0].getAttribute('aria-label'), 'Remove demo.txt', 'each chip names what it removes');
 assert.equal($('attachment-note').hidden, false);
 state.chat = {id: 'other-chat'}; sandbox.test.renderAttachments();
 assert.equal($('attachment-chips').textContent, '');
+
+// A pasted screenshot can arrive as a DataTransferItem with no name; it is
+// attached as an image with a name the chip can show.
+applyCapabilities({offered: {work: ['vision']}}); state.chat = null; state.connected = true; state.busy = false;
+sandbox.test.pendingAttachments.length = 0;
+let pastePrevented = 0;
+$('prompt').listeners.paste({
+  clipboardData: {files: [], items: [{kind: 'file', getAsFile: () => new File(['png'], '', {type: 'image/png'})}]},
+  preventDefault() { pastePrevented += 1; },
+});
+await tick(); await tick();
+assert.equal(pastePrevented, 1, 'a pasted image does not also paste as text');
+assert.equal(uploads.at(-1).file.name, 'Pasted image.png');
+assert.match($('attachment-chips').textContent, /Pasted image.png/);
+sandbox.test.pendingAttachments.length = 0;
 // The composer asks for the selected model's contract, not only the active one.
 state.connected = true; state.busy = false; state.chat = {id: 'attachment-chat'};
 state.models = [

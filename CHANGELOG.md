@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Composer polish (#197): Up in an empty message box browses the messages you sent in that chat (Down moves forward, Escape restores the draft), and it only starts while the caret is on the first line. Typing `@` lists files in the chat's working folder, chosen with the arrow keys and inserted as `@path`; the list is a labelled listbox and the list request returns names only, never contents. Attachment chips show the name and size next to a named remove button, and a pasted screenshot is attached even when the clipboard exposes it as an unnamed item.
 - The primary accent is now solid black on light and solid white on dark instead of orange, finishing the monochrome palette; the example themes keep their own accents (#267).
 - Reasoning rows are now Collapsed (default), Expanded or Hidden, set in Settings > General and shared across paired devices with the other preferences (#274).
 - The web app now applies the chosen theme on load: it paints immediately with no light-to-dark flash and takes the window and toolbar colour from it (#277).

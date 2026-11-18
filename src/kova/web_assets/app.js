@@ -32,6 +32,9 @@
   $('autostart-toggle').onchange = () => refreshAutostart($('autostart-toggle').checked ? 'on' : 'off');
   const pendingAttachments = [];
   let readingAttachments = false;
+  // Composer extras (#197): input history and @-mentions live in their own
+  // files and are wired up beside the message box, not inside its send path.
+  const composerModules = {history: null, mentions: null};
   // Installed PWAs stage share-sheet files in this cache and never send them
   // through a text draft; the page uploads them through the normal API.
   const SHARE_CACHE = 'kova-share-v1';
@@ -627,6 +630,8 @@
   function setChat(chat) {
     rememberDraft();
     state.chat = chat;
+    composerModules.history?.reset();
+    composerModules.mentions?.close();
     draftModel = null;
     syncComposerModel();
     renderAttachments();
@@ -1234,7 +1239,7 @@
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
     const command = text ? parseCommand(text) : null;
     if (command) {
-      try { await dispatchCommand(command); consumeDraft(chat, draft); commandPicker(); }
+      try { await dispatchCommand(command); consumeDraft(chat, draft); commandPicker(); composerModules.history?.reset(); composerModules.mentions?.close(); }
       catch (error) { toastError(error.message); }
       return;
     }
@@ -1255,6 +1260,7 @@
         consumeDraft(submittedChat, sendOptions.draft);
       }
       empty(false); message('user', text, undefined, outgoing); options(false);
+      composerModules.history?.reset(); composerModules.mentions?.close();
       const reply = message('assistant');
       nearBottom = true; turn = turnView(reply); follow();
       // Send to the model the chip showed, even if another window just changed
@@ -1375,19 +1381,32 @@
       setChat(null);
     }
     $('prompt').value = draft.text || '';
+    composerModules.history?.reset();
     resize();
     if (draft.files?.length) await attachFiles(draft.files);
+  }
+  function fileSize(bytes) {
+    const size = Number(bytes) || 0;
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   }
   function renderAttachments() {
     $('attachment-chips').replaceChildren();
     for (const item of pendingAttachments.filter(a => a.chat_id === state.chat?.id)) {
-      const chip = el('span', 'attachment-chip', `${item.name} · ${(item.size / 1024).toFixed(1)} KB${item.pages ? ` · ${item.pages} pages` : ''} · ready `);
-      const remove = el('button', '', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${item.name}`);
+      const chip = el('span', 'attachment-chip');
+      const name = el('span', 'attachment-chip-name', item.name || 'Attached file');
+      name.title = item.name || 'Attached file';
+      const meta = el('span', 'attachment-chip-meta', fileSize(item.size) + (item.pages ? ` · ${item.pages} pages` : ''));
+      const remove = el('button', 'attachment-remove'); remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${item.name || 'attached file'}`);
+      remove.title = `Remove ${item.name || 'attached file'}`;
+      remove.append(icon('x'));
       remove.onclick = () => safe(async () => {
         await json(`/chats/${item.chat_id}/attachments/${item.id}`, {method: 'DELETE'});
         pendingAttachments.splice(pendingAttachments.indexOf(item), 1); renderAttachments(); controls();
       });
-      chip.append(remove); $('attachment-chips').append(chip);
+      chip.append(name, meta, remove); $('attachment-chips').append(chip);
     }
     $('attachment-note').hidden = !pendingAttachments.some(a => a.chat_id === state.chat?.id);
   }
@@ -1417,19 +1436,52 @@
   $('attachment-input').onchange = event => { attachFiles([...event.target.files]); event.target.value = ''; };
   $('composer').addEventListener('dragover', event => { event.preventDefault(); });
   $('composer').addEventListener('drop', event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); attachFiles([...event.dataTransfer.files]); });
+  // A screenshot on the clipboard arrives as a File in most browsers and as a
+  // DataTransferItem in Safari; accept both, and give an unnamed image a name
+  // the chip can show.
+  function pastedFiles(event) {
+    const transfer = event.clipboardData;
+    if (!transfer) return [];
+    const files = [...(transfer.files || [])];
+    if (files.length) return files;
+    return [...(transfer.items || [])]
+      .filter(item => item.kind === 'file')
+      .map(item => item.getAsFile?.())
+      .filter(Boolean);
+  }
+  function namedUpload(file) {
+    if (file.name) return file;
+    const kind = file.type || 'image/png';
+    const ext = (kind.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('+xml', '');
+    return new File([file], `Pasted image.${ext}`, {type: kind});
+  }
   $('prompt').addEventListener('paste', event => {
-    const files = [...(event.clipboardData?.files || [])];
-    if (files.length) { event.preventDefault(); attachFiles(files); }
+    const files = pastedFiles(event);
+    if (files.length) { event.preventDefault(); attachFiles(files.map(namedUpload)); }
   });
+  // The two composer extras (#197). Their modules draw and move their own
+  // surfaces; app.js only supplies the chat history and the path request.
+  function promptChanged() { resize(); commandPicker(); }
+  composerModules.history = globalThis.KovaComposerHistory?.attach?.($('prompt'), {
+    messages: () => state.chat?.messages || [],
+    onChange: () => { promptChanged(); composerModules.mentions?.input(); },
+  }) || null;
+  composerModules.mentions = globalThis.KovaComposerMentions?.attach?.({
+    textarea: $('prompt'), listbox: $('mention-list'), onChange: promptChanged,
+    paths: async fragment => {
+      const base = state.chat ? `/chats/${encodeURIComponent(state.chat.id)}/files` : '/files';
+      const result = await json(`${base}?q=${encodeURIComponent(fragment)}&limit=20`);
+      return result.paths || [];
+    },
+  }) || null;
   $('composer').addEventListener('submit', send);
-  $('prompt').addEventListener('input', () => { resize(); commandPicker(); rememberDraft(); });
+  $('prompt').addEventListener('input', () => { promptChanged(); rememberDraft(); composerModules.mentions?.input(); });
   $('prompt').addEventListener('keydown', event => {
+    // The mention list owns its arrows and Enter while it is open.
+    if (composerModules.mentions?.keydown(event)) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); $('composer').requestSubmit(); }
-    // Like a shell: Up in an empty box brings back what you last said.
-    if (event.key === 'ArrowUp' && !$('prompt').value) {
-      const last = (state.chat?.messages || []).filter(msg => msg.role === 'user' && typeof msg.content === 'string').at(-1);
-      if (last) { event.preventDefault(); $('prompt').value = last.content; resize(); }
-    }
+    // Like a shell: Up at the start of an empty box brings back what you said.
+    composerModules.history?.keydown(event);
   });
   $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));

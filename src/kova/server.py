@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins, egress, reasoning_effort, themes, ui_prefs
+from kova import __version__, checkpoints, pairing, plugins, egress, reasoning_effort, themes, ui_prefs, project_files
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -815,6 +815,20 @@ def create_app(
         if "model" in changes:
             keys += ("model", "reasoning_effort")
         return {key: chat[key] for key in keys}
+
+    @api.get("/files")
+    async def list_default_files(q: str = "", limit: int = Query(20, ge=1, le=50)) -> dict:
+        """Paths in the default folder, for @ before a chat exists."""
+        return {"paths": await asyncio.to_thread(project_files.search, config.files_path, q, limit)}
+
+    @api.get("/chats/{chat_id}/files")
+    async def list_chat_files(chat_id: str, q: str = "", limit: int = Query(20, ge=1, le=50)) -> dict:
+        """Paths inside the chat's working folder, names only, for the @ list."""
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        folder = chat.get("cwd") or config.files_path
+        return {"paths": await asyncio.to_thread(project_files.search, folder, q, limit)}
 
     @api.post("/chats/{chat_id}/attachments")
     async def upload_attachment(chat_id: str, request: Request, file: UploadFile = File(...)) -> dict:
