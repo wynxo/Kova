@@ -363,8 +363,14 @@ and `data-font` on `<html>`, and one block in `app.css` swaps the `--type-size-*
 `--space-*` and `--font` tokens, so no component repeats a size or a gap. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
-an incognito chat never gets a draft key. The sidebar keeps pinned chats on top and groups the
-rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
+an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and
+`mobile.css`, #202) the same markup is laid out for a thumb: the page follows the visual
+viewport so the composer stays above the on-screen keyboard, the top bar, sidebar and
+composer pad themselves into the safe-area insets, the popovers and menus become bottom
+sheets with a drag handle and swipe-down to close (Escape and the backdrop still work), an
+edge swipe opens the conversation drawer, and every control gets a 44px hit area. The
+sidebar keeps pinned chats on top and groups the rest into Today, Yesterday, Previous 7
+days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. The header
 carries one activity entry: a dot and count while any chat is `working` or
 `blocked-on-approval`, fed by the same `conversation_state` events, with Open
