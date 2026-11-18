@@ -14,11 +14,14 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning motion animation',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
          keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
          control: 'theme'},
+        {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
+         keywords: 'motion animation animate transition reduce reduced still accessibility',
+         control: 'motion'},
         {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
          keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
@@ -359,9 +362,62 @@
     }
   }
 
+  // Motion is a three-way choice: Full follows this device's reduced-motion
+  // setting, Reduced keeps quick fades and stops every loop but the spinner,
+  // and Off removes movement entirely. KovaMotion owns the value, the server
+  // copy and <html data-motion>; this only reflects and changes it.
+  const MOTION = [
+    ['full', 'Full', "Follow this device's reduced-motion setting"],
+    ['reduced', 'Reduced', 'Quick fades, and no looping animation except the spinner'],
+    ['off', 'Off', 'No transitions or animations at all'],
+  ];
+  const motionRadios = [];
+  function motionMode() {
+    return window.KovaMotion ? window.KovaMotion.mode() : 'full';
+  }
+  function motionControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Motion');
+    for (const [value, label, hint] of MOTION) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseMotion(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = MOTION.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = MOTION[(at + step + MOTION.length) % MOTION.length][0];
+        chooseMotion(next);
+        motionRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      motionRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
+  }
+  function chooseMotion(value) {
+    window.KovaMotion?.setMode(value);
+    syncMotion();
+  }
+  function syncMotion() {
+    const value = motionMode();
+    for (const radio of motionRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
+  }
+
   function syncControls() {
     syncTheme();
     syncReasoning();
+    syncMotion();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
       button.disabled = Boolean(target?.disabled);
@@ -389,6 +445,8 @@
       row.append(themeControl());
     } else if (item.control === 'reasoning') {
       row.append(reasoningControl());
+    } else if (item.control === 'motion') {
+      row.append(motionControl());
     } else if (item.host) {
       const hosted = byId(item.host);
       if (hosted) {
