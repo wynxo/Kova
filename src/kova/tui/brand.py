@@ -55,7 +55,7 @@ def wordmark(version: str | None = None) -> Group:
 
 
 def heading(text: str, detail: str = "") -> Text:
-    """A section heading: a violet diamond, the title and a quiet detail."""
+    """A section heading: an accent diamond, the title and a quiet detail."""
     line = Text.assemble((" ◆ ", f"bold {colour('ACCENT')}"), (text, "bold"))
     if detail:
         line.append("  " + detail, style=colour('MUTED'))

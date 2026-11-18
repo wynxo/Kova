@@ -217,7 +217,7 @@ whole object as its `data`, so a client can switch on either.
 
 Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `privacy`,
 `tool_call_delta`, `tool_call`, `tool_result`, `approval`, `approval_resolved`,
-`question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `stopped`,
+`question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `model_switch`, `stopped`,
 `done` and `error`. The stream stays open across tool calls and approvals; `done` closes a
 successful turn with the stored message id, model name and `usage` (see
 [Usage and cost](#usage-and-cost)), plus `budget_warning` at most once a day when
@@ -339,10 +339,15 @@ variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at ru
 CSP allows scripts, styles and fonts from `'self'` only. `app.js` is a client
 only: it has no agent logic and no permanent token. It renders Markdown
 through DOMPurify, streams turns with `fetch` + a hand-rolled SSE reader,
-shows reasoning folded into "Thought for Ns" rows (hideable in Settings) and
-live tool rows, and listens to `/events` with
-`EventSource` for reminders. Light/dark choice is a `data-theme` attribute
-stored in `localStorage`. The sidebar keeps pinned chats on top and groups the
+shows reasoning folded into "Thought for Ns" rows (collapsed, expanded or
+hidden in Settings) and live tool rows, and listens to `/events` with
+`EventSource` for reminders. The theme (`web_assets/theme.js`, #174) is one
+choice - `system`, `light`, `dark` or an installed theme file's id - kept in the
+shared `/preferences` document and cached in `localStorage`; it runs from `<head>`
+so the first frame is already right, sets `data-theme` for the built-in palette, and
+writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
+properties on `<html>`. The `theme-color` meta tag and the web manifest take the
+theme's `bg.base`. The sidebar keeps pinned chats on top and groups the
 rest into Today, Yesterday, Previous 7 days and Older by local calendar day;
 `pinned` lives on the chat, so every client shows the same order. Optional sound cues (`web_assets/sounds.js`, off by
 default, with a volume and per-event switches in the *Sounds* panel) are
@@ -859,6 +864,15 @@ are transient form/in-memory data, never browser storage. CLI setup writes
 through the running server when available; no restart is needed. The desktop
 model select uses optgroups; terminal chat's filtered picker renders provider
 headings while keeping stable model aliases as the selection value.
+
+The composer saves a model alias and optional reasoning effort on the chat.
+Unpinned chats use the configured default; an explicit message model still
+overrides the chat for that turn. The client uses `model_switch` events and
+message metadata to mark where a different model took over. The marker is
+never sent in the model's prompt. `GET /models` reports the supported
+effort choices, Local/Cloud classification and the last recorded local speed
+when available. The Local badge is not an exception to Local only mode, which
+still blocks all non-loopback connections.
 
 ### The capability contract
 

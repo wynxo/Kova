@@ -6,70 +6,119 @@
   <meta name="color-scheme" content="dark light">
   <title>Kova · Component gallery</title>
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app/assets/tokens.css">
   <link rel="stylesheet" href="/app/assets/app.css">
+  <link rel="stylesheet" href="/app/assets/toast.css">
+  <link rel="stylesheet" href="/app/assets/tool-cards.css">
+  <link rel="stylesheet" href="/app/assets/diff.css">
   <style>
-    /* Layout only. Every colour comes from the tokens in app.css; the gallery
-       pins a state that CSS otherwise takes from the pointer or focus. */
+    /* Layout only. Every colour comes from the semantic tokens in tokens.css;
+       this page only pins the states that CSS otherwise reads from the
+       pointer, keyboard focus or a live turn. */
     body.gallery-page { display:block; height:auto; min-height:100vh; overflow:auto; }
     .gallery-main { display:grid; gap:28px; max-width:1080px; margin:0 auto; padding:32px 20px 64px; }
     .gallery-head { display:grid; gap:8px; }
     .gallery-head h1 { font-size:24px; font-weight:620; letter-spacing:-.02em; }
-    .gallery-head p { max-width:74ch; color:var(--text-2); font-size:13.5px; line-height:1.6; }
+    .gallery-head p { max-width:74ch; color:var(--fg-muted); font-size:13.5px; line-height:1.6; }
     .gallery-head code, .gallery-item h3 code {
-      padding:1px 5px; border-radius:5px; background:var(--surface-2); font:.9em/1.4 var(--mono);
+      padding:1px 5px; border-radius:5px; background:var(--bg-raised); font:.9em/1.4 var(--mono);
+    }
+    .gallery-switchers { display:flex; flex-wrap:wrap; gap:16px; margin-top:4px; }
+    .gallery-switcher { display:flex; align-items:center; gap:8px; }
+    .gallery-switcher > span { color:var(--fg-faint); font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; }
+    .gallery-switcher .modes { display:flex; gap:4px; }
+    .gallery-switcher .modes button {
+      font:inherit; font-size:12px; padding:6px 12px; cursor:pointer;
+      color:var(--fg-muted); background:var(--bg-surface);
+      border:1px solid var(--border-subtle); border-radius:999px;
+    }
+    .gallery-switcher .modes button[aria-pressed="true"] {
+      color:var(--accent-on); background:var(--accent-default); border-color:var(--accent-default);
     }
     .gallery-section {
       display:grid; gap:16px; padding:18px;
-      border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface);
+      border:1px solid var(--border-subtle); border-radius:var(--radius-lg); background:var(--bg-surface);
     }
     .gallery-section h2 { font-size:15px; font-weight:600; }
+    .gallery-section > p { color:var(--fg-muted); font-size:13px; line-height:1.55; max-width:74ch; }
     .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; }
+    .gallery-grid.wide { grid-template-columns:1fr; }
     .gallery-item {
       display:grid; align-content:start; gap:10px; min-width:0; padding:12px;
-      border:1px solid var(--border); border-radius:var(--r-md); background:var(--bg);
+      border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-base);
     }
-    .gallery-item h3 { color:var(--text-2); font-size:12.5px; font-weight:600; }
+    .gallery-item h3 { color:var(--fg-muted); font-size:12.5px; font-weight:600; }
     .gallery-demo { display:grid; justify-items:start; gap:5px; min-width:0; }
-    .gallery-label { color:var(--text-3); font-size:10.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; }
-    .gallery-demo .search, .gallery-demo .folder-control, .gallery-demo label, .gallery-demo .field { width:100%; }
+    .gallery-demo.block { display:block; }
+    .gallery-label { color:var(--fg-faint); font-size:10.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; }
+    .gallery-demo .search, .gallery-demo .field, .gallery-demo label { width:100%; }
+
+    /* Compact density previews the body token where the app uses the
+       comfortable one; comfortable (the default) changes nothing. */
+    [data-density="compact"] .gallery-messages .markdown,
+    [data-density="compact"] .gallery-messages .message.user .message-body { font-size:var(--type-size-body); }
 
     /* Hover-like: the declarations each component gets from :hover. */
-    .gallery-demo[data-state="hover"] .btn:not(.primary):not(.quiet):not(.danger) { background:var(--surface-3); }
-    .gallery-demo[data-state="hover"] .btn.primary { background:var(--accent-strong); }
-    .gallery-demo[data-state="hover"] .btn.quiet { background:var(--surface-2); color:var(--text); }
-    .gallery-demo[data-state="hover"] .btn.danger { background:var(--danger-soft); }
-    .gallery-demo[data-state="hover"] .icon-button { background:var(--surface-2); color:var(--text); }
-    .gallery-demo[data-state="hover"] .chip.toggle { background:var(--surface-2); color:var(--text); }
-    .gallery-demo[data-state="hover"] .chip.toggle[aria-pressed="true"] {
-      background:color-mix(in srgb, var(--accent) 20%, transparent); color:var(--accent);
+    .gallery-demo[data-state="hover"] .btn:not(.primary):not(.quiet):not(.danger) { background:var(--bg-raised); }
+    .gallery-demo[data-state="hover"] .btn.primary { background:var(--accent-hover); }
+    .gallery-demo[data-state="hover"] .btn.quiet { background:var(--bg-raised); color:var(--fg-default); }
+    .gallery-demo[data-state="hover"] .btn.danger { background:color-mix(in srgb, var(--status-danger) 11%, transparent); }
+    .gallery-demo[data-state="hover"] .icon-button { background:var(--bg-raised); color:var(--fg-default); }
+    .gallery-demo[data-state="hover"] .send { opacity:.86; }
+    .gallery-demo[data-state="hover"] .search { background:var(--bg-raised); }
+    .gallery-demo[data-state="hover"] .chat-option-input { border-color:var(--border-strong); }
+    .gallery-demo[data-state="hover"] .menu-button { background:var(--bg-raised); }
+    .gallery-demo[data-state="hover"] .field .menu-button {
+      background:var(--bg-base);
+      border-color:color-mix(in srgb, var(--accent-default) 42%, transparent);
     }
-    .gallery-demo[data-state="hover"] .send { background:var(--accent-strong); }
-    .gallery-demo[data-state="hover"] .search { background:var(--surface); }
-    .gallery-demo[data-state="hover"] .folder-control { border-color:var(--border-strong); }
-    .gallery-demo[data-state="hover"] .menu-button {
-      background:var(--bg); border-color:var(--accent-line); color:var(--text);
-    }
+    .gallery-demo[data-state="hover"] .compose-menu-item { background:var(--bg-raised); }
+    .gallery-demo[data-state="hover"] .message-action { background:var(--bg-raised); color:var(--fg-default); }
 
     /* Focus: the same outline and field ring the app draws for :focus-visible. */
-    .gallery-demo[data-state="focus"] :is(.btn, .icon-button, .chip, .send, .menu-button),
+    .gallery-demo[data-state="focus"] :is(.btn, .icon-button, .send, .menu-button, .compose-menu-item, .message-action) {
+      outline:2px solid var(--accent-default); outline-offset:2px;
+    }
+    .gallery-demo[data-state="focus"] .search { background:var(--bg-base); border-color:var(--border-strong); }
+    .gallery-demo[data-state="focus"] .search input { outline:none; }
+    .gallery-demo[data-state="focus"] .chat-option-input {
+      outline:none; border-color:var(--border-strong); box-shadow:0 0 0 1px var(--border-strong);
+    }
+    .gallery-demo[data-state="focus"] dialog input:not([type="checkbox"]),
+    .gallery-demo[data-state="focus"] dialog textarea,
+    .gallery-demo[data-state="focus"] .approval-message input {
+      outline:none; border-color:var(--accent-default); box-shadow:0 0 0 3px var(--accent-soft);
+    }
     .gallery-demo[data-state="focus"] input[type="checkbox"] {
-      outline:2px solid var(--accent); outline-offset:2px;
+      outline:2px solid var(--accent-default); outline-offset:2px;
     }
-    .gallery-demo[data-state="focus"] .search { background:var(--surface); border-color:var(--accent-line); }
-    .gallery-demo[data-state="focus"] .folder-control { border-color:var(--accent-line); color:var(--text); }
-    .gallery-demo[data-state="focus"] .search input,
-    .gallery-demo[data-state="focus"] .folder-control input { outline:none; }
-    .gallery-demo[data-state="focus"] input:not([type="checkbox"]),
-    .gallery-demo[data-state="focus"] textarea {
-      outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
-    }
+    .gallery-demo[data-state="focus"] .switch { outline:2px solid var(--accent-default); outline-offset:2px; }
+    .gallery-demo[data-state="focus"] .popover-search { outline:2px solid var(--accent-default); outline-offset:1px; }
 
-    /* The dialog is only a styling context for the real field rules. */
+    /* The dialog, popover and toast samples are styling contexts only: show
+       them in place instead of fixed/overlaid. */
     .gallery-dialog[open] {
       position:static; display:block; width:100%; max-width:none; max-height:none;
-      margin:0; padding:0; border:0; background:none; color:var(--text);
+      margin:0; padding:0; border:0; background:none; color:var(--fg-default);
       box-shadow:none; animation:none;
     }
+    .gallery-dialog[open] .gallery-dialog-frame {
+      width:min(440px, 100%); padding:20px;
+      border:1px solid var(--border-strong); border-radius:var(--radius-lg);
+      background:var(--bg-surface); color:var(--fg-default);
+      box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+    }
+    .gallery-popover {
+      position:static; animation:none; width:min(300px, 100%);
+    }
+    .gallery-menu {
+      position:static; animation:none; width:min(240px, 100%);
+    }
+    .gallery-toasts { display:grid; gap:8px; width:100%; }
+    .gallery-toasts .toast { animation:none; }
+    .gallery-messages { display:grid; gap:16px; width:100%; max-width:var(--type-measure-chat); }
+    .gallery-messages .message-actions { opacity:1; }
+    .gallery-spinner-row { display:flex; align-items:center; gap:8px; color:var(--fg-faint); font-size:14px; }
   </style>
 </head>
 <body class="gallery-page">
@@ -77,8 +126,33 @@
     <header class="gallery-head">
       <h1>Component gallery</h1>
       <p>Dev-only: start Kova with <code>KOVA_GALLERY=1</code>, then open <code>/app/gallery</code>.
-        Every sample uses the classes and tokens from <code>app.css</code>; this page only pins the
-        hover and focus states that CSS normally reads from the pointer.</p>
+        Every sample uses the classes and tokens from <code>tokens.css</code> and <code>app.css</code>
+        (plus <code>toast.css</code>, <code>tool-cards.css</code> and <code>diff.css</code>);
+        this page only pins the hover, focus and turn states that CSS normally
+        reads from the pointer, the keyboard or a live reply.</p>
+      <div class="gallery-switchers" role="group" aria-label="Preview settings">
+        <div class="gallery-switcher">
+          <span id="gallery-theme-label">Theme</span>
+          <div class="modes" role="group" aria-labelledby="gallery-theme-label">
+            <button type="button" data-theme-value="dark" aria-pressed="true">Dark</button>
+            <button type="button" data-theme-value="light" aria-pressed="false">Light</button>
+          </div>
+        </div>
+        <div class="gallery-switcher">
+          <span id="gallery-density-label">Density</span>
+          <div class="modes" role="group" aria-labelledby="gallery-density-label">
+            <button type="button" data-density-value="comfortable" aria-pressed="true">Comfortable</button>
+            <button type="button" data-density-value="compact" aria-pressed="false">Compact</button>
+          </div>
+        </div>
+        <div class="gallery-switcher">
+          <span id="gallery-motion-label">Motion</span>
+          <div class="modes" role="group" aria-labelledby="gallery-motion-label">
+            <button type="button" data-motion-value="full" aria-pressed="true">Full</button>
+            <button type="button" data-motion-value="reduced" aria-pressed="false">Reduced</button>
+          </div>
+        </div>
+      </div>
     </header>
 
     <section class="gallery-section" aria-labelledby="gallery-buttons">
@@ -125,11 +199,11 @@
         </article>
 
         <article class="gallery-item">
-          <h3>Toggle chip <code>.chip.toggle</code></h3>
-          <div class="gallery-demo"><span class="gallery-label">Default</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
-          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
-          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="chip toggle" type="button" aria-pressed="true"><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
-          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="chip toggle" type="button" aria-pressed="true" disabled><span class="icon i-globe" aria-hidden="true"></span>Web on</button></div>
+          <h3>Switch <code>.switch</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">On</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Web search"><span class="switch-thumb" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo"><span class="gallery-label">Off</span><button class="switch" type="button" role="switch" aria-checked="false" aria-label="Web search"><span class="switch-thumb" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Web search"><span class="switch-thumb" aria-hidden="true"></span></button></div>
+          <div class="gallery-demo"><span class="gallery-label">Disabled</span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Web search" disabled><span class="switch-thumb" aria-hidden="true"></span></button></div>
         </article>
 
         <article class="gallery-item">
@@ -177,11 +251,11 @@
           </article>
 
           <article class="gallery-item">
-            <h3>Folder field <code>.folder-control</code></h3>
-            <div class="gallery-demo"><span class="gallery-label">Default</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
-            <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
-            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder"></label></div>
-            <div class="gallery-demo"><span class="gallery-label">Disabled</span><label class="chip folder-control"><span class="icon i-folder" aria-hidden="true"></span><input placeholder="Kova files folder" aria-label="Working folder" disabled></label></div>
+            <h3>Option field <code>.chat-option-input</code></h3>
+            <div class="gallery-demo"><span class="gallery-label">Default</span><div class="chat-option"><span class="chat-option-label">Folder</span><input class="chat-option-input" placeholder="Kova files folder" aria-label="Working folder"></div></div>
+            <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span><div class="chat-option"><span class="chat-option-label">Folder</span><input class="chat-option-input" placeholder="Kova files folder" aria-label="Working folder"></div></div>
+            <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span><div class="chat-option"><span class="chat-option-label">Folder</span><input class="chat-option-input" placeholder="Kova files folder" aria-label="Working folder"></div></div>
+            <div class="gallery-demo"><span class="gallery-label">Disabled</span><div class="chat-option"><span class="chat-option-label">Folder</span><input class="chat-option-input" placeholder="Kova files folder" aria-label="Working folder" disabled></div></div>
           </article>
 
           <article class="gallery-item">
@@ -193,6 +267,335 @@
         </div>
       </dialog>
     </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-menus">
+      <h2 id="gallery-menus">Menus and popovers</h2>
+      <p>Small surfaces that open above the message box or next to a control.
+        The page shows them in place; the app positions them.</p>
+      <div class="gallery-grid">
+        <article class="gallery-item">
+          <h3>Popover <code>.popover .option</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Default</span>
+            <div class="popover gallery-popover">
+              <div class="popover-list" role="listbox" aria-label="Model">
+                <div class="option" role="option" aria-selected="true"><span class="option-text"><span class="option-title">local</span><span class="option-note">On this PC</span></span><span class="icon i-check" aria-hidden="true"></span></div>
+                <div class="option" role="option" aria-selected="false"><span class="option-text"><span class="option-title">shared-large</span><span class="option-note">Needs an API key</span></span><span class="icon i-check" aria-hidden="true"></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="gallery-demo"><span class="gallery-label">Search</span>
+            <div class="popover gallery-popover"><input class="popover-search" placeholder="Search models" aria-label="Search models"></div>
+          </div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span>
+            <div class="popover gallery-popover"><input class="popover-search" placeholder="Search models" aria-label="Search models"></div>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Composer menu <code>.compose-menu</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Default</span>
+            <div class="compose-menu gallery-menu" role="menu" aria-label="Add files and more">
+              <button type="button" role="menuitem" class="compose-menu-item"><span class="icon i-paperclip" aria-hidden="true"></span><span>Attach files</span></button>
+              <button type="button" role="menuitem" class="compose-menu-item"><span class="icon i-slash" aria-hidden="true"></span><span>Slash commands</span></button>
+            </div>
+          </div>
+          <div class="gallery-demo" data-state="hover"><span class="gallery-label">Hover</span>
+            <div class="compose-menu gallery-menu" role="menu" aria-label="Add files and more">
+              <button type="button" role="menuitem" class="compose-menu-item"><span class="icon i-paperclip" aria-hidden="true"></span><span>Attach files</span></button>
+            </div>
+          </div>
+          <div class="gallery-demo" data-state="focus"><span class="gallery-label">Focus</span>
+            <div class="compose-menu gallery-menu" role="menu" aria-label="Add files and more">
+              <button type="button" role="menuitem" class="compose-menu-item"><span class="icon i-paperclip" aria-hidden="true"></span><span>Attach files</span></button>
+            </div>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Empty <code>.option-empty</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">No matches</span>
+            <div class="popover gallery-popover"><p class="option-empty">Nothing matches. Try a shorter word.</p></div>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Empty list</span>
+            <div class="history-empty">No chats yet.</div>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Empty panel</span>
+            <div class="panel-empty">Nothing here yet.</div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-dialog">
+      <h2 id="gallery-dialog">Dialog</h2>
+      <p>The rename dialog from the app, shown in place with its error state.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>Rename <code>dialog .dialog-actions</code></h3>
+          <dialog open class="gallery-dialog" aria-labelledby="gallery-dialog-title">
+            <div class="gallery-dialog-frame">
+              <form method="dialog">
+                <div class="dialog-head"><h2 id="gallery-dialog-title">Rename conversation</h2><button type="button" class="icon-button" aria-label="Close"><span class="icon i-x" aria-hidden="true"></span></button></div>
+                <p id="gallery-dialog-description">Give this chat a short name.</p>
+                <label>Conversation name<input maxlength="200" autocomplete="off" placeholder="New conversation" value="Trip notes"></label>
+                <div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button value="confirm" class="btn primary">Save</button></div>
+              </form>
+            </div>
+          </dialog>
+          <div class="gallery-demo"><span class="gallery-label">Error</span><p class="phone-error" role="alert">That name is already used. Pick another one.</p></div>
+          <div class="gallery-demo"><span class="gallery-label">Loading</span>
+            <div class="gallery-spinner-row"><span class="spinner" aria-hidden="true"></span><span>Saving…</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-messages">
+      <h2 id="gallery-messages">Messages and markdown</h2>
+      <p>A user bubble, a full assistant reply, and the reply while it streams.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>User <code>.message.user</code></h3>
+          <div class="gallery-messages">
+            <article class="message user">
+              <div class="message-label">You</div>
+              <div class="message-body">Summarise these notes into three bullets.</div>
+            </article>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Assistant <code>.message.assistant .markdown</code></h3>
+          <div class="gallery-messages">
+            <article class="message assistant">
+              <div class="message-label"><img class="avatar" src="/app/assets/icon.svg" alt="">Kova</div>
+              <div class="message-body">
+                <div class="markdown">
+                  <h2>Notes</h2>
+                  <p>Three points, with <code>inline code</code> and a <a href="/app/gallery">link</a>:</p>
+                  <ul>
+                    <li>First point with <strong>strong</strong> text</li>
+                    <li>Second point with <em>emphasis</em></li>
+                  </ul>
+                  <blockquote><p>Quoted context stays indented and muted.</p></blockquote>
+                  <pre><code><span class="hljs-keyword">const</span> <span class="hljs-title">total</span> = <span class="hljs-number">3</span>;
+<span class="hljs-title">total</span>.<span class="hljs-title">toFixed</span>(<span class="hljs-number">1</span>); <span class="hljs-comment">// one decimal</span></code></pre>
+                  <div class="table-wrap"><table>
+                    <thead><tr><th>Point</th><th>Status</th></tr></thead>
+                    <tbody><tr><td>First</td><td>Done</td></tr><tr><td>Second</td><td>Next</td></tr></tbody>
+                  </table></div>
+                </div>
+                <div class="message-actions">
+                  <button class="message-action" type="button" aria-label="Copy reply"><span class="icon i-copy" aria-hidden="true"></span></button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Streaming <code>.markdown.live</code></h3>
+          <div class="gallery-messages">
+            <article class="message assistant">
+              <div class="message-label"><img class="avatar" src="/app/assets/icon.svg" alt="">Kova</div>
+              <div class="message-body">
+                <div class="markdown live"><p>Writing the second bullet…</p></div>
+                <div class="activity"><span class="spinner" aria-hidden="true"></span><span class="shimmer">Thinking…</span></div>
+              </div>
+            </article>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-turn">
+      <h2 id="gallery-turn">Turn pieces</h2>
+      <p>Tool rows, the plan list, the approval card, and the quiet activity line.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>Tool rows <code>.tool .tool-row</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Done</span>
+            <details class="tool" open>
+              <summary class="tool-row"><span class="icon i-check" aria-hidden="true"></span><strong>read_file</strong><span class="tool-detail">notes.md</span></summary>
+              <pre class="tool-output">Oat flat white, no sugar.</pre>
+            </details>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Failed</span>
+            <details class="tool" open>
+              <summary class="tool-row failed"><span class="icon i-triangle-alert" aria-hidden="true"></span><strong>web_fetch</strong><span class="tool-detail">example page</span></summary>
+              <pre class="tool-output">The page did not answer. Check the address and retry.</pre>
+            </details>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Tool cards <code>.tool-card</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Done</span>
+            <details class="tool-card" open>
+              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">done</span></summary>
+              <div class="tool-card-rows"><pre>2 results in 1.2s</pre></div>
+            </details>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Error</span>
+            <details class="tool-card" open>
+              <summary class="tool-card-summary">Searched the web for “quiet kettle”<span class="tool-card-status">failed</span></summary>
+              <div class="tool-card-rows"><p class="tool-card-error">The search did not answer. Retry.</p></div>
+            </details>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Plan <code>.plan-view</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Done, in progress, pending</span>
+            <section class="plan-view" aria-label="Plan">
+              <strong>Plan</strong>
+              <ul>
+                <li class="plan-done"><span class="plan-mark" role="img" aria-label="done"><span class="icon i-check" aria-hidden="true"></span></span><span>Read the notes</span></li>
+                <li class="plan-in_progress"><span class="plan-mark" role="img" aria-label="in progress"></span><span>Write the summary</span></li>
+                <li class="plan-pending"><span class="plan-mark" role="img" aria-label="pending"></span><span>File it under trips</span></li>
+              </ul>
+            </section>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Approval <code>.approval-card</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Pending</span>
+            <section class="approval-card" aria-label="Tool approval" role="group">
+              <div class="approval-heading"><span class="icon i-shield-check" aria-hidden="true"></span><strong>Kova needs your approval</strong><span class="risk-badge risk-destructive">destructive</span></div>
+              <small>run_command</small>
+              <pre>rm -rf ~/projects/demo/dist</pre>
+              <label class="approval-message"><span>Optional: what to do instead</span><input maxlength="4000" placeholder="Tell Kova what to do instead"></label>
+              <div class="approval-actions"><button class="btn primary" type="button">Allow once</button><button class="btn" type="button">Allow for session</button><button class="btn danger" type="button">Deny</button></div>
+              <div class="approval-status" role="status"></div>
+            </section>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Resolved</span>
+            <section class="approval-card" aria-label="Tool approval" role="group">
+              <div class="approval-heading"><span class="icon i-shield-check" aria-hidden="true"></span><strong>Kova needs your approval</strong><span class="risk-badge">read</span></div>
+              <small>read_file</small>
+              <pre>notes.md</pre>
+              <div class="approval-actions"><button class="btn primary" type="button" disabled>Allow once</button><button class="btn danger" type="button" disabled>Deny</button></div>
+              <div class="approval-status" role="status">Allowed once</div>
+            </section>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Spinner and activity <code>.spinner .activity</code></h3>
+          <div class="gallery-demo"><span class="gallery-label">Loading</span>
+            <div class="gallery-spinner-row"><span class="spinner" aria-hidden="true"></span><span>Working…</span></div>
+          </div>
+          <div class="gallery-demo"><span class="gallery-label">Activity</span>
+            <div class="activity"><span class="spinner" aria-hidden="true"></span><span class="shimmer">Thinking…</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-diff">
+      <h2 id="gallery-diff">Diffs</h2>
+      <p>Per-turn change review lines and the file browser.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>Change lines <code>.diff .diff-line</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Hunk, addition, deletion</span>
+            <div class="diff" role="group" aria-label="Sample diff"><span class="diff-line meta">notes.md</span><span class="diff-line hunk">@@ -1,3 +1,3 @@</span><span class="diff-line"> Oat flat white,</span><span class="diff-line del">- no sugar.</span><span class="diff-line add">+ oat milk.</span></div>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>File diff <code>.file-diff</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Rows</span>
+            <div class="file-diff" role="group" aria-label="Sample file diff" tabindex="0">
+              <details class="file-diff-file" open>
+                <summary>notes.md</summary>
+                <div class="file-diff-row file-diff-del"><span class="file-diff-number">1</span><span class="file-diff-number"></span><code class="file-diff-source">no sugar.</code></div>
+                <div class="file-diff-row file-diff-add"><span class="file-diff-number"></span><span class="file-diff-number">1</span><code class="file-diff-source">oat milk.</code></div>
+                <div class="file-diff-row file-diff-meta"><span class="file-diff-number"></span><span class="file-diff-number"></span><code class="file-diff-source">2 lines changed</code></div>
+              </details>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="gallery-section" aria-labelledby="gallery-feedback">
+      <h2 id="gallery-feedback">Toasts and errors</h2>
+      <p>Transient confirmations stack in <code>#toasts</code>; turn errors stay
+        in the transcript and the notice line offers a retry.</p>
+      <div class="gallery-grid wide">
+        <article class="gallery-item">
+          <h3>Toasts <code>.toast</code></h3>
+          <div class="gallery-toasts">
+            <article class="toast toast-info" data-severity="info" role="status" aria-live="polite" aria-atomic="true">
+              <span class="icon i-info" aria-hidden="true"></span>
+              <div class="toast-body"><strong class="toast-title">Kova</strong><span class="toast-message">Reminder saved for tomorrow 9am.</span></div>
+              <button class="icon-button toast-close" type="button" aria-label="Dismiss notification"><span class="icon i-x" aria-hidden="true"></span></button>
+            </article>
+            <article class="toast toast-success" data-severity="success" role="status" aria-live="polite" aria-atomic="true">
+              <span class="icon i-check" aria-hidden="true"></span>
+              <div class="toast-body"><strong class="toast-title">Done</strong><span class="toast-message">Chat exported.</span></div>
+              <button class="btn quiet small toast-action" type="button">Undo</button>
+              <button class="icon-button toast-close" type="button" aria-label="Dismiss notification"><span class="icon i-x" aria-hidden="true"></span></button>
+            </article>
+            <article class="toast toast-warning" data-severity="warning" role="alert" aria-live="assertive" aria-atomic="true">
+              <span class="icon i-triangle-alert" aria-hidden="true"></span>
+              <div class="toast-body"><span class="toast-message">The model is slow today. Replies may take longer.</span></div>
+              <button class="icon-button toast-close" type="button" aria-label="Dismiss notification"><span class="icon i-x" aria-hidden="true"></span></button>
+            </article>
+            <article class="toast toast-error" data-severity="error" role="alert" aria-live="assertive" aria-atomic="true">
+              <span class="icon i-triangle-alert" aria-hidden="true"></span>
+              <div class="toast-body"><strong class="toast-title">Send failed</strong><span class="toast-message">Kova is offline. Reconnect and retry.</span></div>
+              <button class="btn quiet small toast-action" type="button">Retry</button>
+              <button class="icon-button toast-close" type="button" aria-label="Dismiss notification"><span class="icon i-x" aria-hidden="true"></span></button>
+            </article>
+          </div>
+        </article>
+
+        <article class="gallery-item">
+          <h3>Inline errors <code>.turn-error .notice</code></h3>
+          <div class="gallery-demo block"><span class="gallery-label">Turn error</span>
+            <div class="turn-error"><span class="icon i-triangle-alert" aria-hidden="true"></span><span>The model server stopped responding. Start it again, or switch to a local model.</span></div>
+          </div>
+          <div class="gallery-demo block"><span class="gallery-label">Notice with retry</span>
+            <div class="notice"><span id="gallery-notice-text">Kova is offline. Reconnect to your computer.</span><button class="notice-retry" type="button">Retry</button></div>
+          </div>
+        </article>
+      </div>
+    </section>
   </main>
+
+<script>
+"use strict";
+document.querySelectorAll("[data-theme-value]").forEach(button => {
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.theme = button.dataset.themeValue;
+    document.querySelectorAll("[data-theme-value]").forEach(other => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+  });
+});
+document.querySelectorAll("[data-density-value]").forEach(button => {
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.density = button.dataset.densityValue;
+    document.querySelectorAll("[data-density-value]").forEach(other => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+  });
+});
+document.querySelectorAll("[data-motion-value]").forEach(button => {
+  button.addEventListener("click", () => {
+    if (button.dataset.motionValue === "reduced") {
+      document.documentElement.dataset.motion = "reduced";
+    } else {
+      delete document.documentElement.dataset.motion;
+    }
+    document.querySelectorAll("[data-motion-value]").forEach(other => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+  });
+});
+</script>
 </body>
 </html>
