@@ -1858,6 +1858,12 @@
   // has actually recorded, not the defaults (#200).
   const shortcutKeys = id => globalThis.KovaShortcuts?.current?.labels?.(id) || [];
   let paletteChats = [];
+  // Chat-content hits from GET /chats/search, filled in as the user types; the
+  // sidebar's own titles-only filter never looked inside a message.
+  let paletteMatches = [];
+  // MCP servers and installed plugins, so the palette can switch them on or off.
+  let paletteMcp = [];
+  let palettePlugins = [];
   function paletteItems() {
     const items = [];
     const add = (group, item) => items.push({group, ...item});
@@ -1875,7 +1881,9 @@
     const themes = globalThis.KovaTheme;
     for (const option of themes?.choices?.() || []) {
       if (option.id === themes.choice()) continue;
-      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, run:() => themes.set(option.id)});
+      // Highlighting a theme row shows it, Escape puts the old one back, and
+      // Enter is the only thing that saves it (#183).
+      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, previewKey:`theme:${option.id}`, preview:() => themes.preview?.(option.id), previewEnd:() => themes.endPreview?.(), run:() => themes.set(option.id)});
     }
 
     if (current) {
@@ -1894,6 +1902,25 @@
       if (offers('approvals') && !$('permission').disabled) {
         for (const [mode, hint] of [['manual', 'Ask before commands and file changes'], ['auto', 'Ask only before destructive commands'], ['full', 'Never ask. Use with care.']]) {
           add('Permissions', {title:`Permission: ${mode === 'full' ? 'Full access' : mode[0].toUpperCase() + mode.slice(1)}`, hint, keywords:`permission approvals ${mode}`, run:() => { $('permission').value = mode; $('permission').onchange?.(); }});
+        }
+      }
+    }
+
+    // Reasoning effort (#183): the same levels the composer's model picker
+    // offers for this model, so the palette never invents one the server would
+    // reject. An empty level means "let the model decide".
+    if (!state.busy) {
+      const selection = composerModel();
+      const supported = modelByName(selection.model)?.reasoning_efforts || [];
+      if (supported.length) {
+        const chosen = supported.includes(selection.reasoning_effort) ? selection.reasoning_effort : '';
+        for (const level of ['', ...supported]) {
+          add('Reasoning', {
+            title: `Reasoning effort: ${effortLabels[level] || level}`,
+            hint: level === chosen ? 'Current level' : level ? 'For this conversation' : 'Let the model choose',
+            keywords: `reasoning effort thinking budget ${level || 'automatic'}`,
+            run: () => safe(() => chooseComposerModel(selection.model, level || null)),
+          });
         }
       }
     }
@@ -1918,8 +1945,42 @@
       if (state.busy) break;
       add('Models', {title:`Use ${model.model || model.name}`, hint:model.provider_name || 'Custom provider', keywords:`model provider ${model.name}`, run:() => { $('model').value = model.name; $('model').onchange?.(); }});
     }
+    // MCP servers and extensions can be switched from here because the app
+    // already has the endpoints the two panels use (#183).
+    for (const server of paletteMcp) {
+      const tools = Array.isArray(server.tools) ? server.tools.filter(tool => tool.enabled !== false).length : 0;
+      add('MCP servers', {
+        title: `${server.enabled ? 'Turn off' : 'Turn on'} MCP server: ${server.name}`,
+        hint: [server.enabled ? 'On' : 'Off', server.transport, server.state || '', `${tools} tool${tools === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+        keywords: `mcp server ${server.name} tools enable disable switch`,
+        run: () => safe(() => paletteSetEnabled(`/mcp/${encodeURIComponent(server.name)}`, {enabled: !server.enabled})),
+      });
+    }
+    for (const plugin of palettePlugins) {
+      add('Extensions', {
+        title: `${plugin.enabled ? 'Turn off' : 'Turn on'} extension: ${plugin.name}`,
+        hint: [plugin.enabled ? 'On' : 'Off', plugin.version ? `v${plugin.version}` : '', plugin.description || ''].filter(Boolean).join(' · '),
+        keywords: `extension plugin add-on ${plugin.name} enable disable switch`,
+        run: () => safe(() => paletteSetEnabled(`/extensions/plugins/${encodeURIComponent(plugin.name)}`, {enabled: !plugin.enabled})),
+      });
+    }
+    // Content hits come first in their group and inside a conversation title
+    // never repeats them: the snippet is the point.
+    const shown = paletteMatches.slice(0, 20);
+    const matched = new Set(shown.map(row => row.id));
+    for (const row of shown) {
+      const snippet = String(row.snippet || '').replace(/\s+/g, ' ').trim();
+      add('In messages', {
+        title: row.title || 'New conversation',
+        hint: `${row.role === 'user' ? 'You' : 'Kova'}: ${snippet || 'Match in this conversation'}`,
+        keywords: `chat conversation history message match ${row.role || ''}`,
+        alwaysMatch: true,
+        run: () => safe(() => openChat(row.id)),
+      });
+    }
     for (const chat of paletteChats.slice(0, 50)) {
       if (state.busy) break;
+      if (matched.has(chat.id)) continue;
       add('Conversations', {
         title: chat.ephemeral ? 'Incognito conversation' : chat.title || 'New conversation',
         hint: chat.ephemeral ? 'Incognito · not saved on this PC'
@@ -1930,15 +1991,44 @@
     }
     return items;
   }
-  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onError: error => toastError(error.message)}) || null;
+  async function paletteSetEnabled(url, body) {
+    await json(url, write('PATCH', body));
+    await paletteLoad();
+  }
+  async function paletteLoad() {
+    const read = url => json(url).catch(() => null);
+    const [chats, servers, plugins] = await Promise.all([read('/chats'), read('/mcp'), read('/extensions/plugins')]);
+    if (Array.isArray(chats)) paletteChats = chats;
+    if (Array.isArray(servers)) paletteMcp = servers;
+    if (Array.isArray(plugins)) palettePlugins = plugins;
+  }
+  // Chat content is searched on the server; the registry stays synchronous, so
+  // the answer is dropped into a list and the open palette re-renders (#183).
+  let paletteSearchTimer, paletteSearchVersion = 0;
+  async function paletteRunSearch(query, version) {
+    let rows = [];
+    try { rows = await json(`/chats/search?q=${encodeURIComponent(query)}&limit=20`); }
+    catch (_) { return; }
+    if (version !== paletteSearchVersion || !commandPalette?.isOpen()) return;
+    paletteMatches = Array.isArray(rows) ? rows : [];
+    commandPalette.refresh();
+  }
+  function paletteSearch(value) {
+    const query = String(value || '').trim();
+    clearTimeout(paletteSearchTimer);
+    const version = ++paletteSearchVersion;
+    if (query.length < 2) { paletteMatches = []; return version; }
+    paletteSearchTimer = setTimeout(() => safe(() => paletteRunSearch(query, version)), 180);
+    return version;
+  }
+  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onQuery: paletteSearch, onError: error => toastError(error.message)}) || null;
   async function openPalette() {
     if (!state.connected || !commandPalette) return;
     closeMenu();
+    paletteMatches = [];
+    paletteSearch('');
     commandPalette.open();
-    try {
-      const chats = await json('/chats');
-      if (Array.isArray(chats)) paletteChats = chats;
-    } catch (_) { /* the palette still offers commands if history cannot load */ }
+    await paletteLoad();
     commandPalette.refresh();
   }
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);

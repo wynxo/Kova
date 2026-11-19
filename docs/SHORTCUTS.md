@@ -117,7 +117,17 @@ including every Settings section.
 - Type to filter. Matching is fuzzy and word-aware: `nwcn` finds *New
   conversation*, `thm` finds the theme switch.
 - Results are grouped: actions, appearance, the current conversation, its
-  permissions, settings, models, then recent conversations.
+  permissions, reasoning effort, settings, models, MCP servers, extensions,
+  recent conversations, and matches found inside messages.
+- Typing two or more characters also searches chat content. A hit shows the
+  matching line and who said it, so a phrase from an old reply is one Enter
+  away from the conversation it came from.
+- Highlighting a theme row previews that theme at once; `esc` puts the saved
+  one back and `enter` is the only way to keep it.
+- Reasoning effort rows are the same levels the composer's model picker offers
+  for the current model, including *Automatic*.
+- MCP servers and installed extensions have an on/off row, using the same
+  endpoints as their settings panels.
 - Each row shows its shortcut, so the palette also teaches the keys.
 - `↑` `↓`, `pageup` `pgdn`, `home` and `end` move; `enter` runs; `esc` closes.
 - The dialog traps focus in its search box, announces the result count, and
