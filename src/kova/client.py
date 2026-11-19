@@ -118,7 +118,16 @@ class KovaClient:
 
     def theme(self, theme_id: str) -> dict:
         """One theme with its tokens resolved over the base it extends."""
-        return self._request('GET', f'/themes/{theme_id}').json()
+        suffix = '?installed=true' if theme_id == 'gallery' else ''
+        return self._request('GET', f'/themes/{quote(theme_id, safe="")}{suffix}').json()
+
+    def theme_gallery(self) -> list[dict]:
+        """Themes bundled in the offline gallery, including their install status."""
+        return self._request('GET', '/themes/gallery').json()
+
+    def install_gallery_theme(self, theme_id: str) -> dict:
+        """Install one theme from the bundled gallery."""
+        return self._request('POST', f'/themes/gallery/{quote(theme_id, safe="")}/install').json()
 
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:

@@ -1,0 +1,209 @@
+{
+  "forest": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "forest",
+    "name": "Forest",
+    "version": "1.0.0",
+    "description": "Dark theme with a green accent, for people who read the accent as \"go\" rather than \"alert\". Status colours keep their own meanings.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "accent": {
+        "default": "#5fd787",
+        "hover": "#79e39c",
+        "pressed": "#46b56e",
+        "on": "#04201c",
+        "soft": "rgba(95, 215, 135, 0.14)"
+      }
+    }
+  },
+  "graphite": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "graphite",
+    "name": "Graphite",
+    "version": "1.0.0",
+    "description": "Neutral dark theme for people who want no warm colour at all: grey surfaces, one cool blue accent. The accent still means activity, never decoration.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "accent": {
+        "default": "#7aa2ff",
+        "hover": "#96b4ff",
+        "pressed": "#5f8ae6",
+        "on": "#0d0c13",
+        "soft": "rgba(122, 162, 255, 0.14)"
+      }
+    }
+  },
+  "high-contrast-dark": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "high-contrast-dark",
+    "name": "High Contrast Dark",
+    "version": "1.0.0",
+    "description": "Pure-black, pure-white high-contrast dark theme for low-vision and dim-room use. A flat black background, crisp white text, high-visibility borders and a white accent chip.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "bg": {
+        "base": "#000000",
+        "surface": "#0a0a0a",
+        "raised": "#1a1a1a"
+      },
+      "fg": {
+        "default": "#ffffff",
+        "muted": "#d0d0d0",
+        "faint": "#b0b0b0"
+      },
+      "border": {
+        "subtle": "#6b6b6b",
+        "strong": "#9a9a9a"
+      },
+      "accent": {
+        "default": "#ffffff",
+        "hover": "#d9d9d9",
+        "pressed": "#bfbfbf",
+        "on": "#000000",
+        "soft": "rgba(255, 255, 255, 0.12)"
+      }
+    }
+  },
+  "high-contrast-light": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "high-contrast-light",
+    "name": "High Contrast Light",
+    "version": "1.0.0",
+    "description": "Pure-white, black-text high-contrast light theme for low-vision and bright-room use. An untinted white background, black text, dark borders and a black accent chip.",
+    "appearance": "light",
+    "extends": "kova-light",
+    "tokens": {
+      "bg": {
+        "base": "#ffffff",
+        "surface": "#f5f5f5",
+        "raised": "#e6e6e6"
+      },
+      "fg": {
+        "default": "#000000",
+        "muted": "#2e2e2e",
+        "faint": "#454545"
+      },
+      "border": {
+        "subtle": "#9a9a9a",
+        "strong": "#4a4a4a"
+      },
+      "accent": {
+        "default": "#000000",
+        "hover": "#262626",
+        "pressed": "#404040",
+        "on": "#ffffff",
+        "soft": "rgba(0, 0, 0, 0.12)"
+      },
+      "status": {
+        "success": "#176b39"
+      }
+    }
+  },
+  "midnight-teal": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "midnight-teal",
+    "name": "Midnight Teal",
+    "version": "1.0.0",
+    "description": "Example theme: same structure as the built-in dark theme, one accent swapped from orange to teal. Copy it as a starting point.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "accent": {
+        "default": "#2dd4bf",
+        "hover": "#5eead4",
+        "pressed": "#14b8a6",
+        "on": "#04201c",
+        "soft": "rgba(45, 212, 191, 0.14)"
+      }
+    }
+  },
+  "midnight": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "midnight",
+    "name": "Midnight",
+    "version": "1.0.0",
+    "description": "Deep navy-blue dark theme. Three close navy-black background shades, cool off-white text, blue-grey muted text and blue-tinted borders, with a soft sky-blue accent.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "bg": {
+        "base": "#0d1024",
+        "surface": "#141a30",
+        "raised": "#1c2440"
+      },
+      "fg": {
+        "default": "#e6e9f3",
+        "muted": "#8f96ad",
+        "faint": "#727a90"
+      },
+      "border": {
+        "subtle": "#2e3858",
+        "strong": "#717e90"
+      },
+      "accent": {
+        "default": "#7ab4ff",
+        "hover": "#9cc8ff",
+        "pressed": "#5a9cf5",
+        "on": "#0a0e1a",
+        "soft": "rgba(122, 180, 255, 0.14)"
+      }
+    }
+  },
+  "paper": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "paper",
+    "name": "Paper",
+    "version": "1.0.0",
+    "description": "A true-white light theme with an ink-blue accent, for bright rooms and projectors. Surfaces stay untinted so screenshots and docs read cleanly.",
+    "appearance": "light",
+    "extends": "kova-light",
+    "tokens": {
+      "accent": {
+        "default": "#2454a6",
+        "hover": "#1f4e8c",
+        "pressed": "#1a4275",
+        "on": "#ffffff",
+        "soft": "rgba(36, 84, 166, 0.10)"
+      }
+    }
+  },
+  "terminal": {
+    "$schema": "../../design/theme.schema.json",
+    "id": "terminal",
+    "name": "Terminal",
+    "version": "1.0.0",
+    "description": "A classic green-phosphor terminal: near-black neutral surfaces, a soft green for body text, dimmer greens for secondary copy, and a bright green accent with black-on text. Status colours keep their own meanings.",
+    "appearance": "dark",
+    "extends": "kova-dark",
+    "tokens": {
+      "bg": {
+        "base": "#0c0d0c",
+        "surface": "#161817",
+        "raised": "#1f2120"
+      },
+      "fg": {
+        "default": "#38c15a",
+        "muted": "#2f9e4f",
+        "faint": "#267d40"
+      },
+      "border": {
+        "subtle": "#204f2e",
+        "strong": "#2a8643"
+      },
+      "accent": {
+        "default": "#22ff5c",
+        "hover": "#55ff8f",
+        "pressed": "#1ae34d",
+        "on": "#0d0c13",
+        "soft": "rgba(34, 255, 92, 0.14)"
+      },
+      "syntax": {
+        "keyword": "#7ee28a",
+        "comment": "#357f4e"
+      }
+    }
+  }
+}

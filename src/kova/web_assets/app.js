@@ -1989,6 +1989,11 @@
     ]) add('Settings', panel(button, title, hint, keywords));
     add('Settings', {title:'Install & notifications', hint:'Add Kova to your device and choose alerts', keywords:'pwa install notifications alerts', run:() => $('install-settings').onclick?.()});
     add('Settings', {title:'Startup settings', hint:'Keep reminders running after you log out', keywords:'start at sign in autostart login boot', run:() => window.KovaSettings?.open?.('general')});
+    add('Settings', {title:'Reload without custom CSS', hint:'Safe mode, in case a stylesheet broke the page', keywords:'safe custom css stylesheet broken reset recovery', run:() => {
+      const url = new URL(location.href);
+      url.searchParams.set('safe', '1');
+      location.assign(url);
+    }});
     add('Settings', {title:'Model settings…', hint:'Vision and the active model', keywords:'model vision context', run:() => safe(openModelSettings)});
     add('Settings', {title:'Permission rules…', hint:'Pre-approve tools with patterns', keywords:'rules allow deny approvals', run:() => safe(openRules)});
 
@@ -2449,6 +2454,7 @@
       await json('/chats'); state.connected = true; clearNotice();
       // Signed in now: the shared theme choice and installed themes are readable.
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
+      globalThis.KovaCustomCss?.sync?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       renderStarters();
