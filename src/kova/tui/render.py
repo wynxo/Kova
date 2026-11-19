@@ -277,7 +277,8 @@ class Renderer:
         if len(rows) > 40:  # a pasted wall of text: show its start and end
             rows = [*rows[:18], f"\u2026 {len(rows) - 36} more lines", *rows[-18:]]
         size = max(display_width(row) for row in rows) + 4
-        shade = bg(mix(tint, theme.SURFACE, 0.86)) if p.level >= 2 else ""
+        surface = p.terminal.roles["SURFACE"]
+        shade = bg(mix(p.hex(tint), surface, 0.86)) if p.level >= 2 else ""
         for index, row in enumerate(rows):
             lead = mark if index == 0 else " "
             if not p.color:
@@ -285,8 +286,8 @@ class Renderer:
                 continue
             pad = " " * (size - display_width(row) - 3)
             if shade:
-                self.line(p.paint(f"1;{colour};{shade}", " " + lead + " ")
-                          + p.paint(shade, row + pad))
+                self.line(p.paint_mixed("1;" + colour, shade, " " + lead + " ")
+                          + p.paint_resolved(shade, row + pad))
             else:
                 self.line(p.paint("1;" + colour, lead + " ") + row)
         self.line()
