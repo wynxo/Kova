@@ -3,8 +3,9 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electr
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, permissionAllowed, windowState} = require('./core');
+const {settings, serverCommand, external, permissionAllowed, windowState, isAction, trayStatus} = require('./core');
 let win, tray, child, quitting = false, starting = false, origin, home;
+let appName = 'Kova', trayState = 'idle';
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -13,6 +14,57 @@ else {
   app.whenReady().then(create).catch(e => { console.error(e.message); app.quit(); });
 }
 function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
+// Native menu and tray items send an allowlisted action id to the page; the
+// page maps each id to the same handler the palette uses. Show and Quit stay
+// in this process.
+function sendAction(id) {
+  if (!win || win.isDestroyed() || !isAction(id)) return;
+  win.webContents.send('app-action', id);
+}
+function refreshTray() {
+  if (!tray) return;
+  const status = trayStatus(appName, trayState);
+  tray.setToolTip(status.tooltip);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label: status.label, enabled: false},
+    {type: 'separator'},
+    {label: 'Show Kova', click: show},
+    {label: 'New chat', click: () => sendAction('new-conversation')},
+    {label: 'Quick ask', click: () => sendAction('focus-composer')},
+    {type: 'separator'},
+    {label: 'Quit', click: () => app.quit()},
+  ]));
+}
+function buildAppMenu() {
+  const action = (label, id) => ({label, click: () => sendAction(id)});
+  const mac = process.platform === 'darwin';
+  const template = [];
+  if (mac) {
+    template.push({label: app.name, submenu: [
+      {role: 'about'}, {type: 'separator'},
+      action('Settings…', 'open-settings'), {type: 'separator'},
+      {role: 'hide'}, {role: 'hideOthers'}, {role: 'unhide'},
+      {type: 'separator'}, {role: 'quit'},
+    ]});
+  }
+  template.push(
+    {label: 'File', submenu: [
+      action('New chat', 'new-conversation'),
+      action('New incognito chat', 'new-incognito'),
+      ...(mac ? [] : [{type: 'separator'}, action('Settings…', 'open-settings'),
+        {type: 'separator'}, {role: 'quit', label: 'Quit Kova'}]),
+    ]},
+    {role: 'editMenu', label: 'Edit'},
+    {label: 'View', submenu: [
+      action('Search conversations', 'search-conversations'),
+      action('Toggle sidebar', 'toggle-sidebar'),
+      action('Toggle theme', 'toggle-theme'),
+    ]},
+    {role: 'windowMenu', label: 'Window'},
+    {role: 'help', submenu: [action('Keyboard shortcuts', 'shortcuts')]},
+  );
+  return Menu.buildFromTemplate(template);
+}
 function stateFile() { return path.join(home, 'desktop-window.json'); }
 function savedWindow() {
   try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch { return null; }
@@ -40,17 +92,10 @@ async function create() {
     backgroundColor: '#0d0d10', icon, title: 'Kova', autoHideMenuBar: true, show: false,
     webPreferences: {contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, 'preload.js')}});
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(buildAppMenu());
   win.once('ready-to-show', () => { if (restored.maximized) win.maximize(); show(); });
   win.on('resize', scheduleBounds);
   win.on('move', scheduleBounds);
-  win.webContents.on('page-title-updated', (_event, title) => {
-    if (tray && title) {
-      tray.setToolTip(title);
-      tray.setContextMenu(Menu.buildFromTemplate([{label: 'Open ' + title, click: show},
-        {type: 'separator'}, {label: 'Quit', click: () => app.quit()}]));
-    }
-  });
   // The page publishes its theme as <meta name="theme-color">; no bridge needed.
   win.webContents.on('did-change-theme-color', (_event, color) => {
     if (/^#[0-9a-f]{6}$/i.test(color || '')) win.setBackgroundColor(color);
@@ -77,13 +122,17 @@ async function create() {
     if (input.key === 'F11') win.setFullScreen(!win.isFullScreen());
   });
   try {
-    tray = new Tray(trayIcon); tray.setToolTip('Kova');
-    tray.setContextMenu(Menu.buildFromTemplate([{label: 'Open Kova', click: show},
-      {type: 'separator'}, {label: 'Quit', click: () => app.quit()}]));
-    tray.on('click', show);
+    tray = new Tray(trayIcon); tray.on('click', show); refreshTray();
   } catch (e) { console.error('Tray unavailable:', e.message); }
   ipcMain.handle('retry', event => {
     if (event.sender === win.webContents && event.senderFrame.url.startsWith('file:')) start();
+  });
+  // The app page reports its aggregate state (idle / working / waiting) for the
+  // tray; anything else is ignored so the renderer cannot drive arbitrary text.
+  ipcMain.on('app-state', (event, state) => {
+    if (event.sender !== win.webContents) return;
+    trayState = ['idle', 'working', 'waiting'].includes(state) ? state : 'idle';
+    refreshTray();
   });
   await start();
 }
@@ -132,10 +181,8 @@ async function start() {
         if (response.ok) {
           const persona = await response.json();
           if (typeof persona.name === 'string' && persona.name) {
-            win.setTitle(persona.name);
-            if (tray) { tray.setToolTip(persona.name); tray.setContextMenu(Menu.buildFromTemplate([
-              {label: 'Open ' + persona.name, click: show}, {type: 'separator'},
-              {label: 'Quit', click: () => app.quit()}])); }
+            appName = persona.name;
+            refreshTray();
           }
         }
       } catch (e) { console.error('Could not load assistant identity:', e.message); }
