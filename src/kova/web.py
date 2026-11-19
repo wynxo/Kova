@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
@@ -154,6 +154,28 @@ def install_web(app, require_bearer) -> None:
         if not gallery_enabled():
             raise HTTPException(404, "Not found")
         return FileResponse(PAGES / "gallery.html")
+
+    @app.get("/app/custom.css", include_in_schema=False,
+             dependencies=[Depends(require_browser_session)])
+    async def custom_css():
+        """The user's optional stylesheet, only while the setting is on.
+
+        It stays a same-origin stylesheet so the CSP's ``style-src 'self'``
+        still holds; the file is sanitised and bounded in ``kova.custom_css``.
+        """
+        from kova import custom_css as sheet, ui_prefs
+        try:
+            enabled = app.state.preferences.read().get("custom_css") == "on"
+        except (AttributeError, ui_prefs.UiPrefsError):
+            enabled = False
+        if not enabled:
+            raise HTTPException(404, "Custom CSS is off.")
+        try:
+            return Response(sheet.load(app.state.config.home), media_type="text/css")
+        except sheet.CustomCssTooLarge as exc:
+            raise HTTPException(413, str(exc)) from None
+        except sheet.CustomCssError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     @app.post("/app/share", dependencies=[Depends(require_browser_session)])
     async def share(request: Request):
