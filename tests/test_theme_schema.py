@@ -63,6 +63,15 @@ def test_named_colours_are_rejected() -> None:
     assert any("tokens.fg.default" in p for p in problems), problems
 
 
+def test_hex_lengths_follow_css_for_tokens_and_terminal() -> None:
+    for invalid in ("#abcde", "#abcdef0"):
+        assert _errors(_theme(tokens={"fg": {"default": invalid}})), invalid
+        assert _errors(_theme(terminal=[invalid] * 16)), invalid
+    for valid in ("#abc", "#abcd", "#abcdef", "#abcdef01"):
+        assert _errors(_theme(tokens={"fg": {"default": valid}})) == [], valid
+        assert _errors(_theme(terminal=[valid] * 16)) == [], valid
+
+
 def test_primitive_overrides_are_rejected() -> None:
     # `tokens` accepts semantic groups only; a primitive ramp is not a group name.
     problems = _errors(_theme(tokens={"primitive": {"orange": {"500": "#ff0000"}}}))
@@ -85,6 +94,14 @@ def test_a_theme_that_hides_its_text_fails_contrast() -> None:
     failures = validator.check_theme(theme)
     assert failures, "dark-on-dark text must not pass"
     assert all("4.5:1" in f for f in failures), failures
+
+
+def test_theme_override_cannot_hide_status_text_on_a_raised_card() -> None:
+    # This grey passes on bg.surface (4.94:1) but fails on bg.raised (4.35:1).
+    theme = _theme(tokens={"status": {"success": "#8a8a8a"}})
+    failures = validator.check_theme(theme)
+    assert any("status.success on bg.raised" in error for error in failures)
+    assert not any("status.success on bg.surface" in error for error in failures)
 
 
 def test_a_readable_override_passes_contrast() -> None:

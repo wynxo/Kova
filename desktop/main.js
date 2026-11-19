@@ -3,7 +3,7 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electr
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, permissionAllowed} = require('./core');
+const {settings, serverCommand, external, permissionAllowed, windowState} = require('./core');
 let win, tray, child, quitting = false, starting = false, origin, home;
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
@@ -14,32 +14,36 @@ else {
 }
 function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
 function stateFile() { return path.join(home, 'desktop-window.json'); }
-function saveBounds() {
-  if (!win || win.isDestroyed() || win.isMinimized() || win.isMaximized()) return;
-  try { fs.writeFileSync(stateFile(), JSON.stringify(win.getBounds()), {mode: 0o600}); } catch {}
+function savedWindow() {
+  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch { return null; }
 }
+let saveTimer = null;
+function saveBounds() {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (!win || win.isDestroyed()) return;
+  try {
+    // The normal bounds are the ones to remember, even while maximized.
+    const bounds = typeof win.getNormalBounds === 'function' ? win.getNormalBounds() : win.getBounds();
+    fs.writeFileSync(stateFile(), JSON.stringify({...bounds, maximized: win.isMaximized()}), {mode: 0o600});
+  } catch {}
+}
+// Moving or resizing is saved as it happens, so even a crash or a kill keeps
+// the window where the reader put it, once it has stopped moving for a moment.
+function scheduleBounds() { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 400); }
 async function create() {
   ({home, origin} = settings());
   fs.mkdirSync(home, {recursive: true, mode: 0o700});
   // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
   app.setPath('userData', path.join(home, 'desktop'));
-  let bounds = {width: 1180, height: 800};
-  try {
-    const saved = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
-    if (['x','y','width','height'].every(k => Number.isFinite(saved[k])) &&
-        screen.getAllDisplays().some(d => saved.x < d.workArea.x + d.workArea.width &&
-          saved.y < d.workArea.y + d.workArea.height && saved.x + saved.width > d.workArea.x &&
-          saved.y + saved.height > d.workArea.y)) {
-      bounds = {...saved, width: Math.max(760, Math.min(saved.width, 3840)),
-        height: Math.max(540, Math.min(saved.height, 2160))};
-    }
-  } catch {}
-  win = new BrowserWindow({...bounds, minWidth: 760, minHeight: 540,
+  const restored = windowState(savedWindow(), screen.getAllDisplays());
+  win = new BrowserWindow({...restored.bounds, minWidth: 760, minHeight: 540,
     backgroundColor: '#0d0d10', icon, title: 'Kova', autoHideMenuBar: true, show: false,
     webPreferences: {contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, 'preload.js')}});
   Menu.setApplicationMenu(null);
-  win.once('ready-to-show', show);
+  win.once('ready-to-show', () => { if (restored.maximized) win.maximize(); show(); });
+  win.on('resize', scheduleBounds);
+  win.on('move', scheduleBounds);
   win.webContents.on('page-title-updated', (_event, title) => {
     if (tray && title) {
       tray.setToolTip(title);
