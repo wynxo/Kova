@@ -157,7 +157,7 @@
       endPreview();
       dialog.remove();
       gallery = null;
-      opener.focus();
+      opener?.focus?.();
     });
     gallery = dialog;
     document.body.append(dialog);
