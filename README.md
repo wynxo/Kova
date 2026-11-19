@@ -525,7 +525,7 @@ Skills are Kova's procedural memory: one Markdown file each, with a one-line des
 
 Everything below lives in the app's **Settings → General**.
 
-- **Theme** — Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark**, or use one of the example themes in `design/themes/` copied into `~/.kova/themes/`. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones. See [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
+- **Theme** — Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark**, or copy one of the eight example themes in `design/themes/` (**Forest**, **Graphite**, **High Contrast Dark**, **High Contrast Light**, **Midnight**, **Midnight Teal**, **Paper** and **Terminal**) into `~/.kova/themes/`. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones. See [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
 - **Text size** — scale every label, message and heading a step up or down.
 - **Density** — tighten or open the space around messages, sidebar rows and the message box.
 - **Font** — keep the bundled Inter, follow the device, or set the conversation in a monospace face.
