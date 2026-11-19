@@ -181,13 +181,13 @@
       clearTimeout(reviewTimer);
       editor = undefined;
       panel.remove();
-      theme.clearPreview();
+      theme.clearPalettePreview();
       if (returnToSettings) onClose?.();
       return true;
     }
 
     function paint() {
-      theme.preview({appearance: draft.appearance, tokens});
+      theme.previewPalette({appearance: draft.appearance, tokens});
     }
 
     async function review(ticket) {

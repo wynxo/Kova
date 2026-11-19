@@ -81,6 +81,10 @@ assert.deepEqual([...rankItems(registry, 'nwcn')].map(item => item.title), ['New
 assert.deepEqual([...rankItems(registry, 'thm')].map(item => item.title), ['Toggle theme']);
 assert.deepEqual([...rankItems(registry, 'prvcy')].map(item => item.title), ['Privacy']);
 assert.deepEqual([...rankItems(registry, 'zzzz')], []);
+// A row the server already matched (a snippet hit) stays even though the query
+// is not in its own title or keywords.
+assert.deepEqual([...rankItems([...registry, {group: 'In messages', title: 'Quarterly notes', alwaysMatch: true}], 'zzzz')]
+  .map(item => item.title), ['Quarterly notes']);
 {
   const names = [...rankItems(registry, 'e')].map(item => item.group);
   const seen = new Set();
@@ -204,4 +208,48 @@ failing.input.listeners.input();
 key(failing.dialog, 'Enter');
 assert.equal(reported?.message, 'boom');
 assert.equal(failing.isOpen(), false);
-console.log('Palette focus, ARIA, fuzzy filtering, keyboard and registry refresh passed');
+
+// Live preview (#183): the highlighted row previews, moving on ends it, Escape
+// reverts without running anything, and Enter reverts before the row commits.
+{
+  const events = [];
+  const previews = [
+    {group: 'Appearance', title: 'Theme: Light', previewKey: 'light', keywords: 'theme',
+     preview() { events.push('preview light'); }, previewEnd() { events.push('end light'); },
+     run() { events.push('run light'); }},
+    {group: 'Appearance', title: 'Theme: Dark', previewKey: 'dark', keywords: 'theme',
+     preview() { events.push('preview dark'); }, previewEnd() { events.push('end dark'); },
+     run() { events.push('run dark'); }},
+  ];
+  const previewDoc = makeDocument();
+  const previewPalette = create({doc: previewDoc, items: () => previews.map(row => ({...row}))});
+  previewPalette.open();
+  assert.deepEqual(events, ['preview light'], 'the first highlighted row previews at once');
+  // A rebuild (a keystroke) keeps the same preview instead of restarting it.
+  previewPalette.refresh();
+  assert.deepEqual(events, ['preview light'], 'the same previewKey is not restarted');
+  key(previewPalette.dialog, 'ArrowDown');
+  assert.deepEqual(events, ['preview light', 'end light', 'preview dark'],
+                   'moving the highlight reverts the old row and previews the new one');
+  key(previewPalette.dialog, 'Escape');
+  assert.deepEqual(events, ['preview light', 'end light', 'preview dark', 'end dark'],
+                   'Escape reverts the preview');
+  assert.equal(previewPalette.isOpen(), false);
+  previewPalette.open();
+  key(previewPalette.dialog, 'Enter');
+  assert.deepEqual(events.slice(-3), ['preview light', 'end light', 'run light'],
+                   'Enter reverts the preview and then commits the row');
+}
+
+// A query the palette cannot resolve itself (server search) is handed back.
+{
+  const seen = [];
+  const searchDoc = makeDocument();
+  const searchPalette = create({doc: searchDoc, items: () => registry, onQuery: value => seen.push(value)});
+  searchPalette.open();
+  searchPalette.input.value = 'quarterly';
+  searchPalette.input.listeners.input();
+  assert.deepEqual(seen, ['quarterly'], 'every keystroke reports the query');
+}
+
+console.log('Palette focus, ARIA, fuzzy filtering, keyboard, preview and registry refresh passed');

@@ -45,8 +45,8 @@ const theme = {
     {id: 'system', name: 'System'}, {id: 'light', name: 'Light'}, {id: 'dark', name: 'Dark'},
     {id: 'my-light', name: 'My Light', appearance: 'light'},
   ],
-  preview: draft => previews.push({...draft, tokens: {...draft.tokens}}),
-  clearPreview: () => previews.push(null),
+  previewPalette: draft => previews.push({...draft, tokens: {...draft.tokens}}),
+  clearPalettePreview: () => previews.push(null),
   set: async id => { selected.push(id); },
   refresh: async () => theme.choices(),
 };
