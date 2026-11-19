@@ -224,11 +224,16 @@
     paint();
   }
 
+  function detailUrl(id) {
+    // The gallery route also covers the pre-existing theme ID "gallery".
+    return `/themes/${encodeURIComponent(id)}${id === 'gallery' ? '?installed=true' : ''}`;
+  }
+
   // A theme file needs its resolved tokens. The last one used is cached so a
   // reload paints it at once; the server copy then replaces it.
   function loadCustom(id) {
     const ticket = ++generation;
-    return getJson(`/themes/${encodeURIComponent(id)}`).then(payload => {
+    return getJson(detailUrl(id)).then(payload => {
       if (ticket !== generation || choice !== id) return;
       const theme = cleanTheme(payload);
       if (!theme || theme.id !== id) {
@@ -370,7 +375,7 @@
     });
   }
 
-  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, clearPalettePreview, endPreview, label, preview, previewPalette, refresh, set, sync, toggle};
+  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, clearPalettePreview, detailUrl, endPreview, label, preview, previewPalette, refresh, set, sync, toggle};
   sync();
   refresh();
 })();

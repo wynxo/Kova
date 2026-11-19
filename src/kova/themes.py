@@ -261,6 +261,8 @@ def load_file(path: Path | str) -> dict[str, Any]:
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeError as exc:
+        raise ThemeError(f"{path.name} is not a UTF-8 theme JSON file.") from exc
     except OSError as exc:
         raise ThemeError(f"Could not read {path.name}: {exc.strerror or exc}") from exc
     try:

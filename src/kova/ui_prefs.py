@@ -47,6 +47,8 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     # Theme backgrounds (#206): on by default; "off" keeps the theme's colours
     # and leaves every panel solid.
     "backgrounds": ("on", "off"),
+    # Power users only (#178): KOVA_HOME/custom.css, never inlined or remote.
+    "custom_css": ("on", "off"),
 }
 
 # Short free-text lists: name -> (most items, longest item). Used by the start
@@ -97,6 +99,7 @@ DEFAULTS: dict[str, Any] = {
     "avatars": "on",
     "shortcuts": {},
     "backgrounds": "on",
+    "custom_css": "off",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the
