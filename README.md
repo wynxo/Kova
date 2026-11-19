@@ -521,11 +521,19 @@ In this mode Kova reads your whole vault when searching, but only ever writes in
 
 Skills are Kova's procedural memory: one Markdown file each, with a one-line description that sits in the prompt and instructions loaded only when needed. Kova writes the ones it learns into `~/.kova/skills/Kova/`; files you put elsewhere in `~/.kova/skills/` are read but never rewritten by the model. `kova skills list|show|rm`, or **Extensions → Installed** in the app, shows every skill with where it came from, and lets you read, edit and delete it. More skills and plugins come from the catalog: `kova catalog search`, then `kova catalog install NAME`. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
-## Themes
+## Make it yours
 
-Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark** in the app's Settings. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones.
+Everything below lives in the app's **Settings → General**.
 
-Eight example themes live in `design/themes/`: **Forest**, **Graphite**, **High Contrast Dark**, **High Contrast Light**, **Midnight**, **Midnight Teal**, **Paper** and **Terminal**. Copy one into `~/.kova/themes/` to use it, or make your own as a JSON file; see [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
+- **Theme** — Kova follows your device's light or dark setting by default; pick **System**, **Light** or **Dark**, or use one of the example themes in `design/themes/` copied into `~/.kova/themes/`. The look is monochrome — the accent is solid white on dark backgrounds and solid black on light ones. See [docs/THEMES.md](docs/THEMES.md) for the format, and check what is installed and validate a file with `kova themes list` and `kova themes check <file>`.
+- **Text size** — scale every label, message and heading a step up or down.
+- **Density** — tighten or open the space around messages, sidebar rows and the message box.
+- **Font** — keep the bundled Inter, follow the device, or set the conversation in a monospace face.
+- **Motion** — **Full** follows the device's reduced-motion setting, **Reduced** keeps quick fades, and **Off** stays still.
+- **Reasoning** — fold the model's thinking into a row (**Collapsed**), open it (**Expanded**), or hide it.
+- **Export / Import preferences** — save every UI preference (and your installed theme names) to a file with `kova prefs export`, then restore it with `kova prefs import`, which refuses a file that does not validate.
+
+Projects group chats and add shared instructions: `kova projects list`, `kova projects create`, `kova projects show <id>`, and `kova projects rm <id>`.
 
 ## Where your data lives
 
