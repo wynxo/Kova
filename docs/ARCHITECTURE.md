@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 124 endpoints: 123 route handlers plus the static asset mount.
+The app exposes 125 endpoints: 124 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -92,6 +92,7 @@ same commit as the route.
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
 | `GET /app/sw.js` | public | app-shell-only service worker |
+| `GET /app/custom.css` | browser session | optional user stylesheet, served only while the setting is on |
 | `GET /app/gallery` | public | dev-only component gallery, served only with `KOVA_GALLERY=1` |
 | `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |
 | `POST /app/share/{token}` | browser session | consume an owner-bound share once |
@@ -377,7 +378,11 @@ Text size, density, font, content width and avatars (#179, #205) use the same sh
 document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
 `data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
 block in `app.css` swaps the `--type-size-*`, `--space-*`, `--font` and `--column`
-values, so no component repeats a size or a gap. An unsent
+values, so no component repeats a size or a gap. Optional custom CSS (#178) is user content:
+it is off by default, served at `/app/custom.css` only while the shared `custom_css`
+preference is on, stripped of `@import` and any `url(...)` outside `/app/assets/`, capped
+at 64 KiB, and appended last by `web_assets/custom_css.js`. `?safe=1` skips it so a broken
+stylesheet can be turned off. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and

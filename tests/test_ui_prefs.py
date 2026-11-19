@@ -374,3 +374,19 @@ def test_an_export_without_themes_still_imports(runner, http, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert http.get("/preferences").json()["theme"] == "dark"
+
+
+def test_prefs_set_changes_one_preference(runner, http):
+    result = runner.invoke(cli.app, ["prefs", "set", "custom_css", "on"])
+
+    assert result.exit_code == 0, result.output
+    assert "custom_css = on" in _output(result)
+    assert http.get("/preferences").json()["custom_css"] == "on"
+
+
+def test_prefs_set_refuses_a_value_outside_the_schema(runner, http):
+    result = runner.invoke(cli.app, ["prefs", "set", "custom_css", "maybe"])
+
+    assert result.exit_code == 1
+    assert "custom_css" in _output(result)
+    assert http.get("/preferences").json()["custom_css"] == "off"

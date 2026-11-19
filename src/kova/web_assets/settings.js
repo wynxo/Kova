@@ -37,6 +37,9 @@
         {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
          keywords: 'motion animation animate transition reduce reduced still accessibility',
          control: 'motion'},
+        {title: 'Custom CSS', help: 'Load KOVA_HOME/custom.css after the packaged stylesheets, for rules no token covers. A broken stylesheet can hide controls; add ?safe=1 to the address to load without it.',
+         keywords: 'custom css stylesheet user style override tokens power user safe broken',
+         control: 'custom_css'},
         {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
          keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
@@ -432,6 +435,47 @@
       radio.tabIndex = checked ? 0 : -1;
     }
   }
+
+  // Custom CSS (#178) is off by default. custom_css.js owns the shared
+  // preference and the one <link> it appends last; this only reflects and
+  // changes it. Safe mode (?safe=1) shows the saved value but loads nothing.
+  const customCssSwitches = [];
+  const customCssStatuses = [];
+  function customCssControl() {
+    const wrap = element('div', 'settings-custom-css');
+    const button = element('button', 'switch');
+    button.type = 'button';
+    button.setAttribute('role', 'switch');
+    button.setAttribute('aria-label', 'Custom CSS');
+    button.append(element('span', 'switch-thumb'), element('span', 'sr-only', 'Custom CSS'));
+    button.addEventListener('click', () => {
+      const engine = window.KovaCustomCss;
+      if (!engine) return;
+      engine.set(!engine.enabled());
+      syncCustomCss();
+    });
+    const status = element('p', 'settings-row-help');
+    status.setAttribute('role', 'status');
+    customCssSwitches.push(button);
+    customCssStatuses.push(status);
+    wrap.append(button, status);
+    return wrap;
+  }
+  function syncCustomCss() {
+    const engine = window.KovaCustomCss;
+    const on = Boolean(engine && engine.enabled());
+    const safe = Boolean(engine && engine.safe && engine.safe());
+    for (const button of customCssSwitches) {
+      button.setAttribute('aria-checked', String(on));
+      button.disabled = !engine;
+    }
+    for (const status of customCssStatuses) {
+      status.textContent = !engine ? 'Custom CSS is unavailable here.'
+        : safe ? 'Safe mode: custom.css is not loaded on this page. Turn it off here, then reload normally.'
+          : on ? 'On: custom.css is loaded after every packaged stylesheet.'
+            : 'Off: custom.css is not loaded.';
+    }
+  }
   // Text size, density, font and content width are the same three-way group
   // (#179, #205). KovaTypography owns each value, the server copy and the
   // attribute on <html>; this only reflects and changes them. "default",
@@ -713,6 +757,7 @@
     syncReasoning();
     syncMotion();
     syncTypography();
+    syncCustomCss();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
       button.disabled = Boolean(target?.disabled);
@@ -758,6 +803,8 @@
       row.append(reasoningControl());
     } else if (item.control === 'motion') {
       row.append(motionControl());
+    } else if (item.control === 'custom_css') {
+      row.append(customCssControl());
     } else if (item.control === 'prefs_export') {
       row.append(prefsExportControl());
     } else if (item.control === 'prefs_import') {
