@@ -1016,6 +1016,15 @@ html[data-motion="off"][data-background] main {
   html[data-background] main { background:var(--bg-base); -webkit-backdrop-filter:none; backdrop-filter:none; }
 }
 
+/* Respect a request for more contrast (#201). No colour is introduced: these
+   swap the quietest roles for their stronger semantic neighbours and make the
+   focus ring unmistakable, on top of the measured palette. */
+@media (prefers-contrast: more) {
+  :focus-visible { outline: 3px solid var(--accent-default); outline-offset: 1px; }
+  .icon-button, .btn.quiet, .btn.small { color: var(--fg-default); }
+  .tool-card-hint, .agent-tree-hint { color: var(--fg-muted); }
+}
+
 /* Motion preference (#181). motion.js resolves the setting onto
    <html data-motion="full|reduced|off">, and this one block carries it for
    every component: Full is the untouched token set, Reduced shortens the
