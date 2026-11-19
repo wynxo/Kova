@@ -41,4 +41,28 @@ function external(url) {
 function permissionAllowed(permission) {
   return permission === 'notifications';
 }
-module.exports = {settings, executable, external, permissionAllowed, serverCommand};
+const DEFAULT_WINDOW = {width: 1180, height: 800};
+const MIN_WINDOW = {width: 760, height: 540};
+// Remember where the window was, but never trust it blindly: a saved position
+// on a display that is no longer connected starts fresh instead of opening
+// somewhere the reader cannot reach, and a silly size is clamped.
+function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
+  const result = {bounds: {...fallback}, maximized: false};
+  if (!saved || typeof saved !== 'object') return result;
+  const {x, y, width, height} = saved;
+  if (![x, y, width, height].every(Number.isFinite)) return result;
+  const areas = (displays || []).map(display => display && (display.workArea || display))
+    .filter(area => area && [area.x, area.y, area.width, area.height].every(Number.isFinite));
+  const visible = !areas.length || areas.some(area =>
+    x < area.x + area.width && y < area.y + area.height &&
+    x + width > area.x && y + height > area.y);
+  if (!visible) return result;
+  result.bounds = {
+    x, y,
+    width: Math.min(Math.max(width, MIN_WINDOW.width), 3840),
+    height: Math.min(Math.max(height, MIN_WINDOW.height), 2160),
+  };
+  result.maximized = saved.maximized === true;
+  return result;
+}
+module.exports = {settings, executable, external, permissionAllowed, serverCommand, windowState};
