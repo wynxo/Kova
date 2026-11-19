@@ -271,7 +271,8 @@
   }
   const json = async (path, options) => (await api(path, options)).json();
   const write = (method, value) => ({method, body: JSON.stringify(value)});
-  const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat});
+  const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat,
+    models: () => state.models || []});
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.
@@ -753,6 +754,7 @@
         actions.append(more); actions.setAttribute('aria-label', `Actions for ${title}`);
         const items = [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)]];
         if (chatAppearance()) items.push(['sliders-horizontal', 'Colour & icon', () => editAppearance(chat)]);
+        if (!chat.ephemeral && (chat.project_id || projects?.hasProjects())) items.push(['folder', 'Move to project', () => projects.move(chat)]);
         items.push(['trash-2', 'Delete', () => editChat(chat, true)]);
         for (const [symbol, name, fn] of items) {
           if (chat.ephemeral && symbol === 'copy') continue;

@@ -28,7 +28,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from kova import theme
+from kova import compare_cli, theme
 from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
@@ -411,6 +411,65 @@ def _models(client: KovaClient, console: Console) -> None:
     console.print()
 
 
+def _compare(client: KovaClient, console: Console, ensure_chat, active: str, rest: str,
+             *, interactive: bool) -> None:
+    """``/compare``: ask several models at once, print each answer, offer to keep one."""
+    try:
+        wanted, text = compare_cli.parse(rest)
+        models = compare_cli.choose_models(client.models_list(), active, wanted)
+    except compare_cli.CompareError as exc:
+        console.print(str(exc), style=colour('ERROR'))
+        return
+    chat_id = ensure_chat()
+    state = compare_cli.Collector()
+    spinner = (console.status(f"Comparing {len(models)} models…") if console.is_terminal
+               else nullcontext())
+    try:
+        with spinner as live:
+            for event in client.stream_compare(chat_id, text, models):
+                state.feed(event)
+                if live is not None:
+                    live.update(state.progress())
+    except KovaError as exc:
+        console.print(exc.message, style=colour('ERROR'))
+        return
+    for answer in state.answers.values():
+        console.print(Text(answer.model, style=f"bold {colour('ACCENT')}")
+                      + Text(f"  {answer.stats()}" if answer.stats() else "", style=colour('MUTED')))
+        if answer.phase == "error":
+            console.print(Text(answer.error, style=colour('ERROR')))
+        elif answer.text.strip():
+            console.print(Markdown(answer.text))
+        else:
+            console.print("No answer.", style=colour('MUTED'))
+        console.print()
+    if state.error:
+        console.print(state.error, style=colour('ERROR'))
+    keepable = state.keepable()
+    if state.finished != "done" or not keepable:
+        return
+    if not interactive:
+        console.print("Not kept. Run /compare in an interactive chat to keep one answer.",
+                      style=colour('MUTED'))
+        return
+    for number, answer in enumerate(keepable, 1):
+        console.print(f"{number}. {answer.model}", style=colour('MUTED'))
+    pick = console.input("Keep which answer? Number, or Enter to keep none › ").strip()
+    if not pick:
+        console.print("Nothing kept.", style=colour('MUTED'))
+        return
+    if not (pick.isdigit() and 1 <= int(pick) <= len(keepable)):
+        console.print(f"Not an answer: {pick}. Nothing kept.", style=colour('ERROR'))
+        return
+    chosen = keepable[int(pick) - 1].model
+    try:
+        client.keep_compare(chat_id, state.compare_id, chosen)
+    except KovaError as exc:
+        console.print(f"Could not keep that answer: {exc.message}", style=colour('ERROR'))
+        return
+    console.print(f"Kept the answer from {chosen}. It is now part of this chat.", style=colour('SUCCESS'))
+
+
 def _changes(client: KovaClient, console: Console, chat_id: str) -> None:
     """Every change set in this chat, newest first."""
     checkpoints = client.list_checkpoints(chat_id)
@@ -731,6 +790,9 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     console.print(f"Folder: {target}", style=colour('MUTED'))
                 else:
                     console.print(f"Not a folder: {target}", style=colour('ERROR'))
+            elif command == "/compare":
+                _compare(client, console, ensure_chat, toolbar_state["model"],
+                         args[0] if args else "", interactive=session is not None)
             elif command == "/steer":
                 console.print("Steering a running reply needs the full-screen chat or the web UI.",
                               style=colour('MUTED'))
