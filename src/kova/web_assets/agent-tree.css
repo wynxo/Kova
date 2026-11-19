@@ -1,0 +1,46 @@
+/* Parallel tasks as a live tree (#192). Semantic tokens only; the status marks
+   reuse the tool-card marks so a task looks like the tool row it expands to. */
+.agent-tree { margin-block: var(--space-3); color: var(--fg-muted); min-width: 0; }
+
+.agent-tree-node { display: grid; min-width: 0; border-radius: var(--radius-sm); }
+.agent-tree-node:focus-visible { outline: var(--space-0-5) solid var(--border-strong); outline-offset: var(--space-0-5); }
+
+.agent-tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease-standard),
+              color var(--motion-fast) var(--motion-ease-standard);
+}
+.agent-tree-row:hover { background: var(--bg-raised); color: var(--fg-default); }
+.agent-tree-node[aria-level="1"] > .agent-tree-row { padding-block: var(--space-2); }
+.agent-tree-node[aria-level="1"] > .agent-tree-row > .agent-tree-label { font-weight: 500; color: inherit; }
+
+.agent-tree-label { flex: none; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-default); font-weight: 550; }
+.agent-tree-hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-faint); font-family: var(--mono); font-size: var(--type-size-label); }
+.agent-tree-model,
+.agent-tree-status,
+.agent-tree-time { flex: none; color: var(--fg-faint); font-size: var(--type-size-label); }
+.agent-tree-model { margin-inline-start: auto; overflow: hidden; max-width: 30%; white-space: nowrap; text-overflow: ellipsis; }
+.agent-tree-time { font-variant-numeric: tabular-nums; min-width: var(--space-8); text-align: end; }
+.agent-tree-chevron { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); color: var(--fg-faint); transition: transform var(--motion-fast) var(--motion-ease-standard); }
+.agent-tree-node.open > .agent-tree-row > .agent-tree-chevron { transform: rotate(90deg); }
+.agent-tree-node.failed > .agent-tree-row > .agent-tree-label { color: var(--status-danger); }
+
+.agent-tree-children {
+  display: grid;
+  gap: var(--space-0-5);
+  margin-inline-start: var(--space-3);
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--space-0-5) solid var(--border-subtle);
+}
+.agent-tree-children[hidden] { display: none; }
+/* The expanded call is its own tool card; drop the card's outer margin there. */
+.agent-tree-children > .tool-card { margin-block: 0; }
+
+@media (prefers-reduced-motion: reduce) { .agent-tree-chevron { transition: none; } }
+[data-motion="reduced"] .agent-tree-chevron { transition: none; }
