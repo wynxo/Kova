@@ -39,6 +39,8 @@ CSS_PATH = ROOT / "src" / "kova" / "web_assets" / "tokens.css"
 # The server needs the same values as data, so a theme file can be merged over its base
 # (kova.themes). It sits next to the module so it ships in the package.
 TOKENS_JSON_PATH = ROOT / "src" / "kova" / "tokens.json"
+EXAMPLE_THEMES = ROOT / "design" / "themes"
+GALLERY_JSON_PATH = ROOT / "src" / "kova" / "theme_gallery.json"
 
 THEMES = ("kova-dark", "kova-light")
 
@@ -188,6 +190,15 @@ def render_tokens_json(data: dict[str, Any] | None = None) -> str:
     return json.dumps(payload, indent=2) + "\n"
 
 
+def render_gallery_json() -> str:
+    """Bundle the example theme documents as package data for offline installs."""
+    documents = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(EXAMPLE_THEMES.glob("*.json"))
+    }
+    return json.dumps(documents, indent=2, ensure_ascii=False) + "\n"
+
+
 # --------------------------------------------------------------------------- checks
 
 
@@ -277,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     problems = check_shape(data) + check_contrast(data)
     css = render_css(data)
     tokens_json = render_tokens_json(data)
+    gallery_json = render_gallery_json()
 
     if args.check:
         stale = [
@@ -284,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             for line in (
                 check_freshness(css, CSS_PATH),
                 check_freshness(tokens_json, TOKENS_JSON_PATH),
+                check_freshness(gallery_json, GALLERY_JSON_PATH),
             )
             if line
         ]
@@ -296,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(
             f"tokens ok: {len(PAIRS)} contrast pairs across {len(THEMES)} themes; "
-            "stylesheet matches the generator and so does the token data"
+            "stylesheet matches the generator, as do the token data and theme gallery"
         )
         return 0
 
@@ -304,7 +317,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(css)
         return 0
 
-    for path, text in ((CSS_PATH, css), (TOKENS_JSON_PATH, tokens_json)):
+    for path, text in ((CSS_PATH, css), (TOKENS_JSON_PATH, tokens_json),
+                       (GALLERY_JSON_PATH, gallery_json)):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)} ({len(text)} bytes)")

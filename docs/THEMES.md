@@ -98,6 +98,23 @@ next to `tokens.css`.
 
 ## Install a theme
 
+Open **Settings > General > Theme > Browse themes…** to browse the examples
+bundled with Kova, even offline. Hover over a card or focus its button with
+the keyboard to preview the palette without changing your selection. On a
+touchscreen, tap **Preview**. **Install** adds the theme without
+replacing an existing file; **Use** selects it.
+
+```bash
+kova themes gallery
+kova themes install forest       # install, without changing the active theme
+```
+
+The gallery uses `design/themes/` as its source. After editing an example, run
+`python scripts/build_tokens.py` to regenerate the bundled gallery data; the
+`--check` flag verifies that it is up to date. Remote galleries are not yet supported.
+
+### Install a theme file by hand
+
 A theme file becomes a real theme the moment it lands in Kova's home.
 
 ```bash

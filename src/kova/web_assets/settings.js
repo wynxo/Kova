@@ -17,7 +17,7 @@
       keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation thinking indicator loading',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
-         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export browse gallery',
          control: 'theme'},
         {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
          keywords: 'text size font typography small large bigger read legible zoom scale',
@@ -798,6 +798,13 @@
     } else if (item.control === 'theme') {
       const control = element('div', 'settings-theme-control');
       control.append(themeControl());
+      if (window.KovaThemeGallery) {
+        const browse = element('button', 'btn small settings-action', 'Browse themes…');
+        browse.type = 'button';
+        browse.setAttribute('aria-haspopup', 'dialog');
+        browse.addEventListener('click', () => window.KovaThemeGallery.open(browse));
+        control.append(browse);
+      }
       if (window.KovaThemeEditor) {
         const customize = element('button', 'btn small settings-action', 'Customize…');
         customize.type = 'button';

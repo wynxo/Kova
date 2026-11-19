@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 124 endpoints: 123 route handlers plus the static asset mount.
+The app exposes 126 endpoints: 125 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -174,6 +174,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/PUT /preferences` | token or session | read every UI preference / merge validated changes into them |
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
 | `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
+| `GET /themes/gallery` | token or session | list bundled examples, install state, swatches and resolved preview tokens; `?installed=true` resolves a user theme named `gallery` |
+| `POST /themes/gallery/{theme_id}/install` | token or session | validate and install a bundled example as a theme file (paired phones need `settings:write`) |
 | `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |

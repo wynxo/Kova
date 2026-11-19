@@ -300,7 +300,7 @@
 
     async function choose(sourceId) {
       const themeId = sourceId === 'dark' || sourceId === 'light' ? `kova-${sourceId}` : sourceId;
-      const palette = await request(`/themes/${encodeURIComponent(themeId)}`);
+      const palette = await request(theme.detailUrl(themeId));
       if (editor !== session) return;
       loadDraft(makeDraft(palette, sourceId, options), palette, sourceId);
       await check(true);
