@@ -1375,10 +1375,17 @@
     // Parallel tool calls draw as a live tree (agent-tree.js, #192).
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint});
     const activityText = el('span', 'shimmer', 'Thinking…');
-    // The Kova mark with a small bolt that strikes now and then: still "working", never a loud spinner.
-    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo');
+    // The Kova mark with one small movement (#171): still "working", never a
+    // loud spinner. thinking.js picks this reply's animation onto the mark.
+    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo thinking-anim');
     activityMark.setAttribute('aria-hidden', 'true'); activityLogo.src = '/app/assets/icon.svg'; activityLogo.alt = '';
-    activityMark.append(activityLogo, el('span', 'thinking-bolt'));
+    activityMark.append(activityLogo,
+      el('span', 'thinking-bolt thinking-anim'),
+      el('span', 'thinking-orbit thinking-anim'),
+      el('span', 'thinking-collide thinking-collide-a thinking-anim'),
+      el('span', 'thinking-collide thinking-collide-b thinking-anim'),
+      el('span', 'thinking-fill thinking-anim'));
+    window.KovaThinking?.apply(activityMark);
     const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
     function paint() {
       scheduled = false;
@@ -1906,6 +1913,8 @@
     if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
     add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
+    add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
+    add('Actions', {title:'Next conversation', hint:'Move down the conversation list', keywords:'chat history navigate down next newer', shortcut:shortcutKeys('next-conversation'), run:() => stepConversation(1)});
     add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
     add('Actions', {title:'Show or hide the sidebar', hint:'Give the conversation more room', keywords:'drawer panel collapse', shortcut:shortcutKeys('toggle-sidebar'), run:() => toggleSidebar()});
     if (state.busy) add('Actions', {title:'Stop the reply', hint:'Cancel the turn that is running now', keywords:'cancel halt interrupt', shortcut:shortcutKeys('stop-reply'), run:() => safe(stop)});
@@ -2069,6 +2078,16 @@
     commandPalette.refresh();
   }
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
+  // #200: move through the sidebar's conversation list, wrapping at the ends.
+  function stepConversation(direction) {
+    const chats = (state.chats || []).filter(chat => !chat.ephemeral);
+    if (!chats.length || state.busy) return;
+    const index = chats.findIndex(chat => chat.id === state.chat?.id);
+    const next = index < 0
+      ? chats[direction > 0 ? 0 : chats.length - 1]
+      : chats[(index + direction + chats.length) % chats.length];
+    if (next && next.id !== state.chat?.id) safe(() => openChat(next.id));
+  }
   // Each chord is a registry entry (shortcuts.js), so a remapped key is
   // dispatched from one place instead of a list of hard-coded compares (#200).
   const shortcutActions = {
@@ -2076,6 +2095,8 @@
     'new-conversation': () => { if (state.connected) safe(newChat); },
     'new-incognito': () => safe(newIncognito),
     'search-conversations': () => { toggleSidebar(true); $('search').focus(); $('search').select?.(); },
+    'previous-conversation': () => stepConversation(-1),
+    'next-conversation': () => stepConversation(1),
     'toggle-sidebar': () => toggleSidebar(),
     'toggle-theme': () => $('theme').onclick?.(),
     'focus-composer': () => $('prompt').focus(),
@@ -2090,7 +2111,7 @@
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
-    const action = globalThis.KovaShortcuts?.current?.actionFor?.(event) || null;
+    const action = globalThis.KovaShortcuts?.current?.actionFor?.(event, {guardTyping: typingIn(event.target)}) || null;
     const run = action && shortcutActions[action];
     if (run && run(event) !== false) { event.preventDefault(); return; }
     // Plain keys keep their own behaviour: they are typing, not chords.

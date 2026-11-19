@@ -5,22 +5,31 @@
  * chords through it, the palette and the shortcuts dialog read their labels
  * from it, and the Settings row lets the user record new keys.
  *
- * A user's changes are overrides in this browser's preferences
- * (`localStorage['kova-shortcuts']`, next to 'kova-theme' and 'kova-sidebar'),
- * stored as {action id: key}. Only the actions that differ from their default
- * are written, so a corrupt or partial document always falls back to a working
- * keyboard. A binding that would collide with another action is refused rather
- * than saved: two actions can never share a chord.
+ * A user's changes are overrides in the shared UI preferences (#200):
+ * `shortcuts` in the server's preferences.json, so every paired device and
+ * `kova prefs export` see them. localStorage keeps a copy under
+ * `kova-shortcuts` for an instant first paint, and the keys that lived only
+ * there are migrated to the server once. Only the actions that differ from
+ * their default are written, so a corrupt or partial document always falls
+ * back to a working keyboard. A binding that would collide with another action
+ * is refused rather than saved: two actions can never share a chord.
+ *
+ * Three presets - Default, Vim-ish and Emacs-ish - are whole override maps;
+ * the preset in use is read back from the map, so recording one key afterwards
+ * makes it "Custom" without another preference to keep in step.
  *
  * A binding is a lowercase string such as "mod+shift+k". "mod" is Ctrl on
  * Windows and Linux and Command on macOS; ctrl, meta, alt and shift are the
- * literal keys. The file is plain logic plus the remap list, with no network
- * access and no innerHTML, so tests/web_shortcuts.mjs can exercise it alone.
+ * literal keys. The file is plain logic plus the remap list and the dialog,
+ * with no innerHTML, so tests/web_shortcuts.mjs can exercise it with a small
+ * stand-in for the page.
  */
 (() => {
   'use strict';
 
   const STORAGE_KEY = 'kova-shortcuts';
+  // One-time marker: the keys saved here before sync have reached the server.
+  const SYNCED_KEY = 'kova-shortcuts-synced';
   const MODIFIER_ORDER = ['mod', 'ctrl', 'meta', 'alt', 'shift'];
   const MODIFIER_ALIASES = {
     mod: 'mod', ctrl: 'ctrl', control: 'ctrl', meta: 'meta', cmd: 'meta',
@@ -41,10 +50,23 @@
   // Pressing one of these alone records nothing; the next key still counts.
   const MODIFIER_KEYS = new Set(['control', 'shift', 'alt', 'meta', 'os', 'altgraph', 'capslock']);
   const PRINTABLE = /^[\x20-\x7e]$/;
+  // Keys that already mean something in a text field. A binding without Ctrl,
+  // Alt or Cmd that uses one of them only fires outside a form control, so a
+  // preset like Alt+J can never steal typing from the message box.
+  const TYPING_KEYS = new Set([
+    'enter', 'space', 'tab', 'backspace', 'delete', 'arrowup', 'arrowdown',
+    'arrowleft', 'arrowright', 'home', 'end', 'pageup', 'pagedown',
+  ]);
   const KEY_LABELS = {
     escape: 'Esc', enter: 'Enter', tab: 'Tab', space: 'Space', backspace: 'Backspace',
     delete: 'Delete', insert: 'Insert', home: 'Home', end: 'End', pageup: 'PageUp',
     pagedown: 'PageDown', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→',
+  };
+  const ARIA_KEYS = {
+    escape: 'Escape', enter: 'Enter', tab: 'Tab', space: 'Space',
+    backspace: 'Backspace', delete: 'Delete', insert: 'Insert', home: 'Home',
+    end: 'End', pageup: 'PageUp', pagedown: 'PageDown', arrowup: 'ArrowUp',
+    arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
   };
 
   /** The actions the app knows, in the order the shortcuts dialog lists them. */
@@ -53,6 +75,8 @@
     {id: 'new-conversation', defaultKey: 'mod+shift+k', description: 'New conversation'},
     {id: 'new-incognito', defaultKey: 'mod+shift+n', description: 'New incognito conversation'},
     {id: 'search-conversations', defaultKey: 'mod+shift+f', description: 'Search conversations'},
+    {id: 'previous-conversation', defaultKey: 'alt+arrowup', description: 'Previous conversation'},
+    {id: 'next-conversation', defaultKey: 'alt+arrowdown', description: 'Next conversation'},
     {id: 'toggle-sidebar', defaultKey: 'mod+b', description: 'Show or hide the sidebar'},
     {id: 'toggle-theme', defaultKey: 'mod+shift+l', description: 'Switch light and dark'},
     {id: 'focus-composer', defaultKey: 'mod+space', description: 'Focus the message box'},
@@ -60,6 +84,35 @@
     {id: 'shortcuts', defaultKey: 'mod+/', description: 'Keyboard shortcuts'},
   ]);
   const BY_ID = new Map(REGISTRY.map(entry => [entry.id, entry]));
+
+  /**
+   * Whole override maps. Every key carries a modifier, so no preset can steal
+   * typing from the message box; the ones that move through the conversation
+   * list follow the editor they are named after.
+   */
+  const PRESETS = Object.freeze({
+    default: {
+      label: 'Default',
+      overrides: {},
+    },
+    vim: {
+      label: 'Vim-ish',
+      overrides: {
+        palette: 'mod+shift+p',
+        'previous-conversation': 'alt+k',
+        'next-conversation': 'alt+j',
+      },
+    },
+    emacs: {
+      label: 'Emacs-ish',
+      overrides: {
+        palette: 'alt+x',
+        'previous-conversation': 'alt+p',
+        'next-conversation': 'alt+n',
+      },
+    },
+  });
+  const PRESET_NAMES = Object.freeze(['default', 'vim', 'emacs']);
 
   function isMac(platform) {
     return /Mac|iPhone|iPad/.test(String(platform ?? globalThis.navigator?.platform ?? ''));
@@ -128,6 +181,24 @@
     return shown;
   }
 
+  /** The aria-keyshortcuts value; "mod" names both Ctrl and Command. */
+  function ariaKeyshortcuts(binding) {
+    const parts = parse(binding);
+    if (!parts) return '';
+    const key = ARIA_KEYS[parts.key] || (parts.key.length === 1 ? parts.key.toUpperCase() : parts.key);
+    const combos = [];
+    for (const modifier of parts.mod ? ['Control', 'Meta'] : [null]) {
+      const names = new Set();
+      if (parts.ctrl) names.add('Control');
+      if (modifier) names.add(modifier);
+      if (parts.meta) names.add('Meta');
+      if (parts.alt) names.add('Alt');
+      if (parts.shift) names.add('Shift');
+      combos.push([...names, key].join('+'));
+    }
+    return [...new Set(combos)].join(' ');
+  }
+
   /** Accept only a key a shortcut can really own: a modifier, or a named key. */
   function isUsable(binding) {
     const parts = parse(binding);
@@ -159,10 +230,24 @@
       && Boolean(event.shiftKey) === parts.shift;
   }
 
+  /**
+   * Does this binding already mean something inside a text field?
+   *
+   * A command modifier makes a chord safe to own anywhere; without one, a
+   * printable key or a cursor key belongs to the person typing.
+   */
+  function disruptiveWhileTyping(binding) {
+    const parts = parse(binding);
+    if (!parts) return true;
+    if (parts.mod || parts.ctrl || parts.meta) return false;
+    return PRINTABLE.test(parts.key) || TYPING_KEYS.has(parts.key);
+  }
+
   /** The action a keydown event runs, or null when no binding matches it. */
   function actionFor(event, overrides = {}, options = {}) {
     const bindings = resolveOverrides(overrides);
     for (const entry of REGISTRY) {
+      if (options.guardTyping && disruptiveWhileTyping(bindings[entry.id])) continue;
       if (matches(bindings[entry.id], event, options)) return entry.id;
     }
     return null;
@@ -195,12 +280,29 @@
     return clean;
   }
 
+  /** Two override maps hold the same actions with the same keys. */
+  function sameOverrides(left, right) {
+    const first = normalizeOverrides(left);
+    const second = normalizeOverrides(right);
+    const keys = Object.keys(first);
+    return keys.length === Object.keys(second).length
+      && keys.every(key => first[key] === second[key]);
+  }
+
   /** The complete map: every default, with the user's overrides on top. */
   function resolveOverrides(overrides = {}) {
     const clean = normalizeOverrides(overrides);
     const resolved = {};
     for (const entry of REGISTRY) resolved[entry.id] = clean[entry.id] || entry.defaultKey;
     return resolved;
+  }
+
+  /** The preset a map is exactly: one of PRESET_NAMES, or "custom". */
+  function presetOf(overrides = {}) {
+    for (const name of PRESET_NAMES) {
+      if (sameOverrides(overrides, PRESETS[name].overrides)) return name;
+    }
+    return 'custom';
   }
 
   /** Every chord used by more than one action on this platform. */
@@ -260,11 +362,26 @@
     } catch (_) { /* a blocked or full storage keeps the in-memory change */ }
   }
 
-  /** One app instance: the overrides in memory, saved to preferences on change. */
+  function syncedBefore(storage) {
+    try { return storage?.getItem?.(SYNCED_KEY) === '1'; } catch (_) { return false; }
+  }
+
+  function markSynced(storage) {
+    try { storage?.setItem?.(SYNCED_KEY, '1'); } catch (_) { /* storage is optional */ }
+  }
+
+  /**
+   * One app instance: the overrides in memory, kept in localStorage for the
+   * first paint, saved to the shared preferences on change, and adopted from
+   * them once the page has loaded.
+   */
   function create(options = {}) {
     const mac = options.mac === undefined ? isMac(options.platform) : Boolean(options.mac);
     const storage = options.storage === undefined ? safeStorage() : options.storage;
+    const fetchImpl = options.fetchImpl === undefined ? globalThis.fetch : options.fetchImpl;
+    const sync = options.sync !== false && typeof fetchImpl === 'function';
     let overrides = loadOverrides(storage);
+    let touched = false;
     const listeners = new Set();
     const resolved = () => resolveOverrides(overrides);
     const emit = () => {
@@ -272,9 +389,67 @@
         try { listener(); } catch (_) { /* a broken panel must not block the save */ }
       }
     };
-    return {
+
+    let lastPushed = null;
+    const push = () => {
+      if (!sync) return;
+      const body = JSON.stringify({shortcuts: normalizeOverrides(overrides)});
+      if (body === lastPushed) return;  // the server already has this exact map
+      lastPushed = body;
+      try {
+        const pending = fetchImpl('/preferences', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body,
+        });
+        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+      } catch (_) { /* offline: the local copy is still right */ }
+    };
+
+    const commit = next => {
+      overrides = normalizeOverrides(next);
+      touched = true;
+      saveOverrides(storage, overrides);
+      markSynced(storage);
+      push();
+      emit();
+    };
+
+    let settle;
+    const ready = new Promise(resolve => { settle = resolve; });
+
+    async function hydrate() {
+      if (!sync) { settle(); return; }
+      try {
+        const response = await fetchImpl('/preferences', {headers: {'Accept': 'application/json'}});
+        if (!response || !response.ok) return;
+        const payload = await response.json();
+        const remote = normalizeOverrides(payload && payload.shortcuts);
+        if (touched) {
+          // A key recorded before the first reply is newer than the document.
+          push();
+        } else if (!syncedBefore(storage) && !Object.keys(remote).length
+                   && Object.keys(overrides).length) {
+          // The keys from before sync live only in this browser: send them once.
+          push();
+        } else if (!sameOverrides(remote, overrides)) {
+          overrides = remote;
+          saveOverrides(storage, overrides);
+          emit();
+        }
+        markSynced(storage);
+      } catch (_) {
+        /* offline: the cached keys are still the working set */
+      } finally {
+        settle();
+      }
+    }
+
+    const instance = {
       mac,
       registry: REGISTRY,
+      presets: PRESET_NAMES.map(name => ({id: name, label: PRESETS[name].label})),
+      ready,
       overrides: () => ({...overrides}),
       binding: id => resolved()[id] || null,
       labels: id => labels(resolved()[id], {mac}),
@@ -287,29 +462,34 @@
           isDefault: !Object.hasOwn(overrides, entry.id),
         }));
       },
-      actionFor: event => actionFor(event, overrides, {mac}),
+      actionFor: (event, options = {}) => actionFor(event, overrides, {mac, ...options}),
+      preset: () => presetOf(overrides),
+      applyPreset(name) {
+        const preset = PRESETS[name];
+        if (!preset) return {ok: false, error: 'unknown-preset'};
+        const next = normalizeOverrides(preset.overrides);
+        if (conflicts(resolveOverrides(next), {mac}).length) {
+          return {ok: false, error: 'conflict'};
+        }
+        commit(next);
+        return {ok: true, preset: name};
+      },
       set(id, binding) {
         const change = planChange(id, binding, overrides, {mac});
         if (!change.ok) return change;
-        overrides = change.overrides;
-        saveOverrides(storage, overrides);
-        emit();
+        commit(change.overrides);
         return {ok: true, binding: change.binding};
       },
       reset(id) {
         if (!Object.hasOwn(overrides, id)) return {ok: true};
         const next = {...overrides};
         delete next[id];
-        overrides = next;
-        saveOverrides(storage, overrides);
-        emit();
+        commit(next);
         return {ok: true};
       },
       resetAll() {
         if (!Object.keys(overrides).length) return {ok: true};
-        overrides = {};
-        saveOverrides(storage, overrides);
-        emit();
+        commit({});
         return {ok: true};
       },
       conflicts: () => conflicts(resolved(), {mac}),
@@ -318,6 +498,8 @@
         return () => listeners.delete(listener);
       },
     };
+    hydrate();
+    return instance;
   }
 
   // ---------------------------------------------------------------- the page
@@ -329,27 +511,88 @@
     return node;
   }
 
-  /** Fill the shortcuts dialog from the registry, keeping its static typing rows. */
-  function renderDialog(instance) {
-    if (typeof document === 'undefined') return;
-    const list = document.getElementById('shortcut-list');
+  function normalizeQuery(query) {
+    return String(query ?? '').trim().toLowerCase();
+  }
+
+  /** Does every word of a search appear in the text? Names and keys both count. */
+  function matchesQuery(text, query) {
+    const words = normalizeQuery(query).split(/[\s+]+/).filter(Boolean);
+    if (!words.length) return true;
+    const haystack = String(text ?? '').toLowerCase();
+    return words.every(word => haystack.includes(word));
+  }
+
+  /**
+   * Fill the shortcuts dialog from the registry and filter it by name or key.
+   *
+   * `options.query` is the search text; without it the dialog's own search box
+   * is read, so a saved change re-renders without losing the filter. The
+   * `doc` and `list` options let tests pass a small stand-in for the page.
+   */
+  function renderDialog(instance, options = {}) {
+    const doc = options.doc || (typeof document === 'undefined' ? null : document);
+    if (!doc) return;
+    const list = options.list || doc.getElementById?.('shortcut-list');
     if (!list) return;
+    const box = doc.getElementById?.('shortcut-search');
+    const query = options.query === undefined ? String(box?.value ?? '') : options.query;
     for (const row of list.querySelectorAll('[data-shortcut-row]')) row.remove();
+    let shown = 0;
     for (const item of instance.all()) {
-      const row = document.createElement('div');
+      const row = doc.createElement('div');
       row.setAttribute('data-shortcut-row', item.id);
-      const description = element(document, 'dt', '', item.description);
-      const binding = document.createElement('dd');
-      for (const label of item.labels) binding.append(element(document, 'kbd', '', label));
+      const description = element(doc, 'dt', '', item.description);
+      const binding = doc.createElement('dd');
+      for (const label of item.labels) binding.append(element(doc, 'kbd', '', label));
       row.append(description, binding);
+      row.hidden = !matchesQuery(
+        [item.description, item.binding, ...item.labels].join(' '), query);
+      if (!row.hidden) shown += 1;
       list.append(row);
+    }
+    // The typing keys are part of the same list, so they filter with it.
+    for (const row of [...list.children]) {
+      if (row.hasAttribute?.('data-shortcut-row')) continue;
+      row.hidden = !matchesQuery(row.textContent, query);
+      if (!row.hidden) shown += 1;
+    }
+    const empty = doc.getElementById?.('shortcut-empty');
+    if (empty) {
+      const needle = normalizeQuery(query);
+      empty.hidden = shown > 0 || !needle;
+      empty.textContent = `No shortcuts match “${needle}”.`;
     }
   }
 
   /**
-   * The Settings list: one row per action, its keys as a button that records
-   * the next keypress, a reset for changed rows, and an inline warning when a
-   * key is already taken. Nothing here invents a colour or a second registry.
+   * Show the current keys on the controls that offer the action: the sidebar's
+   * New chat, the composer's incognito row, the Stop button. The first paint
+   * keeps the title the markup shipped, then the keys are appended to it.
+   */
+  function applyHints(instance, doc = typeof document === 'undefined' ? null : document) {
+    if (!doc || typeof doc.querySelectorAll !== 'function') return;
+    for (const node of doc.querySelectorAll('[data-shortcut]')) {
+      const id = node.getAttribute?.('data-shortcut');
+      const binding = id ? instance.binding(id) : null;
+      if (!binding) continue;
+      if (!node.hasAttribute?.('data-shortcut-title')) {
+        const base = node.getAttribute?.('title') || node.getAttribute?.('aria-label')
+          || String(node.textContent ?? '').trim();
+        node.setAttribute('data-shortcut-title', base);
+      }
+      const base = node.getAttribute('data-shortcut-title');
+      const keys = instance.labels(id);
+      node.setAttribute('aria-keyshortcuts', ariaKeyshortcuts(binding));
+      node.setAttribute('title', keys.length ? `${base} (${keys.join(' ')})` : base);
+    }
+  }
+
+  /**
+   * The Settings list: a preset for the whole keyboard, then one row per
+   * action with its keys as a button that records the next keypress, a reset
+   * for changed rows, and an inline warning when a key is already taken.
+   * Nothing here invents a colour or a second registry.
    */
   function mount(host, instance) {
     const doc = host.ownerDocument || document;
@@ -357,6 +600,27 @@
 
     const list = element(doc, 'div', 'settings-rows');
     const rows = new Map();
+
+    const presetRow = element(doc, 'div', 'settings-row shortcut-preset-row');
+    const presetCopy = element(doc, 'div', 'settings-copy');
+    presetCopy.append(
+      element(doc, 'span', 'settings-row-title', 'Preset'),
+      element(doc, 'p', 'settings-row-help',
+        'Start from a familiar keyboard. Recording a key below makes it Custom.'),
+    );
+    const presetLabel = element(doc, 'label', 'sr-only', 'Shortcut preset');
+    presetLabel.htmlFor = 'shortcut-preset';
+    const preset = element(doc, 'select', 'shortcut-preset');
+    preset.id = 'shortcut-preset';
+    for (const name of PRESET_NAMES) {
+      const option = element(doc, 'option', '', PRESETS[name].label);
+      option.value = name;
+      preset.append(option);
+    }
+    const custom = element(doc, 'option', '', 'Custom');
+    custom.value = 'custom';
+    preset.append(custom);
+    presetRow.append(presetCopy, presetLabel, preset);
 
     function messageFor(result) {
       if (result.error === 'conflict') {
@@ -376,6 +640,12 @@
       row.reset.hidden = item.isDefault;
       row.reset.setAttribute('aria-label', `Reset the shortcut for ${item.description}`);
       row.note.textContent = item.isDefault ? '' : `Default: ${labels(item.defaultKey, {mac: instance.mac}).join(' ')}`;
+    }
+
+    function updatePreset() {
+      const current = instance.preset();
+      preset.value = current;
+      custom.disabled = current !== 'custom';
     }
 
     function stopRecording() {
@@ -448,12 +718,20 @@
     resetAll.addEventListener('click', () => { stopRecording(); instance.resetAll(); });
     foot.append(resetAll);
 
-    host.replaceChildren(list, foot);
+    preset.addEventListener('change', () => {
+      stopRecording();
+      if (preset.value === 'custom') { updatePreset(); return; }
+      instance.applyPreset(preset.value);
+    });
+
+    host.replaceChildren(presetRow, list, foot);
 
     instance.subscribe(() => {
       for (const row of rows.values()) updateRow(row);
+      updatePreset();
       resetAll.disabled = instance.all().every(item => item.isDefault);
     });
+    updatePreset();
     resetAll.disabled = instance.all().every(item => item.isDefault);
   }
 
@@ -461,8 +739,19 @@
 
   function init() {
     if (typeof document === 'undefined' || !document.getElementById) return;
+    const search = document.getElementById('shortcut-search');
+    search?.addEventListener?.('input', () => renderDialog(current, {query: search.value}));
     renderDialog(current);
-    current.subscribe(() => renderDialog(current));
+    current.subscribe(() => {
+      renderDialog(current);
+      applyHints(current);
+    });
+    applyHints(current);
+    const dialog = document.getElementById('shortcuts-dialog');
+    dialog?.addEventListener?.('close', () => {
+      if (search) search.value = '';
+      renderDialog(current);
+    });
     const host = document.getElementById('shortcut-remap');
     if (host) mount(host, current);
   }
@@ -473,9 +762,10 @@
   }
 
   globalThis.KovaShortcuts = {
-    STORAGE_KEY, REGISTRY, create, current,
-    isMac, parse, formatBinding, chordOf, labels, isUsable, matches, actionFor,
-    bindingFromEvent, normalizeOverrides, resolveOverrides, conflicts, planChange,
-    loadOverrides, saveOverrides, renderDialog, mount,
+    STORAGE_KEY, SYNCED_KEY, REGISTRY, PRESETS, PRESET_NAMES, create, current,
+    isMac, parse, formatBinding, chordOf, labels, ariaKeyshortcuts, isUsable,
+    matches, actionFor, bindingFromEvent, normalizeOverrides, sameOverrides,
+    resolveOverrides, presetOf, conflicts, planChange, loadOverrides,
+    saveOverrides, renderDialog, applyHints, matchesQuery, mount,
   };
 })();
