@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, permissionAllowed, serverCommand, windowState} = require('./core');
+const {settings, external, permissionAllowed, serverCommand, windowState, isAction, trayStatus} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -24,6 +24,25 @@ test('the renderer may request notifications and nothing else', () => {
   for (const permission of ['geolocation', 'media', 'camera', 'microphone',
     'clipboard-read', 'clipboard-write', 'openExternal', 'unknown'])
     assert.equal(permissionAllowed(permission), false);
+});
+
+test('the app-action allowlist admits only the palette actions', () => {
+  for (const id of ['new-conversation', 'new-incognito', 'search-conversations',
+    'toggle-sidebar', 'open-settings', 'toggle-theme', 'focus-composer', 'shortcuts'])
+    assert.equal(isAction(id), true);
+  for (const id of ['', 'new-chat', 'quit', 'settings', 'open-settings ', '../open-settings',
+    'open-settings\n', null, 42, undefined])
+    assert.equal(isAction(id), false);
+});
+
+test('tray status turns a page state into a tooltip and menu label', () => {
+  assert.deepEqual(trayStatus('Kova', 'idle'), {label: 'Idle', tooltip: 'Kova · Idle'});
+  assert.deepEqual(trayStatus('Kova', 'working'), {label: 'Working', tooltip: 'Kova · Working'});
+  assert.deepEqual(trayStatus('Alex', 'waiting'),
+    {label: 'Waiting for approval', tooltip: 'Alex · Waiting for approval'});
+  // Anything the page cannot have sent falls back to idle rather than leaking it.
+  assert.deepEqual(trayStatus('Kova', 'blocked-on-approval'), {label: 'Idle', tooltip: 'Kova · Idle'});
+  assert.deepEqual(trayStatus('Kova', 'nonsense'), {label: 'Idle', tooltip: 'Kova · Idle'});
 });
 
 test('menu launcher can retain a custom home without a terminal environment', () => {
