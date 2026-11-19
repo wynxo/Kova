@@ -2,8 +2,9 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false, comparing: false};
   let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
+  let compare = null;  // compare.js (#96), created once the helpers it borrows exist
   const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
   let autostartBusy = false;
   async function refreshAutostart(action) {
@@ -206,7 +207,8 @@
     // is stopped or waited for, so send is withheld while one runs.
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
-    $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
+    $('queue').hidden = !busy || nothingToSend || state.comparing; $('steer').hidden = !busy || nothingToSend || state.comparing;
+    $('compare-open').disabled = busy || pickerSaving || !state.connected;
     $('send').disabled = readingAttachments || pickerSaving || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = !!state.chat?.ephemeral || state.busy || pickerSaving || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
@@ -937,6 +939,7 @@
     await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
+    compare?.dismiss();
     rememberDraft();
     state.chat = chat;
     composerModules.history?.reset();
@@ -1599,6 +1602,7 @@
       catch (error) { toastError(error.message); }
       return;
     }
+    if (state.comparing) return toast('Keep an answer or stop the comparison first.');
     if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
     await sendText(text || 'Please read the attached files.', {draft});
@@ -1606,6 +1610,7 @@
   async function sendText(text, sendOptions = {}) {
     if ((!text && !sendOptions.action) || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
+    compare?.dismiss();
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn, terminal = false, submittedChat = null;
     try {
@@ -1843,6 +1848,25 @@
     // Like a shell: Up at the start of an empty box brings back what you said.
     composerModules.history?.keydown(event);
   });
+  // Compare answers (#96) lives in compare.js; app.js lends it the chat and busy state.
+  compare = globalThis.KovaCompare?.create({
+    json, api, write, readEvents, markdown, toastError, follow,
+    models: () => state.models || [], localOnly: () => !!state.localOnly,
+    currentModel: () => composerModel().model, draft: () => $('prompt').value,
+    busy: () => state.busy || pickerSaving || !state.connected,
+    setBusy: flag => {
+      state.busy = state.comparing = flag; state.turnReady = false;
+      if (!flag) state.stopRequested = false;
+      controls();
+    },
+    setStreaming: () => { state.turnReady = true; if (state.stopRequested) safe(cancelTurn); },
+    ensureChat: async () => (state.chat ||= await createComposerChat()),
+    consumeDraft, restoreFocus: () => $('prompt').focus(),
+    mount: node => { empty(false); options(false); $('messages').append(node); nearBottom = true; },
+    kept: async chatId => { await openChat(chatId); await refreshChats(); },
+  }) || null;
+  $('compare-open').hidden = !compare;
+  $('compare-open').onclick = () => compare?.choose();
   $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
@@ -1858,12 +1882,19 @@
   // has actually recorded, not the defaults (#200).
   const shortcutKeys = id => globalThis.KovaShortcuts?.current?.labels?.(id) || [];
   let paletteChats = [];
+  // Chat-content hits from GET /chats/search, filled in as the user types; the
+  // sidebar's own titles-only filter never looked inside a message.
+  let paletteMatches = [];
+  // MCP servers and installed plugins, so the palette can switch them on or off.
+  let paletteMcp = [];
+  let palettePlugins = [];
   function paletteItems() {
     const items = [];
     const add = (group, item) => items.push({group, ...item});
     const current = state.chat && !state.chat.ephemeral ? state.chat : null;
     const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
     add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
+    if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
     add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
     add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
@@ -1877,7 +1908,9 @@
     const themes = globalThis.KovaTheme;
     for (const option of themes?.choices?.() || []) {
       if (option.id === themes.choice()) continue;
-      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, run:() => themes.set(option.id)});
+      // Highlighting a theme row shows it, Escape puts the old one back, and
+      // Enter is the only thing that saves it (#183).
+      add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, previewKey:`theme:${option.id}`, preview:() => themes.preview?.(option.id), previewEnd:() => themes.endPreview?.(), run:() => themes.set(option.id)});
     }
 
     if (current) {
@@ -1896,6 +1929,25 @@
       if (offers('approvals') && !$('permission').disabled) {
         for (const [mode, hint] of [['manual', 'Ask before commands and file changes'], ['auto', 'Ask only before destructive commands'], ['full', 'Never ask. Use with care.']]) {
           add('Permissions', {title:`Permission: ${mode === 'full' ? 'Full access' : mode[0].toUpperCase() + mode.slice(1)}`, hint, keywords:`permission approvals ${mode}`, run:() => { $('permission').value = mode; $('permission').onchange?.(); }});
+        }
+      }
+    }
+
+    // Reasoning effort (#183): the same levels the composer's model picker
+    // offers for this model, so the palette never invents one the server would
+    // reject. An empty level means "let the model decide".
+    if (!state.busy) {
+      const selection = composerModel();
+      const supported = modelByName(selection.model)?.reasoning_efforts || [];
+      if (supported.length) {
+        const chosen = supported.includes(selection.reasoning_effort) ? selection.reasoning_effort : '';
+        for (const level of ['', ...supported]) {
+          add('Reasoning', {
+            title: `Reasoning effort: ${effortLabels[level] || level}`,
+            hint: level === chosen ? 'Current level' : level ? 'For this conversation' : 'Let the model choose',
+            keywords: `reasoning effort thinking budget ${level || 'automatic'}`,
+            run: () => safe(() => chooseComposerModel(selection.model, level || null)),
+          });
         }
       }
     }
@@ -1920,8 +1972,42 @@
       if (state.busy) break;
       add('Models', {title:`Use ${model.model || model.name}`, hint:model.provider_name || 'Custom provider', keywords:`model provider ${model.name}`, run:() => { $('model').value = model.name; $('model').onchange?.(); }});
     }
+    // MCP servers and extensions can be switched from here because the app
+    // already has the endpoints the two panels use (#183).
+    for (const server of paletteMcp) {
+      const tools = Array.isArray(server.tools) ? server.tools.filter(tool => tool.enabled !== false).length : 0;
+      add('MCP servers', {
+        title: `${server.enabled ? 'Turn off' : 'Turn on'} MCP server: ${server.name}`,
+        hint: [server.enabled ? 'On' : 'Off', server.transport, server.state || '', `${tools} tool${tools === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+        keywords: `mcp server ${server.name} tools enable disable switch`,
+        run: () => safe(() => paletteSetEnabled(`/mcp/${encodeURIComponent(server.name)}`, {enabled: !server.enabled})),
+      });
+    }
+    for (const plugin of palettePlugins) {
+      add('Extensions', {
+        title: `${plugin.enabled ? 'Turn off' : 'Turn on'} extension: ${plugin.name}`,
+        hint: [plugin.enabled ? 'On' : 'Off', plugin.version ? `v${plugin.version}` : '', plugin.description || ''].filter(Boolean).join(' · '),
+        keywords: `extension plugin add-on ${plugin.name} enable disable switch`,
+        run: () => safe(() => paletteSetEnabled(`/extensions/plugins/${encodeURIComponent(plugin.name)}`, {enabled: !plugin.enabled})),
+      });
+    }
+    // Content hits come first in their group and inside a conversation title
+    // never repeats them: the snippet is the point.
+    const shown = paletteMatches.slice(0, 20);
+    const matched = new Set(shown.map(row => row.id));
+    for (const row of shown) {
+      const snippet = String(row.snippet || '').replace(/\s+/g, ' ').trim();
+      add('In messages', {
+        title: row.title || 'New conversation',
+        hint: `${row.role === 'user' ? 'You' : 'Kova'}: ${snippet || 'Match in this conversation'}`,
+        keywords: `chat conversation history message match ${row.role || ''}`,
+        alwaysMatch: true,
+        run: () => safe(() => openChat(row.id)),
+      });
+    }
     for (const chat of paletteChats.slice(0, 50)) {
       if (state.busy) break;
+      if (matched.has(chat.id)) continue;
       add('Conversations', {
         title: chat.ephemeral ? 'Incognito conversation' : chat.title || 'New conversation',
         hint: chat.ephemeral ? 'Incognito · not saved on this PC'
@@ -1932,15 +2018,47 @@
     }
     return items;
   }
-  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onError: error => toastError(error.message)}) || null;
+  async function paletteSetEnabled(url, body) {
+    await json(url, write('PATCH', body));
+    await paletteLoad();
+  }
+  async function paletteLoad() {
+    const read = url => json(url).catch(() => null);
+    const [chats, servers, plugins] = await Promise.all([read('/chats'), read('/mcp'), read('/extensions/plugins')]);
+    if (Array.isArray(chats)) paletteChats = chats;
+    if (Array.isArray(servers)) paletteMcp = servers;
+    if (Array.isArray(plugins)) palettePlugins = plugins;
+  }
+  // Chat content is searched on the server; the registry stays synchronous, so
+  // the answer is dropped into a list and the open palette re-renders (#183).
+  let paletteSearchTimer, paletteSearchVersion = 0, paletteMatchQuery = '';
+  async function paletteRunSearch(query, version) {
+    let rows = [];
+    try { rows = await json(`/chats/search?q=${encodeURIComponent(query)}&limit=20`); }
+    catch (_) { return; }
+    if (version !== paletteSearchVersion || !commandPalette?.isOpen()) return;
+    paletteMatches = Array.isArray(rows) ? rows : [];
+    commandPalette.refresh();
+  }
+  function paletteSearch(value) {
+    const query = String(value || '').trim();
+    clearTimeout(paletteSearchTimer);
+    const version = ++paletteSearchVersion;
+    // A hit the server already matched is shown whatever the query says, so
+    // the list is emptied the moment the query stops matching it.
+    if (query !== paletteMatchQuery) { paletteMatches = []; paletteMatchQuery = query; }
+    if (query.length < 2) return version;
+    paletteSearchTimer = setTimeout(() => safe(() => paletteRunSearch(query, version)), 180);
+    return version;
+  }
+  const commandPalette = globalThis.KovaPalette?.create?.({items: paletteItems, onQuery: paletteSearch, onError: error => toastError(error.message)}) || null;
   async function openPalette() {
     if (!state.connected || !commandPalette) return;
     closeMenu();
+    paletteMatches = [];
+    paletteSearch('');
     commandPalette.open();
-    try {
-      const chats = await json('/chats');
-      if (Array.isArray(chats)) paletteChats = chats;
-    } catch (_) { /* the palette still offers commands if history cannot load */ }
+    await paletteLoad();
     commandPalette.refresh();
   }
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
@@ -3250,6 +3368,7 @@
   const modelMenu = menu('model', 'Model', {align: 'end', width: 260, placeholder: 'Choose model', describe: modelHint, search: true,
     actions: [
       {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
+      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy, run: () => { options(false); compare?.choose(); }},
       {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
     ]});
   menu('reasoning-effort', 'Reasoning effort', {align: 'end'});

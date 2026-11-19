@@ -1,0 +1,155 @@
+.settings-theme-control {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+.settings-theme-control .settings-theme {
+  flex-wrap: wrap;
+  flex-shrink: 1;
+}
+body:has(> .theme-editor) {
+  --theme-editor-width: min(42vw, var(--pane-panel-w));
+}
+.theme-editor {
+  position: fixed;
+  z-index: 81;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: var(--theme-editor-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  border-inline-start: var(--space-0-5) solid var(--border-subtle);
+}
+.theme-editor h2 {
+  padding: var(--space-4);
+  border-bottom: var(--space-0-5) solid var(--border-subtle);
+  font-size: var(--type-size-title);
+}
+.theme-editor h3 {
+  font-size: var(--type-size-body);
+}
+.theme-editor-body {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  min-block-size: 0;
+  overflow: auto;
+}
+.theme-editor fieldset {
+  min-inline-size: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.theme-editor-sources,
+.theme-editor-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: end;
+}
+.theme-editor-identity {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.theme-editor-field,
+.theme-editor-groups,
+.theme-editor-group {
+  display: grid;
+  gap: var(--space-1);
+}
+.theme-editor-group {
+  border-top: var(--space-0-5) solid var(--border-subtle);
+  padding-block: var(--space-2);
+}
+.theme-editor-colour {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--space-10) calc(var(--space-12) * 2);
+  align-items: center;
+  gap: var(--space-2);
+}
+.theme-editor-colour > span {
+  overflow-wrap: anywhere;
+}
+.theme-editor input,
+.theme-editor select {
+  min-inline-size: 0;
+  inline-size: 100%;
+  block-size: var(--space-8);
+  padding-inline: var(--space-2);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg-default);
+}
+.theme-editor input[type="color"] {
+  padding: var(--space-0-5);
+  cursor: pointer;
+}
+:is(.theme-editor, .settings-theme-control) :where(button, input, select):focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
+}
+.theme-editor input[aria-invalid="true"] {
+  border-color: var(--status-danger);
+}
+.theme-editor-footer {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--space-0-5) solid var(--border-subtle);
+}
+.theme-editor-checks,
+.theme-editor-notice {
+  max-block-size: calc(var(--space-12) * 2);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
+.theme-editor-checks:empty,
+.theme-editor-notice:empty {
+  display: none;
+}
+.theme-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* On wide layouts the chat reflows beside the preview editor. */
+@media (min-width: 1120px) {
+  body:not(.panel-open):has(> .theme-editor) > main {
+    margin-inline-end: var(--theme-editor-width);
+  }
+}
+
+/* Leave some of the real app visible even when there is no room beside it. */
+@media (max-width: 720px) {
+  .theme-editor {
+    inset-block-start: auto;
+    inset-inline-start: 0;
+    inline-size: 100%;
+    block-size: 72dvh;
+    border-inline-start: 0;
+    border-top: var(--space-0-5) solid var(--border-subtle);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-editor .btn,
+  .settings-theme-control .btn {
+    transition: none;
+  }
+  :is(.theme-editor, .settings-theme-control) .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
