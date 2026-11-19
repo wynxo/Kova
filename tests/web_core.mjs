@@ -115,6 +115,12 @@ const sandbox = {
                         offered: {chat: ['api_key', 'reasoning', 'vision'], work: ['api_key', 'approvals', 'reasoning', 'tools', 'vision']}},
       '/capabilities?model=text-model': {provider: 'local', capabilities: ['api_key', 'reasoning', 'tools'],
                         offered: {chat: ['api_key', 'reasoning'], work: ['api_key', 'approvals', 'reasoning', 'tools']}},
+      // Palette toggles (#183) read the same lists their panels do.
+      '/mcp': [{name: 'github', transport: 'stdio', state: 'connected', enabled: true,
+                tools: [{name: 'search', enabled: true}, {name: 'issue', enabled: false}]}],
+      '/extensions/plugins': [{name: 'notes', version: '1.2.0', enabled: false, description: 'Notes helpers'}],
+      '/chats/search?q=quarterly&limit=20': [{id: 'found-chat', title: 'Old notes', role: 'user',
+        snippet: 'the quarterly numbers', created: '', last_message: ''}],
       '/providers/catalog': {harness_available: true, providers: [
         {id: 'openai', name: 'OpenAI', key_url: 'https://platform.openai.com/api-keys',
          capabilities: ['api_key', 'tools']},
@@ -140,7 +146,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename, refreshChats};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, paletteSearch, paletteRunSearch, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename, refreshChats};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -612,6 +618,41 @@ assert.ok(sandbox.test.commandPalette.dialog.textContent.includes('Switch to lig
 sandbox.test.commandPalette.close();
 assert.equal(sandbox.test.commandPalette.isOpen(), false);
 console.log('Command palette entry, registry and fuzzy filtering passed');
+
+// Palette gaps from #183: reasoning effort, and MCP/extension switches, now sit
+// in the same registry as every other command.
+state.chat = {id: 'palette-chat', model: 'vision-model', reasoning_effort: 'low'};
+state.models = [{name: 'vision-model', model: 'vision', provider_name: 'Local',
+                 reasoning_efforts: ['low', 'high']}];
+await sandbox.test.openPalette(); await tick(); await tick();
+const paletteText = () => sandbox.test.commandPalette.dialog.textContent;
+sandbox.test.commandPalette.input.value = 'reasoning';
+sandbox.test.commandPalette.input.listeners.input();
+for (const level of ['Automatic', 'Low', 'High']) {
+  assert.ok(paletteText().includes(`Reasoning effort: ${level}`), `the ${level} level is offered`);
+}
+sandbox.test.commandPalette.input.value = 'github';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(paletteText().includes('Turn off MCP server: github'), 'an enabled MCP server can be switched off');
+assert.ok(paletteText().includes('1 tool'), 'the enabled tool count is the hint');
+sandbox.test.commandPalette.input.value = 'notes';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(paletteText().includes('Turn on extension: notes'), 'a disabled extension can be switched on');
+// Chat content, not just titles: the server search answer becomes a snippet row
+// whose Enter opens the matching conversation.
+sandbox.test.commandPalette.input.value = 'quarterly';
+const searchVersion = sandbox.test.paletteSearch('quarterly');
+await sandbox.test.paletteRunSearch('quarterly', searchVersion);
+await tick();
+assert.ok(paletteText().includes('Old notes'), 'a content hit is listed');
+assert.ok(paletteText().includes('You: the quarterly numbers'), 'with the matching snippet');
+assert.ok(paletteText().includes('In messages'), 'in its own group');
+sandbox.test.commandPalette.input.value = 'quarters';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(!paletteText().includes('Old notes'),
+          'a hit from the previous query is dropped until the new one answers');
+sandbox.test.commandPalette.close();
+console.log('Palette reasoning effort, MCP and extension switches passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey. The harness
  // reports no platform, so this is the PC spelling of "mod".
  let spaceFocused = 0, spacePrevented = 0;

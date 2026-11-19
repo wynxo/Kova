@@ -215,6 +215,31 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.api.label('system'), 'System');
 }
 
+// ---- Previewing a highlighted theme changes nothing permanent -------------
+{
+  const page = boot({themes: {'midnight-teal': MIDNIGHT}});
+  await settle();
+  await page.api.preview('midnight-teal');
+  assert.equal(page.root.dataset.theme, 'dark');
+  assert.equal(page.properties.get('--accent-default'), '#2dd4bf', 'the preview paints its tokens');
+  assert.deepEqual(page.puts(), [], 'a preview is not saved');
+  assert.equal(page.store.has('kova-theme'), false, 'a preview is not cached as the choice');
+  assert.equal(page.api.choice(), 'midnight-teal', 'the preview is what is on screen');
+  await page.api.endPreview();
+  assert.equal(page.api.choice(), 'system', 'ending the preview puts the saved choice back');
+  assert.equal(page.properties.size, 0, 'and clears the tokens the preview set');
+  assert.deepEqual(page.puts(), []);
+  assert.equal(page.store.has('kova-theme'), false);
+  // Previewing again and committing keeps the theme for good.
+  await page.api.preview('midnight-teal');
+  await page.api.endPreview();
+  await page.api.set('midnight-teal');
+  assert.deepEqual(page.puts(), [{theme: 'midnight-teal'}], 'the preview itself never saved anything');
+  assert.equal(page.store.get('kova-theme'), 'midnight-teal');
+  await page.api.endPreview();
+  assert.equal(page.api.choice(), 'midnight-teal', 'a committed choice is not undone by a late end');
+}
+
 // ---- Offline: the local choice stays, nothing throws -----------------------
 {
   const page = boot({stored: {'kova-theme': 'light'}, offline: true});
