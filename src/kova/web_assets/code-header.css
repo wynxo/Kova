@@ -43,8 +43,9 @@
 
 .code-action:hover { background: var(--bg-raised); color: var(--fg-default); }
 
-/* Wrap pressed: the setting reads as a held toggle, not as an accent. */
-.wrap-code[aria-pressed="true"] { background: var(--bg-raised); color: var(--fg-default); }
+/* Wrap or Lines pressed: the setting reads as a held toggle, not as an accent. */
+.wrap-code[aria-pressed="true"],
+.lines-code[aria-pressed="true"] { background: var(--bg-raised); color: var(--fg-default); }
 
 /* A block that is still arriving cannot be copied yet. */
 .copy-code:disabled,
