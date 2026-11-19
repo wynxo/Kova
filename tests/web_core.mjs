@@ -146,7 +146,7 @@ const sandbox = {
   },
 };
 let source = readFileSync(new URL('../src/kova/web_assets/app.js', import.meta.url), 'utf8');
-source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, paletteSearch, paletteRunSearch, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename, refreshChats};');
+source = source.replace('controls(); start();', 'globalThis.test = {parseCommand, dispatchCommand, commandPicker, commands, state, controls, turnView, setChat, toolSummary, toolHint, toolLabel, toggleSidebar, stop, renderModels, closeProvider, showProviderModels, readEvents, openChat, newChat, newIncognito, send, sendText, runNextQueued, queueMessage, steerMessage, loadQueue, applyCapabilities, refreshCapabilities, openModelSettings, providerKindChanged, attachFiles, pendingAttachments, renderAttachments, applyShare, readWorkerShare, openLocalModels, installLocalModel, openPalette, commandPalette, paletteSearch, paletteRunSearch, history, togglePin, noteChatState, renderActivity, activityPanel, loadingChats, disconnected, inlineRename, refreshChats, isQuickChat, QUICK_TITLE_PREFIX};');
 // palette.js, shortcuts.js, chat_list.js, diff.js, tool-cards.js, reasoning.js
 // and code-header.js are plain scripts, like app.js: load them first so app.js
 // builds its command registry, tool cards, reasoning rows, diff hooks and code
@@ -166,6 +166,16 @@ const {state, controls, turnView, setChat, queueMessage, steerMessage, loadQueue
 const walk = node => [node, ...node.children.flatMap(walk)];
 const byClass = (node, cls) => walk(node).filter(n => n.className.split(' ').includes(cls));
 const buttons = node => walk(node).filter(n => n.tagName === 'button');
+
+// Quick ask chats keep their [quick] prefix out of the normal sidebar (#71).
+const {isQuickChat, QUICK_TITLE_PREFIX} = sandbox.test;
+assert.equal(QUICK_TITLE_PREFIX, '[quick] ');
+assert.equal(isQuickChat({title: '[quick] summarise this'}), true);
+assert.equal(isQuickChat({title: '[ask] one-shot'}), false, 'the CLI ask prefix stays visible');
+assert.equal(isQuickChat({title: 'Quarterly notes'}), false);
+assert.equal(isQuickChat({}), false, 'a titleless chat is not a quick ask');
+assert.equal(isQuickChat(null), false);
+console.log('Quick ask chats stay out of the sidebar history passed');
 
 // Pinned chats and date groups (#195). A pinned chat appears once, on top; the
 // rest fall into local-calendar buckets, and "Previous 7 days" is the seven

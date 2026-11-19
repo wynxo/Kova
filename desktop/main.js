@@ -1,10 +1,10 @@
 'use strict';
-const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen} = require('electron');
+const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, globalShortcut, clipboard} = require('electron');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, permissionAllowed, windowState, isAction, trayStatus} = require('./core');
-let win, tray, child, quitting = false, starting = false, origin, home;
+const {settings, serverCommand, external, permissionAllowed, windowState, isAction, trayStatus, quickAsk, quickChatId} = require('./core');
+let win, tray, child, quick, quitting = false, starting = false, origin, home;
 let appName = 'Kova', trayState = 'idle';
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
@@ -14,6 +14,65 @@ else {
   app.whenReady().then(create).catch(e => { console.error(e.message); app.quit(); });
 }
 function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
+// Quick ask (#71): a small, always-on-top window over /app?quick=1, toggled by a
+// global shortcut. The selection chip reads the clipboard in this process and
+// hands it to the page over a narrow channel.
+const QUICK_SELECTION_LIMIT = 8192;
+function readSelection() {
+  try {
+    const text = clipboard.readText();
+    return typeof text === 'string' && text.trim() && text.length <= QUICK_SELECTION_LIMIT ? text : '';
+  } catch { return ''; }
+}
+function hideQuick() {
+  if (quick && !quick.isDestroyed()) quick.hide();
+}
+async function ensureQuick() {
+  if (quick && !quick.isDestroyed()) return quick;
+  const placement = screen.getPrimaryDisplay().workArea;
+  quick = new BrowserWindow({
+    width: 720, height: 220, minWidth: 360, minHeight: 160,
+    x: placement.x + Math.round((placement.width - 720) / 2),
+    y: placement.y + 64,
+    frame: false, alwaysOnTop: true, skipTaskbar: true, show: false, resizable: true,
+    backgroundColor: '#0d0d10', icon, title: 'Quick ask',
+    webPreferences: {contextIsolation: true, nodeIntegration: false, sandbox: true,
+      preload: path.join(__dirname, 'preload.js')}});
+  quick.setAlwaysOnTop(true, 'pop-up-menu');
+  quick.webContents.setWindowOpenHandler(({url}) => {
+    if (external(url) && new URL(url).origin !== origin) shell.openExternal(url);
+    return {action: 'deny'};
+  });
+  quick.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin !== origin) { event.preventDefault(); if (external(url)) shell.openExternal(url); }
+  });
+  quick.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => callback(permissionAllowed(permission)));
+  quick.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+    const url = new URL(details.url);
+    callback({cancel: !['file:', 'devtools:'].includes(url.protocol) && url.origin !== origin});
+  });
+  quick.webContents.on('will-attach-webview', e => e.preventDefault());
+  // It should get out of the way; the turn keeps running server-side.
+  quick.on('blur', () => hideQuick());
+  const value = await ticket();
+  await quick.loadURL(origin + '/app?quick=1#ticket=' + encodeURIComponent(value));
+  return quick;
+}
+async function showQuick() {
+  try {
+    const window = await ensureQuick();
+    window.webContents.send('quick-selection', readSelection());
+    if (window.isMinimized()) window.restore();
+    window.show(); window.focus();
+  } catch (e) {
+    console.error('Quick ask unavailable:', e.message);
+    show();  // fall back to the main window
+  }
+}
+function toggleQuick() {
+  if (quick && quick.isVisible()) hideQuick();
+  else showQuick();
+}
 // Native menu and tray items send an allowlisted action id to the page; the
 // page maps each id to the same handler the palette uses. Show and Quit stay
 // in this process.
@@ -31,7 +90,7 @@ function refreshTray() {
     {type: 'separator'},
     {label: 'Show Kova', click: show},
     {label: 'New chat', click: () => sendAction('new-conversation')},
-    {label: 'Quick ask', click: () => sendAction('focus-composer')},
+    {label: 'Quick ask', click: toggleQuick},
     {type: 'separator'},
     {label: 'Quit', click: () => app.quit()},
   ]));
@@ -84,7 +143,7 @@ function saveBounds() {
 // the window where the reader put it, once it has stopped moving for a moment.
 function scheduleBounds() { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 400); }
 async function create() {
-  ({home, origin} = settings());
+  ({home, origin, config} = settings());
   fs.mkdirSync(home, {recursive: true, mode: 0o700});
   // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
   app.setPath('userData', path.join(home, 'desktop'));
@@ -135,7 +194,26 @@ async function create() {
     trayState = ['idle', 'working', 'waiting'].includes(state) ? state : 'idle';
     refreshTray();
   });
+  // Quick ask (#71): the overlay hides itself, or asks the main window to open
+  // the chat it just created. Sender and chat id are both checked first.
+  ipcMain.on('quick-hide', event => {
+    if (event.sender === quick?.webContents) hideQuick();
+  });
+  ipcMain.on('quick-open-chat', (event, chatId) => {
+    if (event.sender !== quick?.webContents || !quickChatId(chatId)) return;
+    hideQuick();
+    show();
+    if (win && !win.isDestroyed()) win.webContents.send('open-chat', chatId);
+  });
   await start();
+  // The global shortcut is a convenience; a platform that refuses it (Wayland
+  // often does) still has the tray's Quick ask item and the composer focus key.
+  try {
+    const accelerator = quickAsk(config);
+    if (!globalShortcut.register(accelerator, toggleQuick)) {
+      console.error(`Could not register the Quick ask shortcut ${accelerator}; another app may own it.`);
+    }
+  } catch (e) { console.error('Could not register the Quick ask shortcut:', e.message); }
 }
 async function status(error = false) {
   await win.loadFile(path.join(__dirname, 'status.html'), {query: {state: error ? 'error' : 'starting', log: path.join(home, 'server.log')}});
@@ -200,6 +278,7 @@ app.on('activate', show);
 app.on('window-all-closed', () => { if (!tray) app.quit(); });
 app.on('before-quit', () => {
   quitting = true; saveBounds();
+  globalShortcut.unregisterAll();
   // Never terminate a server that was already running.
   if (child) child.kill('SIGTERM');
 });

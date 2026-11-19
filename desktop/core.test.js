@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, permissionAllowed, serverCommand, windowState, isAction, trayStatus} = require('./core');
+const {settings, external, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -43,6 +43,25 @@ test('tray status turns a page state into a tooltip and menu label', () => {
   // Anything the page cannot have sent falls back to idle rather than leaking it.
   assert.deepEqual(trayStatus('Kova', 'blocked-on-approval'), {label: 'Idle', tooltip: 'Kova · Idle'});
   assert.deepEqual(trayStatus('Kova', 'nonsense'), {label: 'Idle', tooltip: 'Kova · Idle'});
+});
+
+test('the Quick ask accelerator is read from [desktop] and never throws', () => {
+  assert.equal(quickAsk(''), DEFAULT_QUICK_ASK, 'no config means the default');
+  assert.equal(quickAsk('port = 7700\n[memory]\npath = "/x"'), DEFAULT_QUICK_ASK,
+    'a missing [desktop] section means the default');
+  assert.equal(quickAsk('[desktop]\nquick_ask = "CommandOrControl+Space"'), 'CommandOrControl+Space');
+  assert.equal(quickAsk('[desktop]\nquick_ask = "CommandOrControl+Shift+Space" # my pick'),
+    'CommandOrControl+Shift+Space');
+  assert.equal(quickAsk('[memory]\npath = "/x"\n[desktop]\nquick_ask = "Alt+Q"'), 'Alt+Q',
+    'the section is found wherever it sits');
+  assert.equal(quickAsk('[desktop]\n'), DEFAULT_QUICK_ASK, 'an empty value means the default');
+});
+
+test('only store-shaped chat ids may be asked to open in the main window', () => {
+  for (const id of ['abc123', 'a1b2c3d4e5f6', 'incognito-abc123', 'with_underscore-2'])
+    assert.equal(quickChatId(id), true);
+  for (const id of ['', 'a b', '../etc/passwd', 'a'.repeat(65), null, 42, undefined, 'a\nb'])
+    assert.equal(quickChatId(id), false);
 });
 
 test('menu launcher can retain a custom home without a terminal environment', () => {
