@@ -244,3 +244,117 @@ def test_the_cli_says_why_a_file_is_refused(runner, tmp_path):
 
     assert result.exit_code == 1
     assert "Missing required key" in result.output
+
+
+@pytest.fixture
+def editable_theme():
+    return {
+        "id": "custom-teal",
+        "name": "Custom Teal",
+        "version": "1.0.0",
+        "appearance": "dark",
+        "tokens": {"accent": {"default": "#2dd4bf", "on": "#04201c"}},
+    }
+
+
+def test_validate_and_save_a_theme(http, home, editable_theme):
+    path = themes.theme_dir(home.home) / "custom-teal.json"
+    preview = http.post("/themes?validate_only=true", json=editable_theme)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["tokens"]["accent.default"] == "#2dd4bf"
+    assert not path.exists()
+
+    saved = http.post("/themes", json=editable_theme)
+    assert saved.status_code == 201, saved.text
+    assert json.loads(path.read_text(encoding="utf-8")) == editable_theme
+    assert http.get("/themes/custom-teal").json()["tokens"] == preview.json()["tokens"]
+    assert any(row["id"] == "custom-teal" for row in http.get("/themes").json())
+
+    duplicate = http.post("/themes", json={**editable_theme, "name": "Other"})
+    assert duplicate.status_code == 409
+    assert json.loads(path.read_text(encoding="utf-8")) == editable_theme
+
+
+@pytest.mark.parametrize("overrides", [
+    {"id": "../escaped"},
+    {"id": "sub/file"},
+    {"id": "sub\\file"},
+    {"id": "custom-teal\n"},
+    {"id": "kova-dark"},
+    {"id": "system"},
+    {"id": "con"},
+    {"extends": []},
+    {"tokens": {"bg": {"unknown": "#fff"}}},
+    {"tokens": {"bg": {"overlay": "rgb(1,2,3,4,5)"}}},
+    {"tokens": {"fg": {"default": "rgb(0,0,0,0,9)"}}},
+    {"tokens": {"fg": {"default": "rgb(255255 0 0 / ..%)"}}},
+])
+def test_save_refuses_invalid_documents_without_writing(http, home, editable_theme, overrides):
+    response = http.post("/themes", json={**editable_theme, **overrides})
+    assert response.status_code == 422, response.text
+    assert not themes.theme_dir(home.home).exists()
+    assert not (home.home / "escaped.json").exists()
+
+
+def test_contrast_failure_names_the_pair_on_preview_and_save(http, home, editable_theme):
+    editable_theme["tokens"]["fg"] = {"default": "#14121c"}
+    for suffix in ("?validate_only=true", ""):
+        response = http.post(f"/themes{suffix}", json=editable_theme)
+        assert response.status_code == 422
+        assert any("fg.default on bg.base = 1.00:1, below 4.5:1" in line
+                   for line in response.json()["detail"])
+    assert not themes.theme_dir(home.home).exists()
+
+
+def test_save_refuses_bad_json_and_limits_streamed_bytes(http, home):
+    assert http.post("/themes", content=b"{]").status_code == 422
+    assert http.post("/themes", content=b"\xff").status_code == 422
+    chunks = (b" " * 4096 for _ in range(32))
+    assert http.post("/themes", content=chunks).status_code == 413
+    assert not themes.theme_dir(home.home).exists()
+
+
+def test_save_cannot_write_through_a_symlink(http, home, editable_theme, tmp_path):
+    directory = themes.theme_dir(home.home)
+    outside = tmp_path / "other"
+    outside.mkdir()
+    try:
+        directory.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert http.post("/themes", json=editable_theme).status_code == 409
+    assert not list(outside.iterdir())
+
+    directory.unlink()
+    directory.mkdir()
+    target = outside / "keep.json"
+    (directory / "custom-teal.json").symlink_to(target)
+    assert http.post("/themes", json=editable_theme).status_code == 409
+    assert not target.exists()
+
+
+def test_save_requires_authentication(http, editable_theme):
+    http.headers.pop("Authorization")
+    assert http.post("/themes", json=editable_theme).status_code == 401
+
+
+def test_theme_import_preserves_opaque_hex_and_modern_rgb(http, home, editable_theme):
+    editable_theme["tokens"].update({
+        "fg": {"default": "#ffff"},
+        "bg": {"overlay": "rgb(13 12 19 / 72%)"},
+    })
+    editable_theme["description"] = "Palette from a different device ☕"
+    assert http.post("/themes", json=editable_theme).status_code == 201
+    installed = themes.theme_dir(home.home) / "custom-teal.json"
+    assert json.loads(installed.read_text(encoding="utf-8")) == editable_theme
+
+
+def test_theme_at_the_upload_limit_can_be_reimported(http, home, editable_theme):
+    editable_theme["$schema"] = ""
+    size = len(json.dumps(editable_theme, separators=(",", ":")))
+    editable_theme["$schema"] = "x" * (32 * 1024 - size)
+    document = json.dumps(editable_theme, separators=(",", ":")).encode()
+    assert len(document) == 32 * 1024
+    assert http.post("/themes", content=document).status_code == 201
+    installed = (themes.theme_dir(home.home) / "custom-teal.json").read_bytes()
+    assert http.post("/themes?validate_only=true", content=installed).status_code == 200

@@ -17,7 +17,7 @@
       keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
-         keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export',
          control: 'theme'},
         {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
          keywords: 'text size font typography small large bigger read legible zoom scale',
@@ -215,7 +215,7 @@
   }
 
   function open(sectionId) {
-    if (!view) return;
+    if (!view || window.KovaThemeEditor?.dismiss() === false) return;
     opener = document.activeElement;
     syncControls();
     search.value = '';
@@ -723,7 +723,23 @@
       actionButtons.push({button, item});
       row.append(button);
     } else if (item.control === 'theme') {
-      row.append(themeControl());
+      const control = element('div', 'settings-theme-control');
+      control.append(themeControl());
+      if (window.KovaThemeEditor) {
+        const customize = element('button', 'btn small settings-action', 'Customize…');
+        customize.type = 'button';
+        customize.addEventListener('click', () => {
+          const settingsOpener = opener;
+          close();
+          window.KovaThemeEditor.open(() => {
+            open('general');
+            opener = settingsOpener;
+            customize.focus();
+          });
+        });
+        control.append(customize);
+      }
+      row.append(control);
     } else if (item.control === 'reasoning') {
       row.append(reasoningControl());
     } else if (item.control === 'motion') {

@@ -224,4 +224,37 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.store.has('kova-theme-synced'), false, 'it tries to sync again next time');
 }
 
+// A draft replaces page tokens without changing the saved selection or its cache.
+{
+  const page = boot({themes: {paper: PAPER}});
+  await settle();
+  await page.api.set('paper');
+  const saved = page.store.get('kova-theme-tokens');
+  page.api.preview({appearance: 'dark', tokens: {'bg.base': '#123456'}});
+  assert.equal(page.root.dataset.theme, 'dark');
+  assert.equal(page.meta.attrs.content, '#123456');
+  assert.equal(page.api.choice(), 'paper');
+  assert.equal(page.store.get('kova-theme-tokens'), saved);
+  page.api.clearPreview();
+  assert.equal(page.root.dataset.theme, 'light');
+  assert.equal(page.meta.attrs.content, PAPER.tokens['bg.base'], 'cancel restores an installed theme');
+  page.api.preview({appearance: 'dark', tokens: {'bg.base': '#123456'}});
+  await page.api.sync();
+  assert.equal(page.root.dataset.theme, 'dark', 'a preference update does not replace the preview');
+  page.api.clearPreview();
+  assert.equal(page.root.dataset.theme, 'dark', 'cancel restores the latest saved System choice');
+  assert.equal(page.properties.size, 0);
+}
+
+// An otherwise valid theme ID must not collide with inherited object properties.
+{
+  const palette = {...PAPER, id: 'constructor'};
+  const page = boot({themes: {constructor: palette}, list: [palette]});
+  await settle();
+  assert.ok(page.api.choices().some(choice => choice.id === 'constructor'));
+  await page.api.set('constructor');
+  assert.equal(page.api.choice(), 'constructor');
+  assert.equal(page.root.dataset.theme, 'light');
+}
+
 console.log('Theme engine: choice, sync, installed tokens and window colour passed');

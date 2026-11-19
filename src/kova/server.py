@@ -29,6 +29,7 @@ from kova.reasoning_effort import ReasoningEffort
 from kova.reminders import ReminderLoop
 from kova.scheduler import Scheduler, parse_schedule
 from kova.store import Store
+from kova.theme_routes import install_theme_routes
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
 from kova.web import install_web, require_browser_session
@@ -800,6 +801,8 @@ def create_app(
             return app.state.preferences.update(body)
         except ui_prefs.UiPrefsError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    install_theme_routes(api, config.home)
 
     @api.get("/themes")
     async def list_themes() -> list[dict]:
