@@ -25,6 +25,12 @@
         {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
          keywords: 'density spacing compact comfortable padding layout tight roomy air',
          control: 'density'},
+        {title: 'Content width', help: 'Narrow the conversation for reading, or let it use more of the window.',
+         keywords: 'width narrow wide column layout margins reading measure',
+         control: 'chat_width'},
+        {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
+         keywords: 'avatar picture face icon label name reading',
+         control: 'avatars'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',
          control: 'font'},
@@ -426,10 +432,11 @@
       radio.tabIndex = checked ? 0 : -1;
     }
   }
-  // Text size, density and font are the same three-way choice (#179).
-  // KovaTypography owns each value, the server copy and the three attributes on
-  // <html>; this only reflects and changes them. "default" and "inter" are the
-  // shipped look, so the fallback matches what the page paints without the module.
+  // Text size, density, font and content width are the same three-way group
+  // (#179, #205). KovaTypography owns each value, the server copy and the
+  // attribute on <html>; this only reflects and changes them. "default",
+  // "inter" and "normal" are the shipped look, so the fallback matches what the
+  // page paints without the module.
   const TYPOGRAPHY = [
     {name: 'text_size', label: 'Text size', read: 'textSize', write: 'setTextSize', fallback: 'default',
      items: [['small', 'Small', 'A step down from the shipped sizes'],
@@ -443,6 +450,13 @@
      items: [['inter', 'Inter', 'The bundled typeface'],
              ['system', 'System', "This device's interface font"],
              ['mono', 'Monospace', 'Set the conversation in the bundled mono face']]},
+    {name: 'chat_width', label: 'Content width', read: 'chatWidth', write: 'setChatWidth', fallback: 'normal',
+     items: [['narrow', 'Narrow', 'A narrower column, easier on long answers'],
+             ['normal', 'Normal', 'The shipped 768px column'],
+             ['wide', 'Wide', 'Use more of the window']]},
+    {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'on',
+     items: [['on', 'On', 'Show the avatar beside each reply'],
+             ['off', 'Off', 'Hide avatars and keep the names']]},
   ];
   const typographyRadios = {};
   function typographyChoice(name) {
