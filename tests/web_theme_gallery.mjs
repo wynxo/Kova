@@ -11,7 +11,7 @@ class Node {
     this.children = [];
     this.attributes = {};
     this.events = {};
-    this.style = {};
+    this.style = {setProperty(name, value) { this[name] = value; }};
     this.textContent = '';
   }
   append(...children) {
@@ -49,7 +49,14 @@ const paper = {id: 'paper', name: 'Paper <example>', appearance: 'light', instal
   description: 'Warm background', swatches: ['#fbfaf7'], tokens: {'bg.base': '#fbfaf7'}};
 let rows = [forest, paper];
 let installFails = true;
-const window = {KovaTheme: theme};
+const window = {KovaTheme: theme,
+  KovaThemePreview: {card: tokens => {
+    const node = new Node('div');
+    node.className = 'theme-preview';
+    node.setAttribute('aria-hidden', 'true');
+    node.style.setProperty('--preview-accent-default', tokens['accent.default']);
+    return node;
+  }}};
 vm.runInNewContext(source, {
   window, document,
   fetch: async (url, options) => {
@@ -77,7 +84,9 @@ const [forestCard, paperCard] = grid.children;
 assert.ok(find(forestCard, node => node.textContent === 'Dark'));
 assert.ok(find(paperCard, node => node.textContent === 'Light'));
 assert.ok(find(paperCard, node => node.textContent === paper.name), 'names render as literal text');
-assert.ok(find(forestCard, node => node.style.backgroundColor === forest.swatches[1]));
+assert.ok(find(forestCard, node => node.className === 'theme-preview'), 'each card carries a preview card');
+assert.equal(find(forestCard, node => node.className === 'theme-preview').style['--preview-accent-default'], forest.swatches[1]);
+assert.ok(!find(forestCard, node => node.className === 'theme-gallery-swatches'), 'the four-swatch strip is gone');
 const install = action(forestCard, 'Install');
 const usePaper = action(paperCard, 'Use');
 const previewButton = action(forestCard, 'Preview');

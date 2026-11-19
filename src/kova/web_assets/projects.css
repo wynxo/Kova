@@ -15,6 +15,52 @@
 
 .project-name:hover { background: var(--bg-raised); }
 
+/* A project's colour and icon use the chat keys (#213), so the same semantic
+ * tokens tint both and a theme recolours them together. */
+.project-name > .chat-mark {
+  display: inline-block;
+  width: var(--space-3);
+  height: var(--space-3);
+  margin-inline-end: var(--space-2);
+  vertical-align: middle;
+}
+
+.project-name[data-chat-colour] > .chat-mark.icon { color: var(--chat-colour); }
+
+/* The project at a glance: folder, default model, start of the instructions. */
+.project-overview {
+  display: grid;
+  gap: var(--space-0-5);
+  margin: var(--space-1) 0;
+  padding: 0 var(--space-3);
+  font-size: var(--type-size-label);
+}
+
+.project-fact {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.project-fact dt { flex: none; color: var(--fg-muted); }
+
+.project-fact dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-instructions dd {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 .project-name:focus-visible,
 #chat-list .project-action:focus-visible {
   outline: var(--space-0-5) solid var(--accent-default);
@@ -60,7 +106,8 @@ dialog.project-dialog {
 .project-dialog form { gap: var(--space-3); }
 .project-dialog label { gap: var(--space-1); font-size: var(--type-size-label); }
 
-dialog.project-dialog input, dialog.project-dialog textarea {
+dialog.project-dialog input:not([type="radio"]), dialog.project-dialog textarea,
+dialog.project-dialog select {
   min-height: var(--space-8);
   padding: var(--space-2);
   border-radius: var(--radius-md);
@@ -68,6 +115,46 @@ dialog.project-dialog input, dialog.project-dialog textarea {
 }
 
 dialog.project-dialog textarea { min-height: calc(2 * var(--space-10)); }
+
+.project-look {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.project-move-options {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  max-height: calc(6 * var(--space-10));
+  overflow-y: auto;
+}
+
+.project-move-options legend {
+  margin-bottom: var(--space-1);
+  font-size: var(--type-size-label);
+}
+
+.project-move-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-8);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--type-size-body);
+}
+
+.project-move-option:hover { background: var(--bg-raised); }
+
+.project-move-option input:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
+}
+
+.project-note { color: var(--fg-muted); font-size: var(--type-size-label); }
 
 .project-dialog .dialog-actions {
   gap: var(--space-2);

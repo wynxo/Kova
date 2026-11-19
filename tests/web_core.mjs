@@ -1336,3 +1336,50 @@ assert.equal(requests.findLast(request => request.path === '/chats' && request.b
 assert.equal(state.chat?.project_id, 'research');
 assert.equal(byClass(byClass(shell, 'project-group')[0], 'history-row').length, 1);
 console.log('Project groups, editor and chat creation passed');
+
+// A project's colour, icon and default model, its at-a-glance overview, and
+// moving an existing chat into it (#196).
+state.models = [{name: 'local', model: 'demo'}, {name: 'unset', model: ''}];
+sidebarProjects[0].cwd = '/workspace';
+sidebarChats.push({id: 'loose', title: 'Loose chat', last_message: at(0)});
+await sandbox.test.refreshChats();
+projectButton('Edit project').onclick();
+let projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+const selects = walk(projectDialog).filter(node => node.tagName === 'select');
+const select = name => selects.find(node => node.name === name);
+assert.deepEqual(selects.map(node => node.name), ['model', 'colour', 'icon']);
+assert.deepEqual(select('model').options.map(option => option.value), ['', 'local'],
+                 'only configured models are offered as a default');
+assert.equal(select('colour').options.length, 9);
+select('model').value = 'local'; select('colour').value = 'info'; select('icon').value = 'brain';
+await walk(projectDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(requests.findLast(request => request.path === '/projects/research')?.body,
+                 {name: 'Lab notes', instructions: 'Keep a log.', cwd: '/workspace',
+                  colour: 'info', icon: 'brain', model: 'local'});
+group = byClass(shell, 'project-group')[0];
+const projectSummary = group.children[0];
+assert.equal(projectSummary.dataset.chatColour, 'info');
+assert.equal(byClass(projectSummary, 'i-brain').length, 1);
+assert.equal(projectSummary.textContent, 'Lab notes');
+assert.deepEqual(byClass(group, 'project-fact').map(node => node.textContent),
+                 ['Folder/workspace', 'Modellocal', 'InstructionsKeep a log.']);
+// Saving without touching the look sends no colour, icon or model.
+projectButton('Edit project').onclick();
+projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+await walk(projectDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(Object.keys(requests.findLast(request => request.path === '/projects/research').body),
+                 ['name', 'instructions', 'cwd']);
+
+const looseRow = rowFor('Loose chat');
+const moveAction = buttons(looseRow).find(node => node.textContent === 'Move to project');
+assert.ok(moveAction, 'saved chats offer a move once a project exists');
+moveAction.onclick();
+await tick();
+const moveDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+const radios = walk(moveDialog).filter(node => node.tagName === 'input' && node.type === 'radio');
+assert.deepEqual(radios.map(node => node.value), ['', 'research']);
+assert.equal(radios[0].checked, true, 'an ungrouped chat starts on "No project"');
+radios[0].checked = false; radios[1].checked = true;
+await walk(moveDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(requests.findLast(request => request.path === '/chats/loose')?.body, {project_id: 'research'});
+console.log('Project look, overview and chat moves passed');

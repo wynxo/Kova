@@ -86,7 +86,7 @@ compare. Defaults are what a fresh install writes.
 | `[memory] consolidate_hour` | `memory_consolidate_hour` | `3` | 0–23 | Earliest local hour at which consolidation may start. |
 | `[memory] consolidate_min_confidence` | `memory_consolidate_min_confidence` | `0.8` | 0–1 | Per-operation confidence gate for consolidation. |
 | `[memory] consolidate_max_loss` | `memory_consolidate_max_loss` | `0.25` | 0–1 | Most of the store's characters one consolidation run may drop. |
-| `[tui] theme` | `tui_theme` | `dark` | `dark` or `light` | Terminal palette. `KOVA_THEME` and `KOVA_COLORS` still override at runtime. |
+| `[tui] theme` | `tui_theme` | `dark` | `dark`, `light` or a theme id from `kova themes list` | Terminal palette, from the same theme data as the app. `kova themes use <id>` sets it. `KOVA_THEME` and `KOVA_COLORS` still override at runtime. |
 | `[tui.keys] <action>` | `tui_keys` | `{}` | action name and a supported key | Per-action key overrides for the terminal chat; see [TUI keys](#tui-keys). |
 | `[persona] name` | `persona_name` | `Kova` | 1–40 printable characters | The assistant's displayed name and the "You are …" identity line. The name is trimmed. |
 | `[persona] tone` | `persona_tone` | `warm` | `warm`, `concise`, `professional`, `playful` | One added line in the system prompt and the identity shown in setup. |

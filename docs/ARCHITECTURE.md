@@ -125,7 +125,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, move to a project (`project_id` on its own), delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -252,6 +252,10 @@ text, without tools or memory. Finished answers are held in memory for an hour
 (at most 16 compares) until `POST /chats/{chat_id}/compare/keep` saves one; the
 stop route, Local only and a closed stream cancel the rest. Local only refuses
 the whole compare with 409 when any chosen model is not on this computer.
+The terminal's `/compare` (`src/kova/compare_cli.py`, used by `tui/app.py` and the
+plain loop in `ui.py`) reads the arguments, folds these events per model with
+`Collector`, prints every answer once the stream ends and asks which to keep, via
+`KovaClient.stream_compare` and `keep_compare`.
 
 Parallel tasks (`src/kova/parallel.py`, #192): when one model step asks for a
 consecutive run of two or more read-only tools (`PARALLEL_TOOLS`: file reads and
@@ -540,7 +544,8 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
-- `projects` — id, name, instructions, optional cwd, created, updated
+- `projects` — id, name, instructions, optional cwd, created, updated, and nullable
+  colour, icon and default model
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
@@ -548,7 +553,7 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`)
+`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`)
 so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
@@ -559,7 +564,11 @@ best hit, with a short snippet.
 ### Projects
 
 Existing chats start ungrouped. New persistent chats can set `project_id` with
-`POST /chats`. An explicit chat `cwd` wins over the project folder; without
+`POST /chats`, and `PATCH /chats/{id}` with only `{"project_id": ...}` moves a saved
+chat into a project, or out of one with `null`. A move changes membership only: the
+chat keeps its working folder, model and settings, and its next turn reads the new
+project's instructions. A phone that moves a chat keeps its limits on it, as if it
+had written there; incognito chats cannot move. An explicit chat `cwd` wins over the project folder; without
 either, the normal Kova Files default applies. The selected folder is stored on
 the chat, so changing or removing a project does not change existing working
 folders. Forks keep their project; deleting a project unsets the chat links
@@ -571,13 +580,19 @@ Chat mode. Work mode also reads the usual folder guidance (`KOVA.md` and
 tool permissions. A paired phone still needs the same permissions to inherit
 a folder as it would to select that folder explicitly.
 
-In the web sidebar, projects are collapsed by default above ungrouped chats.
-Use **New project** to set up shared instructions and an optional folder, then
-**New chat in project** inside that group. The CLI supports
-`kova projects list|create|show|rm`; show and rm take the ID from list.
+A project may also carry a colour and an icon (the same keys and semantic tokens a
+chat uses, #213) and a default model. New chats in the project use that model
+unless they pick one; a default whose model entry was removed later is skipped.
 
-Project-scoped memory files, pinned files and moving existing chats between
-groups are follow-ups. Backup restore currently imports the chats ungrouped;
+In the web sidebar, projects are collapsed by default above ungrouped chats. Each
+section shows its colour or icon, and opening it shows the project at a glance:
+its folder, default model and the start of its instructions. Use **New project**
+to set up shared instructions, a folder, a model and a look, then **New chat in
+project** inside that group; **Move to project** in a chat's menu moves an
+existing chat. The CLI supports `kova projects list|create|show|edit|rm` and
+`kova chats move <chat> <project|none>`; project commands take the ID from list.
+
+Project-scoped memory files and pinned files are follow-ups. Backup restore currently imports the chats ungrouped;
 round-tripping project definitions and membership is also a follow-up.
 
 ### Usage and cost
@@ -776,22 +791,32 @@ which is what the clients read (see *The capability contract* below).
 
 ## Theme
 
-`src/kova/theme.py` is the single palette: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SUCCESS`, `WARNING`, `ERROR`, `BASH`, `MEMORY`,
-`CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code blocks. The
-plain chat, branding, help and status resolve their hex colours through
-`tui.style.colour` (the wordmark, `--help` styling and the status card live in
-`src/kova/tui/brand.py`). `KOVA_THEME` overrides `[tui] theme`, with dark as
-the default. The shared light translation darkens text and pales backgrounds;
-reading the theme for styling never creates or migrates configuration. The
-full-screen chat paints with raw escapes through `src/kova/tui/style.py`, which
-builds each role from the theme's hex value and converts it for the terminal:
-24-bit, the nearest of 256 colours, a hand-picked one of the 16 basic colours,
+`src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
+blocks. The constants are `kova-dark`'s values; every other theme maps onto them
+from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->
+`MUTED`, `status.danger` -> `ERROR` …; `USER` and `BASH` follow the theme's ANSI
+cyan and magenta). `theme.terminal_theme(id)` resolves a built-in or a theme file
+through `kova.themes`, the same resolver the web app's `GET /themes/<id>` uses, so
+the terminal and the browser paint one palette. `kova-light` takes every role from
+its tokens; any other theme moves a role away from its base only when it changes
+the token behind it. A missing or broken theme file falls back to `kova-dark`.
+
+`KOVA_THEME` overrides `[tui] theme` (a theme id, or `dark`/`light` for the
+built-ins), with dark as the default, and `kova themes use <id>` writes the
+setting; reading it for styling never creates or migrates configuration. The
+plain chat, branding, help, status and every CLI table resolve their colours
+through `tui.style.colour` (the wordmark, `--help` styling and the status card
+live in `src/kova/tui/brand.py`). The full-screen chat paints with raw escapes
+through `src/kova/tui/style.py`: codes are written in the role colours, swapped
+for the theme's at paint time and converted for the terminal: 24-bit, the
+nearest of 256 colours, a pinned one of the 16 basic colours (the accent pair
+swaps on light themes, and a coloured accent takes its nearest basic colour),
 or none at all (`NO_COLOR`, `TERM=dumb`). `KOVA_COLORS=truecolor|256|16|none`
-overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit, and the
-web app mirrors them again as CSS variables in `web_assets/app.css` (`:root`
-for dark, `:root[data-theme=light]` for light). Change a colour in both places
-to keep the terminal and the app in step.
+overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit.
+Colours from outside the theme (Pygments) are darkened on a light theme so
+they stay readable.
 
 ## Config and data on disk
 
