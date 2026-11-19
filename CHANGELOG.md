@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- The web app's live event stream connects again: a merge had made `/events` return 500, so reminders and background updates never arrived (#283).
+- Two high-contrast example themes join the palette — a pure black-and-white dark and a matching light (#284).
+- The app mark is now a monochrome K that stays sharp at 16px and inverts with the theme (#285).
+- A Motion setting (Full, Reduced, Off) in Settings > General controls animations across the web and desktop apps (#286).
+- Tool calls now group into one row showing status, time and failures, opening while a turn runs and folding when it finishes (#287).
+- A green-phosphor Terminal example theme joins the palette (#289).
+- Message actions add copy-as-markdown, retry, edit-and-resend and reply details (model, tokens, speed, timing, cost) (#290).
+- docs/THEMES.md gains a walkthrough for installing or making a theme (#291).
+- A midnight navy example theme joins the palette (#292).
+- Settings > General gains text size, density and font choices that sync across paired devices (#293).
+- The web UI now ships visual regression snapshots across themes and widths (#294).
+- The sidebar is resizable and a side panel — including an "Open in panel" option for long code blocks — opens on wide screens (#295).
+- The composer gains up/down message history, @-mention completion and attachment chips with name, size and a remove button (#296).
+- Markdown renders better now: wide tables scroll on their own, streaming code highlights only when it finishes, and footnotes and task lists work (#297).
+- Settings > General can export and import UI preferences and installed themes, and the choice syncs across devices (#300).
+- Chats can group under projects with shared instructions, managed from the CLI with `kova projects` (#301).
+- On phones, the layout improves with safe-area padding, swipe-to-close sheets, edge-swipe sidebar gestures and larger touch targets (#304).
 - Chat view options, first slice (#205): Settings > General gains a Content width choice — Narrow (600px), Normal (the shipped 768px) or Wide (1100px) — applied as one `data-chat-width` attribute on `<html>` that moves the conversation, composer and start screen together, plus an Avatars On/Off choice that keeps every reply's name and drops only the repeated mark. Both are shared UI preferences like text size and density, so paired devices and `kova prefs export` carry them, and Normal/Avatars On write no rule at all.
 - Code blocks gain a Lines switch beside Wrap and Copy (#189): a quiet gutter of line numbers, remembered per browser like Wrap, aria-hidden and never copied, hidden while a block wraps and left off for fences still streaming or over 2,000 lines.
 - Replies gain GitHub-flavored callouts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) that render as labelled asides with the status tokens, and collapsible `<details>`/`<summary>` blocks keep their native keyboard behaviour (#189). The sanitizer's allowlist now admits only those two extra tags and `open`.
