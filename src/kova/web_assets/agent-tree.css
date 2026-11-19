@@ -27,6 +27,23 @@
 .agent-tree-time { flex: none; color: var(--fg-faint); font-size: var(--type-size-label); }
 .agent-tree-model { margin-inline-start: auto; overflow: hidden; max-width: 30%; white-space: nowrap; text-overflow: ellipsis; }
 .agent-tree-time { font-variant-numeric: tabular-nums; min-width: var(--space-8); text-align: end; }
+.agent-tree-stop {
+  flex: none;
+  align-self: center;
+  padding: var(--space-0-5) var(--space-2);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-default);
+  font: inherit;
+  font-size: var(--type-size-label);
+  cursor: pointer;
+}
+.agent-tree-stop:hover { background: var(--bg-raised); }
+.agent-tree-stop:focus-visible { outline: var(--space-0-5) solid var(--accent-default); outline-offset: var(--space-0-5); }
+.agent-tree-stop[aria-disabled="true"] { cursor: progress; color: var(--fg-muted); }
+.agent-tree-stop[hidden] { display: none; }
+
 .agent-tree-chevron { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); color: var(--fg-faint); transition: transform var(--motion-fast) var(--motion-ease-standard); }
 .agent-tree-node.open > .agent-tree-row > .agent-tree-chevron { transform: rotate(90deg); }
 .agent-tree-node.failed > .agent-tree-row > .agent-tree-label { color: var(--status-danger); }

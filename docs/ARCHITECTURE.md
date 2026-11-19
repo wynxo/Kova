@@ -146,6 +146,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
 | `POST /chats/{chat_id}/steer` | token or session | put a message into the turn running now |
 | `POST /chats/{chat_id}/stop` | token or session | cancel that chat's server-side turns |
+| `POST /chats/{chat_id}/tasks/{task_id}/stop` | token or session | stop one call of the parallel group running now; the turn and the other calls go on (`{"stopped": false}` when it is not running) |
 | `POST /transcribe` | token or session | transcribe audio to text (`[voice] stt = "local"`); `browser` transcribes client-side |
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
@@ -272,9 +273,13 @@ the model reads never depends on which call finished first. A write, a command,
 about breaks the run and keeps the one-at-a-time path, so a read that follows a
 write in the same step still sees the write. Stopping the turn cancels every
 unfinished call (a sync tool already in its worker thread finishes there, but its
-result is dropped) and stores each as interrupted. Every `tool_result` now
+result is dropped) and stores each as interrupted. One call can also be stopped on
+its own (`POST /chats/{chat_id}/tasks/{task_id}/stop`, the call's `id`): it ends
+with `task_error` and `stopped: true`, its result tells the model the user stopped
+it and not to run it again, and the group and the turn carry on. Every `tool_result` now
 carries the `id` of its `tool_call`, which is how clients pair them. The web
-client draws the group with `web_assets/agent-tree.js`; the terminal shows the
+client draws the group with `web_assets/agent-tree.js`, with a Stop button (and
+Delete on the row) for each call still waiting or running; the terminal shows the
 calls as ordinary tool rows.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can

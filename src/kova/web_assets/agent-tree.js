@@ -18,9 +18,13 @@
    Keyboard: it is an ARIA tree (role tree / treeitem / group, aria-expanded,
    aria-level) with one tab stop. Up and Down move, Right opens or steps in, Left
    closes or steps out, Home and End jump, Enter and Space toggle. Tool output is
-   untrusted text and only ever lands in textContent. */
+   untrusted text and only ever lands in textContent.
+
+   A call that is waiting or running has a Stop button (and Delete on its row
+   does the same): only that call ends, as "Stopped", and the others and the turn
+   go on. The server tells the model the user stopped it. */
 const KovaAgentTree = (() => {
-  const STATUS = {queued: 'Waiting', running: 'Running', ok: 'Done', failed: 'Failed', interrupted: 'Interrupted'};
+  const STATUS = {queued: 'Waiting', running: 'Running', ok: 'Done', failed: 'Failed', interrupted: 'Interrupted', stopped: 'Stopped'};
   let nextId = 0;
   function node(tag, cls, text) {
     const result = document.createElement(tag);
@@ -30,7 +34,7 @@ const KovaAgentTree = (() => {
   }
   function markClass(status) {
     if (status === 'ok') return 'icon i-check tool-card-mark ok';
-    if (status === 'failed' || status === 'interrupted') return 'icon i-triangle-alert tool-card-mark failed';
+    if (status === 'failed' || status === 'interrupted' || status === 'stopped') return 'icon i-triangle-alert tool-card-mark failed';
     if (status === 'running') return 'tool-card-mark running';
     return 'tool-card-mark unknown';
   }
@@ -63,13 +67,19 @@ const KovaAgentTree = (() => {
     const time = node('span', 'agent-tree-time');
     const chevron = node('span', 'icon i-chevron-right agent-tree-chevron');
     chevron.setAttribute('aria-hidden', 'true');
-    row.append(mark, label, hint, model, status, time, chevron);
+    // Stop this one call. Out of the tab order (the tree is one tab stop); the
+    // row answers Delete for keyboards, and this button is for the pointer.
+    const stopButton = node('button', 'agent-tree-stop', 'Stop');
+    stopButton.type = 'button';
+    stopButton.setAttribute('tabindex', '-1');
+    stopButton.hidden = true;
+    row.append(mark, label, hint, model, status, time, stopButton, chevron);
     const children = node('div', 'agent-tree-children');
     children.setAttribute('role', 'group');
     children.hidden = true;
     element.setAttribute('aria-labelledby', `${uid}-label ${uid}-status`);
     element.append(row, children);
-    const entry = {element, row, mark, label, hint, model, status, time, children,
+    const entry = {element, row, mark, label, hint, model, status, time, children, stopButton,
                    state: 'queued', start: null, end: null, touched: false};
     entry.open = (open, byUser = false) => {
       if (byUser) entry.touched = true;
@@ -80,13 +90,20 @@ const KovaAgentTree = (() => {
     entry.paint = (now) => {
       mark.className = markClass(entry.state);
       status.textContent = STATUS[entry.state] || '';
-      element.classList.toggle('failed', entry.state === 'failed' || entry.state === 'interrupted');
+      element.classList.toggle('failed', entry.state === 'failed' || entry.state === 'interrupted' || entry.state === 'stopped');
+      // Only a call that is still waiting or running can be stopped.
+      if (entry.stoppable) {
+        const live = entry.state === 'queued' || entry.state === 'running';
+        stopButton.hidden = !live;
+        if (live) element.setAttribute('aria-keyshortcuts', 'Delete');
+        else element.removeAttribute('aria-keyshortcuts');
+      }
       time.textContent = entry.start == null ? '' : duration((entry.end ?? now()) - entry.start);
     };
     return entry;
   }
 
-  function create({label = titleCase, hint = () => '', model = '', now = () => performance.now(),
+  function create({label = titleCase, hint = () => '', model = '', now = () => performance.now(), stopTask = null,
                    every = (fn, ms) => setInterval(fn, ms), stop = id => clearInterval(id)} = {}) {
     const uid = `agent-tree-${++nextId}`;
     const tree = node('div', 'agent-tree');
@@ -151,9 +168,32 @@ const KovaAgentTree = (() => {
         else if (entry !== root) focus(root);
         else if (expanded) entry.open(false, true);
       } else if (event.key === 'Enter' || event.key === ' ') entry.open(!expanded, true);
-      else handled = false;
+      else if (event.key === 'Delete' && entry !== root && entry.stoppable) {
+        stopOne(entry);
+        handled = true;
+      } else handled = false;
       if (handled) event.preventDefault();
     });
+    // Ask the server to end one call; the task event that follows says how it ended.
+    function stopOne(task) {
+      if (!stopTask || task.stopping || (task.state !== 'queued' && task.state !== 'running')) return;
+      task.stopping = true;
+      task.stopButton.textContent = 'Stopping…';
+      task.stopButton.setAttribute('aria-disabled', 'true');
+      announce(`Stopping ${task.label.textContent}.`);
+      Promise.resolve(stopTask(task.id)).then(result => {
+        // The call had already finished: nothing to stop, nothing to show.
+        if (result && result.stopped === false) resetStop(task);
+      }).catch(() => {
+        resetStop(task);
+        announce(`Could not stop ${task.label.textContent}.`);
+      });
+    }
+    function resetStop(task) {
+      task.stopping = false;
+      task.stopButton.textContent = 'Stop';
+      task.stopButton.removeAttribute('aria-disabled');
+    }
     function clickable(entry) {
       entry.row.onclick = () => { entry.open(entry.children.hidden, true); focus(entry); };
     }
@@ -163,6 +203,10 @@ const KovaAgentTree = (() => {
       total += 1;
       const task = item(2, `${uid}-${tasks.size}`);
       task.name = event.name;
+      task.id = event.id;
+      task.stoppable = Boolean(stopTask);
+      task.stopButton.setAttribute('aria-label', `Stop ${label(event.name || event.label)}`);
+      task.stopButton.addEventListener('click', clickEvent => { clickEvent?.stopPropagation?.(); stopOne(task); });
       task.label.textContent = label(event.name || event.label);
       task.hint.textContent = hint(event.args);
       task.model.textContent = event.model || model;
@@ -199,8 +243,9 @@ const KovaAgentTree = (() => {
       } else if (event.type === 'task_done' || event.type === 'task_error') {
         if (task.start == null) task.start = now();
         task.end = event.elapsed_ms != null ? task.start + event.elapsed_ms : now();
-        task.state = event.type === 'task_error' || event.ok === false ? 'failed' : 'ok';
-        if (task.state === 'failed') announce(`${task.label.textContent} failed.`);
+        task.state = event.stopped ? 'stopped' : event.type === 'task_error' || event.ok === false ? 'failed' : 'ok';
+        if (task.state === 'stopped') announce(`${task.label.textContent} stopped.`);
+        else if (task.state === 'failed') announce(`${task.label.textContent} failed.`);
       }
       task.paint(now);
       startTimer();
@@ -236,13 +281,13 @@ const KovaAgentTree = (() => {
   // One turn's router: app.js hands every stream event here first, and this
   // keeps the ones that belong to a tree (task events, and the tool_call and
   // tool_result of a grouped call).
-  function turn({insert, label, hint, now} = {}) {
+  function turn({insert, label, hint, now, stopTask} = {}) {
     const trees = new Map(), owner = new Map(), all = [];
     return {
       accept(event) {
         const kind = event?.type;
         if (kind === 'task_start' && event.parent == null) {
-          const tree = create({label, hint, model: event.model || '', now});
+          const tree = create({label, hint, model: event.model || '', now, stopTask});
           tree.setId(event.id);
           trees.set(event.id, tree); all.push(tree);
           insert?.(tree.node);
