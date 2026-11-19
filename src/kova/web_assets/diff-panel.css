@@ -1,0 +1,82 @@
+/* A changed file's full diff in the side panel (diff-panel.js, #190).
+   Rows reuse diff.css; this file adds hunks, folds and the per-hunk actions.
+   Tints mix a status role with transparent, so every theme recolours them. */
+.diff-panel { display:grid; gap:var(--space-3); min-width:0; }
+.diff-panel-meta {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:var(--space-1) var(--space-3);
+  min-width:0;
+}
+.diff-panel-path { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; font:600 var(--type-size-label) var(--mono); }
+.diff-panel-count { color:var(--fg-muted); font-size:var(--type-size-label); }
+.diff-panel-status { margin:0; color:var(--fg-muted); font-size:var(--type-size-label); }
+.diff-panel-status:empty { display:none; }
+.diff-panel-status.is-error { color:var(--status-danger); }
+.diff-panel-note { margin:0; color:var(--fg-muted); font-size:var(--type-size-label); }
+.diff-panel-content { display:grid; gap:var(--space-2); min-width:0; }
+.diff-panel-content > .btn { justify-self:start; }
+
+.diff-panel-diff {
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  font-size:var(--type-size-label);
+  line-height:var(--type-leading-body);
+}
+/* Added and removed rows are tinted; their text, numbers and +/- sign stay
+   --fg-default, since muted or status text on the tint drops under 4.5:1 in
+   one theme or the other (measured for kova-dark and kova-light). */
+.diff-panel-diff .file-diff-add { color:var(--fg-default); background:color-mix(in srgb, var(--status-success) 14%, transparent); }
+.diff-panel-diff .file-diff-del { color:var(--fg-default); background:color-mix(in srgb, var(--status-danger) 14%, transparent); }
+.diff-panel-diff .file-diff-context { color:var(--fg-default); }
+.diff-panel-diff .file-diff-number { flex-basis:5ch; }
+.diff-panel-diff :is(.file-diff-add, .file-diff-del) > .file-diff-number { color:var(--fg-default); }
+.diff-sign { flex:none; width:2ch; text-align:center; color:var(--fg-muted); user-select:none; }
+:is(.file-diff-add, .file-diff-del) > .diff-sign { color:var(--fg-default); font-weight:700; }
+
+.diff-hunk { border-block:1px solid var(--border-subtle); }
+.diff-hunk:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(var(--space-0-5) * -1);
+}
+.diff-hunk-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:var(--space-2);
+  padding:var(--space-1) var(--space-2);
+  background:var(--bg-raised);
+  color:var(--fg-muted);
+}
+.diff-hunk-header { flex:1 1 auto; min-width:0; font:inherit; overflow-wrap:anywhere; }
+.diff-hunk-state { font-weight:600; }
+.diff-state-kept { color:var(--fg-muted); }
+.diff-state-undone { color:var(--status-success); }
+.diff-state-changed, .diff-state-missing { color:var(--status-warning); }
+.diff-hunk-actions { display:inline-flex; gap:var(--space-1); }
+
+.diff-expand {
+  display:block;
+  width:100%;
+  padding:var(--space-1) var(--space-2);
+  border:0;
+  border-block:1px dashed var(--border-subtle);
+  background:transparent;
+  color:var(--fg-muted);
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
+}
+.diff-expand:hover { background:var(--bg-raised); color:var(--fg-default); }
+.diff-expand:focus-visible, .diff-expanded:focus-visible {
+  outline:var(--space-0-5) solid var(--accent-default);
+  outline-offset:calc(var(--space-0-5) * -1);
+}
+
+/* The "Open in panel" button beside each file of a change set. */
+.change-row { display:grid; grid-template-columns:minmax(0, 1fr) auto; align-items:start; gap:var(--space-1); }
+.change-row > .icon-button { width:var(--space-8); height:var(--space-8); }
+
+@media (prefers-reduced-motion:reduce) { .diff-expand { transition:none; } }

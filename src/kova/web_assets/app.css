@@ -1065,3 +1065,20 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 [data-font="mono"] {
   --font-chat:var(--mono);
 }
+
+/* Content width (#205): the conversation, the composer and the start screen
+   share --column, so one attribute moves all three. "normal" is the shipped
+   768px column and has no rule; a window narrower than an option keeps its own
+   width, because every option is a max-width. */
+[data-chat-width="narrow"] {
+  --column:600px;
+}
+[data-chat-width="wide"] {
+  --column:1100px;
+}
+
+/* Avatars (#205): the name stays either way; "off" only drops the small mark
+   beside it, which is the same picture in every reply. */
+[data-avatars="off"] .avatar {
+  display:none;
+}

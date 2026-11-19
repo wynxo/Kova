@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, pairing, plugins, egress, reasoning_effort, themes, ui_prefs, project_files
+from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, themes, ui_prefs, project_files
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -92,6 +92,13 @@ class PersonaBody(BaseModel):
 class ApprovalBody(BaseModel):
     decision: Literal["allow", "allow_session", "allow_always", "deny"]
     message: str | None = Field(default=None, max_length=4000)
+
+
+class HunkUndoBody(BaseModel):
+    """One hunk of one file in a change set, and the file hash the viewer saw."""
+    path: str = Field(min_length=1, max_length=4096)
+    hunk: str = Field(min_length=1, max_length=64)
+    expected_hash: str = Field(min_length=64, max_length=64)
 
 
 class QueuedBody(BaseModel):
@@ -1357,6 +1364,69 @@ def create_app(
         result = await asyncio.to_thread(checkpoints.apply_restore, Path(row["root"]), plan,
                                          app.state.agent.blobs)
         return {"ok": not result["failed"], "checkpoint_id": checkpoint_id, "root": row["root"], **result}
+
+
+    def change_file(chat_id: str, checkpoint_id: int, path: str) -> tuple[dict, dict, Path]:
+        """A change set's entry for one file, and the folder it was made in.
+
+        The folder must still be the chat's working folder: a hunk is only ever
+        read or undone there, never in a folder the chat has since left.
+        """
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        row = checkpoint_or_404(chat_id, checkpoint_id)
+        entry = (row.get("files") or {}).get(path)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="file is not part of this checkpoint")
+        root = Path(row["root"])
+        if not chat.get("cwd") or Path(chat["cwd"]).expanduser().resolve() != root.resolve():
+            raise HTTPException(status_code=409, detail="This change set was made in another folder "
+                                                        "than the chat's working folder.")
+        return row, entry, root
+
+    def phone_may_touch(request: Request, row: dict, path: str) -> None:
+        """A phone without ``host:exec`` reads or undoes hunks only inside Kova Files."""
+        allowed = pairing.request_capabilities(request)
+        if allowed is not None and "host:exec" not in allowed and (
+                not pairing.folder_is_shared(row["root"], config.files_path, config.home,
+                                             config.memory_path)
+                or pairing.protected_path(path)):
+            raise HTTPException(403, "This phone may not open this file's changes. "
+                                     "Review it on your computer.")
+
+    @api.get("/chats/{chat_id}/checkpoints/{checkpoint_id}/hunks")
+    async def checkpoint_hunks(chat_id: str, checkpoint_id: int, path: str, request: Request) -> dict:
+        """One changed file as hunks, each marked applied, undone or changed since."""
+        row, entry, root = change_file(chat_id, checkpoint_id, path)
+        phone_may_touch(request, row, path)
+        try:
+            return await asyncio.to_thread(hunks.view, app.state.agent.blobs, root, path, entry)
+        except hunks.HunkError as exc:
+            raise HTTPException(exc.status, exc.message) from exc
+
+    @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo")
+    async def undo_hunk(chat_id: str, checkpoint_id: int, body: HunkUndoBody, request: Request) -> dict:
+        """Revert one hunk in the working file and record that as a new change set."""
+        row, entry, root = change_file(chat_id, checkpoint_id, body.path)
+        phone_may_touch(request, row, body.path)
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Stop the active turn before undoing a change")
+        blobs = app.state.agent.blobs
+        try:
+            change = await asyncio.to_thread(hunks.undo, blobs, root, body.path, entry,
+                                             body.hunk, body.expected_hash)
+        except hunks.HunkError as exc:
+            raise HTTPException(exc.status, exc.message) from exc
+        recorded = {key: change[key] for key in ("before", "after", "status", "additions", "deletions")}
+        recorded["undo_of"] = {"checkpoint": checkpoint_id, "hunk": body.hunk}
+        new_id = await asyncio.to_thread(app.state.store.add_checkpoint, chat_id, row["root"],
+                                         {body.path: recorded}, f"Undid one change in {body.path}")
+        try:
+            refreshed = await asyncio.to_thread(hunks.view, blobs, root, body.path, entry)
+        except hunks.HunkError:
+            refreshed = None
+        return {"ok": True, "checkpoint_id": new_id, "current_hash": change["hash"], "view": refreshed}
 
 
     @api.post("/memory/location", dependencies=settings_write)
