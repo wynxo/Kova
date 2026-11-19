@@ -37,6 +37,7 @@ from kova.config import (
     save_config,
     unknown_config_keys,
 )
+from kova.chat_appearance import CHAT_COLOURS, CHAT_ICONS
 from kova.modes import MODES
 from kova.persona import TONES, Persona
 from kova.privacy import status_text as privacy_status_text
@@ -2335,6 +2336,22 @@ def chats_rm(ref: str, yes: bool = typer.Option(False, "--yes", "-y", help="Skip
         _fail(f'No chat "{ref}".')
 
 
+@_chats.command("move")
+def chats_move(ref: str, project: str = typer.Argument(
+        ..., help='A project ID from `kova projects list`, or "none" to take the chat out.')):
+    """Move a chat into a project, or out with "none". Its folder and model stay."""
+    client = get_client()
+    chat = _resolve_chat(client, ref)
+    title = chat.get("title") or "Untitled chat"
+    target = None if project.strip().lower() == "none" else project.strip()
+    name = _find_project(client, target)["name"] if target else None
+    try:
+        client.move_chat(chat["id"], target)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f'Moved "{title}" to project "{name}".' if name else f'Took "{title}" out of its project.')
+
+
 @_projects.command("list")
 def projects_list():
     """List projects and their IDs."""
@@ -2359,13 +2376,51 @@ def projects_create(
     instructions: str = typer.Option("", "--instructions", help="Shared instructions for project chats."),
     folder: Path | None = typer.Option(None, "--folder", exists=True, file_okay=False, resolve_path=True,
                                        help="Default working folder for new chats in this project."),
+    colour: str | None = typer.Option(None, "--colour", help=f"Sidebar colour: {', '.join(CHAT_COLOURS)}."),
+    icon: str | None = typer.Option(None, "--icon", help=f"Sidebar icon: {', '.join(CHAT_ICONS)}."),
+    model: str | None = typer.Option(None, "--model", help="Default model for new chats (see kova model list)."),
 ):
     """Create a project."""
     try:
-        project = get_client().create_project(name, instructions, str(folder) if folder is not None else None)
+        project = get_client().create_project(
+            name, instructions, str(folder) if folder is not None else None,
+            colour=colour, icon=icon, model=model)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f'Created project "{project["name"]}" ({project["id"]}).')
+
+
+@_projects.command("edit")
+def projects_edit(
+    project_id: str,
+    name: str | None = typer.Option(None, "--name", help="A new name."),
+    instructions: str | None = typer.Option(None, "--instructions", help="New shared instructions."),
+    folder: Path | None = typer.Option(None, "--folder", exists=True, file_okay=False, resolve_path=True,
+                                       help="A new default working folder for new chats."),
+    colour: str | None = typer.Option(None, "--colour", help='Sidebar colour, or "none" to clear it.'),
+    icon: str | None = typer.Option(None, "--icon", help='Sidebar icon, or "none" to clear it.'),
+    model: str | None = typer.Option(None, "--model", help='Default model, or "none" to clear it.'),
+):
+    """Change a project's name, instructions, folder, colour, icon or default model."""
+    changes: dict = {}
+    if name is not None:
+        changes["name"] = name
+    if instructions is not None:
+        changes["instructions"] = instructions
+    if folder is not None:
+        changes["cwd"] = str(folder)
+    for key, value in (("colour", colour), ("icon", icon), ("model", model)):
+        if value is not None:
+            changes[key] = None if value.strip().lower() in ("none", "") else value
+    if not changes:
+        _fail("Nothing to change.", hint="Pass at least one option, for example: --name NAME")
+    client = get_client()
+    _find_project(client, project_id)
+    try:
+        project = client.update_project(project_id, **changes)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f'Updated project "{project["name"]}".')
 
 
 def _find_project(client: KovaClient, project_id: str) -> dict:
@@ -2382,6 +2437,10 @@ def projects_show(project_id: str):
     console.print(Text(project["name"], style=f"bold {theme.ACCENT}"))
     _muted(project["id"])
     console.print(Text(f'Working folder: {project["cwd"] or "(default)"}'))
+    console.print(Text(f'Default model: {project.get("model") or "(the active model)"}'))
+    look = " · ".join(part for part in (project.get("colour"), project.get("icon")) if part)
+    if look:
+        console.print(Text(f"Look: {look}"))
     if project["instructions"]:
         console.print()
         console.print(Text(project["instructions"]))

@@ -125,7 +125,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, move to a project (`project_id` on its own), delete |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -534,7 +534,8 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
-- `projects` — id, name, instructions, optional cwd, created, updated
+- `projects` — id, name, instructions, optional cwd, created, updated, and nullable
+  colour, icon and default model
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
@@ -542,7 +543,7 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`)
+`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`)
 so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
@@ -553,7 +554,11 @@ best hit, with a short snippet.
 ### Projects
 
 Existing chats start ungrouped. New persistent chats can set `project_id` with
-`POST /chats`. An explicit chat `cwd` wins over the project folder; without
+`POST /chats`, and `PATCH /chats/{id}` with only `{"project_id": ...}` moves a saved
+chat into a project, or out of one with `null`. A move changes membership only: the
+chat keeps its working folder, model and settings, and its next turn reads the new
+project's instructions. A phone that moves a chat keeps its limits on it, as if it
+had written there; incognito chats cannot move. An explicit chat `cwd` wins over the project folder; without
 either, the normal Kova Files default applies. The selected folder is stored on
 the chat, so changing or removing a project does not change existing working
 folders. Forks keep their project; deleting a project unsets the chat links
@@ -565,13 +570,19 @@ Chat mode. Work mode also reads the usual folder guidance (`KOVA.md` and
 tool permissions. A paired phone still needs the same permissions to inherit
 a folder as it would to select that folder explicitly.
 
-In the web sidebar, projects are collapsed by default above ungrouped chats.
-Use **New project** to set up shared instructions and an optional folder, then
-**New chat in project** inside that group. The CLI supports
-`kova projects list|create|show|rm`; show and rm take the ID from list.
+A project may also carry a colour and an icon (the same keys and semantic tokens a
+chat uses, #213) and a default model. New chats in the project use that model
+unless they pick one; a default whose model entry was removed later is skipped.
 
-Project-scoped memory files, pinned files and moving existing chats between
-groups are follow-ups. Backup restore currently imports the chats ungrouped;
+In the web sidebar, projects are collapsed by default above ungrouped chats. Each
+section shows its colour or icon, and opening it shows the project at a glance:
+its folder, default model and the start of its instructions. Use **New project**
+to set up shared instructions, a folder, a model and a look, then **New chat in
+project** inside that group; **Move to project** in a chat's menu moves an
+existing chat. The CLI supports `kova projects list|create|show|edit|rm` and
+`kova chats move <chat> <project|none>`; project commands take the ID from list.
+
+Project-scoped memory files and pinned files are follow-ups. Backup restore currently imports the chats ungrouped;
 round-tripping project definitions and membership is also a follow-up.
 
 ### Usage and cost
