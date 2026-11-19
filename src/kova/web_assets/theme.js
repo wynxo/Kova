@@ -92,7 +92,7 @@
     return clean;
   }
   // A background is decorative data from the server, not CSS: a gradient of
-  // two to four plain colours, or one image file in themes/assets. Anything
+  // two to four plain colours, a noise opacity, or one image file in themes/assets. Anything
   // else is dropped, as with tokens.
   function cleanBackground(value) {
     if (!value || typeof value !== 'object') return null;
@@ -106,11 +106,14 @@
       if (clean.length < 2 || clean.length > 4) return null;
       return {kind: 'gradient', stops: clean, angle: number(value.angle, 0, 360, 160)};
     }
+    if (value.kind === 'noise') {
+      return {kind: 'noise', opacity: number(value.opacity, 0.02, 0.2, 0.06)};
+    }
     if (value.kind === 'image' && typeof value.file === 'string' && BACKGROUND_FILE.test(value.file)) {
       return {
         kind: 'image',
         file: value.file,
-        dim: number(value.dim, 0, 0.8, 0.35),
+        dim: number(value.dim, 0, 0.8, 0.55),
         blur: number(value.blur, 0, 24, 0),
       };
     }
@@ -162,6 +165,9 @@
     if (background.kind === 'gradient') {
       const stops = background.stops.join(', ');
       setBackgroundProperty('--theme-background', `linear-gradient(${background.angle}deg, ${stops})`);
+    } else if (background.kind === 'noise') {
+      setBackgroundProperty('--theme-background', 'var(--bg-base)');
+      setBackgroundProperty('--theme-background-noise', String(background.opacity));
     } else {
       const url = `/themes/assets/${encodeURIComponent(background.file)}`;
       setBackgroundProperty('--theme-background', `url("${url}")`);
@@ -214,7 +220,8 @@
 
   function previewPalette(palette) {
     if (palette.appearance !== 'light' && palette.appearance !== 'dark') return;
-    draft = {appearance: palette.appearance, tokens: cleanTokens(palette.tokens)};
+    draft = {appearance: palette.appearance, tokens: cleanTokens(palette.tokens),
+      background: cleanBackground(palette.background)};
     paint();
   }
 

@@ -108,8 +108,83 @@ def contrast_ratio(fg_value: str, bg_value: str) -> float | None:
     return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
 
 
-def contrast_failures(tokens: dict[str, str], terminal: list[str] | None = None) -> list[str]:
-    """Describe invalid colours and failed pairs after merging over the built-in base."""
+#: How much of the background layer may show through a panel (the app draws
+#: panels at 88% of their surface; see "Theme backgrounds" in app.css).
+PANEL_SHOW_THROUGH = 0.12
+
+
+def _mix(top: tuple[float, float, float], bottom: tuple[float, float, float],
+         amount: float) -> tuple[float, float, float]:
+    """``top`` laid over ``bottom`` at ``amount`` (0..1), per sRGB channel like CSS."""
+    return tuple(t * amount + b * (1 - amount) for t, b in zip(top, bottom))
+
+
+def _ratio(first: tuple[float, float, float], second: tuple[float, float, float]) -> float:
+    l1, l2 = relative_luminance(first), relative_luminance(second)
+    return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+
+
+def _opaque(value: str, under: tuple[float, float, float]) -> tuple[float, float, float] | None:
+    colour = parse_colour(value)
+    return None if colour is None else _mix(colour[:3], under, colour[3])
+
+
+def background_areas(tokens: dict[str, str], background: dict) -> list[tuple[str, tuple[float, float, float]]]:
+    """The worst-case colours a theme background can put behind a panel, named for messages.
+
+    A gradient can show any of its stops. A noise texture draws ``fg.default``
+    at its opacity over ``bg.base``, so its brightest grain is that mix. An image
+    is not known to the server, so both extremes stand in: a pure white and a
+    pure black pixel, after the ``dim`` scrim of ``bg.base`` is laid over them.
+    """
+    base = parse_colour(tokens["bg.base"])[:3]
+    kind = background.get("kind")
+    if kind == "gradient":
+        areas = []
+        for index, stop in enumerate(background.get("stops") or []):
+            colour = _opaque(stop, base)
+            if colour is not None:
+                areas.append((f"gradient stop {index + 1} ({stop})", colour))
+        return areas
+    if kind == "noise":
+        grain = parse_colour(tokens["fg.default"])[:3]
+        return [("the brightest grain of the noise", _mix(grain, base, float(background.get("opacity", 0.06))))]
+    if kind == "image":
+        dim = float(background.get("dim", 0.55))
+        return [(f"a {name} pixel of the image under its dim of {dim:g}", _mix(base, extreme, dim))
+                for name, extreme in (("white", (1.0, 1.0, 1.0)), ("black", (0.0, 0.0, 0.0)))]
+    return []
+
+
+def background_failures(tokens: dict[str, str], background: dict | None) -> list[str]:
+    """Text contrast on the panels while a theme background shows through them.
+
+    Panels keep their surface colour and let at most :data:`PANEL_SHOW_THROUGH`
+    of the background through, so body and secondary text are measured on each
+    panel surface mixed with every worst-case area, not just on the bare token.
+    """
+    if not background:
+        return []
+    failures = []
+    for label, area in background_areas(tokens, background):
+        for surface in ("bg.base", "bg.surface"):
+            panel = _mix(area, parse_colour(tokens[surface])[:3], PANEL_SHOW_THROUGH)
+            for text in ("fg.default", "fg.muted"):
+                ratio = _ratio(parse_colour(tokens[text])[:3], panel)
+                if ratio < MIN_TEXT:
+                    failures.append(
+                        f"{text} on the {surface} panel over {label} = {ratio:.2f}:1, below "
+                        f"{MIN_TEXT}:1 (text must stay readable over the worst-case background area)")
+    return failures
+
+
+def contrast_failures(tokens: dict[str, str], terminal: list[str] | None = None,
+                      background: dict | None = None) -> list[str]:
+    """Describe invalid colours and failed pairs after merging over the built-in base.
+
+    ``background`` is the theme's normalised background, if any; its worst-case
+    areas are measured too (see :func:`background_failures`).
+    """
     failures = [
         f"{name}: use a valid hex or rgb()/rgba() colour."
         for name, colour in tokens.items()
@@ -128,4 +203,4 @@ def contrast_failures(tokens: dict[str, str], terminal: list[str] | None = None)
         rgba = parse_colour(colour)
         if rgba is None or rgba[3] != 1:
             failures.append(f"terminal[{index}]: {colour!r} is not a measurable colour")
-    return failures
+    return failures + background_failures(tokens, background)

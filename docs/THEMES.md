@@ -55,7 +55,7 @@ unverifiable, and would break on the next palette change.
 | `extends` | no | `kova-dark` or `kova-light`. Defaults from `appearance`. |
 | `tokens` | no | Groups of semantic overrides: `bg`, `fg`, `border`, `accent`, `status`, `syntax`. |
 | `terminal` | no | Exactly 16 colours, ANSI order 0-15, for the TUI. Inherited when absent. |
-| `background` | no | A subtle gradient or one image behind the app shell. See [Backgrounds](#backgrounds). |
+| `background` | no | A subtle gradient, fine noise or one image behind the app shell. See [Backgrounds](#backgrounds). |
 | `author`, `description` | no | Free text, length-limited. |
 
 Colour values are hex (`#rgb`, `#rrggbb`, `#rrggbbaa`) or `rgb()` / `rgba()`. Named
@@ -64,7 +64,7 @@ a colour table, and it is not a value a theme author can predict across browsers
 
 ## Backgrounds
 
-A theme may put something quiet behind the app shell. Exactly two shapes exist:
+A theme may put something quiet behind the app shell. Exactly three shapes exist:
 
 ```json
 "background": {
@@ -76,17 +76,26 @@ A theme may put something quiet behind the app shell. Exactly two shapes exist:
 
 ```json
 "background": {
+  "kind": "noise",
+  "opacity": 0.06
+}
+```
+
+```json
+"background": {
   "kind": "image",
   "file": "night-sky.webp",
-  "dim": 0.35,
+  "dim": 0.55,
   "blur": 0
 }
 ```
 
 A gradient takes 2-4 colours, written like every other colour in a theme, and an
-optional `angle` from 0 to 360 (default 160). An image takes one **file name** from
+optional `angle` from 0 to 360 (default 160). Noise is a fine grain drawn in the
+theme's own `fg.default` over `bg.base`; `opacity` (0.02-0.2, default 0.06) sets how
+strongly it shows, and there is no file to fetch. An image takes one **file name** from
 `KOVA_HOME/themes/assets/` - no paths, no URLs, no query strings - ending in `.png`,
-`.jpg` or `.webp`. `dim` (0-0.8, default 0.35) lays the theme's `bg.base` over the
+`.jpg` or `.webp`. `dim` (0-0.8, default 0.55) lays the theme's `bg.base` over the
 image, and `blur` (0-24, default 0) softens it in CSS pixels. Files above 4 MiB are
 never served, and the route refuses anything that resolves outside the assets folder.
 
@@ -96,7 +105,17 @@ behind everything; panels keep their own surfaces and may become slightly
 translucent only while a background is active. The contrast gate still measures
 `fg`, `status` and `border` against `bg.base`, `bg.surface` and `bg.raised`: those
 remain the panel surfaces, because translucency is capped at 12% of the background
-showing through and an image also carries a `bg.base` scrim from `dim`. Reduced
+showing through and an image also carries a `bg.base` scrim from `dim`.
+
+On top of that, **text is measured against the worst-case background area**. For
+each area the background can put behind a panel - every gradient stop, the brightest
+grain of the noise, or a pure white and a pure black pixel of an image after its
+`dim` scrim - the validator mixes 12% of it into `bg.base` and `bg.surface` and
+requires `fg.default` and `fg.muted` to keep 4.5:1. A failure names the area, for
+example `fg.muted on the bg.surface panel over gradient stop 2 (#ffffff) = 4.21:1`.
+Raise `dim`, darken that stop or lighten the text. (This is why the default `dim`
+is 0.55: it is the least that keeps the stock dark palette readable over any image.)
+The editor, `POST /themes` and `scripts/validate_theme.py` all run this check. Reduced
 transparency, motion off, forced colours or a browser without `backdrop-filter`
 return to the fully opaque surfaces. **Settings > General > Show theme backgrounds**
 (default on) hides the layer without changing the theme's colours.

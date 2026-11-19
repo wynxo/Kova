@@ -94,13 +94,26 @@ def test_a_gradient_and_an_image_are_both_valid():
     {"kind": "image", "file": "x.png", "dim": 0.9},
     {"kind": "image", "file": "x.png", "blur": 25},
     {"kind": "image", "file": "x.png", "stops": ["#000", "#fff"]},
-    {"kind": "noise"},
+    {"kind": "noise", "opacity": 0.5},
+    {"kind": "noise", "opacity": 0.01},
+    {"kind": "noise", "opacity": "strong"},
+    {"kind": "noise", "opacity": 0.1, "file": "x.png"},
+    {"kind": "noise", "url": "https://example.com/x.png"},
+    {"kind": "image", "file": "x.png", "opacity": 0.1},
+    {"kind": "sparkle"},
     [],
 ])
 def test_everything_else_is_refused(background):
     assert schema_errors(background), background
     with pytest.raises(themes.ThemeError):
         themes.validate(base_theme(background=background))
+
+
+def test_noise_is_valid_with_or_without_an_opacity():
+    assert schema_errors({"kind": "noise"}) == []
+    assert schema_errors({"kind": "noise", "opacity": 0.1}) == []
+    assert themes.normalise_background({"kind": "noise"}) == {"kind": "noise", "opacity": 0.06}
+    assert themes.normalise_background({"kind": "noise", "opacity": 0.2})["opacity"] == 0.2
 
 
 def test_the_background_object_is_optional():
@@ -116,7 +129,7 @@ def test_defaults_are_filled_in_once(tmp_path):
 
     resolved = themes.get("backdrop", tmp_path)
     assert resolved["background"] == {
-        "kind": "image", "file": "backdrop.webp", "dim": 0.35, "blur": 0.0,
+        "kind": "image", "file": "backdrop.webp", "dim": 0.55, "blur": 0.0,
     }
     assert themes.get("kova-dark", tmp_path)["background"] is None
 
@@ -194,3 +207,88 @@ def test_the_browser_paints_a_layer_and_honours_the_fallbacks():
     # The opaque fallback repeats the measured panel surfaces, not a new colour.
     assert "background:var(--bg-surface)" in css
     assert "background:var(--bg-base)" in css
+
+
+# ------------------------------------------------- worst-case text contrast (#206)
+from kova import theme_contrast  # noqa: E402
+
+
+def dark_tokens(**overrides):
+    tokens = dict(themes.base_tokens("kova-dark"))
+    tokens.pop("terminal", None)
+    tokens.update(overrides)
+    return tokens
+
+
+def test_no_background_adds_no_checks():
+    assert theme_contrast.background_failures(dark_tokens(), None) == []
+    assert theme_contrast.contrast_failures(dark_tokens()) == []
+
+
+def test_a_mild_gradient_noise_and_image_keep_the_built_in_palettes_readable():
+    for base in ("kova-dark", "kova-light"):
+        tokens = {k: v for k, v in themes.base_tokens(base).items() if k != "terminal"}
+        for background in (
+            {"kind": "gradient", "stops": [tokens["bg.base"], tokens["bg.raised"]], "angle": 160},
+            {"kind": "noise", "opacity": 0.2},
+            {"kind": "image", "dim": 0.55, "blur": 0},
+        ):
+            assert theme_contrast.contrast_failures(tokens, None, background) == [], (base, background)
+
+
+def test_a_gradient_stop_that_would_wash_out_text_is_named():
+    tokens = dark_tokens()   # the stock secondary text is only just above 4.5:1 on its surface
+    assert theme_contrast.contrast_failures(tokens) == []
+    bright = {"kind": "gradient", "stops": ["#14121c", "#ffffff"], "angle": 160}
+    failures = theme_contrast.contrast_failures(tokens, None, bright)
+    assert failures and all("gradient stop 2 (#ffffff)" in text for text in failures)
+    assert any(text.startswith("fg.muted on the bg.surface panel") for text in failures)
+
+
+def test_the_worst_image_pixel_is_measured_through_the_dim_scrim():
+    tokens = dark_tokens()
+    undimmed = theme_contrast.contrast_failures(tokens, None, {"kind": "image", "dim": 0, "blur": 0, "file": "x.png"})
+    assert undimmed and all("white pixel" in text for text in undimmed), "only the white pixel hurts a dark theme"
+    dimmed = theme_contrast.contrast_failures(tokens, None, {"kind": "image", "dim": 0.8, "blur": 0, "file": "x.png"})
+    assert dimmed == [], "a stronger dim brings the worst pixel back toward the measured surface"
+
+
+def test_a_light_theme_is_hurt_by_the_dark_pixel_instead():
+    tokens = {k: v for k, v in themes.base_tokens("kova-light").items() if k != "terminal"}
+    tokens["fg.muted"] = "#60636c"   # clears 4.5:1 on every plain surface
+    assert theme_contrast.contrast_failures(tokens) == []
+    failures = theme_contrast.contrast_failures(
+        tokens, None, {"kind": "image", "dim": 0, "blur": 0, "file": "x.png"})
+    assert failures and all("black pixel" in text for text in failures)
+
+
+def test_a_translucent_stop_is_measured_over_the_base():
+    tokens = dark_tokens()
+    areas = theme_contrast.background_areas(
+        tokens, {"kind": "gradient", "stops": ["#ffffff00", "#14121c"], "angle": 0})
+    assert [round(channel, 3) for channel in areas[0][1]] == [round(c, 3) for c in theme_contrast.parse_colour(tokens["bg.base"])[:3]]
+
+
+def test_the_route_and_the_validator_reject_a_theme_the_background_would_wash_out(http, config):
+    washed = base_theme(
+        id="washed",
+        background={"kind": "gradient", "stops": ["#14121c", "#ffffff"]})
+    response = http.post("/themes?validate_only=true", json=washed)
+    assert response.status_code == 422
+    assert "gradient stop 2" in " ".join(response.json()["detail"])
+    assert validator.check_theme(washed)
+    fine = {**washed, "background": {"kind": "gradient", "stops": ["#14121c", "#1c1a26"]}}
+    assert http.post("/themes?validate_only=true", json=fine).status_code == 200
+    assert validator.check_theme(fine) == []
+    noise = {**washed, "background": {"kind": "noise", "opacity": 0.2}}
+    assert http.post("/themes?validate_only=true", json=noise).status_code == 200
+
+
+def test_noise_is_painted_from_theme_tokens_with_no_file_or_literal_colour():
+    css = (ASSETS / "app.css").read_text(encoding="utf-8")
+    block = css[css.index('html[data-background="noise"]'):]
+    block = block[:block.index("}")]
+    assert "var(--fg-default)" in block and "--theme-background-noise" in block
+    assert "feTurbulence" in block and "data:image/svg+xml" in block
+    assert "http" not in block.replace("http://www.w3.org/2000/svg", "")
+    assert '[data-background]' in css and 'html[data-background="image"]' in css
