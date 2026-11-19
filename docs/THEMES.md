@@ -98,6 +98,23 @@ next to `tokens.css`.
 
 ## Install a theme
 
+Open **Settings > General > Theme > Browse themes…** to browse the examples
+bundled with Kova, even offline. Hover over a card or focus its button with
+the keyboard to preview the palette without changing your selection. On a
+touchscreen, tap **Preview**. **Install** adds the theme without
+replacing an existing file; **Use** selects it.
+
+```bash
+kova themes gallery
+kova themes install forest       # install, without changing the active theme
+```
+
+The gallery uses `design/themes/` as its source. After editing an example, run
+`python scripts/build_tokens.py` to regenerate the bundled gallery data; the
+`--check` flag verifies that it is up to date. Remote galleries are not yet supported.
+
+### Install a theme file by hand
+
 A theme file becomes a real theme the moment it lands in Kova's home.
 
 ```bash
@@ -174,6 +191,35 @@ To edit by hand, start from an example in `design/themes/`: copy one into
 until it passes. That command checks the file's structure, not its contrast. To measure contrast too, run
 `uv run python scripts/validate_theme.py <file>` from a Kova checkout; it fails on any text
 or control pair below the WCAG ratios the built-in themes meet.
+
+## Custom CSS
+
+Power users can keep a stylesheet at `~/.kova/custom.css` (or `$KOVA_HOME/custom.css`).
+It is off by default. Turn it on under **Settings > General > Custom CSS**, or from the
+terminal with `kova prefs set custom_css on`. When it is on, the server serves the file at
+`/app/custom.css` and the page appends it after every packaged stylesheet, so a rule in it
+can override a semantic token:
+
+```css
+:root {
+  --accent-default: #2dd4bf;
+  --radius-md: 6px;
+}
+```
+
+An installed theme file writes its tokens as inline styles on `<html>`, so overriding one
+of those needs `!important`; prefer a semantic token over a component class. Component
+class names are not a stable contract.
+
+The file is same-origin only and capped at 64 KiB, and it is served as `text/css` with
+`nosniff`. `@import` is dropped, and a `url(...)` is kept only when it points at
+`/app/assets/...`, so a stylesheet cannot call another origin or smuggle data through a
+`data:` URL. A paired phone gets the sheet only while the shared setting is on. It is not
+part of the offline app-shell cache: it is user content and may change at any time.
+
+If a stylesheet breaks the layout, open `http://127.0.0.1:7700/app?safe=1`, or choose
+**Reload without custom CSS** in the command palette. The page loads without the sheet, so
+the switch in Settings can turn it off again.
 
 ## Adding a built-in theme
 
