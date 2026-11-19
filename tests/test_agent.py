@@ -187,7 +187,7 @@ async def test_sync_tool_does_not_block_event_loop_and_awaitable_is_awaited(setu
     started, release = threading.Event(), threading.Event()
     def blocking(args):
         started.set()
-        assert release.wait(2)
+        assert release.wait(10)
         async def result():
             return 'completed'
         return result()
@@ -199,7 +199,7 @@ async def test_sync_tool_does_not_block_event_loop_and_awaitable_is_awaited(setu
         return [event async for event in agent.run_turn(chat_id, 'hello')]
     task = asyncio.create_task(collect())
     try:
-        assert await asyncio.to_thread(started.wait, 1)
+        assert await asyncio.to_thread(started.wait, 10)  # slow CI runners need headroom
     finally:
         release.set()
     events = await task

@@ -131,6 +131,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}` | token or session | one change set's files |
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/diff` | token or session | one changed file's diff and both sides |
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/restore` | token or session | put the working folder back to this checkpoint |
+| `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks` | token or session | one changed file as hunks, each still applied, undone or edited since; contained to the chat's working folder |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo` | token or session | revert one hunk in the working file, refused if the file's hash changed or the path leaves the folder or crosses a symlink; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
@@ -357,10 +359,11 @@ theme's `bg.base`. The Motion preference (#181) uses the same shared document an
 first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
 asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
 one block in `app.css` shortens or removes motion through the duration tokens.
-Text size, density and font (#179) use the same shared document and
-first-paint pattern: `web_assets/typography.js` sets `data-text-size`, `data-density`
-and `data-font` on `<html>`, and one block in `app.css` swaps the `--type-size-*`,
-`--space-*` and `--font` tokens, so no component repeats a size or a gap. An unsent
+Text size, density, font, content width and avatars (#179, #205) use the same shared
+document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
+`data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
+block in `app.css` swaps the `--type-size-*`, `--space-*`, `--font` and `--column`
+values, so no component repeats a size or a gap. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and

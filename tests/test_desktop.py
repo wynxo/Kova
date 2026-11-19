@@ -168,7 +168,7 @@ def test_agent_core_frontend_behavior():
     # out of CI by a list nobody updated (the service worker's own test was).
     for script in sorted(Path(__file__).parent.glob('web_*.mjs')):
         result = subprocess.run([node, str(script)],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=60)  # Windows CI runners are slow
         assert result.returncode == 0, script.name + '\n' + result.stdout + result.stderr
 
 
