@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import suppress
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,36 @@ def _install(home: Path, theme_id: str, serialized: bytes) -> None:
         raise HTTPException(409, "That theme ID is already installed. Choose a new ID.") from exc
     except (OSError, RuntimeError) as exc:
         raise HTTPException(500, "Could not write to Kova's themes folder.") from exc
+
+
+def _replace(home: Path, theme_id: str, serialized: bytes) -> None:
+    """Swap an installed theme file for a new copy in one step; never follows a symlink."""
+    directory = themes.theme_dir(home)
+    path = directory / f"{theme_id}.json"
+    try:
+        if directory.resolve() != home.resolve() / "themes":
+            raise HTTPException(409, "Kova's themes folder must not point to another folder.")
+        if path.is_symlink():
+            raise HTTPException(409, "That theme file is a link, so Kova will not replace it.")
+        fd, staged = tempfile.mkstemp(prefix=".theme-", dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(serialized)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staged, path)
+        except BaseException:
+            with suppress(FileNotFoundError):
+                os.unlink(staged)
+            raise
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(500, "Could not write to Kova's themes folder.") from exc
+
+
+def _version(value: Any) -> tuple[int, int, int] | None:
+    """A ``major.minor.patch`` string as a tuple, or None for anything else."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value) if isinstance(value, str) else None
+    return tuple(int(part) for part in match.groups()) if match else None
 
 
 def _prepare_theme(payload: Any) -> tuple[dict, bytes]:
@@ -133,7 +164,8 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
         """Show bundled themes, or resolve a custom theme literally named gallery."""
         if installed:
             return show_theme("gallery")
-        installed_ids = {entry["id"] for entry in list_themes() if not entry["error"]}
+        installed_versions = {entry["id"]: entry.get("version")
+                              for entry in list_themes() if not entry["error"]}
         entries = []
         for theme_id, document in _gallery_documents().items():
             try:
@@ -142,12 +174,19 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
                 if exc.status_code not in (413, 422):
                     raise
                 continue
+            installed = theme_id in installed_versions
+            have, offered = _version(installed_versions.get(theme_id)), _version(document["version"])
             entries.append({
                 **result,
                 "name": document["name"],
                 "description": document.get("description", ""),
+                "author": document.get("author", ""),
+                "version": document["version"],
                 "swatches": [result["tokens"][role] for role in _SWATCH_ROLES],
-                "installed": theme_id in installed_ids,
+                "installed": installed,
+                "installed_version": installed_versions.get(theme_id),
+                # A theme file with no readable version counts as older.
+                "update": installed and offered is not None and (have is None or offered > have),
             })
         return entries
 
@@ -161,6 +200,45 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
         result, serialized = _prepare_gallery_theme(theme_id, documents[theme_id])
         _install(home, result["id"], serialized)
         return result
+
+    @api.post("/themes/gallery/{theme_id}/update", dependencies=[Depends(_require_settings_write)])
+    def update_gallery_theme(theme_id: str) -> dict:
+        """Replace an installed gallery theme with the bundled, newer copy."""
+        documents = _gallery_documents()
+        if theme_id not in documents:
+            raise HTTPException(404, "No theme in the gallery with that ID. Run `kova themes gallery`.")
+        result, serialized = _prepare_gallery_theme(theme_id, documents[theme_id])
+        path = themes.theme_dir(home) / f"{theme_id}.json"
+        if not path.is_file():
+            raise HTTPException(409, "That theme is not installed. Install it first.")
+        try:
+            have = _version(themes.load_file(path).get("version"))
+        except themes.ThemeError:
+            have = None  # a broken file is exactly what an update should repair
+        offered = _version(documents[theme_id]["version"])
+        if have is not None and offered is not None and offered <= have:
+            raise HTTPException(409, "That theme is already up to date.")
+        _replace(home, theme_id, serialized)
+        return result
+
+    @api.delete("/themes/{theme_id}", dependencies=[Depends(_require_settings_write)])
+    def remove_theme(theme_id: str) -> dict:
+        """Delete one installed theme file. Built-in themes and images stay."""
+        if theme_id in themes.BUILTIN or theme_id in themes.CHOICES:
+            raise HTTPException(409, "Built-in themes cannot be removed.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,39}", theme_id):
+            raise HTTPException(404, "No installed theme with that ID.")
+        directory = themes.theme_dir(home)
+        path = directory / f"{theme_id}.json"
+        try:
+            if directory.resolve() != home.resolve() / "themes":
+                raise HTTPException(409, "Kova's themes folder must not point to another folder.")
+            if not path.is_file() and not path.is_symlink():
+                raise HTTPException(404, "No installed theme with that ID.")
+            path.unlink()  # a symlink is removed itself, never its target
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(500, "Could not remove the theme file.") from exc
+        return {"id": theme_id, "removed": True}
 
     @api.get("/themes/{theme_id}")
     def show_theme(theme_id: str) -> dict:

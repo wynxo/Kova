@@ -141,12 +141,28 @@ next to `tokens.css`.
 Open **Settings > General > Theme > Browse themes…** to browse the examples
 bundled with Kova, even offline. Hover over a card or focus its button with
 the keyboard to preview the palette without changing your selection. On a
-touchscreen, tap **Preview**. **Install** adds the theme without
-replacing an existing file; **Use** selects it.
+touchscreen, tap **Preview**. Type in **Search themes** to narrow the cards by name,
+author, description or light/dark. **Install** adds the theme without replacing an
+existing file; **Use** selects it.
+
+**Try** shows a theme on the real app for 30 seconds and closes the gallery. A bar
+offers **Keep** (installs it if needed, then selects it) and **Revert**; if you do
+nothing it reverts by itself, and Esc on the bar reverts at once. Nothing is saved
+until you keep it.
+
+A card shows the bundled version, and **Update** appears when Kova ships a newer copy
+than the installed file: it replaces that one file in a single step (a file that is a
+link is left alone). **Remove** deletes an installed theme file after a second
+confirming click; if it was your chosen theme, Kova goes back to following your
+device. Built-in themes cannot be removed, and background images stay in `themes/assets`.
 
 ```bash
-kova themes gallery
-kova themes install forest       # install, without changing the active theme
+kova themes gallery                  # every bundled theme, with version and status
+kova themes gallery green dark       # only themes whose text contains every word
+kova themes install forest           # install, without changing the active theme
+kova themes update                   # update every installed theme with a newer bundled copy
+kova themes update forest            # or just one
+kova themes remove forest            # delete the installed file
 ```
 
 The gallery uses `design/themes/` as its source. After editing an example, run

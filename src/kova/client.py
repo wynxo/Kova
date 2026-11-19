@@ -129,6 +129,14 @@ class KovaClient:
         """Install one theme from the bundled gallery."""
         return self._request('POST', f'/themes/gallery/{quote(theme_id, safe="")}/install').json()
 
+    def update_gallery_theme(self, theme_id: str) -> dict:
+        """Replace an installed theme with the bundled, newer copy."""
+        return self._request('POST', f'/themes/gallery/{quote(theme_id, safe="")}/update').json()
+
+    def remove_theme(self, theme_id: str) -> dict:
+        """Delete one installed theme file."""
+        return self._request('DELETE', f'/themes/{quote(theme_id, safe="")}').json()
+
     def _stream(self, method: str, path: str, **kwargs) -> Iterator[dict]:
         try:
             with self.http.stream(method, path, headers=_auth(self.token), timeout=kwargs.pop("timeout", None), **kwargs) as response:
