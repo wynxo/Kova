@@ -41,6 +41,8 @@ assert.ok(!stores.has(oldShell), 'a previously cached shell is removed on upgrad
 const shell = [...stores.entries()].find(([name]) => name.startsWith('kova-shell-'))[1];
 assert.ok(shell.has('/app'));
 for (const path of shell.keys()) assert.ok(path === '/app' || path.startsWith('/app/assets/'));
+assert.equal([...stores.keys()].filter(name => name.startsWith('kova-shell-')).length, 1,
+             'exactly one shell cache, named by CACHE');
 online = false;
 for (const path of ['/app', '/app/assets/app.js', '/app/assets/app.css', '/app/assets/projects.js', '/app/assets/projects.css']) {
   listeners.fetch({request: {method: 'GET', url: 'https://kova.test' + path}, respondWith: promise => {pending = promise;}});

@@ -44,6 +44,42 @@
 .markdown blockquote > :last-child { margin-bottom:0; }
 .markdown blockquote blockquote { border-left-color:var(--border-subtle); background:none; }
 
+/* Callouts (#189): a quote that starts with [!NOTE], [!TIP], [!IMPORTANT],
+   [!WARNING] or [!CAUTION]. The label says which one in words; the left rule
+   and the label colour repeat it for readers who scan by colour. */
+.markdown .callout { padding:var(--space-2) var(--space-4); border-left-width:var(--space-0-5); }
+.markdown .callout-label {
+  margin:0 0 var(--space-1);
+  font-size:var(--type-size-label); font-weight:600; letter-spacing:.02em;
+}
+.markdown .callout-note { border-left-color:var(--status-info); }
+.markdown .callout-note .callout-label { color:var(--status-info); }
+.markdown .callout-tip { border-left-color:var(--status-success); }
+.markdown .callout-tip .callout-label { color:var(--status-success); }
+.markdown .callout-important { border-left-color:var(--accent-default); }
+.markdown .callout-important .callout-label { color:var(--accent-default); }
+.markdown .callout-warning { border-left-color:var(--status-warning); }
+.markdown .callout-warning .callout-label { color:var(--status-warning); }
+.markdown .callout-caution { border-left-color:var(--status-danger); }
+.markdown .callout-caution .callout-label { color:var(--status-danger); }
+
+/* Collapsible blocks (#189): `<details>` keeps its native behaviour, so the
+   summary is a real keyboard target and its open state is the browser's. */
+.markdown details {
+  margin:0 0 var(--space-3);
+  border:1px solid var(--border-subtle); border-radius:var(--radius-md);
+  background:color-mix(in srgb, var(--bg-raised) 55%, transparent);
+}
+.markdown summary {
+  padding:var(--space-2) var(--space-3);
+  border-radius:var(--radius-md);
+  color:var(--fg-default); font-weight:550; cursor:pointer;
+}
+.markdown summary:hover { background:var(--bg-raised); }
+.markdown summary:focus-visible { outline:var(--space-0-5) solid var(--accent-default); outline-offset:calc(var(--space-1) * -1); }
+.markdown summary::marker { color:var(--fg-faint); }
+.markdown details > :not(summary) { margin:0 var(--space-3) var(--space-2); }
+
 /* Task lists are read-only: the box shows what the reply recorded. */
 .markdown li.task-item { list-style:none; }
 .markdown li.task-item .task-box { margin:0 var(--space-2) 0 0; vertical-align:middle; accent-color:var(--fg-muted); }

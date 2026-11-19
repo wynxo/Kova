@@ -29,7 +29,7 @@
          keywords: 'width narrow wide column layout margins reading measure',
          control: 'chat_width'},
         {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
-         keywords: 'avatar image face icon label name reading',
+         keywords: 'avatar picture face icon label name reading',
          control: 'avatars'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',

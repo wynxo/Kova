@@ -27,6 +27,9 @@
       "pressed": "#404040",
       "on": "#ffffff",
       "soft": "rgba(0, 0, 0, 0.12)"
+    },
+    "status": {
+      "success": "#176b39"
     }
   }
 }
