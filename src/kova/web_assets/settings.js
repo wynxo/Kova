@@ -14,10 +14,10 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation thinking indicator loading',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
-         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export browse gallery',
          control: 'theme'},
         {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
          keywords: 'text size font typography small large bigger read legible zoom scale',
@@ -40,6 +40,9 @@
         {title: 'Custom CSS', help: 'Load KOVA_HOME/custom.css after the packaged stylesheets, for rules no token covers. A broken stylesheet can hide controls; add ?safe=1 to the address to load without it.',
          keywords: 'custom css stylesheet user style override tokens power user safe broken',
          control: 'custom_css'},
+        {title: 'Thinking animation', help: 'The small movement on the Kova mark while a reply runs, or a different one each time.',
+         keywords: 'thinking animation indicator working loading orbit collide thunderstorm breathe charge random off',
+         control: 'thinking'},
         {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
          keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
@@ -436,6 +439,61 @@
     }
   }
 
+  // The thinking animation (#171) is the same radio group: Off, one named
+  // movement, or a different one each reply. KovaThinking owns the value, the
+  // server copy and this reply's pick; this only reflects and changes it.
+  const THINKING = [
+    ['off', 'Off', 'A still mark and the "Thinking…" label'],
+    ['thunderstorm', 'Thunderstorm', 'A small bolt striking the mark'],
+    ['orbit', 'Orbit', 'A dot circling the mark'],
+    ['collide', 'Collide', 'Two dots meeting'],
+    ['breathe', 'Breathe', 'The mark gently scaling'],
+    ['charge', 'Charge up', 'A fill rising inside the mark'],
+    ['random', 'Random', 'A different one each reply'],
+  ];
+  const thinkingRadios = [];
+  function thinkingMode() {
+    return window.KovaThinking ? window.KovaThinking.choice() : 'thunderstorm';
+  }
+  function thinkingControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Thinking animation');
+    for (const [value, label, hint] of THINKING) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseThinking(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = THINKING.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = THINKING[(at + step + THINKING.length) % THINKING.length][0];
+        chooseThinking(next);
+        thinkingRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      thinkingRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
+  }
+  function chooseThinking(value) {
+    window.KovaThinking?.setChoice(value);
+    syncThinking();
+  }
+  function syncThinking() {
+    const value = thinkingMode();
+    for (const radio of thinkingRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
+  }
+
   // Custom CSS (#178) is off by default. custom_css.js owns the shared
   // preference and the one <link> it appends last; this only reflects and
   // changes it. Safe mode (?safe=1) shows the saved value but loads nothing.
@@ -756,6 +814,7 @@
     syncTheme();
     syncReasoning();
     syncMotion();
+    syncThinking();
     syncTypography();
     syncCustomCss();
     for (const {button, item} of actionButtons) {
@@ -784,6 +843,13 @@
     } else if (item.control === 'theme') {
       const control = element('div', 'settings-theme-control');
       control.append(themeControl());
+      if (window.KovaThemeGallery) {
+        const browse = element('button', 'btn small settings-action', 'Browse themes…');
+        browse.type = 'button';
+        browse.setAttribute('aria-haspopup', 'dialog');
+        browse.addEventListener('click', () => window.KovaThemeGallery.open(browse));
+        control.append(browse);
+      }
       if (window.KovaThemeEditor) {
         const customize = element('button', 'btn small settings-action', 'Customize…');
         customize.type = 'button';
@@ -805,6 +871,8 @@
       row.append(motionControl());
     } else if (item.control === 'custom_css') {
       row.append(customCssControl());
+    } else if (item.control === 'thinking') {
+      row.append(thinkingControl());
     } else if (item.control === 'prefs_export') {
       row.append(prefsExportControl());
     } else if (item.control === 'prefs_import') {

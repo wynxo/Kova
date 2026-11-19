@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, themes, ui_prefs, project_files
+from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -830,22 +830,6 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     install_theme_routes(api, config.home)
-
-    @api.get("/themes")
-    async def list_themes() -> list[dict]:
-        """Every theme Kova can offer; a broken user file is listed with its error."""
-        try:
-            return themes.discover(config.home)
-        except themes.ThemeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    @api.get("/themes/{theme_id}")
-    async def show_theme(theme_id: str) -> dict:
-        """One theme with its tokens resolved over the base it extends."""
-        try:
-            return themes.get(theme_id, config.home)
-        except themes.ThemeError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @api.get("/projects")
     async def list_projects() -> list[dict]:

@@ -311,7 +311,7 @@ app.add_typer(_projects, name="projects")
 _prefs = typer.Typer(no_args_is_help=True, help="Export and import UI preferences.")
 app.add_typer(_prefs, name="prefs")
 
-_themes = typer.Typer(no_args_is_help=False, help="List and inspect themes.")
+_themes = typer.Typer(no_args_is_help=False, help="List, inspect and install themes.")
 app.add_typer(_themes, name="themes")
 
 
@@ -1053,6 +1053,35 @@ def themes_list():
     for entry in entries:
         if entry.get("error"):
             _error_line(entry["error"])
+
+
+@_themes.command("gallery")
+def themes_gallery():
+    """Browse themes bundled with Kova's offline gallery."""
+    try:
+        entries = get_client().theme_gallery()
+    except KovaError as exc:
+        _fail(str(exc))
+    table = _table(caption="Install with: kova themes install <id>")
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Appearance", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Description", overflow="fold")
+    for entry in entries:
+        table.add_row(Text(entry["id"], style="bold"), Text(entry["name"]), entry["appearance"],
+                      "Installed" if entry["installed"] else "Available", Text(entry["description"]))
+    console.print(table)
+
+
+@_themes.command("install")
+def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `kova themes gallery`.")):
+    """Install one bundled gallery theme without changing the active theme."""
+    try:
+        installed = get_client().install_gallery_theme(theme_id)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f"Installed {installed['id']}")
 
 
 @_themes.command("show")

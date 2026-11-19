@@ -117,6 +117,7 @@ class _Block:
     name: str = ""
     args: str = ""
     ok: bool | None = None
+    call_id: str = ""
     started: float = field(default_factory=lambda: perf_counter())
     elapsed: float | None = None
     items: list[dict] = field(default_factory=list)
@@ -151,10 +152,15 @@ class _Turn:
             self.blocks[-1].chunks.append(event["text"])
         elif kind == "tool_call":
             self.blocks.append(_Block("tool", name=event["name"],
-                                      args=_format_args(event.get("args"))))
+                                      args=_format_args(event.get("args")),
+                                      call_id=str(event.get("id") or "")))
         elif kind == "tool_result":
-            block = next((block for block in reversed(self.blocks)
-                          if block.kind == "tool" and block.name == event["name"] and block.ok is None), None)
+            # Parallel calls of one step report back in request order, so a
+            # result finds its own call by id before falling back to its name.
+            block = next((block for block in self.blocks if block.kind == "tool" and block.ok is None
+                          and event.get("id") and block.call_id == event["id"]), None) or \
+                next((block for block in reversed(self.blocks)
+                      if block.kind == "tool" and block.name == event["name"] and block.ok is None), None)
             if block is None:
                 block = _Block("tool", name=event["name"])
                 self.blocks.append(block)

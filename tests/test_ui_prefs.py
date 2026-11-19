@@ -144,6 +144,20 @@ def test_motion_preference_accepts_three_values(http):
         assert http.get("/preferences").json()["motion"] == value
 
 
+def test_thinking_animation_preference_is_shared(http):
+    """#171: off, one named animation, or a different one each reply."""
+    assert http.get("/preferences").json()["thinking_animation"] == "thunderstorm", \
+        "the mark keeps the bolt until the reader chooses otherwise"
+
+    for value in ("off", "orbit", "collide", "breathe", "charge", "random",
+                  "thunderstorm"):
+        saved = http.put("/preferences", json={"thinking_animation": value})
+
+        assert saved.status_code == 200
+        assert saved.json()["thinking_animation"] == value
+        assert http.get("/preferences").json()["thinking_animation"] == value
+
+
 def test_chat_width_preference_is_shared(http):
     """Content width (#205): "normal" is the shipped 768px column."""
     assert http.get("/preferences").json()["chat_width"] == "normal"
@@ -176,6 +190,7 @@ def test_avatars_preference_is_shared(http):
     ({"density": "cozy"}, "must be one of"),
     ({"font": "comic"}, "must be one of"),
     ({"motion": "none"}, "must be one of"),
+    ({"thinking_animation": "spin"}, "must be one of"),
     ({"chat_width": "huge"}, "must be one of"),
     ({"avatars": "maybe"}, "must be one of"),
     ({"sidebar": None}, "must be one of"),

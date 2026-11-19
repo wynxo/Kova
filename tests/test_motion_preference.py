@@ -52,8 +52,8 @@ def test_reduced_shortens_the_tokens_and_stops_every_loop_but_the_spinner() -> N
     assert "animation-iteration-count:1" in reduced, "Reduced must stop looping animations"
     assert "animation:spin 1.2s linear infinite !important" in reduced, \
         "the spinner is the one loop that keeps turning under Reduced"
-    assert ".thinking-bolt" in reduced and "animation:none !important" in reduced, \
-        "the thinking bolt keeps its still, visible form"
+    assert ".thinking-anim" in reduced and "animation:none !important" in reduced, \
+        "every thinking animation keeps its still frame"
 
 
 def test_off_removes_every_transition_and_animation() -> None:

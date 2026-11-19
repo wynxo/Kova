@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import unicodedata
 from collections.abc import AsyncIterator, Callable
@@ -13,7 +12,7 @@ from pathlib import Path
 
 import httpx
 
-from kova import egress, plugins, providers, sandbox
+from kova import egress, parallel, plugins, providers, sandbox
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
@@ -496,6 +495,39 @@ class Agent:
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
+
+        def parallel_args(call: dict) -> dict | None:
+            """The parsed arguments when ``call`` may join a parallel group, else None.
+
+            Only read-only tools that would run right away qualify: anything a
+            rule or the permission mode would stop to ask about, or that this
+            chat's authority does not cover, keeps the one-at-a-time path.
+            """
+            name = call['name']
+            tool = tools.get(name)
+            if name not in parallel.PARALLEL_TOOLS or tool is None or tool.external:
+                return None
+            try:
+                args = json.loads(call['arguments'])
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if not isinstance(args, dict):
+                return None
+            try:
+                if name in CORE_TOOLS:
+                    validate(tool.parameters, args)
+                if capabilities is not None and needs(name, tool, args) - capabilities:
+                    return None
+                policy, _ = self.approvals.policy(chat_id, name, args, cwd)
+                if policy in ('deny', 'ask'):
+                    return None
+                if policy != 'allow' and needs_approval(name, args, permission, cwd, self.config.files_path,
+                                                        False, sandboxed=confined, external=tool.external):
+                    return None
+            except Exception:  # anything doubtful takes the ordinary path, which reports it
+                return None
+            return args
+
         meter = TurnMeter()
         pricing = getattr(self.config, 'pricing', None) or {}
         try:
@@ -608,17 +640,36 @@ class Agent:
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]
                 self.store.add_message(chat_id, 'assistant', answer or None, tool_calls=formatted)
-                for call in calls:
+                # Consecutive read-only calls that need no answer run at once (#192).
+                ready = [parallel_args(call) for call in calls]
+                groups = parallel.runs([args is not None for args in ready])
+                grouped: dict[int, tuple[str, bool]] = {}
+                for index, call in enumerate(calls):
                     name = call['name']
-                    try:
-                        args = json.loads(call['arguments'])
-                    except (json.JSONDecodeError, TypeError):
-                        args = None
-                        result, ok = 'Error: arguments were not valid JSON', False
+                    if index in groups:
+                        batch = [(i, calls[i], tools[calls[i]['name']], ready[i])
+                                 for i in range(index, groups[index])]
+                        try:
+                            async for event in parallel.run_group(batch, entry.name, grouped):
+                                yield event
+                        except asyncio.CancelledError:
+                            for _, batched, _, _ in batch:
+                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
+                            raise
+                    ran = index in grouped
+                    if ran:
+                        args = ready[index]
+                        result, ok = grouped.pop(index)
                     else:
-                        result, ok = '', True
-                    yield {'type': 'tool_call', 'id': call['id'], 'name': name, 'args': args}
-                    if ok:
+                        try:
+                            args = json.loads(call['arguments'])
+                        except (json.JSONDecodeError, TypeError):
+                            args = None
+                            result, ok = 'Error: arguments were not valid JSON', False
+                        else:
+                            result, ok = '', True
+                        yield {'type': 'tool_call', 'id': call['id'], 'name': name, 'args': args}
+                    if ok and not ran:
                         if name not in tools:
                             result, ok = f'Error: unknown tool {name}', False
                         else:
@@ -641,7 +692,7 @@ class Agent:
                                     yield {'type': 'question_resolved', 'id': question['id']}
                                     result = decision.get('message') or 'No answer provided.'
                                     self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
-                                    yield {'type': 'tool_result', 'name': name, 'ok': decision['decision'] == 'allow', 'summary': result[:200], 'output': result}
+                                    yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': decision['decision'] == 'allow', 'summary': result[:200], 'output': result}
                                     continue
                                 prepared = None
                                 if name in FILE_TOOLS:
@@ -682,12 +733,7 @@ class Agent:
                                     if tracker is not None:
                                         # Remember the file as it is now, before the write lands.
                                         await asyncio.to_thread(tracker.note, prepared[0])
-                                if inspect.iscoroutinefunction(tools[name].run):
-                                    result = await tools[name].run(args)
-                                else:
-                                    result = await asyncio.to_thread(tools[name].run, args)
-                                    if inspect.isawaitable(result):
-                                        result = await result
+                                result = await parallel.call_tool(tools[name], args)
                                 if name == 'update_plan':
                                     items = args['items']
                                     self.store.update_chat(chat_id, plan=items)
@@ -722,11 +768,11 @@ class Agent:
                                    f"'{name}' failed repeatedly and kept returning the same error. "
                                    "This call keeps failing — try a different approach or answer the user.")
                         self.store.add_message(chat_id, 'tool', warning, tool_call_id=call['id'])
-                        yield {'type': 'tool_result', 'name': name, 'ok': False,
+                        yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': False,
                                'summary': warning[:200], 'output': warning}
                     else:
                         self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
-                        event = {'type': 'tool_result', 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
+                        event = {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
                         if ok and tracker is not None and name in {'write_file', 'edit_file'}:
                             # A presentation failure must never fail a successful write.
                             try:

@@ -41,6 +41,7 @@ let closes = 0;
 let pauseRecheck;
 const theme = {
   choice: () => 'system', appearance: () => 'dark',
+  detailUrl: id => `/themes/${encodeURIComponent(id)}`,
   choices: () => [
     {id: 'system', name: 'System'}, {id: 'light', name: 'Light'}, {id: 'dark', name: 'Dark'},
     {id: 'my-light', name: 'My Light', appearance: 'light'},
