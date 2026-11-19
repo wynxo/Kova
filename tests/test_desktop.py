@@ -43,6 +43,7 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
     assert page.headers["referrer-policy"] == "no-referrer"
     for name in ("app.js", "app.css", "settings.js", "settings.css",
                  "reasoning.js", "reasoning.css",
+                 "theme-preview.js", "theme-preview.css",
                  "focus-trap.js",
                  "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
                  "fonts/InterVariable.woff2", "fonts/InterVariable-Italic.woff2",
@@ -189,6 +190,15 @@ def test_tool_card_assets():
     from pathlib import Path
     assets = Path(__file__).resolve().parents[1] / "src/kova/web_assets"
     for name in ("tool-cards.js", "tool-cards.css"):
+        assert (assets / name).is_file()
+        assert name in (assets / "index.html").read_text()
+        assert name in (assets / "sw.js").read_text()
+
+
+def test_theme_preview_assets():
+    from pathlib import Path
+    assets = Path(__file__).resolve().parents[1] / "src/kova/web_assets"
+    for name in ("theme-preview.js", "theme-preview.css"):
         assert (assets / name).is_file()
         assert name in (assets / "index.html").read_text()
         assert name in (assets / "sw.js").read_text()

@@ -1,0 +1,123 @@
+/* A theme preview card (#175): a thumbnail of the app painted with the theme's
+   own tokens. theme-preview.js writes the theme's resolved values as --preview-*
+   custom properties on the card; this sheet reads them with a fallback to the
+   active theme's semantic token, so the card always resolves to something and
+   never hard-codes a colour. Purely decorative, so it needs no focus ring. */
+
+.theme-preview {
+  display: flex;
+  gap: var(--space-1);
+  block-size: calc(var(--space-8) + var(--space-6)); /* 56px thumbnail */
+  padding: var(--space-1);
+  overflow: hidden;
+  border: var(--space-0-5) solid var(--preview-border-subtle, var(--border-subtle));
+  border-radius: var(--radius-md);
+  background: var(--preview-bg-base, var(--bg-base));
+}
+
+.theme-preview-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  inline-size: var(--space-9);
+  padding: var(--space-1);
+  background: var(--preview-bg-surface, var(--bg-surface));
+}
+
+.theme-preview-mark {
+  block-size: var(--space-2);
+  inline-size: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--preview-accent-default, var(--accent-default));
+}
+
+.theme-preview-nav {
+  block-size: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--preview-fg-faint, var(--fg-faint));
+}
+
+.theme-preview-nav.short { inline-size: 62%; }
+
+.theme-preview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.theme-preview-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  align-self: flex-end;
+  inline-size: 70%;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--preview-bg-raised, var(--bg-raised));
+}
+
+.theme-preview-bubble-line {
+  block-size: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--preview-fg-default, var(--fg-default));
+}
+
+.theme-preview-bubble-line.short { inline-size: 58%; }
+
+.theme-preview-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.theme-preview-text-line {
+  block-size: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--preview-fg-default, var(--fg-default));
+}
+
+.theme-preview-text-line.muted { background: var(--preview-fg-muted, var(--fg-muted)); }
+.theme-preview-text-line.short { inline-size: 52%; }
+
+.theme-preview-accent {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  block-size: var(--space-4);
+  inline-size: var(--space-10);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--preview-accent-default, var(--accent-default));
+}
+
+.theme-preview-accent::before {
+  content: "";
+  block-size: var(--space-0-5);
+  border-radius: var(--radius-pill);
+  background: var(--preview-accent-on, var(--accent-on));
+}
+
+.theme-preview-status {
+  display: flex;
+  gap: var(--space-1);
+  margin-block-start: auto;
+}
+
+.theme-preview-status > span {
+  block-size: var(--space-1);
+  inline-size: var(--space-1);
+  border-radius: var(--radius-pill);
+}
+
+.theme-preview-status > .ok { background: var(--preview-status-success, var(--status-success)); }
+.theme-preview-status > .warn { background: var(--preview-status-warning, var(--status-warning)); }
+.theme-preview-status > .err { background: var(--preview-status-danger, var(--status-danger)); }
+
+/* The card never animates; this block is the audit's requirement that every
+   served stylesheet state how it honours reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .theme-preview { animation: none; }
+}
