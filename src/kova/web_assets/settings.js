@@ -344,6 +344,40 @@
   }
   document.addEventListener?.('kova:theme', () => syncTheme());
 
+  // A live preview card for the theme the picker has chosen (#175). It sits under
+  // the segmented control and repaints whenever the choice changes. Built-ins
+  // resolve through the theme API too, so one path paints System, Light, Dark and
+  // any installed theme file. Purely decorative, so it is aria-hidden.
+  function themePreview() {
+    if (typeof window === 'undefined' || !window.KovaThemePreview || !window.KovaTheme) return null;
+    const holder = element('div', 'settings-theme-preview');
+    holder.setAttribute('aria-hidden', 'true');
+    const THEME_IDS = {light: 'kova-light', dark: 'kova-dark'};
+    let ticket = 0;
+
+    function previewId(choice) {
+      if (choice === 'system') return window.KovaTheme.appearance() === 'light' ? 'kova-light' : 'kova-dark';
+      return THEME_IDS[choice] || choice;
+    }
+
+    async function render() {
+      const id = previewId(window.KovaTheme.choice());
+      const current = ++ticket;
+      let payload = null;
+      try {
+        const response = await fetch(window.KovaTheme.detailUrl(id), {headers: {Accept: 'application/json'}});
+        if (response.ok) payload = await response.json();
+      } catch (_) { payload = null; }
+      if (current !== ticket) return;
+      if (!payload?.tokens) { holder.replaceChildren(); return; }
+      holder.replaceChildren(window.KovaThemePreview.card(payload.tokens));
+    }
+
+    document.addEventListener?.('kova:theme', render);
+    render();
+    return holder;
+  }
+
   // Rows follow their target: a control another script hides (Connect your
   // phone, on the phone itself) or disables (while offline) does the same here.
   const actionButtons = [];
@@ -894,6 +928,8 @@
         });
         control.append(customize);
       }
+      const preview = themePreview();
+      if (preview) control.append(preview);
       row.append(control);
     } else if (item.control === 'reasoning') {
       row.append(reasoningControl());
