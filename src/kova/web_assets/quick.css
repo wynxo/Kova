@@ -54,3 +54,13 @@ body.quick .compose-wrap {
 body.quick .compose-more,
 body.quick .chat-options-wrap { display:none; }
 body.quick .composer { margin:0; }
+
+/* The quick bar's buttons get their own visible focus ring, independent of the
+   shared app.css rule, so the overlay stays keyboard-reachable on its own. */
+.quick-bar button:focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
+
+@media (prefers-reduced-motion:reduce) {
+  .quick-bar button, .quick-selection { transition:none; }
+}
+[data-motion="reduced"] .quick-bar button,
+[data-motion="reduced"] .quick-selection { transition:none; }
