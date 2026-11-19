@@ -2004,7 +2004,7 @@
   }
   // Chat content is searched on the server; the registry stays synchronous, so
   // the answer is dropped into a list and the open palette re-renders (#183).
-  let paletteSearchTimer, paletteSearchVersion = 0;
+  let paletteSearchTimer, paletteSearchVersion = 0, paletteMatchQuery = '';
   async function paletteRunSearch(query, version) {
     let rows = [];
     try { rows = await json(`/chats/search?q=${encodeURIComponent(query)}&limit=20`); }
@@ -2017,7 +2017,10 @@
     const query = String(value || '').trim();
     clearTimeout(paletteSearchTimer);
     const version = ++paletteSearchVersion;
-    if (query.length < 2) { paletteMatches = []; return version; }
+    // A hit the server already matched is shown whatever the query says, so
+    // the list is emptied the moment the query stops matching it.
+    if (query !== paletteMatchQuery) { paletteMatches = []; paletteMatchQuery = query; }
+    if (query.length < 2) return version;
     paletteSearchTimer = setTimeout(() => safe(() => paletteRunSearch(query, version)), 180);
     return version;
   }

@@ -647,6 +647,10 @@ await tick();
 assert.ok(paletteText().includes('Old notes'), 'a content hit is listed');
 assert.ok(paletteText().includes('You: the quarterly numbers'), 'with the matching snippet');
 assert.ok(paletteText().includes('In messages'), 'in its own group');
+sandbox.test.commandPalette.input.value = 'quarters';
+sandbox.test.commandPalette.input.listeners.input();
+assert.ok(!paletteText().includes('Old notes'),
+          'a hit from the previous query is dropped until the new one answers');
 sandbox.test.commandPalette.close();
 console.log('Palette reasoning effort, MCP and extension switches passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey. The harness
