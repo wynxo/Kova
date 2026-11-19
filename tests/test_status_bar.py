@@ -1,9 +1,11 @@
-"""First slice of #204: an optional, off-by-default status bar and context meter.
+"""The optional status bar and context meter (#204).
 
 The bar lives in new files (`status-bar.js`/`status-bar.css`) with minimal
 hooks elsewhere, stays hidden and quiet until opted in, reuses the data the
-server already exposes (chat messages, the model list, the active model) and
-the existing Compact action, and never hard-codes a colour.
+server already exposes (chat messages, the model list, the active model, the
+answer's own usage object) and the existing Compact action, and never
+hard-codes a colour. The second slice adds the speed, connection and phone
+items, one switch per item, and a bottom-edge placement.
 """
 
 from __future__ import annotations
@@ -92,3 +94,50 @@ def test_bridge_passes_server_data_without_new_lookups(page):
     used = set(re.findall(r"""\$\s*\(\s*(['"`])([^'"`$]+)\1\s*\)""", text))
     missing = sorted(name for _, name in used if f'id="{name}"' not in page)
     assert missing == [], f"app.js looks up ids missing from index.html: {missing}"
+
+
+# --------------------------------------------------------------- second slice
+def test_every_item_has_a_switch_and_the_bar_can_sit_at_the_edge(page):
+    assert 'id="status-bar-items"' in page, "no place for the item switches"
+    for name in ("model", "context", "speed", "connection", "phone"):
+        assert f'id="status-bar-item-{name}"' in page, f"no switch for {name}"
+    for name in ("speed", "connection", "phone"):
+        assert f'id="status-bar-{name}"' in page, f"no {name} item in the bar"
+    assert 'id="status-bar-placement"' in page
+    assert 'value="edge"' in page
+
+
+def test_item_switches_are_folded_away_until_the_bar_is_shown(page):
+    assert re.search(r'<fieldset id="status-bar-items"[^>]*\bhidden\b', page), \
+        "the switches must not appear before the bar itself is asked for"
+
+
+def test_placement_and_offline_are_token_only_rules():
+    text = re.sub(r"/\*.*?\*/", "", CSS.read_text(encoding="utf-8"), flags=re.S)
+    assert '[data-placement="edge"]' in text, "no bottom-edge placement rule"
+    assert ".status-bar-connection.is-offline" in text, "offline has no colour of its own"
+    assert "body.status-bar-edge .compose-wrap" in text, \
+        "an edge bar must not draw over the message box"
+
+
+def test_module_switches_places_and_derives_every_item():
+    text = JS.read_text(encoding="utf-8")
+    assert "const ITEMS = [" in text, "the item list moved"
+    for name in ("model", "context", "speed", "connection", "phone"):
+        assert f"'{name}'" in text, f"status-bar.js has no switch for {name}"
+    for marker in ('status-bar-item-', "status-bar-placement", "lastSpeed",
+                   "tokens_per_second", "status-bar-edge"):
+        assert marker in text, f"status-bar.js lost {marker}"
+
+
+def test_speed_comes_from_the_answer_not_a_second_meter():
+    text = JS.read_text(encoding="utf-8")
+    assert "tokens_per_second" in text, \
+        "the speed is the answer's own usage object (#217), never a new estimate"
+    assert "fetch(" not in text
+
+
+def test_bridge_passes_the_page_s_own_connection_and_phone():
+    text = APP_JS.read_text(encoding="utf-8")
+    assert "connected: state.connected" in text, "the bar must know when Kova is unreachable"
+    assert "phone: onPhone()" in text, "the bar must know it is running on a paired phone"

@@ -44,6 +44,38 @@ def test_contrast_pairs_pass() -> None:
     assert not failures, "\n".join(failures)
 
 
+def test_contrast_manifest_covers_common_component_surfaces() -> None:
+    # These token combinations occur in buttons, raised cards, status text and code.
+    expected = {
+        ("fg.muted", "bg.base"),
+        ("fg.muted", "bg.raised"),
+        ("accent.on", "accent.default"),
+        ("accent.default", "bg.raised"),
+        ("status.info", "bg.surface"),
+        ("status.success", "bg.raised"),
+        ("status.danger", "bg.raised"),
+        ("status.warning", "bg.raised"),
+        ("status.info", "bg.raised"),
+        ("syntax.string", "bg.base"),
+        ("syntax.number", "bg.base"),
+        ("syntax.function", "bg.base"),
+        ("syntax.type", "bg.base"),
+        ("syntax.invalid", "bg.base"),
+    }
+    actual = {(fg, bg) for fg, bg, _, _ in build.PAIRS}
+    assert expected <= actual, sorted(expected - actual)
+
+
+def test_raised_surface_contrast_regression_is_detected() -> None:
+    import copy
+
+    broken = copy.deepcopy(tokens)
+    # Dark muted grey is readable on the surface but too dim on raised cards.
+    broken["semantic"]["kova-dark"]["fg"]["muted"]["$value"] = "#888888"
+    failures = build.check_contrast(broken)
+    assert any("kova-dark: fg.muted on bg.raised" in error for error in failures)
+
+
 def test_alias_cycles_are_rejected() -> None:
     broken = {"a": {"$value": "{b}"}, "b": {"$value": "{a}"}}
     try:

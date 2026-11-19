@@ -153,7 +153,15 @@
           <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
-      <div id="status-bar" class="status-bar" role="note" hidden><span id="status-bar-model" class="status-bar-model"></span><span class="status-bar-meter" aria-hidden="true"><span id="status-bar-fill" class="status-bar-fill"></span></span><span id="status-bar-context" class="status-bar-context"></span><button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button></div>
+      <div id="status-bar" class="status-bar" role="note" hidden>
+        <span id="status-bar-model" class="status-bar-model"></span>
+        <span id="status-bar-meter" class="status-bar-meter" aria-hidden="true"><span id="status-bar-fill" class="status-bar-fill"></span></span>
+        <span id="status-bar-context" class="status-bar-context"></span>
+        <span id="status-bar-speed" class="status-bar-speed" hidden></span>
+        <span id="status-bar-connection" class="status-bar-connection" hidden></span>
+        <span id="status-bar-phone" class="status-bar-phone" hidden></span>
+        <button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button>
+      </div>
     </div>
   </main>
   <!-- Action targets. Settings (settings.js) and the command palette run these;
@@ -179,7 +187,21 @@
         <label><input id="autostart-toggle" type="checkbox" disabled> Start Kova when I sign in</label>
         <p id="autostart-status" role="status" aria-live="polite">Not loaded</p>
         <button id="autostart-refresh" type="button" class="btn small quiet">Check again</button>
-        <label><input id="status-bar-toggle" type="checkbox"> Show the status bar under the message box</label>
+        <label><input id="status-bar-toggle" type="checkbox"> Show the status bar</label>
+        <fieldset id="status-bar-items" class="status-bar-settings" hidden>
+          <legend>Items in the status bar</legend>
+          <label><input id="status-bar-item-model" type="checkbox"> Model</label>
+          <label><input id="status-bar-item-context" type="checkbox"> Context meter</label>
+          <label><input id="status-bar-item-speed" type="checkbox"> Tokens per second</label>
+          <label><input id="status-bar-item-connection" type="checkbox"> Connection</label>
+          <label><input id="status-bar-item-phone" type="checkbox"> Phone</label>
+          <label>Position
+            <select id="status-bar-placement">
+              <option value="composer">Under the message box</option>
+              <option value="edge">At the bottom of the window</option>
+            </select>
+          </label>
+        </fieldset>
       </div>
     </details>
   </div>

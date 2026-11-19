@@ -5,12 +5,25 @@
 (function () {
   // No remote images, embedded content, form controls we did not ask for, SVG or
   // style injection. `sup` carries footnote references, `input` a read-only task
-  // checkbox, `section` the footnote list.
+  // checkbox, `section` the footnote list, and `details`/`summary` the collapsible
+  // blocks a reply may write (#189).
   const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'del', 'a', 'code', 'pre', 'blockquote',
     'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'table', 'thead', 'tbody',
-    'tr', 'th', 'td', 'sup', 'section', 'input'];
+    'tr', 'th', 'td', 'sup', 'section', 'input', 'details', 'summary'];
   const ALLOWED_ATTR = ['href', 'title', 'class', 'start', 'id', 'type', 'checked', 'disabled',
-    'aria-label', 'aria-hidden'];
+    'aria-label', 'aria-hidden', 'open'];
+
+  // GitHub-flavored callouts (#189): a quote whose first line is `[!NOTE]` and so
+  // on becomes a labelled aside. The marker is replaced by a visible label, so the
+  // kind is never carried by colour alone.
+  const CALLOUTS = {
+    note: 'Note',
+    tip: 'Tip',
+    important: 'Important',
+    warning: 'Warning',
+    caution: 'Caution',
+  };
+  const CALLOUT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i;
 
   // Three or more backticks or tildes at the start of a line open or close a fence.
   const FENCE = /^ {0,3}(`{3,}|~{3,})/;
@@ -160,6 +173,48 @@
     });
   }
 
+  // The first text node a paragraph actually paints, following inline elements
+  // (`**[!NOTE]**` still counts). Null when the paragraph has no text at all.
+  function leadingText(node) {
+    const children = node.childNodes || node.children || [];
+    if (!children.length) {
+      return node.nodeType === 3 || node.tagName === '#text' ? node : null;
+    }
+    for (const child of children) {
+      const found = leadingText(child);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // Turn `> [!NOTE]` blocks into labelled callouts. The marker is removed from
+  // the paragraph and a label paragraph is put in front of it, so a plain quote
+  // is left exactly as it was and a callout always says what it is in words.
+  function callouts(root) {
+    const quotes = [...root.querySelectorAll('blockquote')];
+    for (const quote of quotes) {
+      const first = quote.querySelector('p');
+      if (!first) continue;
+      const text = first.textContent;
+      const trimmed = text.trimStart();
+      const marker = CALLOUT.exec(trimmed);
+      if (!marker) continue;
+      const kind = marker[1].toLowerCase();
+      const remove = text.length - trimmed.length + marker[0].length;
+      const node = leadingText(first);
+      if (node && node.textContent.length >= remove) node.textContent = node.textContent.slice(remove);
+      else first.textContent = trimmed.slice(marker[0].length);
+      quote.classList.add('callout', `callout-${kind}`);
+      quote.setAttribute('role', 'note');
+      const label = document.createElement('p');
+      label.className = 'callout-label';
+      label.textContent = CALLOUTS[kind];
+      quote.insertBefore(label, first);
+      // A marker alone in its paragraph leaves nothing behind.
+      if (!first.textContent.trim()) first.remove();
+    }
+  }
+
   // Markdown task lists are a record of what the reply says, not a control the
   // reader can change: the box is disabled and labelled for screen readers.
   function readOnlyTasks(root) {
@@ -203,6 +258,7 @@
     });
     scopeIds(root);
     wrapTables(root);
+    callouts(root);
     readOnlyTasks(root);
     links(root);
     // The header row and highlighting are rebuilt with the subtree, so clear the

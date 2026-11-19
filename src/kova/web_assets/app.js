@@ -227,7 +227,8 @@
     if (!status) return;
     const active = (state.models || []).find(entry => entry.name === $('model').value);
     status.update({model: $('model').value || '', windowTokens: (active && active.context) || 0,
-                   messages: (state.chat && state.chat.messages) || []});
+                   messages: (state.chat && state.chat.messages) || [],
+                   connected: state.connected, phone: onPhone()});
   }
   window.KovaStatusRefresh = refreshStatusBar;
   function disconnected(message) {

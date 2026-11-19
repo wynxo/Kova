@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, permissionAllowed, serverCommand} = require('./core');
+const {settings, external, permissionAllowed, serverCommand, windowState} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -48,4 +48,23 @@ test('packaged apps start the installed backend, never uv run in an empty home',
       command: 'installed-uv', args: ['run', 'kova', 'serve'], cwd: root,
     });
   } finally { fs.rmSync(root, {recursive:true, force:true}); }
+});
+
+
+test('window memory keeps a sane place, size and maximized state', () => {
+  const displays = [{workArea: {x: 0, y: 0, width: 1920, height: 1080}}];
+  assert.deepEqual(windowState(null, displays),
+    {bounds: {width: 1180, height: 800}, maximized: false});
+  assert.deepEqual(windowState({x: 120, y: 80, width: 1280, height: 900, maximized: true}, displays),
+    {bounds: {x: 120, y: 80, width: 1280, height: 900}, maximized: true});
+  assert.deepEqual(windowState({x: 120, y: 80, width: 200, height: 200}, displays).bounds,
+    {x: 120, y: 80, width: 760, height: 540}, 'a tiny window is clamped');
+  // A monitor that is no longer connected starts fresh instead of off-screen.
+  assert.deepEqual(windowState({x: 5000, y: 5000, width: 900, height: 700}, displays),
+    {bounds: {width: 1180, height: 800}, maximized: false});
+  assert.deepEqual(windowState({x: 0, y: 0, width: 800, height: 600}).bounds.x, 0,
+    'with no display information the saved place is trusted');
+  assert.deepEqual(windowState('nonsense', displays).bounds, {width: 1180, height: 800});
+  assert.deepEqual(windowState({x: 0, y: 0, width: '900', height: 700}, displays).bounds,
+    {width: 1180, height: 800}, 'strings are not coordinates');
 });

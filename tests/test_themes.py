@@ -112,6 +112,9 @@ def test_a_dark_theme_without_extends_uses_the_dark_base(home):
     ({"tokens": {"primitive": {"orange": {"500": "#ff0000"}}}}, "semantic group"),
     ({"tokens": {"accent": {"glow": "#ff0000"}}}, "not a token"),
     ({"tokens": {"fg": {"default": "url(https://example.com/x.png)"}}}, "colour"),
+    ({"tokens": {"fg": {"default": "#abcde"}}}, "colour"),
+    ({"tokens": {"fg": {"default": "#abcdef0"}}}, "colour"),
+    ({"terminal": ["#000000"] * 15 + ["#abcde"]}, "colour"),
     ({"terminal": ["#000000"] * 15}, "16 colours"),
 ])
 def test_a_broken_theme_is_refused_with_a_sentence(overrides, needle):
@@ -121,6 +124,14 @@ def test_a_broken_theme_is_refused_with_a_sentence(overrides, needle):
 
     with pytest.raises(themes.ThemeError, match=needle):
         themes.validate(payload)
+
+
+@pytest.mark.parametrize("value", ["#abc", "#abcd", "#abcdef", "#abcdef01"])
+def test_valid_css_hex_lengths_are_accepted(value):
+    payload = {"id": "midnight-teal", "name": "Midnight Teal", "version": "1.0.0",
+               "appearance": "dark", "tokens": {"fg": {"default": value}},
+               "terminal": [value] * 16}
+    assert themes.validate(payload) is payload
 
 
 def test_a_theme_that_is_not_an_object_is_refused():

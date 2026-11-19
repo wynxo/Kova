@@ -51,7 +51,7 @@
   "$defs": {
     "color": {
       "type": "string",
-      "pattern": "^(#[0-9a-fA-F]{3,8}|rgba?\\([0-9.,%\\s/]+\\))$",
+      "pattern": "^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)|rgba?\\([0-9.,%\\s/]+\\))$",
       "description": "Hex or rgb()/rgba(). No named colours, no CSS functions beyond rgb/rgba, and never a url()."
     },
     "colorGroup": {

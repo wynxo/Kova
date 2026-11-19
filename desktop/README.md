@@ -22,7 +22,8 @@ The shell reads KOVA_HOME/config.toml (default ~/.kova), including its port.
 It reuses an authenticated server or starts one, logs to server.log, and
 exchanges the local token for a one-use /app/session ticket. Only the ticket
 fragment reaches the renderer; /app/login sets the existing HttpOnly cookie.
-Electron storage and remembered window bounds also live under KOVA_HOME.
+Electron storage and remembered window bounds (place, size and whether the
+window was maximized) also live under KOVA_HOME.
 No remote pages or subresources are loaded inside Electron. HTTP(S)/mailto
 external links go to your system browser. No renderer Node access.
 
