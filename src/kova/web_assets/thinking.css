@@ -1,28 +1,94 @@
-/* The "Kova is working" indicator: the app mark with a small bolt that strikes
-   about every 2.5 s. It exists only while a turn runs, and it is the one place
-   the accent colour is used for motion. Colours come from the theme variables. */
+/* The "Kova is working" indicator: the app mark with one small movement while
+   a turn runs (#171). Five animations share the mark — a bolt striking
+   (Thunderstorm), a dot circling (Orbit), two dots meeting (Collide), the mark
+   breathing (Breathe) and a fill rising inside it (Charge up). thinking.js
+   writes the chosen one onto the mark's data-thinking attribute; with "off"
+   only the mark itself shows. Colours come from the theme variables.
+
+   Every part's resting rule is its still frame, so reduced motion and the Off
+   choice show the state without movement. */
 
 .thinking-mark { position:relative; display:inline-block; flex:none; width:18px; height:18px; }
 .thinking-logo { display:block; width:100%; height:100%; border-radius:4px; opacity:.75; }
+
+/* An extra part is on screen only for its own animation. */
+.thinking-bolt,
+.thinking-orbit,
+.thinking-collide,
+.thinking-fill { display:none; }
+
+/* Thunderstorm: a small bolt that strikes every 2.4 s. */
 .thinking-bolt {
   position:absolute; right:-5px; bottom:-4px; width:7px; height:11px;
   background:var(--accent-default);
   -webkit-mask:url("/app/assets/bolt.svg") center / contain no-repeat;
           mask:url("/app/assets/bolt.svg") center / contain no-repeat;
-  opacity:0;
-  animation:thinking-bolt 2.4s ease-in-out infinite;
 }
+[data-thinking="thunderstorm"] .thinking-bolt { display:block; animation:thinking-bolt 2.4s ease-in-out infinite; }
 @keyframes thinking-bolt {
   0%, 58% { opacity:0; }
   66%, 84% { opacity:1; }
   100% { opacity:0; }
 }
 
-/* A hidden row must not animate. */
-.activity[hidden] .thinking-bolt { animation:none; opacity:0; }
+/* Orbit: one dot travelling around the mark. Its still frame is the dot at the
+   top of the ring. */
+.thinking-orbit { position:absolute; inset:-3px; }
+.thinking-orbit::after {
+  content:""; position:absolute; top:0; left:50%; width:3px; height:3px; margin-left:-1.5px;
+  border-radius:var(--radius-pill); background:var(--accent-default);
+}
+[data-thinking="orbit"] .thinking-orbit { display:block; animation:thinking-orbit 2.6s linear infinite; }
+@keyframes thinking-orbit { to { transform:rotate(360deg); } }
 
-/* Reduced motion: no strike. The bolt stays still and visible, and the
-   "Thinking..." text is always shown, so the state is never lost. */
+/* Collide: two dots drift in until they meet, then part again. The still frame
+   is the pair at rest. */
+.thinking-collide {
+  position:absolute; top:50%; width:3px; height:3px; margin-top:-1.5px;
+  border-radius:var(--radius-pill); background:var(--accent-default);
+}
+.thinking-collide-a { left:-6px; }
+.thinking-collide-b { right:-6px; }
+[data-thinking="collide"] .thinking-collide-a,
+[data-thinking="collide"] .thinking-collide-b { display:block; }
+[data-thinking="collide"] .thinking-collide-a { animation:thinking-collide-a 2.6s ease-in-out infinite; }
+[data-thinking="collide"] .thinking-collide-b { animation:thinking-collide-b 2.6s ease-in-out infinite; }
+@keyframes thinking-collide-a {
+  0%, 100% { transform:translateX(0); }
+  42%, 58% { transform:translateX(5px); }
+}
+@keyframes thinking-collide-b {
+  0%, 100% { transform:translateX(0); }
+  42%, 58% { transform:translateX(-5px); }
+}
+
+/* Breathe: the mark itself, slowly in and out. Its still frame is the mark at
+   its shipped opacity. */
+[data-thinking="breathe"] .thinking-logo { animation:thinking-breathe 3.2s ease-in-out infinite; }
+@keyframes thinking-breathe {
+  0%, 100% { transform:scale(.94); opacity:.6; }
+  50% { transform:scale(1); opacity:.8; }
+}
+
+/* Charge up: a quiet fill rising inside the mark and falling back. The still
+   frame is the half-filled mark. */
+.thinking-fill {
+  position:absolute; inset:2px; border-radius:2px;
+  background:var(--accent-soft); transform-origin:bottom; transform:scaleY(.55);
+}
+[data-thinking="charge"] .thinking-fill { display:block; animation:thinking-charge 2.8s ease-in-out infinite; }
+@keyframes thinking-charge {
+  0% { transform:scaleY(.08); opacity:.6; }
+  70%, 85% { transform:scaleY(1); opacity:1; }
+  100% { transform:scaleY(.08); opacity:.6; }
+}
+
+/* A hidden row must not animate. */
+.activity[hidden] .thinking-anim { animation:none; }
+
+/* Reduced motion: no movement at all. Each animation keeps the still frame its
+   resting rule paints, and the "Thinking..." label is always shown, so the
+   state is never carried by movement alone. */
 @media (prefers-reduced-motion: reduce) {
-  .thinking-bolt { animation:none; opacity:1; }
+  .thinking-anim { animation:none !important; }
 }
