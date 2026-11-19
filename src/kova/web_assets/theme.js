@@ -35,6 +35,7 @@
   let applied = [];         // custom properties this module set, to clear them again
   let installed = [];       // valid theme files from GET /themes
   let generation = 0;       // drops a slow theme fetch that a newer choice replaced
+  let previewing = null;    // the choice on screen before preview(), null when none
 
   function read(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -170,8 +171,7 @@
   function adopt(next, {save = false} = {}) {
     const value = normalise(next);
     if (!value) return Promise.resolve();
-    const changed = value !== choice;
-    choice = value;
+    previewing = null;
     write(KEY, value);
     if (save) {
       const pending = request('/preferences', {
@@ -181,21 +181,43 @@
       });
       if (pending && typeof pending.catch === 'function') pending.catch(() => {});
     }
-    if (FIXED.includes(value)) {
+    return apply(value);
+  }
+
+  function apply(next) {
+    const changed = next !== choice;
+    choice = next;
+    if (FIXED.includes(next)) {
       generation += 1;
       custom = null;
       write(CACHE, null);
       paint();
       return Promise.resolve();
     }
-    if (changed && custom && custom.id !== value) custom = null;
+    if (changed && custom && custom.id !== next) custom = null;
     paint();
-    return loadCustom(value);
+    return loadCustom(next);
   }
 
   /** Choose a theme: "system", "dark", "light" or an installed theme id. */
   function set(next) {
     return adopt(next, {save: true});
+  }
+
+  /** Show a theme without choosing it: a picker's highlighted row, before Enter. */
+  function preview(next) {
+    const value = normalise(next);
+    if (!value || value === choice) return Promise.resolve();
+    if (previewing === null) previewing = choice;
+    return apply(value);
+  }
+
+  /** Put back the theme that was showing before `preview`, and forget the preview. */
+  function endPreview() {
+    if (previewing === null) return Promise.resolve();
+    const value = previewing;
+    previewing = null;
+    return apply(normalise(value) || 'system');
   }
 
   /** The light/dark shortcut: always lands on the built-in opposite of what is shown. */
@@ -271,7 +293,7 @@
     });
   }
 
-  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, label, refresh, set, sync, toggle};
+  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, endPreview, label, preview, refresh, set, sync, toggle};
   sync();
   refresh();
 })();
