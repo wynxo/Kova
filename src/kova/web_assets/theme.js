@@ -25,6 +25,7 @@
   const ID = /^[a-z0-9][a-z0-9-]{1,39}$/;
   const TOKEN = /^(bg|fg|border|accent|status|syntax)\.[a-z0-9-]+$/;
   const COLOUR = /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$/;
+  const BACKGROUND_FILE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$/;
 
   const root = document.documentElement;
   const media = typeof window.matchMedia === 'function'
@@ -34,6 +35,7 @@
   let draft = null;         // live editor preview; never written to preferences or cache
   let custom = null;        // {id, name, appearance, tokens} for the active theme file
   let applied = [];         // custom properties this module set, to clear them again
+  let backgroundApplied = []; // the background properties, cleared on every repaint
   let installed = [];       // valid theme files from GET /themes
   let generation = 0;       // drops a slow theme fetch that a newer choice replaced
   let previewing = null;    // the choice on screen before preview(), null when none
@@ -89,6 +91,31 @@
     }
     return clean;
   }
+  // A background is decorative data from the server, not CSS: a gradient of
+  // two to four plain colours, or one image file in themes/assets. Anything
+  // else is dropped, as with tokens.
+  function cleanBackground(value) {
+    if (!value || typeof value !== 'object') return null;
+    const number = (candidate, low, high, fallback) =>
+      (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= low && candidate <= high
+        ? candidate : fallback);
+    if (value.kind === 'gradient') {
+      const stops = Array.isArray(value.stops) ? value.stops : [];
+      const clean = stops.filter(stop => typeof stop === 'string' && COLOUR.test(stop.trim()))
+        .map(stop => stop.trim());
+      if (clean.length < 2 || clean.length > 4) return null;
+      return {kind: 'gradient', stops: clean, angle: number(value.angle, 0, 360, 160)};
+    }
+    if (value.kind === 'image' && typeof value.file === 'string' && BACKGROUND_FILE.test(value.file)) {
+      return {
+        kind: 'image',
+        file: value.file,
+        dim: number(value.dim, 0, 0.8, 0.35),
+        blur: number(value.blur, 0, 24, 0),
+      };
+    }
+    return null;
+  }
   function cleanTheme(payload) {
     if (!payload || typeof payload !== 'object' || !ID.test(payload.id || '')) return null;
     if (payload.appearance !== 'dark' && payload.appearance !== 'light') return null;
@@ -97,6 +124,7 @@
       name: typeof payload.name === 'string' ? payload.name : payload.id,
       appearance: payload.appearance,
       tokens: cleanTokens(payload.tokens),
+      background: cleanBackground(payload.background),
     };
   }
 
@@ -107,6 +135,40 @@
       try { root.style.removeProperty(name); } catch (_) {}
     }
     applied = [];
+  }
+
+  function setBackgroundProperty(name, value) {
+    try {
+      root.style.setProperty(name, value);
+      backgroundApplied.push(name);
+    } catch (_) {}
+  }
+
+  function clearBackground() {
+    for (const name of backgroundApplied) {
+      try { root.style.removeProperty(name); } catch (_) {}
+    }
+    backgroundApplied = [];
+    try { delete root.dataset.background; } catch (_) {}
+  }
+
+  // The stylesheet draws one fixed layer behind the shell from these values.
+  // An image is addressed through the authenticated assets route, never a
+  // user-supplied URL; the file name was already checked above.
+  function paintBackground(active) {
+    clearBackground();
+    const background = active && active.background;
+    if (!background) return;
+    if (background.kind === 'gradient') {
+      const stops = background.stops.join(', ');
+      setBackgroundProperty('--theme-background', `linear-gradient(${background.angle}deg, ${stops})`);
+    } else {
+      const url = `/themes/assets/${encodeURIComponent(background.file)}`;
+      setBackgroundProperty('--theme-background', `url("${url}")`);
+      setBackgroundProperty('--theme-background-dim', String(background.dim));
+      setBackgroundProperty('--theme-background-blur', `${background.blur}px`);
+    }
+    try { root.dataset.background = background.kind; } catch (_) {}
   }
 
   // The browser chrome (and the desktop shell's window) takes the page's base
@@ -139,6 +201,7 @@
     clearProperties();
     const active = draft || (custom?.id === choice ? custom : null);
     root.dataset.theme = appearance();
+    paintBackground(active);
     if (active) {
       for (const [name, value] of Object.entries(active.tokens)) {
         const css = property(name);

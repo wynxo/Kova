@@ -19,6 +19,9 @@
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
          keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export',
          control: 'theme'},
+        {title: 'Show theme backgrounds', help: "Draw the theme's gradient or image behind the app. Off keeps its colours and leaves every panel solid.",
+         keywords: 'background gradient image wallpaper picture blur transparency glass solid',
+         control: 'backgrounds'},
         {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
          keywords: 'text size font typography small large bigger read legible zoom scale',
          control: 'text_size'},
@@ -515,6 +518,9 @@
     {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'on',
      items: [['on', 'On', 'Show the avatar beside each reply'],
              ['off', 'Off', 'Hide avatars and keep the names']]},
+    {name: 'backgrounds', label: 'Show theme backgrounds', read: 'backgrounds', write: 'setBackgrounds', fallback: 'on',
+     items: [['on', 'On', "Show the theme's gradient or image behind the app"],
+             ['off', 'Off', 'Keep solid panels and hide the background']]},
   ];
   const typographyRadios = {};
   function typographyChoice(name) {

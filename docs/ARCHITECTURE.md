@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 124 endpoints: 123 route handlers plus the static asset mount.
+The app exposes 125 endpoints: 124 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -175,6 +175,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
 | `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
 | `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
+| `GET /themes/assets/{name}` | token or session | one theme background image from `KOVA_HOME/themes/assets`: a plain png/jpg/webp file name, confined to that folder, with its real type |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
 | `GET /extensions/catalog` | token or session | the extensions catalog (configured index or the bundled one), with install state |
@@ -368,8 +369,15 @@ choice - `system`, `light`, `dark` or an installed theme file's id - kept in the
 shared `/preferences` document and cached in `localStorage`; it runs from `<head>`
 so the first frame is already right, sets `data-theme` for the built-in palette, and
 writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
-properties on `<html>`. The `theme-color` meta tag and the web manifest take the
-theme's `bg.base`. The Motion preference (#181) uses the same shared document and
+properties on `<html>`. A theme file may also carry a `background` object (#206): a
+subtle gradient of semantic colours, or one image from `KOVA_HOME/themes/assets` with
+dim and blur. `theme.js` writes that as `--theme-background` and a
+`data-background` marker; one fixed layer in `app.css` draws it behind the shell,
+panels become 88% surfaces with backdrop blur, and the
+`prefers-reduced-transparency`, motion-off and no-backdrop-filter rules return to the
+opaque measured surfaces. The **Show theme backgrounds** preference (default on) turns
+the layer off without changing the theme. The `theme-color` meta tag and the web
+manifest take the theme's `bg.base`. The Motion preference (#181) uses the same shared document and
 first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
 asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
 one block in `app.css` shortens or removes motion through the duration tokens.
