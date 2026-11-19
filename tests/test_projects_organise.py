@@ -1,0 +1,168 @@
+"""Projects (#196): colour, icon, a default model, and moving chats in and out."""
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+from fastapi.testclient import TestClient
+from typer.testing import CliRunner
+
+from kova import cli
+from kova.client import KovaClient
+from kova.config import ModelEntry, ensure_token, load_config
+from kova.server import create_app
+from kova.store import Store
+from tests.fake_model import FakeModel, text
+
+
+@pytest.fixture
+def server(tmp_path, monkeypatch):
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    cfg.models[0].model = "demo-local"
+    cfg.models.append(ModelEntry("second", "http://127.0.0.1:9/v1", "demo-second"))
+    fake = FakeModel([text("One"), text("Two"), text("Three")])
+    headers = {"Authorization": f"Bearer {ensure_token(cfg.home)}"}
+    with TestClient(create_app(cfg, transport=fake.transport)) as client:
+        yield client, headers, cfg, fake
+
+
+# ------------------------------------------------------------------- store
+def test_older_project_tables_gain_colour_icon_and_model(tmp_path):
+    path = tmp_path / "kova.db"
+    old = Store(path)
+    project = old.create_project("Research", "Cite sources.")
+    old._conn.close()
+    with sqlite3.connect(path) as db:
+        for column in ("colour", "icon", "model"):
+            db.execute(f"ALTER TABLE projects DROP COLUMN {column}")
+    migrated = Store(path)
+    saved = migrated.get_project(project["id"])
+    assert (saved["name"], saved["instructions"]) == ("Research", "Cite sources.")
+    assert (saved["colour"], saved["icon"], saved["model"]) == (None, None, None)
+    updated = migrated.update_project(project["id"], colour="info", icon="brain", model="second")
+    assert (updated["colour"], updated["icon"], updated["model"]) == ("info", "brain", "second")
+    cleared = migrated.update_project(project["id"], colour=None, model="")
+    assert (cleared["colour"], cleared["icon"], cleared["model"]) == (None, "brain", None)
+
+
+def test_store_moves_chats_without_touching_their_folder(tmp_path):
+    store = Store(tmp_path / "kova.db")
+    project = store.create_project("Research", cwd=str(tmp_path / "project"))
+    chat = store.create_chat("Loose", cwd=str(tmp_path / "own"))
+    assert store.move_chat(chat["id"], project["id"])
+    saved = store.get_chat(chat["id"])
+    assert saved["project_id"] == project["id"] and saved["cwd"] == str(tmp_path / "own")
+    assert store.move_chat(chat["id"], None)
+    assert store.get_chat(chat["id"])["project_id"] is None
+    assert not store.move_chat("missing", None)
+    with pytest.raises(LookupError):
+        store.move_chat(chat["id"], "missing")
+    incognito = store.create_chat(ephemeral=True)
+    with pytest.raises(ValueError):
+        store.move_chat(incognito["id"], project["id"])
+
+
+# ------------------------------------------------------------------ server
+def test_project_colour_icon_and_model_are_validated(server):
+    client, headers, _, _ = server
+    for body in ({"name": "X", "colour": "#ff0000"}, {"name": "X", "icon": "rocket"}):
+        assert client.post("/projects", headers=headers, json=body).status_code == 422
+    missing = client.post("/projects", headers=headers, json={"name": "X", "model": "nowhere"})
+    assert missing.status_code == 404 and "not configured" in missing.json()["detail"]
+    project = client.post("/projects", headers=headers, json={
+        "name": "Research", "colour": "Success", "icon": "brain", "model": "second",
+    }).json()
+    assert (project["colour"], project["icon"], project["model"]) == ("success", "brain", "second")
+    path = f"/projects/{project['id']}"
+    cleared = client.patch(path, headers=headers, json={"colour": None, "model": ""}).json()
+    assert (cleared["colour"], cleared["icon"], cleared["model"]) == (None, "brain", None)
+    assert client.patch(path, headers=headers, json={"model": "nowhere"}).status_code == 404
+    assert client.get(path, headers=headers).json()["model"] is None
+
+
+def test_new_project_chats_inherit_the_default_model(server):
+    client, headers, cfg, _ = server
+    project = client.post("/projects", headers=headers, json={"name": "R", "model": "second"}).json()
+    chat = client.post("/chats", headers=headers, json={"project_id": project["id"]}).json()
+    assert chat["model"] == "second"
+    explicit = client.post("/chats", headers=headers,
+                           json={"project_id": project["id"], "model": "local"}).json()
+    assert explicit["model"] == "local"
+    loose = client.post("/chats", headers=headers, json={}).json()
+    assert loose["model"] is None
+    # A default whose model was removed later is skipped rather than failing the chat.
+    cfg.models[:] = [entry for entry in cfg.models if entry.name != "second"]
+    fallback = client.post("/chats", headers=headers, json={"project_id": project["id"]})
+    assert fallback.status_code == 200 and fallback.json()["model"] is None
+
+
+def test_chats_move_in_and_out_of_projects(server, tmp_path):
+    client, headers, _, fake = server
+    folder = tmp_path / "project"
+    folder.mkdir()
+    project = client.post("/projects", headers=headers, json={
+        "name": "Research", "instructions": "Project rule: use metric units.", "cwd": str(folder),
+    }).json()
+    chat = client.post("/chats", headers=headers, json={}).json()
+    path = f"/chats/{chat['id']}"
+
+    moved = client.patch(path, headers=headers, json={"project_id": project["id"]})
+    assert moved.status_code == 200, moved.text
+    assert moved.json() == {"id": chat["id"], "project_id": project["id"]}
+    saved = client.get(path, headers=headers).json()
+    assert saved["project_id"] == project["id"] and saved["cwd"] == chat["cwd"]
+    reply = client.post(f"{path}/messages", headers=headers, json={"text": "Hello"})
+    assert reply.status_code == 200
+    assert "Project rule: use metric units." in fake.requests[-1]["messages"][0]["content"]
+
+    assert client.patch(path, headers=headers, json={"project_id": None}).json()["project_id"] is None
+    assert client.get(path, headers=headers).json()["project_id"] is None
+
+    assert client.patch(path, headers=headers, json={"project_id": "missing"}).status_code == 404
+    assert client.patch("/chats/missing", headers=headers, json={"project_id": None}).status_code == 404
+    both = client.patch(path, headers=headers, json={"project_id": project["id"], "title": "X"})
+    assert both.status_code == 422
+    incognito = client.post("/chats", headers=headers, json={"ephemeral": True}).json()
+    refused = client.patch(f"/chats/{incognito['id']}", headers=headers,
+                           json={"project_id": project["id"]})
+    assert refused.status_code == 422
+
+
+# --------------------------------------------------------------------- CLI
+@pytest.fixture
+def runner(server, monkeypatch):
+    client, headers, cfg, fake = server
+    kova = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=client)
+    monkeypatch.setattr(cli, "get_client", lambda: kova)
+    return CliRunner(), kova
+
+
+def test_cli_moves_chats_and_edits_projects(runner):
+    cli_runner, kova = runner
+    created = cli_runner.invoke(cli.app, ["projects", "create", "Research", "--colour", "info",
+                                          "--icon", "brain", "--model", "second"])
+    assert created.exit_code == 0, created.output
+    [project] = kova.list_projects()
+    assert (project["colour"], project["icon"], project["model"]) == ("info", "brain", "second")
+    shown = cli_runner.invoke(cli.app, ["projects", "show", project["id"]])
+    assert "Default model: second" in shown.output and "info · brain" in shown.output
+
+    edited = cli_runner.invoke(cli.app, ["projects", "edit", project["id"], "--name", "Lab",
+                                         "--colour", "none", "--model", "none"])
+    assert edited.exit_code == 0, edited.output
+    saved = kova.get_project(project["id"])
+    assert (saved["name"], saved["colour"], saved["icon"], saved["model"]) == ("Lab", None, "brain", None)
+    nothing = cli_runner.invoke(cli.app, ["projects", "edit", project["id"]])
+    assert nothing.exit_code == 1 and "Nothing to change" in nothing.output
+
+    chat = kova.create_chat(title="Loose notes")
+    moved = cli_runner.invoke(cli.app, ["chats", "move", chat["id"], project["id"]])
+    assert moved.exit_code == 0, moved.output
+    assert 'Moved "Loose notes" to project "Lab"' in moved.output
+    assert kova.get_chat(chat["id"])["project_id"] == project["id"]
+    out = cli_runner.invoke(cli.app, ["chats", "move", chat["id"], "none"])
+    assert out.exit_code == 0 and "out of its project" in out.output
+    assert kova.get_chat(chat["id"])["project_id"] is None
+    missing = cli_runner.invoke(cli.app, ["chats", "move", chat["id"], "nope"])
+    assert missing.exit_code == 1 and 'No project "nope"' in missing.output
