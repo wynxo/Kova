@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Compare answers in a chat (#96): the + menu, the model picker and the command palette open a chooser for two to four configured models, which all answer the same message at once, side by side on a desktop and as swipeable cards on a phone, each with its speed and token count, one Stop and a Keep this one button. Answers are plain replies (no tools, no memory) and nothing is saved until you keep one, which stores your message and that answer as a normal turn with its model and usage. `POST /chats/{id}/compare` streams the answers tagged by model and `POST /chats/{id}/compare/keep` saves the chosen one; Local only refuses a cloud model before anything is sent, and Stop, Local only or closing the stream cancels every model.
 - The web app's live event stream connects again: a merge had made `/events` return 500, so reminders and background updates never arrived (#283).
 - Two high-contrast example themes join the palette — a pure black-and-white dark and a matching light (#284).
 - The app mark is now a monochrome K that stays sharp at 16px and inverts with the theme (#285).

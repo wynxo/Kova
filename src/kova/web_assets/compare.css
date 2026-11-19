@@ -1,0 +1,132 @@
+/* Compare answers (#96): side-by-side columns on a desktop, swipeable cards
+   on a phone. Semantic tokens only (docs/DESIGN.md). The accent marks only a
+   column that is still writing; a finished answer is neutral. */
+
+.i-columns-2 { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2'/%3E%3Cpath d='M12 3v18'/%3E%3C/svg%3E"); }
+
+.compare {
+  display:grid;
+  gap:var(--space-3);
+  margin:var(--space-4) 0;
+}
+
+.compare-bar {
+  display:flex;
+  align-items:center;
+  gap:var(--space-2);
+}
+.compare-heading {
+  flex:1;
+  margin:0;
+  font-size:var(--type-size-body);
+  font-weight:600;
+  color:var(--fg-default);
+}
+
+.compare-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(0, 1fr));
+  grid-auto-flow:column;
+  gap:var(--space-3);
+  border-radius:var(--radius-md);
+}
+.compare-grid:focus-visible { outline:2px solid var(--border-strong); outline-offset:var(--space-0-5); }
+
+.compare-card {
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-2);
+  min-width:0;
+  padding:var(--space-3);
+  background:var(--bg-surface);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  transition:border-color var(--motion-fast) var(--motion-ease-standard);
+}
+.compare-card[data-phase="writing"], .compare-card[data-phase="thinking"] { border-color:var(--accent-default); }
+.compare-card[data-phase="error"] { border-color:color-mix(in srgb, var(--status-danger) 40%, transparent); }
+
+.compare-card-head {
+  display:flex;
+  align-items:baseline;
+  gap:var(--space-2);
+}
+.compare-card-title {
+  flex:1;
+  margin:0;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:var(--type-size-body);
+  font-weight:600;
+  color:var(--fg-default);
+}
+.compare-card-index { display:none; font-size:var(--type-size-label); color:var(--fg-muted); }
+
+.compare-card-status {
+  margin:0;
+  font-size:var(--type-size-label);
+  color:var(--fg-muted);
+  font-variant-numeric:tabular-nums;
+}
+.compare-card[data-phase="error"] .compare-card-status { color:var(--status-danger); }
+
+.compare-card-body {
+  flex:1;
+  min-height:var(--space-12);
+  overflow-wrap:anywhere;
+  font-size:var(--type-size-body);
+  line-height:var(--type-leading-body);
+  color:var(--fg-default);
+}
+.compare-card-body:empty::before { content:"…"; color:var(--fg-faint); }
+
+.compare-keep { align-self:flex-start; }
+
+/* The model chooser. */
+.compare-dialog .compare-intro { color:var(--fg-muted); }
+.compare-text-label { display:grid; gap:var(--space-1); }
+.compare-models {
+  display:grid;
+  gap:var(--space-1);
+  margin:var(--space-3) 0 0;
+  padding:0;
+  border:0;
+}
+.compare-models legend { margin-bottom:var(--space-1); font-weight:600; }
+.compare-model {
+  display:flex;
+  align-items:center;
+  gap:var(--space-2);
+  padding:var(--space-2);
+  border-radius:var(--radius-sm);
+  cursor:pointer;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.compare-model:hover { background:var(--bg-raised); }
+.compare-model:has(input:disabled) { cursor:default; color:var(--fg-faint); }
+.compare-model-name { flex:1; min-width:0; overflow-wrap:anywhere; }
+.compare-model-note { font-size:var(--type-size-label); color:var(--fg-muted); }
+.compare-count { margin:var(--space-2) 0 0; font-size:var(--type-size-label); color:var(--fg-muted); }
+
+/* A phone shows one answer at a time: swipe sideways, each card snaps. */
+@media (max-width:720px) {
+  .compare-grid {
+    display:flex;
+    overflow-x:auto;
+    scroll-snap-type:x mandatory;
+    overscroll-behavior-x:contain;
+    padding-bottom:var(--space-1);
+  }
+  .compare-card {
+    flex:0 0 88%;
+    scroll-snap-align:center;
+  }
+  .compare-card-index { display:inline; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compare-card, .compare-model { transition:none; }
+  .compare-grid { scroll-behavior:auto; }
+}

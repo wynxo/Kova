@@ -229,6 +229,23 @@ class CompareBody(BaseModel):
     models: list[str] | None = None
 
 
+class ChatCompareBody(BaseModel):
+    """One message to ask two to four models in a chat, side by side (#96)."""
+    text: str = Field(min_length=1, max_length=100_000)
+    models: list[str] = Field(min_length=2, max_length=4)
+
+
+class CompareKeepBody(BaseModel):
+    """Which compared answer becomes the chat's next turn."""
+    compare_id: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=200)
+
+
+#: How long a finished compare can still be kept, and how many are held.
+COMPARE_KEEP_SECONDS = 60 * 60
+COMPARE_KEEP_LIMIT = 16
+
+
 def _note_dict(note: Note) -> dict:
     """The JSON shape of a memory note, including where the fact came from."""
     return {"slug": note.slug, "title": note.title, "body": note.body,
@@ -542,6 +559,9 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     app.state.steering = {}
+    # Finished compare answers waiting for "Keep this one", in memory only (#96).
+    app.state.compares = {}
+    app.state.compare_tasks = {}
     app.state.events_keepalive = EVENTS_KEEPALIVE
     app.state.transcriber = _build_transcriber(config)
     install_web(app, _require_bearer)
@@ -1295,6 +1315,158 @@ def create_app(
         wrote_in(chat_id, request)
         steering.add(body.text)
         return {"ok": True, "text": body.text}
+
+    def compare_entries(names: list[str]) -> list[ModelEntry]:
+        """The configured models a chat compare asks, in the order given."""
+        from kova.compare import MAX_CHAT_COMPARE_MODELS, MIN_CHAT_COMPARE_MODELS
+        unique = list(dict.fromkeys(names))
+        if not MIN_CHAT_COMPARE_MODELS <= len(unique) <= MAX_CHAT_COMPARE_MODELS:
+            raise HTTPException(422, f"Choose {MIN_CHAT_COMPARE_MODELS} to "
+                                     f"{MAX_CHAT_COMPARE_MODELS} different models to compare.")
+        entries = []
+        for name in unique:
+            entry = config.model_entry(name)
+            if entry is None or not entry.model:
+                raise HTTPException(404, f"Model '{name}' is not configured. Choose another model.")
+            entries.append(entry)
+        return entries
+
+    def prune_compares() -> None:
+        """Forget compares nobody kept: they expire, and only the newest few stay."""
+        cutoff = time.monotonic() - COMPARE_KEEP_SECONDS
+        held = app.state.compares
+        for compare_id in [key for key, item in held.items() if item["created"] < cutoff]:
+            held.pop(compare_id, None)
+        while len(held) > COMPARE_KEEP_LIMIT:
+            held.pop(next(iter(held)))
+
+    @api.post("/chats/{chat_id}/compare")
+    async def compare_in_chat(chat_id: str, body: ChatCompareBody) -> StreamingResponse:
+        """Ask two to four models the same message at once and stream each answer.
+
+        Every event carries its ``model``. Each answer is a plain reply to the
+        chat so far: no tools, no memory, nothing written to the chat. A
+        finished answer is held in memory until ``/compare/keep`` saves it.
+        ``/chats/{id}/stop`` and turning on Local only cancel it.
+        """
+        from kova.agent import build_system_prompt, trim_history
+        from kova.compare import plain_history, stream_compare
+        from kova.persona import Persona
+        import secrets as token_source
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        config.bind_providers()
+        entries = compare_entries(body.models)
+        for entry in entries:  # Local only refuses a cloud model before anything is sent
+            egress.check_url(entry.base_url, config)
+        reject_while_turning(chat_id)
+        history = plain_history(app.state.store.get_context_entries(chat_id))
+        history.append({"role": "user", "content": body.text})
+        prompt = build_system_prompt(now(), [], [], "chat",
+                                     persona=Persona(config.persona_name, config.persona_tone))
+
+        def messages_for(entry: ModelEntry) -> list[dict]:
+            return [{"role": "system", "content": prompt},
+                    *trim_history(list(history), entry.context, len(prompt))]
+
+        prune_compares()
+        compare_id = token_source.token_urlsafe(12)
+        held = {"chat_id": chat_id, "text": body.text, "created": time.monotonic(), "results": {}}
+        app.state.compares[compare_id] = held
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        def keep_result(result: dict) -> None:
+            if result["text"].strip():
+                held["results"][result["model"]] = result
+
+        async def run_compare() -> None:
+            records = []
+            with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
+                try:
+                    queue.put_nowait({"type": "start", "compare_id": compare_id,
+                                      "models": [entry.name for entry in entries]})
+                    async for event in stream_compare(
+                            entries, messages_for, transport=app.state.agent.transport,
+                            privacy=config.privacy_secrets, config=config,
+                            pricing=getattr(config, "pricing", None) or {}, on_result=keep_result):
+                        queue.put_nowait(event)
+                    if records:
+                        queue.put_nowait({"type": "egress", "items": list(records)})
+                    queue.put_nowait({"type": "done", "compare_id": compare_id,
+                                      "kept": sorted(held["results"])})
+                except asyncio.CancelledError:
+                    queue.put_nowait({"type": "stopped", "compare_id": compare_id,
+                                      "kept": sorted(held["results"])})
+                    raise
+                except Exception as exc:  # never leave the stream without an ending
+                    queue.put_nowait({"type": "error", "message": str(exc)})
+
+        task = asyncio.create_task(run_compare())
+        app.state.turns.add(task)
+        app.state.compare_tasks[compare_id] = task
+        tasks = app.state.chat_turns.setdefault(chat_id, set())
+        tasks.add(task)
+
+        def finished(done):
+            app.state.turns.discard(done)
+            app.state.compare_tasks.pop(compare_id, None)
+            tasks.discard(done)
+            if not tasks:
+                app.state.chat_turns.pop(chat_id, None)
+            queue.put_nowait(None)
+
+        task.add_done_callback(finished)
+
+        async def drain() -> AsyncIterator[str]:
+            try:
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        return
+                    yield _sse(event)
+            finally:
+                # Nobody is reading any more: an unread compare only spends tokens.
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(drain(), media_type="text/event-stream")
+
+    @api.post("/chats/{chat_id}/compare/keep")
+    async def keep_compared(chat_id: str, body: CompareKeepBody, request: Request) -> dict:
+        """Save the user's message and the chosen compared answer as one turn.
+
+        The other answers are dropped and a compare still running is stopped.
+        The turn is stored like any other: the user message, then the reply
+        with the model that wrote it and what it cost.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        held = app.state.compares.get(body.compare_id)
+        if held is None or held["chat_id"] != chat_id:
+            raise HTTPException(404, "That comparison has expired. Compare again to keep an answer.")
+        result = held["results"].get(body.model)
+        if result is None:
+            raise HTTPException(409, "That model has no finished answer to keep.")
+        running = app.state.compare_tasks.get(body.compare_id)
+        if running is not None and not running.done():
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+        reject_while_turning(chat_id)
+        async with chat_lock(chat_id):
+            if app.state.compares.pop(body.compare_id, None) is None:
+                raise HTTPException(404, "That comparison was already kept.")
+            if app.state.store.get_chat(chat_id) is None:
+                raise HTTPException(status_code=404, detail="chat not found")
+            wrote_in(chat_id, request)
+            needs_title = not app.state.store.get_chat(chat_id)["title"]
+            store = app.state.store
+            user_id = store.add_message(chat_id, "user", held["text"], turn_model=result["model"])
+            message_id = store.add_message(chat_id, "assistant", result["text"])
+            store.record_usage(chat_id, message_id, result["usage"])
+            if needs_title:
+                store.set_title(chat_id, derive_title(held["text"]))
+        return {"user_message_id": user_id, "message_id": message_id,
+                "model": result["model"], "usage": result["usage"]}
 
     @api.post("/chats/{chat_id}/stop")
     async def stop_chat(chat_id: str) -> dict:
