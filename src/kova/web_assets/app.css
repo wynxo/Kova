@@ -936,6 +936,87 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .spinner { animation-duration:1.2s !important; animation-iteration-count:infinite !important; }
 }
 
+/* Theme backgrounds (#206). theme.js writes the theme's gradient or image
+   address into --theme-background on <html>; this one fixed layer sits behind
+   the shell. Panels turn slightly translucent only while a background is
+   present, and only while the "Show theme backgrounds" preference is on; every
+   colour still comes from the theme's own semantic tokens.
+
+   Contrast rule: the validator measures text against bg.base/surface/raised,
+   which remain the panel surfaces. Translucency is capped at 12% of the
+   background showing through, and an image carries a bg.base scrim (dim) of at
+   least 0 by default, so the panel stays close to the measured token. The
+   reduced-transparency, no-blur and motion-off fallbacks below return to the
+   fully opaque surface. */
+html[data-background]:not([data-backgrounds="off"]) body { background:transparent; }
+html[data-background]:not([data-backgrounds="off"]) body::before {
+  content:"";
+  position:fixed;
+  inset:calc(var(--space-4) * -1);
+  z-index:-1;
+  pointer-events:none;
+  background:var(--theme-background) center/cover no-repeat;
+}
+html[data-background="image"]:not([data-backgrounds="off"]) body::before {
+  filter:blur(var(--theme-background-blur, 0px));
+}
+html[data-background="image"]:not([data-backgrounds="off"]) body::after {
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:-1;
+  pointer-events:none;
+  background:var(--bg-base);
+  opacity:var(--theme-background-dim, 0);
+}
+html[data-background]:not([data-backgrounds="off"]) #sidebar,
+html[data-background]:not([data-backgrounds="off"]) .composer {
+  background:color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  -webkit-backdrop-filter:blur(var(--space-4));
+  backdrop-filter:blur(var(--space-4));
+}
+html[data-background]:not([data-backgrounds="off"]) main {
+  background:color-mix(in srgb, var(--bg-base) 88%, transparent);
+  -webkit-backdrop-filter:blur(var(--space-4));
+  backdrop-filter:blur(var(--space-4));
+}
+/* Reduced motion still paints the background, but drops the blur: it is the
+   costly part and some readers read it as visual movement. */
+html[data-motion="reduced"][data-background] #sidebar,
+html[data-motion="reduced"][data-background] main,
+html[data-motion="reduced"][data-background] .composer {
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+}
+/* Reduced transparency, motion off, forced colours and browsers without
+   backdrop-filter all fall back to the measured opaque surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-background] #sidebar,
+  html[data-background] .composer { background:var(--bg-surface); -webkit-backdrop-filter:none; backdrop-filter:none; }
+  html[data-background] main { background:var(--bg-base); -webkit-backdrop-filter:none; backdrop-filter:none; }
+}
+html[data-motion="off"][data-background] #sidebar,
+html[data-motion="off"][data-background] .composer {
+  background:var(--bg-surface);
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+}
+html[data-motion="off"][data-background] main {
+  background:var(--bg-base);
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+  html[data-background] #sidebar,
+  html[data-background] .composer { background:var(--bg-surface); }
+  html[data-background] main { background:var(--bg-base); }
+}
+@media (forced-colors: active) {
+  html[data-background] #sidebar,
+  html[data-background] .composer { background:var(--bg-surface); -webkit-backdrop-filter:none; backdrop-filter:none; }
+  html[data-background] main { background:var(--bg-base); -webkit-backdrop-filter:none; backdrop-filter:none; }
+}
+
 /* Motion preference (#181). motion.js resolves the setting onto
    <html data-motion="full|reduced|off">, and this one block carries it for
    every component: Full is the untouched token set, Reduced shortens the

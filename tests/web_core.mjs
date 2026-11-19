@@ -676,6 +676,18 @@ assert.ok(!paletteText().includes('Old notes'),
           'a hit from the previous query is dropped until the new one answers');
 sandbox.test.commandPalette.close();
 console.log('Palette reasoning effort, MCP and extension switches passed');
+// Every menu action, including the dialog-specific ones, is one command away (#183).
+state.chat = {id: 'palette-chat', model: 'vision-model', reasoning_effort: 'low', pinned: false};
+state.models = [{name: 'vision-model', model: 'vision', provider_name: 'Local',
+                 reasoning_efforts: ['low', 'high']}];
+await sandbox.test.openPalette(); await tick(); await tick();
+const everyAction = () => sandbox.test.commandPalette.dialog.textContent;
+for (const label of ['Customize theme', 'Browse themes', 'Pin this conversation',
+                     'Colour & icon', 'Favourite this model', 'Make this model the default']) {
+  assert.ok(everyAction().includes(label), `the palette reaches ${label}`);
+}
+sandbox.test.commandPalette.close();
+console.log('Palette reaches every menu and dialog action passed');
  // Ctrl/Cmd+Space focuses the composer, like the terminal hotkey. The harness
  // reports no platform, so this is the PC spelling of "mod".
  let spaceFocused = 0, spacePrevented = 0;

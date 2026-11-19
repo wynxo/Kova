@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from kova import pairing, themes
 from kova.theme_contrast import contrast_failures
@@ -103,6 +103,23 @@ def _prepare_gallery_theme(theme_id: str, document: Any) -> tuple[dict, bytes]:
 
 
 def install_theme_routes(api: APIRouter, home: Path) -> None:
+    @api.get("/themes/assets/{name}")
+    async def theme_asset(name: str) -> FileResponse:
+        """One background image from KOVA_HOME/themes/assets, authenticated.
+
+        Registered before ``/themes/{theme_id}`` so ``assets`` is never read as
+        a theme id. The helper confines the name to the assets folder and the
+        response is sent with its real type; the app middleware adds nosniff
+        and no-store to every response.
+        """
+        try:
+            path = themes.background_asset(home, name)
+        except themes.ThemeAssetTooLarge as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except themes.ThemeError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return FileResponse(path, media_type=themes.BACKGROUND_TYPES[path.suffix])
+
     @api.get("/themes")
     def list_themes() -> list[dict]:
         """Every theme Kova can offer; a broken user file is listed with its error."""
