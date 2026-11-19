@@ -252,6 +252,10 @@ text, without tools or memory. Finished answers are held in memory for an hour
 (at most 16 compares) until `POST /chats/{chat_id}/compare/keep` saves one; the
 stop route, Local only and a closed stream cancel the rest. Local only refuses
 the whole compare with 409 when any chosen model is not on this computer.
+The terminal's `/compare` (`src/kova/compare_cli.py`, used by `tui/app.py` and the
+plain loop in `ui.py`) reads the arguments, folds these events per model with
+`Collector`, prints every answer once the stream ends and asks which to keep, via
+`KovaClient.stream_compare` and `keep_compare`.
 
 Parallel tasks (`src/kova/parallel.py`, #192): when one model step asks for a
 consecutive run of two or more read-only tools (`PARALLEL_TOOLS`: file reads and
