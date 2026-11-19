@@ -79,6 +79,14 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any], path: 
     if "$ref" in schema:
         return validate(instance, _resolve_ref(schema["$ref"], root), root, path)
 
+    # A background is one of two disjoint shapes. Exactly one branch must pass,
+    # so an image cannot also carry gradient stops (and vice versa).
+    if "oneOf" in schema:
+        branches = [validate(instance, branch, root, path) for branch in schema["oneOf"]]
+        if sum(1 for branch in branches if not branch) != 1:
+            errors.append(f"{path}: does not match exactly one allowed shape")
+        return errors
+
     expected = schema.get("type")
     if expected is not None:
         types = expected if isinstance(expected, list) else [expected]
@@ -87,6 +95,12 @@ def validate(instance: Any, schema: dict[str, Any], root: dict[str, Any], path: 
 
     if "enum" in schema and instance not in schema["enum"]:
         errors.append(f"{path}: must be one of {schema['enum']}, got {instance!r}")
+
+    if isinstance(instance, (int, float)) and not isinstance(instance, bool):
+        if "minimum" in schema and instance < schema["minimum"]:
+            errors.append(f"{path}: smaller than {schema['minimum']}")
+        if "maximum" in schema and instance > schema["maximum"]:
+            errors.append(f"{path}: larger than {schema['maximum']}")
 
     if isinstance(instance, str):
         if "minLength" in schema and len(instance) < schema["minLength"]:

@@ -6,6 +6,11 @@
   "description": "Deep navy-blue dark theme. Three close navy-black background shades, cool off-white text, blue-grey muted text and blue-tinted borders, with a soft sky-blue accent.",
   "appearance": "dark",
   "extends": "kova-dark",
+  "background": {
+    "kind": "gradient",
+    "stops": ["#0d1024", "#1b2a54", "#0d1024"],
+    "angle": 160
+  },
   "tokens": {
     "bg": {
       "base": "#0d1024",

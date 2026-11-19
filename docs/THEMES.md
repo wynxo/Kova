@@ -55,11 +55,51 @@ unverifiable, and would break on the next palette change.
 | `extends` | no | `kova-dark` or `kova-light`. Defaults from `appearance`. |
 | `tokens` | no | Groups of semantic overrides: `bg`, `fg`, `border`, `accent`, `status`, `syntax`. |
 | `terminal` | no | Exactly 16 colours, ANSI order 0-15, for the TUI. Inherited when absent. |
+| `background` | no | A subtle gradient or one image behind the app shell. See [Backgrounds](#backgrounds). |
 | `author`, `description` | no | Free text, length-limited. |
 
 Colour values are hex (`#rgb`, `#rrggbb`, `#rrggbbaa`) or `rgb()` / `rgba()`. Named
 colours are rejected: `red` is not a value a contrast checker can read without shipping
 a colour table, and it is not a value a theme author can predict across browsers.
+
+## Backgrounds
+
+A theme may put something quiet behind the app shell. Exactly two shapes exist:
+
+```json
+"background": {
+  "kind": "gradient",
+  "stops": ["#0d1024", "#1b2a54", "#0d1024"],
+  "angle": 160
+}
+```
+
+```json
+"background": {
+  "kind": "image",
+  "file": "night-sky.webp",
+  "dim": 0.35,
+  "blur": 0
+}
+```
+
+A gradient takes 2-4 colours, written like every other colour in a theme, and an
+optional `angle` from 0 to 360 (default 160). An image takes one **file name** from
+`KOVA_HOME/themes/assets/` - no paths, no URLs, no query strings - ending in `.png`,
+`.jpg` or `.webp`. `dim` (0-0.8, default 0.35) lays the theme's `bg.base` over the
+image, and `blur` (0-24, default 0) softens it in CSS pixels. Files above 4 MiB are
+never served, and the route refuses anything that resolves outside the assets folder.
+
+The browser asks for the image through the authenticated `GET /themes/assets/<name>`
+route, so it is same-origin and carries the right content type. The layer is drawn
+behind everything; panels keep their own surfaces and may become slightly
+translucent only while a background is active. The contrast gate still measures
+`fg`, `status` and `border` against `bg.base`, `bg.surface` and `bg.raised`: those
+remain the panel surfaces, because translucency is capped at 12% of the background
+showing through and an image also carries a `bg.base` scrim from `dim`. Reduced
+transparency, motion off, forced colours or a browser without `backdrop-filter`
+return to the fully opaque surfaces. **Settings > General > Show theme backgrounds**
+(default on) hides the layer without changing the theme's colours.
 
 ## Validating
 
