@@ -42,6 +42,8 @@ def _load_tokens_module():
 
 
 tokens = _load_tokens_module()
+from kova import themes
+from kova.theme_contrast import contrast_failures
 
 
 # --------------------------------------------------------------- a small JSON Schema
@@ -147,29 +149,9 @@ def merged_tokens(theme: dict[str, Any]) -> dict[str, Any]:
 
 def check_theme(theme: dict[str, Any]) -> list[str]:
     """Semantic checks a schema cannot express. Returns failures."""
-    failures: list[str] = []
     merged = merged_tokens(theme)
-    supplied = {
-        f"{group}.{key}" for group, values in (theme.get("tokens") or {}).items() for key in values
-    }
-
-    for fg, bg, minimum, why in tokens.PAIRS:
-        ratio = tokens.contrast_ratio(str(merged.get(fg, "")), str(merged.get(bg, "")))
-        if ratio is None:
-            # Inherited translucent values (bg.overlay) are the base theme's business;
-            # only fail when this theme supplied one of the two sides.
-            if fg in supplied or bg in supplied:
-                failures.append(f"{fg} on {bg}: translucent, contrast cannot be measured ({why})")
-            continue
-        if ratio < minimum:
-            failures.append(f"{fg} on {bg} = {ratio:.2f}:1, below {minimum}:1 ({why})")
-
-    palette = theme.get("terminal")
-    if isinstance(palette, list) and len(palette) == 16:
-        for index, colour in enumerate(palette):
-            if tokens.contrast_ratio(str(colour), "#000000") is None:
-                failures.append(f"terminal[{index}]: {colour!r} is not a measurable colour")
-    return failures
+    terminal = merged.pop("terminal", None)
+    return contrast_failures(merged, terminal)
 
 
 def check_file(path: Path) -> list[str]:
@@ -182,7 +164,11 @@ def check_file(path: Path) -> list[str]:
     errors = [f"{path}: {e}" for e in validate(theme, schema, schema)]
     if errors:
         return errors
-    return [f"{path}: {f}" for f in check_theme(theme)]
+    try:
+        themes.validate(theme)
+    except themes.ThemeError as exc:
+        return [f"{path}: {exc}"]
+    return [f"{path}: {failure}" for failure in check_theme(theme)]
 
 
 def main(argv: list[str] | None = None) -> int:

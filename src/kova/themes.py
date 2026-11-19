@@ -4,8 +4,8 @@ A theme is one JSON document shaped like ``design/theme.schema.json`` — never 
 The two built-in palettes live in the generated ``tokens.json`` beside this module,
 so a theme file only lists what it changes and inherits everything else from the
 base it extends. This is the server half of #174: discovery, structural validation
-and merging; contrast is still measured at build time by ``scripts/build_tokens.py``
-and ``scripts/validate_theme.py``.
+and merging. Editor imports and saves also check contrast through
+``kova.theme_routes``.
 
 Nothing here touches the browser. A theme is resolved on the server and handed to
 a client as plain values, so a broken file can never reach a stylesheet.
@@ -128,7 +128,7 @@ def validate(payload: Any) -> dict[str, Any]:
             raise ThemeError(f"Missing required key {field!r}.")
 
     theme_id = payload["id"]
-    if not isinstance(theme_id, str) or not _ID.match(theme_id):
+    if not isinstance(theme_id, str) or not _ID.fullmatch(theme_id):
         raise ThemeError(
             f"id {theme_id!r} must be lowercase letters, digits and hyphens (2-40 characters)."
         )
@@ -136,7 +136,7 @@ def validate(payload: Any) -> dict[str, Any]:
     if not isinstance(name, str) or not 1 <= len(name) <= 60:
         raise ThemeError("name must be a string of 1-60 characters.")
     version = payload["version"]
-    if not isinstance(version, str) or not _SEMVER.match(version):
+    if not isinstance(version, str) or not _SEMVER.fullmatch(version):
         raise ThemeError(f"version {version!r} must look like 1.0.0.")
     appearance = payload["appearance"]
     if appearance not in APPEARANCES:
@@ -274,7 +274,7 @@ def discover(home: Path | str) -> list[dict[str, Any]]:
 
 def get(theme_id: str, home: Path | str) -> dict[str, Any]:
     """One theme with its tokens resolved, or :class:`ThemeError` naming the problem."""
-    if not isinstance(theme_id, str) or not _ID.match(theme_id):
+    if not isinstance(theme_id, str) or not _ID.fullmatch(theme_id):
         raise ThemeError(f"{theme_id!r} is not a theme id.")
     if theme_id in BUILTIN:
         tokens = base_tokens(theme_id)

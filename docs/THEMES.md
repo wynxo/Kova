@@ -143,9 +143,17 @@ manifest uses the dark base for `system`, since a manifest cannot follow the dev
 
 ## Make your own
 
-Start from an example in `design/themes/`: copy one into `~/.kova/themes/`, change only
-semantic tokens, and re-run `kova themes check` until it passes. That command checks the
-file's structure, not its contrast. To measure contrast too, run
+In **Settings > General > Theme**, choose **Customize…** to start from the current
+palette, duplicate another installed theme, or **Import** a theme JSON file (up
+to 32 KiB). Edit a swatch or its hex value to preview the change on the app.
+Kova checks contrast as you edit and lists any failing token pairs. **Save** is
+available once the checks pass; it installs and selects the new theme without
+overwriting any existing theme ID. **Cancel** restores the previous appearance.
+**Export** downloads the validated draft as JSON without installing it.
+
+To edit by hand, start from an example in `design/themes/`: copy one into
+`~/.kova/themes/`, change only semantic tokens, and re-run `kova themes check`
+until it passes. That command checks the file's structure, not its contrast. To measure contrast too, run
 `uv run python scripts/validate_theme.py <file>` from a Kova checkout; it fails on any text
 or control pair below the WCAG ratios the built-in themes meet.
 

@@ -173,6 +173,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/PUT /preferences` | token or session | read every UI preference / merge validated changes into them |
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
+| `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
 | `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |

@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+# Keep this runnable with plain Python from a source checkout.
+sys.path.insert(0, str(ROOT / "src"))
+from kova.theme_contrast import PAIRS, contrast_ratio
+
 TOKENS_PATH = ROOT / "design" / "tokens.json"
 # src/kova/web_assets is mounted at /app/assets by src/kova/web.py; a stylesheet at the
 # repository root would never be served.
@@ -52,108 +56,6 @@ THEME_SCHEMES = {"kova-dark": "dark", "kova-light": "light"}
 SCALES = ("space", "radius", "motion", "type")
 
 ALIAS = re.compile(r"^\{([a-z0-9_.]+)\}$", re.IGNORECASE)
-
-# Contrast pairs that must hold, per WCAG 2.2 SC 1.4.3 (text) and SC 1.4.11 (non-text).
-# An explicit manifest, not a cross product: most fg/bg combinations never co-occur.
-MIN_TEXT = 4.5
-MIN_LARGE = 3.0
-MIN_NONTEXT = 3.0
-# Decorative rules are not control boundaries, so SC 1.4.11 does not apply. They still
-# have to be visible: anything under ~1.2:1 reads as a gap rather than a divider.
-MIN_VISIBLE = 1.2
-
-PAIRS: tuple[tuple[str, str, float, str], ...] = (
-    # (foreground token, background token, minimum ratio, why)
-    ("fg.default", "bg.base", MIN_TEXT, "body text on the app background"),
-    ("fg.default", "bg.surface", MIN_TEXT, "body text on panels"),
-    ("fg.default", "bg.raised", MIN_TEXT, "body text on raised chips and cards"),
-    ("fg.muted", "bg.surface", MIN_TEXT, "timestamps and secondary copy"),
-    ("fg.muted", "bg.base", MIN_TEXT, "secondary text on the page"),
-    ("fg.muted", "bg.raised", MIN_TEXT, "secondary text inside raised cards"),
-    ("fg.inverse", "accent.default", MIN_TEXT, "text drawn on a solid accent chip"),
-    ("accent.on", "accent.default", MIN_TEXT, "text on an accented button"),
-    ("accent.default", "bg.surface", MIN_NONTEXT, "accent controls on panels"),
-    ("accent.default", "bg.raised", MIN_NONTEXT, "accent controls on raised cards"),
-    ("accent.default", "bg.base", MIN_NONTEXT, "the accent edge, icon and activity dot"),
-    ("status.danger", "bg.surface", MIN_TEXT, "error text"),
-    ("status.success", "bg.surface", MIN_TEXT, "success text"),
-    ("status.warning", "bg.surface", MIN_TEXT, "warning text"),
-    ("status.info", "bg.surface", MIN_TEXT, "informational text"),
-    ("status.success", "bg.raised", MIN_TEXT, "success text inside raised cards"),
-    ("status.danger", "bg.raised", MIN_TEXT, "error text inside raised cards"),
-    ("status.warning", "bg.raised", MIN_TEXT, "warning text inside raised cards"),
-    ("status.info", "bg.raised", MIN_TEXT, "informational text inside raised cards"),
-    ("border.strong", "bg.surface", MIN_NONTEXT, "input and focus-ring boundaries (SC 1.4.11)"),
-    ("border.subtle", "bg.surface", MIN_VISIBLE, "decorative dividers: perceptible, not a control boundary"),
-    ("syntax.keyword", "bg.base", MIN_LARGE, "code keyword colour"),
-    ("syntax.comment", "bg.base", MIN_LARGE, "code comment colour"),
-    ("syntax.string", "bg.base", MIN_TEXT, "code string text"),
-    ("syntax.number", "bg.base", MIN_TEXT, "code number text"),
-    ("syntax.function", "bg.base", MIN_TEXT, "code function text"),
-    ("syntax.type", "bg.base", MIN_TEXT, "code type text"),
-    ("syntax.invalid", "bg.base", MIN_TEXT, "code error text"),
-)
-
-
-# --------------------------------------------------------------------------- colour
-
-
-def _srgb_to_linear(channel: float) -> float:
-    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
-
-
-def _parse_colour(value: str) -> tuple[float, float, float] | None:
-    """Return linear-light sRGB in 0..1, or None for anything non-opaque.
-
-    Only what the token file is allowed to contain: #rgb, #rrggbb, rgb()/rgba() with an
-    opaque alpha. Translucent values (`accent.soft`, `bg.overlay`) have no single
-    contrast ratio, so they are reported by the checker rather than guessed at.
-    """
-    text = value.strip()
-    if text.startswith("#"):
-        digits = text[1:]
-        if len(digits) == 3:
-            digits = "".join(c * 2 for c in digits)
-        if len(digits) != 6:
-            return None
-        try:
-            channels = [int(digits[i : i + 2], 16) / 255 for i in (0, 2, 4)]
-        except ValueError:
-            return None
-        return tuple(_srgb_to_linear(c) for c in channels)  # type: ignore[return-value]
-    if text.startswith("rgb"):
-        body = text[text.index("(") + 1 : text.rindex(")")]
-        parts = [p.strip() for p in body.replace("/", ",").split(",") if p.strip()]
-        if len(parts) == 4:
-            alpha = parts[3]
-            opaque = alpha in {"1", "1.0"} or alpha.endswith("%") and float(alpha[:-1]) >= 100
-            if not opaque:
-                return None
-        if len(parts) < 3:
-            return None
-        try:
-            channels = [float(p.rstrip("%")) / (100 if p.endswith("%") else 255) for p in parts[:3]]
-        except ValueError:
-            return None
-        return tuple(_srgb_to_linear(c) for c in channels)  # type: ignore[return-value]
-    return None
-
-
-def relative_luminance(linear_rgb: tuple[float, float, float]) -> float:
-    r, g, b = linear_rgb
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
-def contrast_ratio(fg_value: str, bg_value: str) -> float | None:
-    """WCAG 2.x ratio `(L1 + 0.05) / (L2 + 0.05)`, or None if either side is translucent."""
-    fg = _parse_colour(fg_value)
-    bg = _parse_colour(bg_value)
-    if fg is None or bg is None:
-        return None
-    l1, l2 = relative_luminance(fg), relative_luminance(bg)
-    lighter, darker = max(l1, l2), min(l1, l2)
-    return (lighter + 0.05) / (darker + 0.05)
-
 
 # ---------------------------------------------------------------------------- tokens
 
