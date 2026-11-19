@@ -1,9 +1,12 @@
-/* Optional status bar for issue #204, first slice: model + context meter.
+/* Optional status bar for issue #204: model, context meter, speed, connection
+ * and phone, each one switchable, under the message box or at the window's
+ * bottom edge.
  *
  * Hidden by default (the `hidden` attribute in index.html): Kova stays quiet
  * until the user opts in via the settings toggle. Idle colours are muted text
  * and borders only; the accent token never appears here. The warning token
- * appears only past 80% context, next to the Compact action.
+ * appears only past 80% context, next to the Compact action, and the danger
+ * token only on the "Offline" word.
  *
  * Colours are semantic tokens from design/tokens.json (via tokens.css), never
  * hard-coded values. Layout numbers follow the 4px grid and the 12px minimum
@@ -28,6 +31,11 @@
   display: none;
 }
 
+/* A switched-off item holds no space, whatever display rule it carries. */
+#status-bar [hidden] {
+  display: none;
+}
+
 .status-bar-model {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -40,7 +48,7 @@
   min-width: 48px;
   max-width: 160px;
   height: 3px;
-  border-radius: 999px; /* radius-pill */
+  border-radius: var(--radius-pill);
   background: var(--border-subtle);
   overflow: hidden;
 }
@@ -63,11 +71,30 @@
   color: var(--fg-faint);
 }
 
+/* Speed, connection and phone are facts, not calls to action: they stay as
+   quiet as the numbers beside them. Offline is the one state worth a colour. */
+.status-bar-speed,
+.status-bar-connection,
+.status-bar-phone {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+#status-bar .status-bar-connection.is-offline {
+  color: var(--status-danger);
+}
+
+.status-bar-phone {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+}
+
 .status-bar-compact {
   flex: none;
   padding: 2px 8px; /* space-0-5 + space-2 */
   border: 1px solid var(--border-strong);
-  border-radius: 999px; /* radius-pill */
+  border-radius: var(--radius-pill);
   background: none;
   color: var(--fg-muted);
   font: inherit;
@@ -79,6 +106,65 @@
 }
 
 .status-bar-compact:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+
+/* Placement: under the message box (the default), or fixed to the window's
+   bottom edge like an editor's status line. The composer pads itself out of
+   the way, so the two never overlap and a phone's home-bar inset is kept. */
+#status-bar[data-placement="edge"] {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  padding: var(--space-1)
+    max(var(--space-4), env(safe-area-inset-right))
+    calc(var(--space-1) + env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+body.status-bar-edge .compose-wrap {
+  padding-bottom: calc(var(--space-6) + var(--space-2) + env(safe-area-inset-bottom));
+}
+
+/* The switches wait in Settings > General > Startup, beside the bar's own
+   toggle, and use the page's labels and fields. */
+.status-bar-settings {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
+
+.status-bar-settings legend {
+  padding: 0 var(--space-1);
+  color: var(--fg-faint);
+}
+
+.status-bar-settings label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-bar-settings select {
+  min-height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg-default);
+  font: inherit;
+}
+
+.status-bar-settings select:focus-visible {
   outline: 2px solid var(--border-strong);
   outline-offset: 1px;
 }
