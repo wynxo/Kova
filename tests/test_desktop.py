@@ -164,7 +164,10 @@ def test_agent_core_frontend_behavior():
     node = shutil.which('node')
     if not node:
         pytest.skip('Node is optional; needed only for frontend DOM behavior checks')
-    'web_core.mjs', 'web_events.mjs', 'web_pairing.mjs', 'web_privacy.mjs', 'web_status_bar.mjs', 'web_sounds.mjs', 'web_palette.mjs', 'web_settings.mjs', 'web_toast.mjs', 'web_reasoning.mjs', 'web_tool_cards.mjs', 'web_shortcuts.mjs', 'web_code_header.mjs', 'web_theme.mjs', 'web_starters.mjs', 'web_message_actions.mjs', 'web_composer.mjs', 'web_markdown.mjs', 'web_drafts.mjs', 'web_prefs_export.mjs', 'web_diff_panel.mjs', 'web_plan_card.mjs', 'web_*.mjs'):
+    # Every check is discovered, so a new tests/web_*.mjs file cannot be left
+    # out of CI by a list nobody updated (the service worker's own test was).
+    for script in sorted(Path(__file__).parent.glob('web_*.mjs')):
+        result = subprocess.run([node, str(script)],
                                 capture_output=True, text=True, timeout=60)  # Windows CI runners are slow
         assert result.returncode == 0, script.name + '\n' + result.stdout + result.stderr
 
