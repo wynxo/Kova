@@ -94,12 +94,13 @@ const typography = {textSizeValue: 'default', densityValue: 'default', fontValue
 const motion = {value: 'full',
   mode() { return this.value; },
   setMode(next) { this.value = next; }};
+let returnFromThemeEditor;
+const themeEditor = {open(onClose) { returnFromThemeEditor = onClose; }, dismiss() { return true; }};
 // A stand-in for thinking.js: the choice the activity mark animates with.
 const thinking = {value: 'thunderstorm',
   choice() { return this.value; },
   setChoice(next) { this.value = next; }};
-const window = {KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography,
-  KovaMotion: motion, KovaThinking: thinking};
+const window = {KovaThemeEditor: themeEditor, KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography, KovaMotion: motion, KovaThinking: thinking};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -159,7 +160,16 @@ assert.ok(themeRow, 'the Theme setting is shown');
 const title = byClass(themeRow, 'settings-row-title')[0];
 const mark = walk(title).find(node => node.tagName === 'MARK');
 assert.equal(mark?.textContent, 'Theme', 'the matched word is highlighted');
-assert.match($('settings-search-status').textContent, /14 settings match/);
+const customize = walk(themeRow).find(node => node.textContent === 'Customize…');
+customize.click();
+assert.equal(view.hidden, true, 'the real app becomes visible behind the editor');
+returnFromThemeEditor();
+assert.equal(view.hidden, false, 'the editor returns to General');
+assert.equal(document.activeElement, customize, 'focus returns to Customize');
+search.value = 'theme';
+search.dispatch('input', {});
+
+assert.match($('settings-search-status').textContent, /16 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.

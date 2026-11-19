@@ -49,7 +49,9 @@
   function scoreItem(item, query) {
     const title = fuzzyScore(query, item.title);
     const keywords = fuzzyScore(query, item.keywords);
-    if (title === null && keywords === null) return null;
+    // A row the server already filtered (a content search hit whose match sits
+    // in its snippet) is kept even when the query is not in its own text.
+    if (title === null && keywords === null) return item.alwaysMatch ? -1 : null;
     // A keyword hit ranks below the same hit in the visible title.
     if (title !== null && keywords !== null) return Math.max(title, keywords - 4);
     return title !== null ? title : keywords - 10;
@@ -97,7 +99,13 @@
    *
    * options.items is a function returning the current registry, re-read on
    * every open, refresh and keystroke, so chats, models and enabled actions are
-   * never stale. Optional: onOpen, onClose, onError, label, placeholder.
+   * never stale. Optional: onOpen, onClose, onQuery, onError, label, placeholder.
+   *
+   * A row may carry `preview()`, run whenever it becomes the highlighted row, and
+   * `previewEnd()`, run when the highlight leaves it or the palette closes, so a
+   * reversible change (a theme, say) can be shown before Enter commits it. Give
+   * rows a stable `previewKey` when the registry is rebuilt on every keystroke:
+   * rows with the same key are the same preview, so it is not restarted.
    */
   function create(options = {}) {
     const doc = options.doc || globalThis.document;
@@ -111,6 +119,7 @@
     let active = -1;
     let restore = null;
     let entries = [];
+    let previewing = null;   // {item, key}: the row whose preview is showing
 
     const dialog = node(doc, 'dialog', 'palette');
     dialog.id = id;
@@ -162,6 +171,24 @@
     dialog.append(panel);
     doc.body.append(dialog);
 
+    function stopPreview() {
+      if (!previewing) return;
+      const {item} = previewing;
+      previewing = null;
+      if (typeof item.previewEnd !== 'function') return;
+      try { item.previewEnd(); } catch (error) { onError(error); }
+    }
+
+    function startPreview(item) {
+      const live = item && typeof item.preview === 'function' ? item : null;
+      const key = live ? (live.previewKey === undefined ? live.preview : live.previewKey) : null;
+      if (previewing && previewing.key === key) return;
+      stopPreview();
+      if (!live) return;
+      previewing = {item: live, key};
+      try { live.preview(); } catch (error) { onError(error); }
+    }
+
     function setActive(index, scroll = true) {
       if (!entries.length) {
         active = -1;
@@ -175,6 +202,7 @@
       option.setAttribute('aria-selected', 'true');
       input.setAttribute('aria-activedescendant', option.id);
       if (scroll) option.scrollIntoView?.({block: 'nearest'});
+      startPreview(entries[active].item);
     }
 
     function render() {
@@ -220,7 +248,7 @@
         ? `${ranked.length} result${ranked.length === 1 ? '' : 's'}`
         : 'No results';
       if (ranked.length) setActive(0, false);
-      else { active = -1; input.removeAttribute('aria-activedescendant'); }
+      else { active = -1; input.removeAttribute('aria-activedescendant'); stopPreview(); }
     }
 
     function choose(index) {
@@ -234,6 +262,7 @@
     }
 
     function settle() {
+      stopPreview();
       input.setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
       active = -1;
@@ -287,7 +316,10 @@
       if (key === 'Enter' && entries.length) { event.preventDefault(); choose(active); }
     }
 
-    input.addEventListener('input', render);
+    input.addEventListener('input', () => {
+      options.onQuery?.(input.value);
+      render();
+    });
     dialog.addEventListener?.('keydown', keydown);
     dialog.addEventListener?.('cancel', event => { event.preventDefault(); close(); });
     dialog.addEventListener?.('click', event => { if (event.target === dialog) close(); });

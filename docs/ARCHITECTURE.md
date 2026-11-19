@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 122 endpoints: 121 route handlers plus the static asset mount.
+The app exposes 124 endpoints: 123 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -131,6 +131,10 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}` | token or session | one change set's files |
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/diff` | token or session | one changed file's diff and both sides |
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/restore` | token or session | put the working folder back to this checkpoint |
+| `POST /chats/{chat_id}/compare` | token or session | ask 2–4 models the same message at once, stream each plain answer tagged with its model; writes nothing |
+| `POST /chats/{chat_id}/compare/keep` | token or session | save the message and one compared answer as a normal turn |
+| `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks` | token or session | one changed file as hunks, each still applied, undone or edited since; contained to the chat's working folder |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo` | token or session | revert one hunk in the working file, refused if the file's hash changed or the path leaves the folder or crosses a symlink; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
@@ -169,6 +173,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /persona` | token or session | read / set the assistant's name and tone |
 | `GET/PUT /preferences` | token or session | read every UI preference / merge validated changes into them |
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
+| `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
 | `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
@@ -216,8 +221,9 @@ their own ticket or cookie. `_require_bearer` compares with
 
 ### Streaming events
 
-Two routes answer `text/event-stream`: `POST /chats/{chat_id}/messages` for one
-turn, and `GET /events` for what happens while no turn is running. `_sse`
+Three routes answer `text/event-stream`: `POST /chats/{chat_id}/messages` for one
+turn, `POST /chats/{chat_id}/compare` for a side-by-side compare, and `GET /events`
+for what happens while no turn is running. `_sse`
 (`src/kova/server.py`) writes the JSON `type` as the SSE event name and the
 whole object as its `data`, so a client can switch on either.
 
@@ -231,6 +237,16 @@ this month's estimated spend passes 80% of `[usage] monthly_budget_usd`; `stoppe
 turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
 cancels it server-side.
+
+Compare stream (`POST /chats/{chat_id}/compare`, `src/kova/compare.py`): `start`
+with the `compare_id` and model names, then `text`, `reasoning` and `privacy`
+events that each carry their `model`, one `model_done` (text and `usage`) or
+`model_error` per model, and finally `done` or `stopped` with the models whose
+answers can be kept. Every model runs at once on the chat's user and assistant
+text, without tools or memory. Finished answers are held in memory for an hour
+(at most 16 compares) until `POST /chats/{chat_id}/compare/keep` saves one; the
+stop route, Local only and a closed stream cancel the rest. Local only refuses
+the whole compare with 409 when any chosen model is not on this computer.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`
@@ -362,10 +378,11 @@ attribute: `web_assets/thinking.js` resolves off, Thunderstorm, Orbit, Collide,
 Breathe, Charge up or Random (one pick per reply) onto `data-thinking` on the
 activity mark, and `thinking.css` paints each animation's still frame when motion
 is reduced or the choice is off.
-Text size, density and font (#179) use the same shared document and
-first-paint pattern: `web_assets/typography.js` sets `data-text-size`, `data-density`
-and `data-font` on `<html>`, and one block in `app.css` swaps the `--type-size-*`,
-`--space-*` and `--font` tokens, so no component repeats a size or a gap. An unsent
+Text size, density, font, content width and avatars (#179, #205) use the same shared
+document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
+`data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
+block in `app.css` swaps the `--type-size-*`, `--space-*`, `--font` and `--column`
+values, so no component repeats a size or a gap. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and

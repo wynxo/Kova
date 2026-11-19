@@ -17,7 +17,7 @@
       keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation thinking indicator loading',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
-         keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
+         keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export',
          control: 'theme'},
         {title: 'Text size', help: 'Scale every label, message and heading a step up or down.',
          keywords: 'text size font typography small large bigger read legible zoom scale',
@@ -25,6 +25,12 @@
         {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
          keywords: 'density spacing compact comfortable padding layout tight roomy air',
          control: 'density'},
+        {title: 'Content width', help: 'Narrow the conversation for reading, or let it use more of the window.',
+         keywords: 'width narrow wide column layout margins reading measure',
+         control: 'chat_width'},
+        {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
+         keywords: 'avatar picture face icon label name reading',
+         control: 'avatars'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',
          control: 'font'},
@@ -39,10 +45,10 @@
          control: 'reasoning'},
         {title: 'Sounds', help: 'Quiet cues for finished replies, reminders and approvals.',
          keywords: 'sound audio chime volume alert cue', action: 'open-sounds', actionLabel: 'Choose'},
-        {title: 'Keyboard shortcuts', help: 'Every key this window understands.',
-         keywords: 'keys keyboard hotkeys', action: 'open-shortcuts', actionLabel: 'Show'},
-        {title: 'Shortcut keys', help: 'Record a new key for an action. A key already in use is refused.',
-         keywords: 'remap rebind change custom keys hotkeys record', host: 'shortcut-remap'},
+        {title: 'Keyboard shortcuts', help: 'Every key this window understands, searchable by name or key.',
+         keywords: 'keys keyboard hotkeys search find', action: 'open-shortcuts', actionLabel: 'Show'},
+        {title: 'Shortcut keys', help: 'Pick a preset, or record a new key for one action. A key already in use is refused.',
+         keywords: 'remap rebind change custom keys hotkeys record preset vim emacs default', host: 'shortcut-remap'},
         {title: 'Startup', help: 'Keep reminders and scheduled jobs running after you sign in.',
          keywords: 'start login sign in boot autostart service status bar', host: 'settings'},
         {title: 'Export preferences', help: 'Save every UI preference and the names of your installed themes to a file, for another computer.',
@@ -218,7 +224,7 @@
   }
 
   function open(sectionId) {
-    if (!view) return;
+    if (!view || window.KovaThemeEditor?.dismiss() === false) return;
     opener = document.activeElement;
     syncControls();
     search.value = '';
@@ -484,10 +490,11 @@
       radio.tabIndex = checked ? 0 : -1;
     }
   }
-  // Text size, density and font are the same three-way choice (#179).
-  // KovaTypography owns each value, the server copy and the three attributes on
-  // <html>; this only reflects and changes them. "default" and "inter" are the
-  // shipped look, so the fallback matches what the page paints without the module.
+  // Text size, density, font and content width are the same three-way group
+  // (#179, #205). KovaTypography owns each value, the server copy and the
+  // attribute on <html>; this only reflects and changes them. "default",
+  // "inter" and "normal" are the shipped look, so the fallback matches what the
+  // page paints without the module.
   const TYPOGRAPHY = [
     {name: 'text_size', label: 'Text size', read: 'textSize', write: 'setTextSize', fallback: 'default',
      items: [['small', 'Small', 'A step down from the shipped sizes'],
@@ -501,6 +508,13 @@
      items: [['inter', 'Inter', 'The bundled typeface'],
              ['system', 'System', "This device's interface font"],
              ['mono', 'Monospace', 'Set the conversation in the bundled mono face']]},
+    {name: 'chat_width', label: 'Content width', read: 'chatWidth', write: 'setChatWidth', fallback: 'normal',
+     items: [['narrow', 'Narrow', 'A narrower column, easier on long answers'],
+             ['normal', 'Normal', 'The shipped 768px column'],
+             ['wide', 'Wide', 'Use more of the window']]},
+    {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'on',
+     items: [['on', 'On', 'Show the avatar beside each reply'],
+             ['off', 'Off', 'Hide avatars and keep the names']]},
   ];
   const typographyRadios = {};
   function typographyChoice(name) {
@@ -782,7 +796,23 @@
       actionButtons.push({button, item});
       row.append(button);
     } else if (item.control === 'theme') {
-      row.append(themeControl());
+      const control = element('div', 'settings-theme-control');
+      control.append(themeControl());
+      if (window.KovaThemeEditor) {
+        const customize = element('button', 'btn small settings-action', 'Customize…');
+        customize.type = 'button';
+        customize.addEventListener('click', () => {
+          const settingsOpener = opener;
+          close();
+          window.KovaThemeEditor.open(() => {
+            open('general');
+            opener = settingsOpener;
+            customize.focus();
+          });
+        });
+        control.append(customize);
+      }
+      row.append(control);
     } else if (item.control === 'reasoning') {
       row.append(reasoningControl());
     } else if (item.control === 'motion') {

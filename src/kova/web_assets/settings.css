@@ -146,6 +146,20 @@ body.settings-open { overflow: hidden; }
    new chord, and a refused chord explains itself under the row. */
 .shortcut-row { flex-wrap: wrap; }
 .shortcut-row .settings-copy { flex: 1; }
+/* The preset picks a whole keyboard layout (#200); recording a key afterwards
+   shows "Custom", so the choice is read back from the keys themselves. */
+.shortcut-preset-row { flex-wrap: wrap; }
+.shortcut-preset-row .settings-copy { flex: 1; }
+.shortcut-preset {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg-default);
+  font-size: var(--type-size-body);
+}
 .shortcut-key { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
 .shortcut-key kbd { padding: 0; border: 0; background: transparent; color: inherit; }
 .shortcut-error { color: var(--status-danger); }

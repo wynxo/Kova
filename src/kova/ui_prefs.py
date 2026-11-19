@@ -40,12 +40,39 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "thinking_animation": (
         "off", "thunderstorm", "orbit", "collide", "breathe", "charge", "random"
     ),
+    # Content width and avatars (#205). "normal" is the shipped 768px column,
+    # and avatars are on until they are turned off.
+    "chat_width": ("narrow", "normal", "wide"),
+    "avatars": ("on", "off"),
 }
 
 # Short free-text lists: name -> (most items, longest item). Used by the start
 # screen's suggestion chips; an empty list means "show no suggestions".
 TEXT_LISTS: dict[str, tuple[int, int]] = {
     "starters": (4, 120),
+}
+
+# Keyboard bindings (#200): action id -> chord, for the actions that differ
+# from their default. The ids are the stable names in shortcuts.js, repeated
+# here because this document is what every paired device reads: a hand-edited
+# file or an old client must not be able to put an unknown action, a broken
+# chord, or an unbounded map into it.
+SHORTCUT_ACTIONS = frozenset({
+    "palette", "new-conversation", "new-incognito", "search-conversations",
+    "toggle-sidebar", "toggle-theme", "focus-composer", "stop-reply",
+    "shortcuts", "next-conversation", "previous-conversation",
+})
+MAX_BINDING_LENGTH = 40
+_BINDING_MODIFIERS = ("mod", "ctrl", "meta", "alt", "shift")
+_BINDING_NAMED_KEYS = frozenset({
+    "escape", "enter", "tab", "space", "backspace", "delete", "insert", "home",
+    "end", "pageup", "pagedown", "arrowup", "arrowdown", "arrowleft",
+    "arrowright", *(f"f{index}" for index in range(1, 13)),
+})
+
+# Structured maps: name -> the ids it accepts as keys.
+MAPS: dict[str, frozenset[str]] = {
+    "shortcuts": SHORTCUT_ACTIONS,
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -63,6 +90,9 @@ DEFAULTS: dict[str, Any] = {
     "font": "inter",
     "motion": "full",
     "thinking_animation": "thunderstorm",
+    "chat_width": "normal",
+    "avatars": "on",
+    "shortcuts": {},
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the
@@ -79,11 +109,70 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 # working instead of failing validation.
 LEGACY = {"reasoning": {"shown": "collapsed"}}
 
-_KNOWN = ", ".join(sorted({*SCHEMA, *TEXT_LISTS}))
+_KNOWN = ", ".join(sorted({*SCHEMA, *TEXT_LISTS, *MAPS}))
 
 
 class UiPrefsError(ValueError):
     """A preferences document or file did not validate."""
+
+
+def _check_binding(value: Any) -> str:
+    """Validate one chord in the spelling shortcuts.js writes and reads.
+
+    Modifiers are lowercase in the fixed order mod, ctrl, meta, alt, shift,
+    followed by one lowercase key: a printable character, or a named key such
+    as ``escape``. A printable key needs Ctrl, Alt or Cmd, because a bare letter
+    would steal typing from the message box.
+    """
+    if not isinstance(value, str):
+        raise UiPrefsError("A shortcut binding must be text such as 'mod+shift+k'.")
+    text = value.strip().lower()
+    if not text or len(text) > MAX_BINDING_LENGTH:
+        raise UiPrefsError(
+            f"A shortcut binding must be 1-{MAX_BINDING_LENGTH} characters, "
+            f"such as 'mod+shift+k'; got {value[:MAX_BINDING_LENGTH]!r}."
+        )
+    pieces = text.split("+")
+    if not all(pieces):
+        raise UiPrefsError(f"{text!r} is not a shortcut: every part must be a modifier or one key.")
+    modifiers, key = pieces[:-1], pieces[-1]
+    canonical = [name for name in _BINDING_MODIFIERS if name in modifiers]
+    if modifiers != canonical or len(set(modifiers)) != len(modifiers):
+        raise UiPrefsError(
+            f"{text!r} is not a shortcut: write its modifiers once, in the order "
+            f"{', '.join(_BINDING_MODIFIERS)}."
+        )
+    if key in _BINDING_MODIFIERS:
+        raise UiPrefsError(f"{text!r} is not a shortcut: it has no key after its modifiers.")
+    if key in _BINDING_NAMED_KEYS:
+        return "+".join([*modifiers, key])
+    if not (len(key) == 1 and 0x20 < ord(key) < 0x7F):
+        raise UiPrefsError(f"{text!r} is not a shortcut: {key!r} is not a usable key.")
+    if not {"mod", "ctrl", "meta", "alt"} & set(modifiers):
+        raise UiPrefsError(
+            f"{text!r} is not a shortcut: a letter or symbol needs Ctrl, Alt or Cmd."
+        )
+    return "+".join([*modifiers, key])
+
+
+def _check_shortcut_map(value: Any) -> dict[str, str]:
+    """Validate the shared action -> chord map: known ids only, bounded size."""
+    if not isinstance(value, dict):
+        raise UiPrefsError(
+            "Preference 'shortcuts' must be a JSON object of action ids to keys."
+        )
+    if len(value) > len(SHORTCUT_ACTIONS):
+        raise UiPrefsError(
+            f"Preference 'shortcuts' holds at most {len(SHORTCUT_ACTIONS)} bindings; "
+            f"got {len(value)}."
+        )
+    unknown = sorted(set(value) - SHORTCUT_ACTIONS)
+    if unknown:
+        raise UiPrefsError(
+            f"Unknown shortcut action{'s' if len(unknown) > 1 else ''}: "
+            f"{', '.join(unknown)}. Known actions: {', '.join(sorted(SHORTCUT_ACTIONS))}."
+        )
+    return {action: _check_binding(value[action]) for action in sorted(value)}
 
 
 def _check_text_list(name: str, value: Any) -> list[str]:
@@ -119,7 +208,7 @@ def _check_values(values: Any) -> dict[str, Any]:
     """Validate a plain mapping of preference names to accepted values."""
     if not isinstance(values, dict):
         raise UiPrefsError("Preferences must be a JSON object.")
-    unknown = sorted(set(values) - set(SCHEMA) - set(TEXT_LISTS))
+    unknown = sorted(set(values) - set(SCHEMA) - set(TEXT_LISTS) - set(MAPS))
     if unknown:
         raise UiPrefsError(
             f"Unknown preference{'s' if len(unknown) > 1 else ''}: "
@@ -129,6 +218,9 @@ def _check_values(values: Any) -> dict[str, Any]:
     for name, value in values.items():
         if name in TEXT_LISTS:
             checked[name] = _check_text_list(name, value)
+            continue
+        if name in MAPS:
+            checked[name] = _check_shortcut_map(value)
             continue
         if isinstance(value, str):
             value = LEGACY.get(name, {}).get(value, value)

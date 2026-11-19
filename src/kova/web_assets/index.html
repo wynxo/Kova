@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="/app/assets/status-bar.css">
   <link rel="stylesheet" href="/app/assets/palette.css">
   <link rel="stylesheet" href="/app/assets/settings.css">
+  <link rel="stylesheet" href="/app/assets/theme-editor.css">
   <link rel="stylesheet" href="/app/assets/toast.css">
   <link rel="stylesheet" href="/app/assets/chat-appearance.css">
   <link rel="stylesheet" href="/app/assets/chat_list.css">
@@ -34,11 +35,13 @@
   <script defer src="/app/assets/vendor/highlight.js"></script>
   <script defer src="/app/assets/status-bar.js"></script>
   <link rel="stylesheet" href="/app/assets/diff.css">
+  <link rel="stylesheet" href="/app/assets/diff-panel.css">
   <link rel="stylesheet" href="/app/assets/thinking.css">
   <link rel="stylesheet" href="/app/assets/reasoning.css">
   <script defer src="/app/assets/chat_list.js"></script>
   <script defer src="/app/assets/projects.js"></script>
   <script defer src="/app/assets/diff.js"></script>
+  <script defer src="/app/assets/diff-panel.js"></script>
   <script defer src="/app/assets/sounds.js"></script>
   <script defer src="/app/assets/toast.js"></script>
   <script defer src="/app/assets/starters.js"></script>
@@ -60,10 +63,13 @@
   <script defer src="/app/assets/panes.js"></script>
   <link rel="stylesheet" href="/app/assets/plan-card.css">
   <script defer src="/app/assets/plan-card.js"></script>
+  <link rel="stylesheet" href="/app/assets/compare.css">
+  <script defer src="/app/assets/compare.js"></script>
   <link rel="stylesheet" href="/app/assets/mobile.css">
   <script defer src="/app/assets/mobile.js"></script>
   <script defer src="/app/assets/thinking.js"></script>
   <script defer src="/app/assets/app.js"></script>
+  <script defer src="/app/assets/theme-editor.js"></script>
   <script defer src="/app/assets/settings.js"></script>
 </head>
 <body class="is-empty">
@@ -73,7 +79,7 @@
       <a class="brand" href="/app" aria-label="Kova home"><span class="kova-mark" aria-hidden="true"></span><span>Kova</span></a>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
-    <button id="new-chat" type="button" class="new-chat" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
+    <button id="new-chat" type="button" class="new-chat" data-shortcut="new-conversation" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <nav id="chat-list" aria-label="Chat history"></nav>
     <div class="sidebar-footer">
@@ -82,7 +88,7 @@
   </aside>
   <main>
     <header class="topbar">
-      <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
+      <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" data-shortcut="toggle-sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New chat</strong>
       <div class="activity-wrap">
         <button id="activity" type="button" class="icon-button activity-button" aria-label="Activity" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-panel" hidden><span id="activity-dot" class="activity-dot" aria-hidden="true"></span><span id="activity-count" class="activity-count" hidden></span></button>
@@ -117,7 +123,8 @@
             <div id="compose-menu" class="compose-menu" role="menu" aria-label="Add files and more" hidden>
               <button id="attach" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-paperclip" aria-hidden="true"></span><span>Attach files</span></button>
               <button id="commands" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-slash" aria-hidden="true"></span><span>Slash commands</span></button>
-              <button id="new-incognito" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" aria-keyshortcuts="Control+Shift+N Meta+Shift+N"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span></button>
+              <button id="compare-open" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-columns-2" aria-hidden="true"></span><span>Compare answers</span></button>
+              <button id="new-incognito" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" data-shortcut="new-incognito" aria-keyshortcuts="Control+Shift+N Meta+Shift+N"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span></button>
             </div>
           </div>
           <label class="sr-only" for="prompt">Message Kova</label>
@@ -149,7 +156,7 @@
           <button id="send" type="submit" class="send" aria-label="Send message"><span class="icon i-arrow-up" aria-hidden="true"></span></button>
           <button id="queue" type="button" class="stop" hidden title="Run this message after the current reply"><span class="icon i-plus" aria-hidden="true"></span>Queue</button>
           <button id="steer" type="button" class="stop" hidden title="Send this message into the reply that is running"><span class="icon i-arrow-up" aria-hidden="true"></span>Steer</button>
-          <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply (Esc)" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
+          <button id="stop" type="button" class="send stop-round" hidden title="Stop the reply" data-shortcut="stop-reply" aria-label="Stop the reply"><span class="icon i-square" aria-hidden="true"></span></button>
         </div>
       </form>
       <div id="status-bar" class="status-bar" role="note" hidden>
@@ -209,6 +216,7 @@
   <dialog id="chat-dialog" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">Rename conversation</h2><p id="dialog-description"></p><label id="rename-label">Conversation name<input id="rename-input" maxlength="200" autocomplete="off" placeholder="New conversation"></label><div class="dialog-actions"><button value="cancel" class="btn quiet">Cancel</button><button id="dialog-confirm" value="confirm" class="btn primary">Save</button></div></form></dialog>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <div class="dialog-head"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button id="shortcuts-close" type="button" class="icon-button" aria-label="Close keyboard shortcuts"><span class="icon i-x" aria-hidden="true"></span></button></div>
+    <label class="shortcuts-search"><span class="icon i-search" aria-hidden="true"></span><input id="shortcut-search" type="search" placeholder="Search keys and actions" aria-label="Search keyboard shortcuts" autocomplete="off" spellcheck="false"></label>
     <!-- The typing keys are fixed; the action rows below them are drawn from
          the registry in shortcuts.js, so they always show the current keys. -->
     <dl id="shortcut-list" class="shortcuts">
@@ -217,6 +225,7 @@
       <div><dt>Bring back your last message</dt><dd><kbd>↑</kbd> <span>in an empty box</span></dd></div>
       <div><dt>Jump to the message box</dt><dd><kbd>/</kbd></dd></div>
     </dl>
+    <p id="shortcut-empty" class="shortcuts-empty" role="status" hidden></p>
   </dialog>
   <dialog id="provider-dialog" aria-labelledby="provider-title">
     <form id="provider-form" autocomplete="off">

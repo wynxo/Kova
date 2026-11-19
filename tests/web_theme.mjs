@@ -215,6 +215,31 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.api.label('system'), 'System');
 }
 
+// ---- Previewing a highlighted theme changes nothing permanent -------------
+{
+  const page = boot({themes: {'midnight-teal': MIDNIGHT}});
+  await settle();
+  await page.api.preview('midnight-teal');
+  assert.equal(page.root.dataset.theme, 'dark');
+  assert.equal(page.properties.get('--accent-default'), '#2dd4bf', 'the preview paints its tokens');
+  assert.deepEqual(page.puts(), [], 'a preview is not saved');
+  assert.equal(page.store.has('kova-theme'), false, 'a preview is not cached as the choice');
+  assert.equal(page.api.choice(), 'midnight-teal', 'the preview is what is on screen');
+  await page.api.endPreview();
+  assert.equal(page.api.choice(), 'system', 'ending the preview puts the saved choice back');
+  assert.equal(page.properties.size, 0, 'and clears the tokens the preview set');
+  assert.deepEqual(page.puts(), []);
+  assert.equal(page.store.has('kova-theme'), false);
+  // Previewing again and committing keeps the theme for good.
+  await page.api.preview('midnight-teal');
+  await page.api.endPreview();
+  await page.api.set('midnight-teal');
+  assert.deepEqual(page.puts(), [{theme: 'midnight-teal'}], 'the preview itself never saved anything');
+  assert.equal(page.store.get('kova-theme'), 'midnight-teal');
+  await page.api.endPreview();
+  assert.equal(page.api.choice(), 'midnight-teal', 'a committed choice is not undone by a late end');
+}
+
 // ---- Offline: the local choice stays, nothing throws -----------------------
 {
   const page = boot({stored: {'kova-theme': 'light'}, offline: true});
@@ -222,6 +247,39 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.api.choice(), 'light');
   assert.equal(page.root.dataset.theme, 'light');
   assert.equal(page.store.has('kova-theme-synced'), false, 'it tries to sync again next time');
+}
+
+// A draft replaces page tokens without changing the saved selection or its cache.
+{
+  const page = boot({themes: {paper: PAPER}});
+  await settle();
+  await page.api.set('paper');
+  const saved = page.store.get('kova-theme-tokens');
+  page.api.previewPalette({appearance: 'dark', tokens: {'bg.base': '#123456'}});
+  assert.equal(page.root.dataset.theme, 'dark');
+  assert.equal(page.meta.attrs.content, '#123456');
+  assert.equal(page.api.choice(), 'paper');
+  assert.equal(page.store.get('kova-theme-tokens'), saved);
+  page.api.clearPalettePreview();
+  assert.equal(page.root.dataset.theme, 'light');
+  assert.equal(page.meta.attrs.content, PAPER.tokens['bg.base'], 'cancel restores an installed theme');
+  page.api.previewPalette({appearance: 'dark', tokens: {'bg.base': '#123456'}});
+  await page.api.sync();
+  assert.equal(page.root.dataset.theme, 'dark', 'a preference update does not replace the preview');
+  page.api.clearPalettePreview();
+  assert.equal(page.root.dataset.theme, 'dark', 'cancel restores the latest saved System choice');
+  assert.equal(page.properties.size, 0);
+}
+
+// An otherwise valid theme ID must not collide with inherited object properties.
+{
+  const palette = {...PAPER, id: 'constructor'};
+  const page = boot({themes: {constructor: palette}, list: [palette]});
+  await settle();
+  assert.ok(page.api.choices().some(choice => choice.id === 'constructor'));
+  await page.api.set('constructor');
+  assert.equal(page.api.choice(), 'constructor');
+  assert.equal(page.root.dataset.theme, 'light');
 }
 
 console.log('Theme engine: choice, sync, installed tokens and window colour passed');

@@ -90,6 +90,7 @@ on a Mac) in the app for the same list.
 | `ctrl+shift+k` | New chat |
 | `ctrl+shift+n` | New incognito conversation |
 | `ctrl+shift+f` | Search chats (the sidebar's search field) |
+| `alt+↑` / `alt+↓` | Previous / next conversation |
 | `ctrl+b` | Show or hide the sidebar |
 | `ctrl+shift+l` | Switch light and dark |
 | `ctrl+space` | Focus the message box |
@@ -99,13 +100,26 @@ on a Mac) in the app for the same list.
 moved to `ctrl+shift+k` so the two do not compete for the same chord.
 
 Every modifier chord in that table comes from one registry; the typing keys
-(including the plain `/` and `?`) stay fixed. Settings → General → **Shortcut
-keys** lists the registry: click the keys, press the new
-combination, and `esc` cancels. A combination another action already uses is
-refused, and the row names that action, so two actions can never share a chord.
-**Reset** restores one action and **Reset all** restores every default. Changes
-are kept in this browser's preferences (`localStorage`) and the shortcuts
-dialog and the command palette show the recorded keys at once.
+(including the plain `/` and `?`) stay fixed. The shortcuts dialog has a search
+box that filters by action name or key, and each control that offers an action
+shows its keys in its tooltip. Settings → General → **Shortcut keys** lists the
+registry: click the keys, press the new combination, and `esc` cancels. A
+combination another action already uses is refused, and the row names that
+action, so two actions can never share a chord. **Reset** restores one action
+and **Reset all** restores every default.
+
+The same list starts with a preset: **Default**, **Vim-ish** (`Alt` `J`/`Alt`
+`K` move down and up the conversation list, and the palette moves to
+`ctrl+shift+p`) or **Emacs-ish** (`Alt` `N`/`Alt` `P` move down and up, `M-x` is
+`Alt` `X`). Presets only use chords with a modifier, and a plain `Alt` key is
+ignored while you are typing in the message box. Recording a key afterwards
+turns the choice into **Custom**.
+
+The bindings are the `shortcuts` UI preference on the server, so every paired
+device and `kova prefs export` carry them. Each browser keeps a copy in
+`localStorage` for an instant first paint, and the keys it held before this
+existed are sent to the server once. The shortcuts dialog and the command
+palette show the recorded keys at once.
 
 ## Command palette (web and desktop)
 
@@ -117,7 +131,17 @@ including every Settings section.
 - Type to filter. Matching is fuzzy and word-aware: `nwcn` finds *New
   conversation*, `thm` finds the theme switch.
 - Results are grouped: actions, appearance, the current conversation, its
-  permissions, settings, models, then recent conversations.
+  permissions, reasoning effort, settings, models, MCP servers, extensions,
+  recent conversations, and matches found inside messages.
+- Typing two or more characters also searches chat content. A hit shows the
+  matching line and who said it, so a phrase from an old reply is one Enter
+  away from the conversation it came from.
+- Highlighting a theme row previews that theme at once; `esc` puts the saved
+  one back and `enter` is the only way to keep it.
+- Reasoning effort rows are the same levels the composer's model picker offers
+  for the current model, including *Automatic*.
+- MCP servers and installed extensions have an on/off row, using the same
+  endpoints as their settings panels.
 - Each row shows its shortcut, so the palette also teaches the keys.
 - `↑` `↓`, `pageup` `pgdn`, `home` and `end` move; `enter` runs; `esc` closes.
 - The dialog traps focus in its search box, announces the result count, and

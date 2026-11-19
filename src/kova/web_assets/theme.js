@@ -31,10 +31,12 @@
     ? window.matchMedia('(prefers-color-scheme: light)') : null;
 
   let choice = 'system';
+  let draft = null;         // live editor preview; never written to preferences or cache
   let custom = null;        // {id, name, appearance, tokens} for the active theme file
   let applied = [];         // custom properties this module set, to clear them again
   let installed = [];       // valid theme files from GET /themes
   let generation = 0;       // drops a slow theme fetch that a newer choice replaced
+  let previewing = null;    // the choice on screen before preview(), null when none
 
   function read(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -48,7 +50,7 @@
 
   function normalise(value) {
     if (typeof value !== 'string') return null;
-    if (BUILTIN[value]) return BUILTIN[value];
+    if (Object.hasOwn(BUILTIN, value)) return BUILTIN[value];
     if (FIXED.includes(value) || ID.test(value)) return value;
     return null;
   }
@@ -69,6 +71,7 @@
 
   /** The appearance actually on screen: "dark" or "light". */
   function appearance() {
+    if (draft) return draft.appearance;
     if (choice === 'dark' || choice === 'light') return choice;
     if (custom && custom.id === choice) return custom.appearance;
     return systemAppearance();
@@ -108,10 +111,10 @@
 
   // The browser chrome (and the desktop shell's window) takes the page's base
   // colour. Built-in palettes are read back from tokens.css, already applied.
-  function paintChrome() {
+  function paintChrome(active) {
     const meta = document.getElementById && document.getElementById('theme-color');
     if (!meta) return;
-    let colour = custom && custom.id === choice ? custom.tokens['bg.base'] : '';
+    let colour = active?.tokens['bg.base'];
     if (!colour) {
       try {
         colour = getComputedStyle(root).getPropertyValue('--bg-base').trim();
@@ -134,16 +137,28 @@
 
   function paint() {
     clearProperties();
-    const active = custom && custom.id === choice ? custom : null;
-    root.dataset.theme = active ? active.appearance : appearance();
+    const active = draft || (custom?.id === choice ? custom : null);
+    root.dataset.theme = appearance();
     if (active) {
       for (const [name, value] of Object.entries(active.tokens)) {
         const css = property(name);
         try { root.style.setProperty(css, value); applied.push(css); } catch (_) {}
       }
     }
-    paintChrome();
+    paintChrome(active);
     announce();
+  }
+
+  function previewPalette(palette) {
+    if (palette.appearance !== 'light' && palette.appearance !== 'dark') return;
+    draft = {appearance: palette.appearance, tokens: cleanTokens(palette.tokens)};
+    paint();
+  }
+
+  function clearPalettePreview() {
+    if (!draft) return;
+    draft = null;
+    paint();
   }
 
   // A theme file needs its resolved tokens. The last one used is cached so a
@@ -170,8 +185,7 @@
   function adopt(next, {save = false} = {}) {
     const value = normalise(next);
     if (!value) return Promise.resolve();
-    const changed = value !== choice;
-    choice = value;
+    previewing = null;
     write(KEY, value);
     if (save) {
       const pending = request('/preferences', {
@@ -181,21 +195,43 @@
       });
       if (pending && typeof pending.catch === 'function') pending.catch(() => {});
     }
-    if (FIXED.includes(value)) {
+    return apply(value);
+  }
+
+  function apply(next) {
+    const changed = next !== choice;
+    choice = next;
+    if (FIXED.includes(next)) {
       generation += 1;
       custom = null;
       write(CACHE, null);
       paint();
       return Promise.resolve();
     }
-    if (changed && custom && custom.id !== value) custom = null;
+    if (changed && custom && custom.id !== next) custom = null;
     paint();
-    return loadCustom(value);
+    return loadCustom(next);
   }
 
   /** Choose a theme: "system", "dark", "light" or an installed theme id. */
   function set(next) {
     return adopt(next, {save: true});
+  }
+
+  /** Show a theme without choosing it: a picker's highlighted row, before Enter. */
+  function preview(next) {
+    const value = normalise(next);
+    if (!value || value === choice) return Promise.resolve();
+    if (previewing === null) previewing = choice;
+    return apply(value);
+  }
+
+  /** Put back the theme that was showing before `preview`, and forget the preview. */
+  function endPreview() {
+    if (previewing === null) return Promise.resolve();
+    const value = previewing;
+    previewing = null;
+    return apply(normalise(value) || 'system');
   }
 
   /** The light/dark shortcut: always lands on the built-in opposite of what is shown. */
@@ -226,7 +262,7 @@
     return getJson('/themes').then(list => {
       if (!Array.isArray(list)) return choices();
       installed = list
-        .filter(entry => entry && !entry.error && !BUILTIN[entry.id] && ID.test(entry.id || '')
+        .filter(entry => entry && !entry.error && !Object.hasOwn(BUILTIN, entry.id) && ID.test(entry.id || '')
           && (entry.appearance === 'dark' || entry.appearance === 'light'))
         .map(entry => ({
           id: entry.id,
@@ -271,7 +307,7 @@
     });
   }
 
-  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, label, refresh, set, sync, toggle};
+  window.KovaTheme = {KEY, appearance, choice: () => choice, choices, clearPalettePreview, endPreview, label, preview, previewPalette, refresh, set, sync, toggle};
   sync();
   refresh();
 })();
