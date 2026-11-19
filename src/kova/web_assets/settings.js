@@ -14,7 +14,7 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation thinking indicator loading',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
          keywords: 'appearance colour color light dark mode system auto device installed custom theme file',
@@ -31,6 +31,9 @@
         {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
          keywords: 'motion animation animate transition reduce reduced still accessibility',
          control: 'motion'},
+        {title: 'Thinking animation', help: 'The small movement on the Kova mark while a reply runs, or a different one each time.',
+         keywords: 'thinking animation indicator working loading orbit collide thunderstorm breathe charge random off',
+         control: 'thinking'},
         {title: 'Reasoning', help: "Fold the model's thinking into a row, open it, or hide it.",
          keywords: 'thinking thought chain show hide collapsed expanded rows',
          control: 'reasoning'},
@@ -426,6 +429,61 @@
       radio.tabIndex = checked ? 0 : -1;
     }
   }
+
+  // The thinking animation (#171) is the same radio group: Off, one named
+  // movement, or a different one each reply. KovaThinking owns the value, the
+  // server copy and this reply's pick; this only reflects and changes it.
+  const THINKING = [
+    ['off', 'Off', 'A still mark and the "Thinking…" label'],
+    ['thunderstorm', 'Thunderstorm', 'A small bolt striking the mark'],
+    ['orbit', 'Orbit', 'A dot circling the mark'],
+    ['collide', 'Collide', 'Two dots meeting'],
+    ['breathe', 'Breathe', 'The mark gently scaling'],
+    ['charge', 'Charge up', 'A fill rising inside the mark'],
+    ['random', 'Random', 'A different one each reply'],
+  ];
+  const thinkingRadios = [];
+  function thinkingMode() {
+    return window.KovaThinking ? window.KovaThinking.choice() : 'thunderstorm';
+  }
+  function thinkingControl() {
+    const group = element('div', 'settings-segmented');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Thinking animation');
+    for (const [value, label, hint] of THINKING) {
+      const radio = element('button', 'settings-segment');
+      radio.type = 'button';
+      radio.dataset.value = value;
+      radio.title = hint;
+      radio.setAttribute('role', 'radio');
+      radio.append(element('span', '', label));
+      radio.addEventListener('click', () => chooseThinking(value));
+      radio.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const at = THINKING.findIndex(([candidate]) => candidate === value);
+        const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        const next = THINKING[(at + step + THINKING.length) % THINKING.length][0];
+        chooseThinking(next);
+        thinkingRadios.find(item => item.dataset.value === next)?.focus();
+      });
+      thinkingRadios.push(radio);
+      group.append(radio);
+    }
+    return group;
+  }
+  function chooseThinking(value) {
+    window.KovaThinking?.setChoice(value);
+    syncThinking();
+  }
+  function syncThinking() {
+    const value = thinkingMode();
+    for (const radio of thinkingRadios) {
+      const checked = radio.dataset.value === value;
+      radio.setAttribute('aria-checked', String(checked));
+      radio.tabIndex = checked ? 0 : -1;
+    }
+  }
   // Text size, density and font are the same three-way choice (#179).
   // KovaTypography owns each value, the server copy and the three attributes on
   // <html>; this only reflects and changes them. "default" and "inter" are the
@@ -698,6 +756,7 @@
     syncTheme();
     syncReasoning();
     syncMotion();
+    syncThinking();
     syncTypography();
     for (const {button, item} of actionButtons) {
       const target = byId(item.action);
@@ -728,6 +787,8 @@
       row.append(reasoningControl());
     } else if (item.control === 'motion') {
       row.append(motionControl());
+    } else if (item.control === 'thinking') {
+      row.append(thinkingControl());
     } else if (item.control === 'prefs_export') {
       row.append(prefsExportControl());
     } else if (item.control === 'prefs_import') {

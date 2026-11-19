@@ -35,6 +35,11 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     "density": ("compact", "default", "comfortable"),
     "font": ("inter", "system", "mono"),
     "motion": ("full", "reduced", "off"),
+    # The thinking indicator (#171): the mark plus one small movement, a still
+    # mark, or a different animation each reply.
+    "thinking_animation": (
+        "off", "thunderstorm", "orbit", "collide", "breathe", "charge", "random"
+    ),
 }
 
 # Short free-text lists: name -> (most items, longest item). Used by the start
@@ -57,6 +62,7 @@ DEFAULTS: dict[str, Any] = {
     "density": "default",
     "font": "inter",
     "motion": "full",
+    "thinking_animation": "thunderstorm",
 }
 
 # Preferences that also accept an open-ended id. ``theme`` names one of the

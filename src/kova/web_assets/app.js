@@ -1357,10 +1357,17 @@
     let toolGroup = null;
     let plan = null;
     const activityText = el('span', 'shimmer', 'Thinking…');
-    // The Kova mark with a small bolt that strikes now and then: still "working", never a loud spinner.
-    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo');
+    // The Kova mark with one small movement (#171): still "working", never a
+    // loud spinner. thinking.js picks this reply's animation onto the mark.
+    const activityMark = el('span', 'thinking-mark'), activityLogo = el('img', 'thinking-logo thinking-anim');
     activityMark.setAttribute('aria-hidden', 'true'); activityLogo.src = '/app/assets/icon.svg'; activityLogo.alt = '';
-    activityMark.append(activityLogo, el('span', 'thinking-bolt'));
+    activityMark.append(activityLogo,
+      el('span', 'thinking-bolt thinking-anim'),
+      el('span', 'thinking-orbit thinking-anim'),
+      el('span', 'thinking-collide thinking-collide-a thinking-anim'),
+      el('span', 'thinking-collide thinking-collide-b thinking-anim'),
+      el('span', 'thinking-fill thinking-anim'));
+    window.KovaThinking?.apply(activityMark);
     const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
     function paint() {
       scheduled = false;

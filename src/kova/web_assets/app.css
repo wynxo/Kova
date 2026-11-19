@@ -920,8 +920,8 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
 }
 
 /* Reduced: quick fades, and every loop plays once. The spinner keeps turning —
-   a still ring no longer says "working" — and the thinking bolt takes the
-   still, visible form it has for prefers-reduced-motion (#171). */
+   a still ring no longer says "working" — and every thinking animation takes
+   the still frame it has for prefers-reduced-motion (#171). */
 [data-motion="reduced"] *,
 [data-motion="reduced"] *::before,
 [data-motion="reduced"] *::after {
@@ -930,7 +930,7 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   scroll-behavior:auto !important;
 }
 [data-motion="reduced"] .spinner { animation:spin 1.2s linear infinite !important; }
-[data-motion="reduced"] .thinking-bolt { animation:none !important; opacity:1; }
+[data-motion="reduced"] .thinking-anim { animation:none !important; }
 
 /* Off: nothing moves at all. Text an animation was keeping visible stays
    readable, so turning motion off never hides a word. */
@@ -941,7 +941,6 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   transition:none !important;
   scroll-behavior:auto !important;
 }
-[data-motion="off"] .thinking-bolt { opacity:1; }
 [data-motion="off"] .shimmer,
 [data-motion="off"] .thinking.live summary {
   background:none !important;

@@ -94,7 +94,12 @@ const typography = {textSizeValue: 'default', densityValue: 'default', fontValue
 const motion = {value: 'full',
   mode() { return this.value; },
   setMode(next) { this.value = next; }};
-const window = {KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography, KovaMotion: motion};
+// A stand-in for thinking.js: the choice the activity mark animates with.
+const thinking = {value: 'thunderstorm',
+  choice() { return this.value; },
+  setChoice(next) { this.value = next; }};
+const window = {KovaReasoning: reasoning, KovaTheme: themeEngine, KovaTypography: typography,
+  KovaMotion: motion, KovaThinking: thinking};
 const sandbox = {document, window, console, URLSearchParams};
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/settings.js', import.meta.url), 'utf8'), sandbox);
 const $ = id => document.getElementById(id);
@@ -154,7 +159,7 @@ assert.ok(themeRow, 'the Theme setting is shown');
 const title = byClass(themeRow, 'settings-row-title')[0];
 const mark = walk(title).find(node => node.tagName === 'MARK');
 assert.equal(mark?.textContent, 'Theme', 'the matched word is highlighted');
-assert.match($('settings-search-status').textContent, /13 settings match/);
+assert.match($('settings-search-status').textContent, /14 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.
@@ -306,6 +311,38 @@ $('open-settings').click();
 assert.equal(motionRadios[1].getAttribute('aria-checked'), 'true',
   'reopening Settings reflects the current value');
 motion.value = 'full';
+
+// The thinking animation is the same group (#171): off, one named movement, or
+// a different one each reply, applied by KovaThinking onto the activity mark.
+const thinkingRow = byClass(panels[0], 'settings-row').find(row => row.textContent.includes('Thinking animation'));
+assert.ok(thinkingRow, 'the Thinking animation setting is in General');
+const thinkingGroup = byClass(thinkingRow, 'settings-segmented')[0];
+assert.equal(thinkingGroup.getAttribute('role'), 'radiogroup');
+assert.equal(thinkingGroup.getAttribute('aria-label'), 'Thinking animation');
+const thinkingRadios = byClass(thinkingRow, 'settings-segment');
+assert.deepEqual(thinkingRadios.map(radio => radio.getAttribute('role')),
+  ['radio', 'radio', 'radio', 'radio', 'radio', 'radio', 'radio']);
+assert.deepEqual(thinkingRadios.map(radio => radio.textContent),
+  ['Off', 'Thunderstorm', 'Orbit', 'Collide', 'Breathe', 'Charge up', 'Random']);
+assert.equal(thinkingRadios[1].getAttribute('aria-checked'), 'true', 'the bolt is the default');
+assert.equal(thinkingRadios[1].tabIndex, 0, 'the checked radio is the tab stop');
+thinkingRadios[2].click();
+assert.equal(thinking.value, 'orbit', 'Orbit is applied through thinking.js');
+assert.equal(thinkingRadios[2].getAttribute('aria-checked'), 'true');
+assert.equal(thinkingRadios[1].getAttribute('aria-checked'), 'false');
+thinkingRadios[0].click();
+assert.equal(thinking.value, 'off', 'Off leaves the mark still');
+thinkingRadios[6].click();
+assert.equal(thinking.value, 'random', 'Random picks one per reply');
+thinkingRadios[6].dispatch('keydown', {key: 'ArrowRight', preventDefault() {}});
+assert.equal(thinking.value, 'off', 'arrow keys wrap to the first choice');
+assert.equal(document.activeElement, thinkingRadios[0], 'focus follows the choice');
+thinking.value = 'charge';
+document.activeElement = sidebar;
+$('open-settings').click();
+assert.equal(thinkingRadios[5].getAttribute('aria-checked'), 'true',
+  'reopening Settings reflects the current animation');
+thinking.value = 'thunderstorm';
 
 // Text size, density and font are the same three-way group, applied by
 // KovaTypography onto <html> (#179). Each row reflects the module's value.
