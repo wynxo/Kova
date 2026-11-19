@@ -54,8 +54,3 @@ body.quick .compose-wrap {
 body.quick .compose-more,
 body.quick .chat-options-wrap { display:none; }
 body.quick .composer { margin:0; }
-
-@media (prefers-reduced-motion:reduce) {
-  body.quick .quick-bar { transition:none; }
-}
-[data-motion="reduced"] .quick-bar { transition:none; }
