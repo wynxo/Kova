@@ -512,11 +512,11 @@
       .filter(([, item]) => item.state === 'working' || item.state === 'blocked-on-approval')
       .map(([id, item]) => ({id, ...item}));
   }
-  // The desktop tray shows one aggregate: working beats waiting beats idle. Only
+  // The desktop tray shows one aggregate: waiting (needs you) beats working beats idle. Only
   // the Electron shell exposes a bridge; kova-web and the plain browser skip it.
   function reportTrayState(rows) {
-    const next = rows.some(row => row.state === 'working') ? 'working'
-      : rows.some(row => row.state === 'blocked-on-approval') ? 'waiting' : 'idle';
+    const next = rows.some(row => row.state === 'blocked-on-approval') ? 'waiting'
+      : rows.some(row => row.state === 'working') ? 'working' : 'idle';
     window.kovaDesktop?.reportState?.(next);
   }
   function activityName(row) {
@@ -2119,7 +2119,7 @@
     'toggle-theme': shortcutActions['toggle-theme'],
     'focus-composer': shortcutActions['focus-composer'],
     'shortcuts': shortcutActions['shortcuts'],
-    'open-settings': () => $('open-settings').onclick?.(),
+    'open-settings': () => { if (window.KovaSettings?.open) window.KovaSettings.open(); else $('open-settings')?.click(); },
   };
   window.kovaDesktop?.onAction?.(id => { const run = desktopActions[typeof id === 'string' ? id : '']; if (run) run(); });
   document.addEventListener('keydown', event => {
