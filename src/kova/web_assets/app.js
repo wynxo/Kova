@@ -1380,6 +1380,8 @@
     const blocks = [], approvals = new Map(), toolGroups = [];
     let toolGroup = null;
     let plan = null;
+    // Parallel tool calls draw as a live tree (agent-tree.js, #192).
+    const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint});
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with one small movement (#171): still "working", never a
     // loud spinner. thinking.js picks this reply's animation onto the mark.
@@ -1417,6 +1419,12 @@
       accept(event) {
         const kind = event.type;
         if (kind !== 'reasoning') endReasoning();
+        if (tasks?.accept(event)) {
+          current = null; toolGroup = null;
+          if (kind === 'tool_call') toolCount += 1;
+          activity.hidden = kind !== 'tool_result'; activityText.textContent = 'Working…';
+          schedule(); return;
+        }
         if (kind === 'text' || kind === 'reasoning') {
           // A new answer or thinking burst starts a new region, so any tool
           // card that was open ends here.
@@ -1519,6 +1527,7 @@
       },
       finish() {
         window.KovaPlanCard?.finish();
+        tasks?.finish();
         endReasoning(); finished = true; activity.remove();
         for (const approval of approvals.values()) approval.finish();
         for (const group of toolGroups) group.finish();
