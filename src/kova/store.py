@@ -129,6 +129,7 @@ USAGE_COLUMNS = {
     "cost_usd": "REAL",
     "usage_local": "INTEGER",
     "usage_model": "TEXT",
+    "usage_provider": "TEXT",
 }
 
 
@@ -145,6 +146,7 @@ def _usage_dict(row) -> dict:
         "cost_usd": row["cost_usd"],
         "local": bool(row["usage_local"]),
         "model": row["usage_model"],
+        **({"provider": row["usage_provider"]} if row["usage_provider"] else {}),
     }
 
 
@@ -549,19 +551,48 @@ class Store:
                     "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False,
                     "project_id": project_id, **({"ephemeral": True} if self._memory_only else {})}
 
-    def fork_chat(self, chat_id: str) -> dict | None:
-        """Atomically clone a conversation, including its compacted context."""
+    def fork_chat(self, chat_id: str, *, through: int | None = None) -> dict | None:
+        """Clone a conversation, optionally ending at a particular reply."""
         if self.is_ephemeral(chat_id):
             raise ValueError("Incognito chats cannot be forked or exported.")
         with self._lock:
             source = self._conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
             if source is None:
                 return None
+            rows = self._conn.execute(
+                "SELECT id, role, content, tool_calls, tool_call_id, created, "
+                "COALESCE(turn_model, usage_model) AS turn_model FROM messages "
+                "WHERE chat_id = ? AND (? IS NULL OR id <= ?) ORDER BY id",
+                (chat_id, through, through)).fetchall()
+            if through is not None:
+                if not rows or rows[-1]["id"] != through:
+                    return None
+                reply = rows[-1]
+                if (reply["role"] != "assistant" or not reply["content"]
+                        or json.loads(reply["tool_calls"] or "null")):
+                    return None
+            links = self._conn.execute(
+                "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
+                "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
+                "WHERE m.chat_id = ? AND (? IS NULL OR m.id <= ?) ORDER BY ma.message_id, ma.position",
+                (chat_id, through, through)).fetchall()
+            compact = self._conn.execute(
+                "SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
+            included = {row["id"] for row in rows}
+            if compact and compact["cutoff"] not in included:
+                compact = None
+            linked_files = {link["attachment_id"] for link in links}
+            # Older turns can also refer to attachments from their content or tool arguments.
+            references = "\n".join(value for row in rows for value in (row["content"], row["tool_calls"]) if value)
+            if compact:
+                references += "\n" + compact["summary"]
             cid, created = uuid4().hex[:12], _utc_now_iso()
             copied_dir = self.path.parent / "attachments" / cid
             try:
                 attachment_ids: dict[str, str] = {}
                 for attachment in self.attachments(chat_id):
+                    if through is not None and attachment["id"] not in linked_files and attachment["id"] not in references:
+                        continue
                     ident = uuid4().hex
                     copied_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
                     path = copied_dir / (ident + Path(attachment["path"]).suffix)
@@ -586,13 +617,10 @@ class Store:
                     "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, "
                     "colour, icon, model, reasoning_effort, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
-                     source['web'], source['permission'], source['cwd'], remap(source['plan']),
+                     source['web'], source['permission'], source['cwd'],
+                     remap(source['plan']) if through is None else '[]',
                      source['capabilities'], source['colour'], source['icon'], source['model'],
                      source['reasoning_effort'], source['project_id']))
-                rows = self._conn.execute(
-                    "SELECT id, role, content, tool_calls, tool_call_id, created, "
-                    "COALESCE(turn_model, usage_model) AS turn_model "
-                    "FROM messages WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute(
@@ -601,10 +629,6 @@ class Store:
                         (cid, row['role'], remap(row['content']), remap(row['tool_calls']),
                          row['tool_call_id'], row['created'], row['turn_model']))
                     ids[row['id']] = cur.lastrowid
-                links = self._conn.execute(
-                    "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
-                    "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
-                    "WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position", (chat_id,)).fetchall()
                 for link in links:
                     if link['message_id'] in ids:
                         self._conn.execute(
@@ -612,8 +636,7 @@ class Store:
                             (ids[link['message_id']],
                              attachment_ids.get(link['attachment_id'], link['attachment_id']),
                              link['name'], link['position']))
-                compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
-                if compact and compact['cutoff'] in ids:
+                if compact:
                     self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?)",
                                        (cid, ids[compact['cutoff']], remap(compact['summary'])))
                 self._conn.commit()
@@ -661,7 +684,7 @@ class Store:
 
     @_chat_scoped
     def get_chat(self, chat_id: str, include_created: bool = False,
-                 include_usage: bool = False) -> dict | None:
+                 include_usage: bool = False, *, include_message_meta: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
@@ -688,7 +711,7 @@ class Store:
                if row["capabilities"] is not None else {}),
             **({"ephemeral": True} if self._memory_only else {}),
             "messages": self.get_messages(chat_id, include_created=include_created,
-                                          include_usage=include_usage),
+                                          include_usage=include_usage, include_message_meta=include_message_meta),
         }
 
     @_chat_scoped
@@ -1062,6 +1085,7 @@ class Store:
         tool_call_id: str | None = None,
         *,
         turn_model: str | None = None,
+        created: str | None = None,
     ) -> int:
         with self._lock:
             cur = self._conn.execute(
@@ -1074,7 +1098,7 @@ class Store:
                     content,
                     json.dumps(tool_calls) if tool_calls is not None else None,
                     tool_call_id,
-                    _utc_now_iso(),
+                    created or _utc_now_iso(),
                     turn_model,
                 ),
             )
@@ -1108,11 +1132,11 @@ class Store:
             self._conn.execute(
                 "UPDATE messages SET prompt_tokens = ?, completion_tokens = ?, usage_estimated = ?, "
                 "ms_first_token = ?, ms_generation = ?, ms_total = ?, cost_usd = ?, usage_local = ?, "
-                "usage_model = ? WHERE id = ? AND chat_id = ?",
+                "usage_model = ?, usage_provider = ? WHERE id = ? AND chat_id = ?",
                 (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0),
                  int(bool(usage.get("estimated"))), usage.get("ms_first_token"),
                  usage.get("ms_generation"), usage.get("ms_total"), usage.get("cost_usd"),
-                 int(bool(usage.get("local"))), usage.get("model"), message_id, chat_id),
+                 int(bool(usage.get("local"))), usage.get("model"), usage.get("provider"), message_id, chat_id),
             )
             self._conn.commit()
 
@@ -1195,7 +1219,7 @@ class Store:
 
     @_chat_scoped
     def get_messages(self, chat_id: str, include_created: bool = False,
-                     include_usage: bool = False) -> list[dict]:
+                     include_usage: bool = False, *, include_message_meta: bool = False) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, role, content, tool_calls, tool_call_id, created, turn_model, "
@@ -1223,7 +1247,10 @@ class Store:
                 message["tool_calls"] = json.loads(tool_calls)
             if tool_call_id is not None:
                 message["tool_call_id"] = tool_call_id
-            if include_created:
+            has_meta = include_message_meta and role in {"user", "assistant"}
+            if has_meta:
+                message["id"] = message_id
+            if include_created or has_meta:
                 message["created"] = created
             if include_usage and row["prompt_tokens"] is not None:
                 message["usage"] = _usage_dict(row)

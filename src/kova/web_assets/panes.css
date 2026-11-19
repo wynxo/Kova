@@ -109,6 +109,8 @@ body.panes-dragging iframe { pointer-events:none; }
 @media (min-width:721px) {
   body.panel-open { grid-template-columns:var(--sidebar-w) minmax(0, 1fr) var(--pane-panel-w); }
   body.panel-open.sidebar-collapsed { grid-template-columns:0 minmax(0, 1fr) var(--pane-panel-w); }
+  body.zen-mode.panel-open,
+  body.zen-mode.panel-open.sidebar-collapsed { grid-template-columns:minmax(0, 1fr) var(--pane-panel-w); }
   .side-panel { grid-column:3; grid-row:1; animation:panes-panel-in var(--motion-base) var(--motion-ease-standard); }
 }
 

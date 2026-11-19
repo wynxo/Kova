@@ -37,7 +37,18 @@
         "border": { "$ref": "#/$defs/colorGroup" },
         "accent": { "$ref": "#/$defs/colorGroup" },
         "status": { "$ref": "#/$defs/colorGroup" },
-        "syntax": { "$ref": "#/$defs/colorGroup" }
+        "syntax": { "$ref": "#/$defs/colorGroup" },
+        "chat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "width": { "enum": ["narrow", "normal", "wide"] },
+            "message-style": { "enum": ["document", "bubbles", "compact"] },
+            "avatars": { "enum": ["on", "off"] },
+            "zen": { "enum": ["on", "off"] },
+            "bubble-shape": { "enum": ["round", "sharp"] }
+          }
+        }
       }
     },
     "background": {

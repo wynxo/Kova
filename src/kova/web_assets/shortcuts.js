@@ -78,6 +78,7 @@
     {id: 'previous-conversation', defaultKey: 'alt+arrowup', description: 'Previous conversation'},
     {id: 'next-conversation', defaultKey: 'alt+arrowdown', description: 'Next conversation'},
     {id: 'toggle-sidebar', defaultKey: 'mod+b', description: 'Show or hide the sidebar'},
+    {id: 'toggle-zen', defaultKey: 'mod+alt+z', description: 'Toggle zen mode'},
     {id: 'toggle-theme', defaultKey: 'mod+shift+l', description: 'Switch light and dark'},
     {id: 'focus-composer', defaultKey: 'mod+space', description: 'Focus the message box'},
     {id: 'stop-reply', defaultKey: 'escape', description: 'Stop the reply'},

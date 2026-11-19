@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
@@ -26,6 +27,20 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINES = Path(__file__).with_name("chromium-linux")
 ARTIFACTS = ROOT / "test-results" / "visual"
 EXAMPLE_THEME = "forest"
+DEMO_REPLY = """# Setup
+
+**A short introduction** with $x^2$ and `code`.
+
+## Configure
+
+```js:example.js
+console.log("demo");
+```
+
+## Run
+
+Start the example.
+"""
 UPDATE_SNAPSHOTS = os.environ.get("KOVA_UPDATE_SNAPSHOTS") == "1"
 VISUAL_REQUIRED = os.environ.get("KOVA_VISUAL_REQUIRED") == "1"
 PAGES = {
@@ -74,8 +89,13 @@ def kova(chromium, tmp_path_factory):
                     themes / f"{EXAMPLE_THEME}.json")
 
     def model_stub(request):
-        assert request.method == "GET" and request.url.path == "/v1/models"
-        return httpx.Response(200, json={"data": [{"id": "demo-model"}]})
+        if request.method == "GET":
+            assert request.url.path == "/v1/models"
+            return httpx.Response(200, json={"data": [{"id": "demo-model"}]})
+        assert request.url.path == "/v1/chat/completions"
+        delta = json.dumps({"choices": [{"delta": {"content": DEMO_REPLY}}]})
+        return httpx.Response(200, text=f"data: {delta}\n\ndata: [DONE]\n\n",
+                              headers={"content-type": "text/event-stream"})
 
     with pytest.MonkeyPatch.context() as monkeypatch, socket.socket() as listener:
         monkeypatch.setenv("KOVA_HOME", str(home))
@@ -141,6 +161,14 @@ def open_screen(page, kova, screen, theme):
         expect(toggle).to_have_attribute("aria-pressed", "true")
         if screen == "tokens":
             expect(page.locator("#pairs tr").first).to_be_visible()
+        if screen == "gallery":
+            sample = page.locator("[data-markdown-example]")
+            expect(sample.locator("math")).to_have_count(2, timeout=12_000)
+            expect(sample.locator(".callout")).to_have_count(5)
+            expect(sample.locator(".code-filename")).to_have_text("example.js")
+            expect(sample.locator(".markdown-diagram")).to_have_attribute(
+                "data-diagram-theme", appearance, timeout=12_000)
+            page.wait_for_function("document.querySelector('.markdown-diagram')?.naturalWidth > 0")
 
     expect(root).to_have_attribute("data-theme", appearance)
     root.evaluate("root => { root.dataset.motion = 'off'; }")
@@ -212,3 +240,99 @@ def test_visual_snapshot(chromium, kova, screen, theme, width, height):
         image = png.convert("RGB")
     image.info.clear()  # Never carry capture metadata into baselines or artifacts.
     compare_snapshot(image, f"{screen}-{theme}-{width}", max_changed=0 if screen == "tokens" else 40)
+
+
+def test_chat_layouts_reply_outline_and_zen_shortcut(chromium, kova):
+    from playwright.sync_api import expect
+
+    context = chromium.new_context(viewport={"width": 1280, "height": 900},
+                                   permissions=["clipboard-read", "clipboard-write"],
+                                   service_workers="block")
+    try:
+        page = context.new_page()
+        open_screen(page, kova, "start", "dark")
+        page.locator("#prompt").fill("Show the example")
+        page.locator("#prompt").press("Enter")
+        reply = page.locator("#messages .assistant")
+        expect(reply.locator("math")).to_be_visible()
+        expect(reply.get_by_text("example.js", exact=True)).to_be_visible()
+        reply.get_by_role("button", name="Copy as plain text").click()
+        copied = page.evaluate("navigator.clipboard.readText()")
+        assert "A short introduction" in copied and "**" not in copied and "Wrap" not in copied
+
+        reply.get_by_role("button", name="Open reply outline").click()
+        panel = page.get_by_role("complementary", name="Reply outline")
+        panel.get_by_role("button", name="Configure").click()
+        expect(reply.get_by_role("heading", name="Configure")).to_be_focused()
+        panel.get_by_role("button", name="Close panel").click()
+
+        page.get_by_role("button", name="Settings", exact=True).click()
+        page.get_by_role("tab", name="Chat", exact=True).click()
+        page.get_by_role("radio", name="Bubbles", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-message-style", "bubbles")
+        page.get_by_role("radio", name="Compact", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-message-style", "compact")
+        page.get_by_role("radio", name="Always", exact=True).click()
+        page.get_by_role("button", name="Enter: Zen mode").click()
+        expect(page.locator(".topbar")).to_be_hidden()
+        expect(page.locator("#sidebar")).to_be_hidden()
+        expect(page.locator("#status-bar")).to_be_hidden()
+        expect(reply.locator("time")).to_be_visible()
+        page.keyboard.press("Control+Alt+z")
+        expect(page.locator(".topbar")).to_be_visible()
+    finally:
+        context.close()
+        kova.set_preferences({"message_style": "theme", "message_timestamps": "never"})
+
+
+def test_phone_long_press_sheet_keeps_actions_keyboard_reachable(chromium, kova):
+    from playwright.sync_api import expect
+
+    context = chromium.new_context(viewport={"width": 390, "height": 844}, has_touch=True,
+                                   is_mobile=True, forced_colors="active", service_workers="block")
+    try:
+        page = context.new_page()
+        open_screen(page, kova, "start", "light")
+        page.locator("#prompt").fill("Show the example")
+        page.locator("#prompt").press("Enter")
+        reply = page.locator("#messages .assistant")
+        trigger = reply.get_by_role("button", name="Open message actions")
+        expect(trigger).to_be_visible()
+        reply.locator(".markdown p").first.dispatch_event("pointerdown", {
+            "pointerType": "touch", "isPrimary": True, "clientX": 30, "clientY": 40,
+        })
+        sheet = page.get_by_role("dialog", name="Message actions")
+        expect(sheet.get_by_role("button", name="Copy as plain text")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(sheet).to_be_hidden()
+        expect(trigger).to_be_focused()
+        trigger.press("Enter")
+        expect(sheet.get_by_role("button", name="Branch from here")).to_be_visible()
+    finally:
+        context.close()
+
+
+def test_saved_chat_style_overrides_theme_defaults_on_first_login(chromium, kova):
+    from playwright.sync_api import expect
+
+    response = kova._request("POST", "/themes", json={
+        "id": "chat-defaults", "name": "Chat defaults", "version": "1.0.0", "appearance": "light",
+        "tokens": {"chat": {"width": "wide", "avatars": "off", "message-style": "bubbles",
+                            "zen": "on", "bubble-shape": "sharp"}},
+    })
+    assert response.status_code == 201
+    kova.set_preferences({"theme": "chat-defaults", "message_style": "compact"})
+    context = chromium.new_context(service_workers="block")
+    try:
+        page = context.new_page()
+        page.goto(f"{kova.base_url}/app#ticket={kova.app_ticket()}")
+        root = page.locator("html")
+        for name, value in {"chat-width": "wide", "avatars": "off", "message-style": "compact",
+                            "bubble-shape": "sharp"}.items():
+            expect(root).to_have_attribute(f"data-{name}", value)
+        expect(page.locator(".topbar")).to_be_hidden()
+        page.get_by_role("button", name="Exit zen mode").click()
+        expect(page.locator(".topbar")).to_be_visible()
+    finally:
+        context.close()
+        kova.set_preferences({"theme": "system", "message_style": "theme"})

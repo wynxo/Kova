@@ -64,7 +64,7 @@ function launch(id, tag = 'button') {
 
 // The action targets app.js owns (index.html #settings-actions), and the
 // startup card settings.js hosts. The sidebar keeps only #open-settings.
-const triggers = ['open-settings', 'theme', 'open-shortcuts', 'install-settings', 'open-sounds', 'connect-phone',
+const triggers = ['open-settings', 'theme', 'open-shortcuts', 'install-settings', 'open-sounds', 'connect-phone', 'zen-enter',
   'add-provider', 'open-model-settings', 'open-privacy', 'open-memory', 'open-reminders', 'open-extensions',
   'open-mcp', 'disconnect'];
 for (const id of triggers) launch(id);
@@ -122,8 +122,9 @@ assert.equal(view.getAttribute('aria-describedby'), 'settings-description');
 
 const tabs = byClass(view, 'settings-tab');
 const panels = byClass(view, 'settings-section');
-const SECTIONS = ['General', 'Models and providers', 'Memory', 'Reminders', 'Extensions and MCP',
+const SECTIONS = ['General', 'Chat', 'Models and providers', 'Memory', 'Reminders', 'Extensions and MCP',
   'Privacy', 'Phone', 'Install and notifications'];
+const section = label => SECTIONS.indexOf(label);
 assert.deepEqual(tabs.map(tab => tab.textContent.trim()), SECTIONS);
 assert.equal(panels.length, tabs.length);
 assert.equal(byClass(view, 'settings-nav')[0].getAttribute('role'), 'tablist');
@@ -147,7 +148,7 @@ assert.equal(panels[2].hidden, false);
 assert.equal(panels[1].hidden, true);
 document.activeElement = tabs[0];
 nav.dispatch('keydown', {key: 'End', preventDefault() {}});
-assert.equal(document.activeElement, tabs[7], 'End moves to the last section');
+assert.equal(document.activeElement, tabs.at(-1), 'End moves to the last section');
 nav.dispatch('keydown', {key: 'Home', preventDefault() {}});
 assert.equal(document.activeElement, tabs[0], 'Home moves to the first section');
 
@@ -175,14 +176,14 @@ assert.equal(document.activeElement, customize, 'focus returns to Customize');
 search.value = 'theme';
 search.dispatch('input', {});
 
-assert.match($('settings-search-status').textContent, /18 settings match/);
+assert.match($('settings-search-status').textContent, /16 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.
 search.value = 'chatgpt';
 search.dispatch('input', {});
 assert.equal(tabs.filter(tab => !tab.hidden).length, 1);
-assert.equal(tabs[1].hidden, false, 'the matching Models section stays');
+assert.equal(tabs[section('Models and providers')].hidden, false, 'the matching Models section stays');
 assert.match($('settings-search-status').textContent, /1 setting matches/);
 
 search.value = 'theme';
@@ -191,14 +192,15 @@ search.dispatch('input', {});
 search.value = 'privacy';
 search.dispatch('input', {});
 assert.equal(tabs.filter(tab => !tab.hidden).length, 1);
-assert.equal(tabs[5].hidden, false);
-assert.equal(panels[5].hidden, false, 'the matching section becomes active');
-assert.equal(tabs[5].getAttribute('aria-selected'), 'true');
+assert.equal(tabs[section('Privacy')].hidden, false);
+assert.equal(panels[section('Privacy')].hidden, false, 'the matching section becomes active');
+assert.equal(tabs[section('Privacy')].getAttribute('aria-selected'), 'true');
 
 // Every row that left the sidebar is findable by the word people would type.
 for (const [word, section] of [['sounds', 'General'], ['sign out', 'General'], ['startup', 'General'],
   ['reasoning', 'General'], ['thinking', 'General'], ['motion', 'General'],
   ['text size', 'General'], ['density', 'General'], ['font', 'General'],
+  ['message style', 'Chat'], ['timestamps', 'Chat'], ['zen mode', 'Chat'],
   ['provider', 'Models and providers'], ['remember', 'Memory'], ['reminders', 'Reminders'],
   ['mcp', 'Extensions and MCP'], ['plugins', 'Extensions and MCP'], ['local only', 'Privacy'],
   ['phone', 'Phone'], ['notifications', 'Install and notifications']]) {
@@ -216,21 +218,24 @@ assert.ok(panels.every(panel => panel.hidden), 'no section is left open');
 
 search.value = '';
 search.dispatch('input', {});
-assert.equal(tabs.filter(tab => !tab.hidden).length, 8, 'clearing restores every section');
+assert.equal(tabs.filter(tab => !tab.hidden).length, SECTIONS.length, 'clearing restores every section');
 assert.equal($('settings-no-results').hidden, true);
 assert.equal($('settings-search-status').textContent, '');
 
 // A row runs the control app.js already bound; nothing is reimplemented here.
-tabs[2].click();
-const memoryRow = byClass(panels[2], 'settings-row').find(row => row.textContent.includes('Memory notes'));
+tabs[section('Memory')].click();
+const memoryRow = byClass(panels[section('Memory')], 'settings-row').find(row => row.textContent.includes('Memory notes'));
 const openMemory = byClass(memoryRow, 'settings-action')[0];
 assert.ok(openMemory, 'the Memory row has an action');
 openMemory.click();
 assert.equal($('open-memory').clicked, 1);
 
 // Each moved sidebar row runs its own target from its section.
-for (const [index, target] of [[3, 'open-reminders'], [4, 'open-extensions'], [4, 'open-mcp'], [5, 'open-privacy'],
-  [6, 'connect-phone'], [7, 'install-settings'], [1, 'add-provider'], [0, 'open-sounds'], [0, 'disconnect']]) {
+for (const [label, target] of [['Reminders', 'open-reminders'], ['Extensions and MCP', 'open-extensions'],
+  ['Extensions and MCP', 'open-mcp'], ['Privacy', 'open-privacy'], ['Phone', 'connect-phone'],
+  ['Install and notifications', 'install-settings'], ['Models and providers', 'add-provider'],
+  ['General', 'open-sounds'], ['General', 'disconnect'], ['Chat', 'zen-enter']]) {
+  const index = section(label);
   const before = $(target).clicked;
   const actions = byClass(panels[index], 'settings-action');
   assert.ok(actions.length, `section ${SECTIONS[index]} has actions`);
@@ -403,7 +408,7 @@ assert.ok(panels[0].textContent.includes('Startup'));
 view.dispatch('keydown', {key: 'Escape', preventDefault() {}});
 $('connect-phone').hidden = true;
 window.KovaSettings.open('general');
-assert.equal(tabs[6].hidden, true, 'no Phone section on the phone itself');
+assert.equal(tabs[section('Phone')].hidden, true, 'no Phone section on the phone itself');
 $('connect-phone').hidden = false;
 assert.equal(view.hidden, false, 'the palette can open Settings at a section');
 

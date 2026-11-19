@@ -75,6 +75,11 @@ start screen at 390 px and 1280 px in Dark, Light and the installed Forest
 example theme. A throwaway `KOVA_HOME`, offline model stub and fresh browser
 contexts keep the captures separate from your chats and settings.
 
+The gallery's Markdown reference uses the real reply renderer. Fences can name
+a file with `language:path` or `language title="file name"`. Math accepts
+`$…$` inline and `$$…$$` on its own line. Use a `mermaid` fence for supported
+Mermaid Tiny diagrams; unsupported diagrams keep their copyable source.
+
 On x86-64 Linux, a quick local run is:
 
 ```sh

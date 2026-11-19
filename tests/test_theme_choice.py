@@ -148,5 +148,13 @@ def test_the_client_and_server_agree_on_the_id_rule():
     source = (ASSETS / "theme.js").read_text(encoding="utf-8")
     assert "/^[a-z0-9][a-z0-9-]{1,39}$/" in source
     assert ui_prefs.PATTERNS["theme"].pattern == "^[a-z0-9][a-z0-9-]{1,39}$"
-    for group in themes.GROUPS:
-        assert group in re.search(r"const TOKEN = /\^\((.*?)\)", source).group(1).split("|")
+
+
+def test_the_client_and_server_agree_on_semantic_token_values():
+    source = (ASSETS / "theme.js").read_text(encoding="utf-8")
+    colour_groups = re.search(r"const TOKEN = /\^\((.*?)\)", source).group(1).split("|")
+    assert set(colour_groups) == set(themes.GROUPS) - {"chat"}
+    for name, choices in themes.CHAT_TOKENS.items():
+        rule = re.search(rf"'chat\.{re.escape(name)}': \[([^\]]+)\]", source)
+        assert rule, f"missing chat token: {name}"
+        assert tuple(re.findall(r"'([^']+)'", rule.group(1))) == choices

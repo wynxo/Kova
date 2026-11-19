@@ -114,6 +114,7 @@
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
     </section>
     <div class="compose-wrap">
+      <button id="zen-exit" type="button" class="btn quiet small" data-shortcut="toggle-zen" hidden>Exit zen mode</button>
       <button id="jump" type="button" class="jump" hidden title="Jump to the latest message" aria-label="Jump to the latest message"><span class="icon i-arrow-down" aria-hidden="true"></span></button>
       <div id="queue-strip" class="queue-strip" aria-label="Queued messages" hidden></div>
       <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-retry" type="button" class="notice-retry">Retry</button></div>
@@ -179,6 +180,7 @@
   <!-- Action targets. Settings (settings.js) and the command palette run these;
        app.js and the panel scripts bind them by id. Nothing here is drawn. -->
   <div id="settings-actions" hidden>
+    <button id="zen-enter" type="button">Enter zen mode</button>
     <button id="theme" type="button" title="Light theme"><span id="theme-icon" class="icon i-sun" aria-hidden="true"></span><span>Light theme</span></button>
     <button id="open-shortcuts" type="button">Keyboard shortcuts</button>
     <div id="shortcut-remap"></div>

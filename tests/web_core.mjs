@@ -601,6 +601,12 @@ assert.ok(sandbox.document.body.classList.contains('sidebar-open'));
 assert.equal($('menu').getAttribute('aria-expanded'), 'true');
 keys({key: 'Escape', target: {tagName: 'BODY'}, preventDefault() {}});
 assert.equal(sandbox.document.body.classList.contains('sidebar-open'), false);
+keys({key: 'z', ctrlKey: true, altKey: true, target: $('prompt'), preventDefault() {}});
+assert.equal(sandbox.document.body.classList.contains('zen-mode'), true);
+assert.equal($('zen-exit').hidden, false);
+$('zen-exit').onclick();
+assert.equal(sandbox.document.body.classList.contains('zen-mode'), false);
+assert.equal($('zen-exit').hidden, true);
 console.log('Live indicators, tool rows, message actions and keyboard shortcuts passed');
 // Ctrl/Cmd+K opens the palette; new conversation moved to Ctrl/Cmd+Shift+K.
 state.connected = true; state.busy = false; $('mode').value = 'work'; controls();

@@ -113,6 +113,11 @@ class EditedTurnBody(BaseModel):
     text: str = Field(min_length=1, max_length=100_000)
 
 
+class RetryTurnBody(BaseModel):
+    model: str | None = None
+    expected_reply: int | None = None
+
+
 def working_folder(value: str) -> str:
     if not value.strip() or "\0" in value:
         raise HTTPException(status_code=422, detail="working folder must be a non-empty path")
@@ -916,18 +921,18 @@ def create_app(
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in chats]
 
     @api.post("/chats/{chat_id}/fork")
-    async def fork_chat(chat_id: str) -> dict:
+    async def fork_chat(chat_id: str, through: int | None = None) -> dict:
         if app.state.store.is_ephemeral(chat_id):
             raise HTTPException(409, "Incognito chats cannot be forked or exported.")
         async with chat_lock(chat_id):
-            chat = app.state.store.fork_chat(chat_id)
+            chat = app.state.store.fork_chat(chat_id, through=through)
             if chat is None:
-                raise HTTPException(status_code=404, detail="chat not found")
-            return app.state.store.get_chat(chat["id"], include_usage=True)
+                raise HTTPException(status_code=404, detail="reply not found" if through is not None else "chat not found")
+            return app.state.store.get_chat(chat["id"], include_usage=True, include_message_meta=True)
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
-        chat = app.state.store.get_chat(chat_id, include_usage=True)
+        chat = app.state.store.get_chat(chat_id, include_usage=True, include_message_meta=True)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         return {**chat, "state": app.state.conversation_states.get(chat_id)}
@@ -1173,21 +1178,7 @@ def create_app(
                 raise HTTPException(404, "That queued message was already sent or removed.")
             if body.text != queued["text"] or (queued["remote"] and body.attachments):
                 raise HTTPException(409, "Send a queued message as it was queued.")
-        selected = body.model if body.model is not None else chat.get("model")
-        entry = config.model_entry(selected)
-        if selected is not None and entry is None:
-            detail = (f"unknown model '{selected}'" if body.model is not None else
-                      f"Model '{selected}' is not configured. Choose another model.")
-            raise HTTPException(status_code=404, detail=detail)
-        rows = {r['id']: r for r in app.state.store.attachments(chat_id)}
-        if len(set(body.attachments)) != len(body.attachments) or any(i not in rows for i in body.attachments):
-            raise HTTPException(400, "Choose attachments from this chat only.")
-        from kova import providers
-        if entry is not None:
-            egress.check_url(entry.base_url, config)
-        if any(rows[i]['mime'].startswith('image/') for i in body.attachments):
-            if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
-                raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
+        validate_turn_model(chat, body.model, body.attachments)
         # Validation is over: only now take the queued row (once) and record who wrote.
         if queued is not None:
             if not app.state.store.take_queued_message(chat_id, queued["id"]):
@@ -1201,26 +1192,53 @@ def create_app(
         return turn_stream(chat_id, body.text, model=body.model, attachments=body.attachments,
                            capabilities=capabilities)
 
+    def validate_turn_model(chat: dict, model: str | None, attachments: list[str]) -> None:
+        selected = model if model is not None else chat.get("model")
+        entry = config.model_entry(selected)
+        if selected is not None and entry is None:
+            detail = (f"unknown model '{selected}'" if model is not None else
+                      f"Model '{selected}' is not configured. Choose another model.")
+            raise HTTPException(status_code=404, detail=detail)
+        rows = {r['id']: r for r in app.state.store.attachments(chat["id"])}
+        if len(set(attachments)) != len(attachments) or any(i not in rows for i in attachments):
+            raise HTTPException(400, "Choose attachments from this chat only.")
+        from kova import providers
+        if entry is not None:
+            egress.check_url(entry.base_url, config)
+        if any(rows[i]['mime'].startswith('image/') for i in attachments):
+            if entry is None or not entry.vision or not providers.supports(entry._provider, 'vision'):
+                raise HTTPException(400, "This model cannot read images; turn on Vision for it in Model settings, or attach OCR text.")
 
     @api.post("/chats/{chat_id}/retry")
-    async def retry_chat(chat_id: str, request: Request) -> StreamingResponse:
+    async def retry_chat(chat_id: str, request: Request, body: RetryTurnBody | None = None) -> StreamingResponse:
         """Run the last user turn again, replacing the reply it produced.
 
         Nothing is appended to the transcript: the stored words and their files
         are reused, so a retry never grows the conversation with a duplicate.
         """
-        if app.state.store.get_chat(chat_id) is None:
-            raise HTTPException(status_code=404, detail="chat not found")
+        model = body.model if body is not None else None
         reject_while_turning(chat_id)
         async with chat_lock(chat_id):
+            reject_while_turning(chat_id)
+            chat = app.state.store.get_chat(chat_id, include_message_meta=True)
+            if chat is None:
+                raise HTTPException(status_code=404, detail="chat not found")
             message = app.state.store.last_user_message(chat_id)
             if message is None:
                 raise HTTPException(status_code=409, detail="There is no message to retry.")
+            if body and body.expected_reply is not None:
+                latest = next((row for row in reversed(chat["messages"])
+                               if row["role"] == "assistant" and row["content"]
+                               and not row.get("tool_calls")), None)
+                if (latest is None or latest["id"] != body.expected_reply
+                        or latest["id"] <= message["id"]):
+                    raise HTTPException(409, "This reply is no longer the latest. Reopen the conversation to retry.")
             reject_if_compacted(chat_id, message)
+            validate_turn_model(chat, model, message["attachments"])
             app.state.store.delete_messages_from(chat_id, message["id"], include=False)
             capabilities = pairing.narrow(pairing.request_capabilities(request),
                                           app.state.store.chat_capabilities(chat_id))
-        return turn_stream(chat_id, message["content"], model=None, attachments=message["attachments"],
+        return turn_stream(chat_id, message["content"], model=model, attachments=message["attachments"],
                            capabilities=capabilities, record_user=False)
 
 
