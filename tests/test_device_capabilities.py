@@ -792,6 +792,35 @@ def test_kova_devices_allow_and_deny(monkeypatch):
     assert listing.exit_code == 0 and "chat" in listing.output
 
 
+def test_a_phone_undoes_hunks_only_inside_kova_files(kova, tmp_path):
+    client, app, local, phone, record = kova
+    blobs = app.state.agent.blobs
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    for folder in (outside, app.state.config.files_path):
+        (folder / "notes.txt").write_bytes(b"ONE\n")
+    entry = {"before": blobs.put(b"one\n"), "after": blobs.put(b"ONE\n"), "status": "modified",
+             "additions": 1, "deletions": 1}
+
+    def change_set(folder):
+        chat_id = client.post("/chats", json={"cwd": str(folder)}, headers=local).json()["id"]
+        checkpoint = app.state.store.add_checkpoint(chat_id, str(folder), {"notes.txt": entry})
+        return f"/chats/{chat_id}/checkpoints/{checkpoint}/hunks"
+
+    base = change_set(outside)
+    assert client.get(base, params={"path": "notes.txt"}, headers=phone).status_code == 403
+    view = client.get(base, params={"path": "notes.txt"}, headers=local).json()
+    undo = {"path": "notes.txt", "hunk": view["segments"][0]["id"], "expected_hash": view["current_hash"]}
+    assert client.post(f"{base}/undo", json=undo, headers=phone).status_code == 403
+    assert (outside / "notes.txt").read_bytes() == b"ONE\n"
+
+    shared = change_set(app.state.config.files_path)
+    view = client.get(shared, params={"path": "notes.txt"}, headers=phone).json()
+    undo = {"path": "notes.txt", "hunk": view["segments"][0]["id"], "expected_hash": view["current_hash"]}
+    assert client.post(f"{shared}/undo", json=undo, headers=phone).status_code == 200
+    assert (app.state.config.files_path / "notes.txt").read_bytes() == b"one\n"
+
+
 def test_phone_cannot_edit_shared_project_guidance_or_inherit_unshared_folder(kova, tmp_path):
     client, app, local, phone, _ = kova
     folder = tmp_path / "private-workspace"

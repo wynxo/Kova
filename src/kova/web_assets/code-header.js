@@ -7,6 +7,10 @@
   const COPIED_MS = 2000;
   // The wrap choice is a reading preference, per browser, like the theme.
   const WRAP_KEY = 'kova-code-wrap';
+  // Line numbers are a reading preference too, and get the same treatment.
+  const LINES_KEY = 'kova-code-lines';
+  // A gutter on a block this long is more work than it is worth.
+  const MAX_LINES = 2000;
   // Blocks longer than this also get "Open in panel" (#182) when the side panel exists.
   const PANEL_LINES = 100;
 
@@ -38,6 +42,67 @@
     try {
       storage()?.setItem(WRAP_KEY, on ? '1' : '0');
     } catch (_) { /* a private window may refuse storage; the toggle still works */ }
+  }
+
+  function linesEnabled() {
+    try {
+      return storage()?.getItem(LINES_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function storeLines(on) {
+    try {
+      storage()?.setItem(LINES_KEY, on ? '1' : '0');
+    } catch (_) { /* a private window may refuse storage; the toggle still works */ }
+  }
+
+  // Source lines, ignoring the single trailing newline marked puts on a fence.
+  function lineCount(code) {
+    const text = String(code?.textContent || '');
+    const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+    return Math.max(1, body.split('\n').length);
+  }
+
+  // A gutter is a plain column of numbers beside the code, not a second copy of
+  // it: hidden from screen readers, never selectable and never part of a copy.
+  function addGutter(pre, code) {
+    if (!pre || !code || pre.querySelector?.('.code-gutter')) return;
+    const count = lineCount(code);
+    if (count > MAX_LINES) return;
+    const gutter = el('span', 'code-gutter');
+    gutter.setAttribute('aria-hidden', 'true');
+    gutter.textContent = Array.from({length: count}, (_, index) => index + 1).join('\n');
+    pre.classList.add('has-lines');
+    pre.insertBefore(gutter, code);
+  }
+
+  function removeGutter(pre) {
+    pre?.classList.remove('has-lines');
+    pre?.querySelector?.('.code-gutter')?.remove();
+  }
+
+  // One preference for every block, like Wrap: toggling one row updates the
+  // blocks already on screen and every other header's pressed state.
+  function applyLines(on, local) {
+    storeLines(on);
+    if (local) {
+      const code = local.querySelector?.('code');
+      if (on) addGutter(local, code);
+      else removeGutter(local);
+    }
+    document.querySelectorAll?.('.markdown pre').forEach((pre) => {
+      // A block still arriving has no fixed line count yet.
+      if (pre.getAttribute?.('data-streaming') !== null) return;
+      const code = pre.querySelector('code');
+      if (!code) return;
+      if (on) addGutter(pre, code);
+      else removeGutter(pre);
+    });
+    document.querySelectorAll?.('.lines-code').forEach((button) => {
+      button.setAttribute('aria-pressed', String(on));
+    });
   }
 
   // An icon from the app's own set (app.css masks these by name).
@@ -95,6 +160,20 @@
       const next = button.getAttribute('aria-pressed') !== 'true';
       button.setAttribute('aria-pressed', String(next));
       applyWrap(next, pre);
+    };
+    return button;
+  }
+
+  function linesButton(pre) {
+    const button = el('button', 'code-action lines-code');
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Show line numbers');
+    button.setAttribute('aria-pressed', String(linesEnabled()));
+    button.append(el('span', '', 'Lines'));
+    button.onclick = () => {
+      const next = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', String(next));
+      applyLines(next, pre);
     };
     return button;
   }
@@ -168,13 +247,17 @@
           });
         };
       }
-      const lines = code.textContent.split('\n').length;
-      if (!streaming && lines > PANEL_LINES && window.KovaPanel?.open) actions.append(panelButton(code, language));
-      actions.append(wrapButton(pre), copy);
+      const count = lineCount(code);
+      if (!streaming && count > PANEL_LINES && window.KovaPanel?.open) actions.append(panelButton(code, language));
+      actions.append(wrapButton(pre));
+      // A fence still arriving has no fixed line count yet.
+      if (!streaming && count <= MAX_LINES) actions.append(linesButton(pre));
+      actions.append(copy);
       bar.append(el('span', 'code-lang', language), actions);
       code.parentNode.insertBefore(bar, code);
+      if (linesEnabled() && !streaming && count <= MAX_LINES) addGutter(pre, code);
     });
   }
 
-  window.CodeHeader = {attach, wrapEnabled, applyWrap};
+  window.CodeHeader = {attach, wrapEnabled, applyWrap, linesEnabled, applyLines};
 })();

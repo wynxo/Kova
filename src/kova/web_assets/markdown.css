@@ -95,6 +95,23 @@
 .markdown pre.wrap-lines code { white-space:pre-wrap; overflow-wrap:anywhere; }
 .markdown pre[data-streaming] { border-style:dashed; }
 
+/* Line numbers (#189): a quiet gutter the header script draws beside the code.
+   Grid keeps it out of the code's own horizontal scroll and gives the bar the
+   full width above it. The numbers hide while a block wraps, because then one
+   source line takes several rows and a fixed count would lie. */
+.markdown pre.has-lines { display:grid; grid-template-columns:auto minmax(0, 1fr); }
+.markdown pre.has-lines > .code-bar { grid-column:1 / -1; }
+.markdown .code-gutter {
+  grid-column:1;
+  padding:var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  border-right:1px solid var(--border-subtle);
+  background:var(--bg-base); color:var(--fg-faint);
+  font:var(--type-size-body)/1.6 var(--mono);
+  text-align:right; white-space:pre; user-select:none;
+}
+.markdown pre.has-lines > code { grid-column:2; }
+.markdown pre.wrap-lines .code-gutter { display:none; }
+
 /* Wide tables scroll inside their frame, never the page. The frame can also
    scroll vertically, which is what keeps the header row pinned. */
 .table-wrap {

@@ -276,6 +276,44 @@ CodeHeader.attach(laterRoot);
 assert.ok(laterPre.classList.contains('wrap-lines'), 'a later block inherits the saved choice');
 assert.equal(laterRoot.querySelector('.wrap-code').getAttribute('aria-pressed'), 'true');
 
+// ---- Lines: a gutter beside the code, one persisted preference ------------
+const linesRoot = new Element('div');
+const linesPre = new Element('pre');
+const linesCode = new Element('code');
+linesCode.className = 'language-js';
+linesCode.textContent = 'one\ntwo\nthree\n';
+linesPre.append(linesCode);
+linesRoot.append(linesPre);
+CodeHeader.attach(linesRoot);
+
+const linesButton = linesRoot.querySelector('.lines-code');
+assert.equal(linesButton.textContent, 'Lines', 'the toggle names the setting');
+assert.equal(linesButton.getAttribute('aria-pressed'), 'false', 'line numbers start off');
+assert.equal(linesPre.querySelector('.code-gutter'), null, 'no gutter until it is asked for');
+linesButton.click();
+
+const gutter = linesPre.querySelector('.code-gutter');
+assert.ok(gutter, 'the gutter appears beside the code');
+assert.equal(gutter.textContent, '1\n2\n3', 'one number per source line, no trailing blank');
+assert.equal(gutter.getAttribute('aria-hidden'), 'true', 'numbers are decoration, not content');
+assert.ok(linesPre.classList.contains('has-lines'), 'the block lays out a gutter column');
+assert.equal(linesButton.getAttribute('aria-pressed'), 'true');
+assert.equal(storage.get('kova-code-lines'), '1', 'the choice is saved for this browser');
+
+const laterLinesRoot = new Element('div');
+const laterLinesPre = new Element('pre');
+const laterLinesCode = new Element('code');
+laterLinesCode.textContent = 'x\ny';
+laterLinesPre.append(laterLinesCode);
+laterLinesRoot.append(laterLinesPre);
+CodeHeader.attach(laterLinesRoot);
+assert.equal(laterLinesPre.querySelector('.code-gutter').textContent, '1\n2',
+  'a later block inherits the saved choice');
+
+linesButton.click();
+assert.equal(linesPre.querySelector('.code-gutter'), null, 'turning it off removes the gutter');
+assert.equal(storage.get('kova-code-lines'), '0');
+
 // ---- a fence still streaming stays plain and cannot be copied -------------
 highlighted.length = 0;
 const streamRoot = new Element('div');
