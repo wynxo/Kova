@@ -7,6 +7,7 @@ name from the base it extends (#174).
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -244,6 +245,102 @@ def test_the_cli_says_why_a_file_is_refused(runner, tmp_path):
 
     assert result.exit_code == 1
     assert "Missing required key" in result.output
+
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "design" / "themes"
+
+
+def test_gallery_lists_examples_with_preview_tokens_without_installing(http, home):
+    response = http.get("/themes/gallery")
+    assert response.status_code == 200, response.text
+    entries = {entry["id"]: entry for entry in response.json()}
+    assert set(entries) == {path.stem for path in EXAMPLES.glob("*.json")}
+    example = themes.load_file(EXAMPLES / "forest.json")
+    forest = entries["forest"]
+    assert forest["name"] == example["name"]
+    assert forest["appearance"] == example["appearance"]
+    assert forest["description"] == example["description"]
+    assert forest["tokens"]["accent.default"] == example["tokens"]["accent"]["default"]
+    assert forest["swatches"] == [forest["tokens"][role] for role in (
+        "bg.base", "bg.raised", "fg.default", "accent.default",
+    )]
+    assert forest["installed"] is False
+    assert not themes.theme_dir(home.home).exists()
+
+
+def test_gallery_installs_the_example_but_never_overwrites_it(http, home):
+    example = themes.load_file(EXAMPLES / "forest.json")
+    url = "/themes/gallery/forest/install"
+    installed = http.post(url)
+    assert installed.status_code == 201, installed.text
+    path = themes.theme_dir(home.home) / "forest.json"
+    assert themes.load_file(path) == example
+    assert http.get("/themes/forest").json()["tokens"] == installed.json()["tokens"]
+    assert next(row for row in http.get("/themes/gallery").json() if row["id"] == "forest")["installed"]
+    edited = {**example, "name": "My Forest"}
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    assert http.post(url).status_code == 409
+    assert themes.load_file(path) == edited
+
+
+@pytest.mark.parametrize("overrides", [
+    {"id": "other-id"}, {"css": "not allowed"}, {"tokens": {"fg": {"default": "#14121c"}}},
+])
+def test_gallery_revalidates_bundled_documents_before_installing(http, home, monkeypatch, overrides):
+    from kova import theme_routes
+
+    example = themes.load_file(EXAMPLES / "forest.json")
+    monkeypatch.setattr(theme_routes, "_gallery_documents", lambda: {"forest": {**example, **overrides}})
+    assert http.get("/themes/gallery").json() == []
+    assert http.post("/themes/gallery/forest/install").status_code == 422
+    assert not themes.theme_dir(home.home).exists()
+
+
+@pytest.mark.parametrize("ident", ["missing", "forest.json", "%2e%2e%2Fforest", "..%5Cforest", "forest%00"])
+def test_gallery_only_accepts_exact_bundled_ids(http, home, ident):
+    assert http.post(f"/themes/gallery/{ident}/install").status_code == 404
+    assert not themes.theme_dir(home.home).exists()
+
+
+def test_gallery_install_does_not_follow_a_destination_link(http, home, tmp_path):
+    directory = themes.theme_dir(home.home)
+    directory.mkdir()
+    target = tmp_path / "keep.json"
+    try:
+        (directory / "forest.json").symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert http.post("/themes/gallery/forest/install").status_code == 409
+    assert not target.exists()
+
+
+def test_gallery_needs_authentication(http):
+    http.headers.pop("Authorization")
+    assert http.get("/themes/gallery").status_code == 401
+    assert http.post("/themes/gallery/forest/install").status_code == 401
+
+
+def test_the_gallery_does_not_hide_an_existing_theme_named_gallery(http, home, runner):
+    write_theme(home.home, id="gallery", name="My Gallery")
+    assert isinstance(http.get("/themes/gallery").json(), list)
+    assert http.get("/themes/gallery?installed=true").json()["name"] == "My Gallery"
+    result = runner.invoke(cli.app, ["themes", "show", "gallery"])
+    assert result.exit_code == 0, result.output
+    assert "My Gallery" in result.output
+
+
+def test_the_cli_browses_and_installs_from_the_gallery(runner):
+    listing = runner.invoke(cli.app, ["themes", "gallery"])
+    assert listing.exit_code == 0, listing.output
+    assert "Forest" in listing.output and "forest" in listing.output
+    installed = runner.invoke(cli.app, ["themes", "install", "forest"])
+    assert installed.exit_code == 0, installed.output
+    assert "Installed forest" in installed.output
+    duplicate = runner.invoke(cli.app, ["themes", "install", "forest"])
+    assert duplicate.exit_code == 1, duplicate.output
+    assert "already installed" in duplicate.output
+    unsafe_id = runner.invoke(cli.app, ["themes", "install", "../forest"])
+    assert unsafe_id.exit_code == 1, unsafe_id.output
 
 
 @pytest.fixture

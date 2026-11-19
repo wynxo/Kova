@@ -1,0 +1,92 @@
+dialog.theme-gallery {
+  inline-size: min(calc(var(--space-12) * 14), calc(100% - var(--space-6)));
+  max-block-size: calc(100dvh - var(--space-8));
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+}
+
+.theme-gallery[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-gallery-header,
+.theme-gallery-status:not(:empty) { margin-block-end: var(--space-3); }
+
+.theme-gallery-header,
+.theme-gallery-heading,
+.theme-gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.theme-gallery-header,
+.theme-gallery-heading {
+  justify-content: space-between;
+}
+
+.theme-gallery h2 { font-size: var(--type-size-title); }
+.theme-gallery h3 { font-size: var(--type-size-body); }
+
+.theme-gallery-status,
+.theme-gallery-heading span,
+.theme-gallery-card p {
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  overflow-wrap: anywhere;
+}
+
+.theme-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-12) * 6 + var(--space-4))), 1fr));
+  gap: var(--space-3);
+  padding: var(--space-1);
+  margin: var(--space-0);
+  min-block-size: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.theme-gallery-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--space-0-5) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.theme-gallery-swatches {
+  display: flex;
+  min-block-size: var(--space-6);
+  overflow: hidden;
+  border: var(--space-0-5) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.theme-gallery-swatches > span { flex: 1; }
+
+.theme-gallery-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-block-start: auto;
+}
+
+.theme-gallery .btn[aria-pressed="true"] {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+.theme-gallery .btn[aria-disabled="true"] { cursor: progress; }
+
+.theme-gallery .btn:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-gallery[open] { animation: none; }
+  .theme-gallery .btn { transition: none; }
+  .theme-gallery .btn:active:not(:disabled) { transform: none; }
+}

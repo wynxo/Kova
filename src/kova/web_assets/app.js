@@ -512,6 +512,13 @@
       .filter(([, item]) => item.state === 'working' || item.state === 'blocked-on-approval')
       .map(([id, item]) => ({id, ...item}));
   }
+  // The desktop tray shows one aggregate: waiting (needs you) beats working beats idle. Only
+  // the Electron shell exposes a bridge; kova-web and the plain browser skip it.
+  function reportTrayState(rows) {
+    const next = rows.some(row => row.state === 'blocked-on-approval') ? 'waiting'
+      : rows.some(row => row.state === 'working') ? 'working' : 'idle';
+    window.kovaDesktop?.reportState?.(next);
+  }
   function activityName(row) {
     return row.title || (row.ephemeral ? 'Incognito' : 'New conversation');
   }
@@ -549,6 +556,7 @@
     const now = Date.now();
     state.finishedActivity = state.finishedActivity.filter(item => now - item.at < ACTIVITY_RECENT_MS);
     const rows = activityRows();
+    reportTrayState(rows);
     button.hidden = !rows.length && !state.finishedActivity.length;
     button.dataset.active = String(rows.length > 0);
     button.setAttribute('aria-label', rows.length ? `Activity: ${rows.length} running` : 'Activity: recent results');
@@ -2003,6 +2011,11 @@
     ]) add('Settings', panel(button, title, hint, keywords));
     add('Settings', {title:'Install & notifications', hint:'Add Kova to your device and choose alerts', keywords:'pwa install notifications alerts', run:() => $('install-settings').onclick?.()});
     add('Settings', {title:'Startup settings', hint:'Keep reminders running after you log out', keywords:'start at sign in autostart login boot', run:() => window.KovaSettings?.open?.('general')});
+    add('Settings', {title:'Reload without custom CSS', hint:'Safe mode, in case a stylesheet broke the page', keywords:'safe custom css stylesheet broken reset recovery', run:() => {
+      const url = new URL(location.href);
+      url.searchParams.set('safe', '1');
+      location.assign(url);
+    }});
     add('Settings', {title:'Model settings…', hint:'Vision and the active model', keywords:'model vision context', run:() => safe(openModelSettings)});
     add('Settings', {title:'Permission rules…', hint:'Pre-approve tools with patterns', keywords:'rules allow deny approvals', run:() => safe(openRules)});
 
@@ -2134,6 +2147,21 @@
     },
     shortcuts: () => $('shortcuts-dialog').showModal(),
   };
+  // Native menu and tray quick actions (#203). The desktop shell sends an
+  // allowlisted action id over its app-action channel; each maps to the same
+  // handler the palette and keyboard shortcuts use, so behaviour stays in one
+  // place. kova-web and the plain browser have no bridge, so this is a no-op.
+  const desktopActions = {
+    'new-conversation': shortcutActions['new-conversation'],
+    'new-incognito': shortcutActions['new-incognito'],
+    'search-conversations': shortcutActions['search-conversations'],
+    'toggle-sidebar': shortcutActions['toggle-sidebar'],
+    'toggle-theme': shortcutActions['toggle-theme'],
+    'focus-composer': shortcutActions['focus-composer'],
+    'shortcuts': shortcutActions['shortcuts'],
+    'open-settings': () => { if (window.KovaSettings?.open) window.KovaSettings.open(); else $('open-settings')?.click(); },
+  };
+  window.kovaDesktop?.onAction?.(id => { const run = desktopActions[typeof id === 'string' ? id : '']; if (run) run(); });
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
@@ -2452,6 +2480,7 @@
       await json('/chats'); state.connected = true; clearNotice();
       // Signed in now: the shared theme choice and installed themes are readable.
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
+      globalThis.KovaCustomCss?.sync?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       renderStarters();

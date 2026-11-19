@@ -49,7 +49,8 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
     if (url === '/preferences') payload = method === 'PUT' ? {...server, ...JSON.parse(options.body)} : server;
     else if (url === '/themes') payload = list || [];
     else if (url.startsWith('/themes/')) {
-      const id = decodeURIComponent(url.slice('/themes/'.length));
+      if (url === '/themes/gallery') return Promise.resolve({ok: true, json: async () => []});
+      const id = decodeURIComponent(url.slice('/themes/'.length).split('?')[0]);
       payload = themes[id] || {detail: 'No theme'}; ok = Boolean(themes[id]);
     }
     const response = Promise.resolve({ok, json: async () => payload});
@@ -76,6 +77,15 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   const api = vm.runInNewContext('window.KovaTheme', sandbox);
   return {api, root, meta, store, properties, events, calls, media, mediaListeners, held,
     puts: () => calls.filter(call => call.method === 'PUT').map(call => call.body)};
+}
+
+// An older custom theme called gallery is still a usable choice.
+{
+  const gallery = {...PAPER, id: 'gallery'};
+  const page = boot({stored: {'kova-theme': 'gallery'}, server: {theme: 'gallery'}, themes: {gallery}});
+  await settle();
+  assert.ok(page.calls.some(call => call.url === '/themes/gallery?installed=true'));
+  assert.equal(page.properties.get('--bg-base'), gallery.tokens['bg.base']);
 }
 
 // ---- System is the default and follows the device -------------------------

@@ -96,6 +96,7 @@ EXPECTED = {
     ("POST", "/memory/location"): "settings:write",
     ("POST", "/persona"): "settings:write",
     ("PATCH", "/memory/settings"): "settings:write",
+    ("POST", "/themes/gallery/{theme_id}/install"): "settings:write",
     ("POST", "/jobs"): "host:exec",
     ("DELETE", "/jobs/{jid}"): "host:exec",
     ("POST", "/projects"): "host:exec",
@@ -219,6 +220,15 @@ def test_the_computer_itself_is_never_limited(kova):
     # Past the capability check: the empty body is what fails now.
     assert client.post("/local-models/install", json={}, headers=local).status_code == 422
     assert client.put("/permission-rules", json=[], headers=local).status_code == 200
+
+
+def test_phone_gallery_can_preview_but_requires_settings_write_to_install(kova):
+    client, _, local, phone, record = kova
+    assert client.get("/themes/gallery", headers=phone).status_code == 200
+    install = "/themes/gallery/forest/install"
+    assert client.post(install, headers=phone).status_code == 403
+    client.patch(f"/devices/{record['id']}", json={"capabilities": ["settings:write"]}, headers=local)
+    assert client.post(install, headers=phone).status_code == 201
 
 
 def test_granting_a_capability_opens_only_its_routes(kova):

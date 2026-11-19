@@ -47,6 +47,25 @@ function panelWindow(url, frameName) {
 function permissionAllowed(permission) {
   return permission === 'notifications';
 }
+// Native menu and tray actions. The id sent to the renderer over the
+// 'app-action' channel is checked against this allowlist first, so an
+// arbitrary string can never reach the page.
+const APP_ACTION_IDS = new Set([
+  'new-conversation', 'new-incognito', 'search-conversations',
+  'toggle-sidebar', 'open-settings', 'toggle-theme', 'focus-composer',
+  'shortcuts',
+]);
+function isAction(id) {
+  return typeof id === 'string' && APP_ACTION_IDS.has(id);
+}
+// Tray status: the single aggregate the page reports (idle / working /
+// waiting) becomes the tooltip and the menu's status line.
+const TRAY_STATES = {idle: 'Idle', working: 'Working', waiting: 'Waiting for approval'};
+function trayStatus(name, state) {
+  const label = Object.prototype.hasOwnProperty.call(TRAY_STATES, state)
+    ? TRAY_STATES[state] : TRAY_STATES.idle;
+  return {label, tooltip: `${name} · ${label}`};
+}
 const DEFAULT_WINDOW = {width: 1180, height: 800};
 const MIN_WINDOW = {width: 760, height: 540};
 // Remember where the window was, but never trust it blindly: a saved position
@@ -71,4 +90,4 @@ function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
   result.maximized = saved.maximized === true;
   return result;
 }
-module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState};
+module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus};
