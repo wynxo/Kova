@@ -229,7 +229,8 @@ whole object as its `data`, so a client can switch on either.
 
 Turn stream (`src/kova/agent.py`): `text`, `reasoning`, `privacy`,
 `tool_call_delta`, `tool_call`, `tool_result`, `approval`, `approval_resolved`,
-`question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `model_switch`, `stopped`,
+`question`, `question_resolved`, `plan`, `notice`, `steer`, `review`, `model_switch`,
+`task_start`, `task_progress`, `task_done`, `task_error`, `stopped`,
 `done` and `error`. The stream stays open across tool calls and approvals; `done` closes a
 successful turn with the stored message id, model name and `usage` (see
 [Usage and cost](#usage-and-cost)), plus `budget_warning` at most once a day when
@@ -247,6 +248,30 @@ text, without tools or memory. Finished answers are held in memory for an hour
 (at most 16 compares) until `POST /chats/{chat_id}/compare/keep` saves one; the
 stop route, Local only and a closed stream cancel the rest. Local only refuses
 the whole compare with 409 when any chosen model is not on this computer.
+
+Parallel tasks (`src/kova/parallel.py`, #192): when one model step asks for a
+consecutive run of two or more read-only tools (`PARALLEL_TOOLS`: file reads and
+searches, web search and fetch, memory and chat lookups, listings, system info)
+that would run without a question, the run executes at once, at most
+`PARALLEL_LIMIT` (4) calls at a time. The group streams as a tree whose events
+carry an `id` and a `parent`: one `task_start` for the group (`parent: null`,
+`kind: "parallel"`, `label`, `model`, `total`), then one `task_start` per call
+(`parent` is the group, `kind: "tool"`, `name`, `args`, `model`,
+`status: "queued"`) followed by that call's usual `tool_call`. As calls really
+run and finish, `task_progress` reports a call going `running` and the group's
+`done`/`total`/`failed` count, and each call ends with `task_done` (`ok`,
+`summary`, `elapsed_ms`) or `task_error` (`message`, `elapsed_ms`); the group
+closes with its own `task_done`. Only then are the results stored and sent as
+`tool_result` events, in the order the model asked for them, so the transcript
+the model reads never depends on which call finished first. A write, a command,
+`ask_user`, an MCP tool, or any call a rule or the permission mode would ask
+about breaks the run and keeps the one-at-a-time path, so a read that follows a
+write in the same step still sees the write. Stopping the turn cancels every
+unfinished call (a sync tool already in its worker thread finishes there, but its
+result is dropped) and stores each as interrupted. Every `tool_result` now
+carries the `id` of its `tool_call`, which is how clients pair them. The web
+client draws the group with `web_assets/agent-tree.js`; the terminal shows the
+calls as ordinary tool rows.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`
@@ -354,7 +379,8 @@ over `uv run kova-app`.
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
 `palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
 (the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`
-(per-chat colour and icon), `token-sheet.html` (a standalone page that shows every
+(per-chat colour and icon), `agent-tree.js` and `agent-tree.css` (parallel tool calls as a
+live, keyboard-navigable ARIA tree that folds when the turn ends, #192), `token-sheet.html` (a standalone page that shows every
 semantic token and re-measures the build gate's contrast pairs in the browser),
 vendored copies of marked, DOMPurify and highlight.js, and the
 variable fonts Inter and JetBrains Mono under `fonts/`. Nothing is fetched at runtime — the
@@ -469,12 +495,14 @@ forwards its events to the client as SSE.
    `tool_calls`) is saved, each tool runs (sync tools in a worker thread,
    awaitables awaited), errors become tool output rather than crashes, and
    each result is stored as a `tool` message. Results are cut at
-   `MAX_TOOL_RESULT_CHARS` (32,000).
+   `MAX_TOOL_RESULT_CHARS` (32,000). A consecutive run of read-only calls that
+   need no answer runs concurrently instead, and its results are stored in
+   request order (see [Streaming events](#streaming-events)).
 10. The last of the eleven calls is made without tool schemas, so the model has
     to answer in text instead of looping forever.
 
 Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
-`tool_result`, `done`, `error`, `stopped`.
+`tool_result`, the `task_*` events of a parallel group, `done`, `error`, `stopped`.
 
 ## Store
 
