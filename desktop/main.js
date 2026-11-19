@@ -19,6 +19,7 @@ function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); w
 // in this process.
 function sendAction(id) {
   if (!win || win.isDestroyed() || !isAction(id)) return;
+  show();
   win.webContents.send('app-action', id);
 }
 function refreshTray() {
