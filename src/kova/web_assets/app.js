@@ -2,8 +2,9 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false, comparing: false};
   let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
+  let compare = null;  // compare.js (#96), created once the helpers it borrows exist
   const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
   let autostartBusy = false;
   async function refreshAutostart(action) {
@@ -206,7 +207,8 @@
     // is stopped or waited for, so send is withheld while one runs.
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
-    $('queue').hidden = !busy || nothingToSend; $('steer').hidden = !busy || nothingToSend;
+    $('queue').hidden = !busy || nothingToSend || state.comparing; $('steer').hidden = !busy || nothingToSend || state.comparing;
+    $('compare-open').disabled = busy || pickerSaving || !state.connected;
     $('send').disabled = readingAttachments || pickerSaving || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = !!state.chat?.ephemeral || state.busy || pickerSaving || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
@@ -937,6 +939,7 @@
     await sendText(row.text, row.remote ? {queued: row.id} : {});
   }
   function setChat(chat) {
+    compare?.dismiss();
     rememberDraft();
     state.chat = chat;
     composerModules.history?.reset();
@@ -1586,6 +1589,7 @@
       catch (error) { toastError(error.message); }
       return;
     }
+    if (state.comparing) return toast('Keep an answer or stop the comparison first.');
     if (state.busy && pendingAttachments.length) return toast('Send attachments after the current reply.');
     if (state.busy) return safe(() => queueMessage(text));
     await sendText(text || 'Please read the attached files.', {draft});
@@ -1593,6 +1597,7 @@
   async function sendText(text, sendOptions = {}) {
     if ((!text && !sendOptions.action) || state.busy || pickerSaving || !state.connected) return;
     ++state.navigationVersion;
+    compare?.dismiss();
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
     let turn, terminal = false, submittedChat = null;
     try {
@@ -1830,6 +1835,25 @@
     // Like a shell: Up at the start of an empty box brings back what you said.
     composerModules.history?.keydown(event);
   });
+  // Compare answers (#96) lives in compare.js; app.js lends it the chat and busy state.
+  compare = globalThis.KovaCompare?.create({
+    json, api, write, readEvents, markdown, toastError, follow,
+    models: () => state.models || [], localOnly: () => !!state.localOnly,
+    currentModel: () => composerModel().model, draft: () => $('prompt').value,
+    busy: () => state.busy || pickerSaving || !state.connected,
+    setBusy: flag => {
+      state.busy = state.comparing = flag; state.turnReady = false;
+      if (!flag) state.stopRequested = false;
+      controls();
+    },
+    setStreaming: () => { state.turnReady = true; if (state.stopRequested) safe(cancelTurn); },
+    ensureChat: async () => (state.chat ||= await createComposerChat()),
+    consumeDraft, restoreFocus: () => $('prompt').focus(),
+    mount: node => { empty(false); options(false); $('messages').append(node); nearBottom = true; },
+    kept: async chatId => { await openChat(chatId); await refreshChats(); },
+  }) || null;
+  $('compare-open').hidden = !compare;
+  $('compare-open').onclick = () => compare?.choose();
   $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
@@ -1851,6 +1875,7 @@
     const current = state.chat && !state.chat.ephemeral ? state.chat : null;
     const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
     add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
+    if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
     add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
     add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
@@ -3223,6 +3248,7 @@
   const modelMenu = menu('model', 'Model', {align: 'end', width: 260, placeholder: 'Choose model', describe: modelHint, search: true,
     actions: [
       {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
+      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy, run: () => { options(false); compare?.choose(); }},
       {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
     ]});
   menu('reasoning-effort', 'Reasoning effort', {align: 'end'});
