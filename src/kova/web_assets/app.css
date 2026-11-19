@@ -770,6 +770,37 @@ dialog label, dialog .field { display:grid; gap:6px; color:var(--fg-muted); font
 .shortcuts dt { color:var(--fg-default); font-size:13.5px; }
 .shortcuts dd { display:flex; align-items:center; gap:4px; margin:0; color:var(--fg-faint); font-size:12px; white-space:nowrap; }
 .shortcuts kbd { min-width:22px; padding:4px 6px; text-align:center; background:var(--bg-raised); color:var(--fg-muted); }
+dialog label.shortcuts-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  margin-top: var(--space-4);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg-muted);
+  cursor: text;
+}
+.shortcuts-search:focus-within { border-color: var(--accent-default); }
+.shortcuts-search .icon { width: 14px; height: 14px; }
+.shortcuts-search input {
+  flex: 1;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--fg-default);
+  font-size: var(--type-size-body);
+}
+.shortcuts-empty {
+  margin: var(--space-4) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--type-size-body);
+}
+
 #provider-dialog { width:min(480px, calc(100vw - 24px)); }
 #provider-details, #provider-models-step { display:grid; gap:14px; }
 .provider-intro, .provider-footnote { color:var(--fg-muted); font-size:13px; line-height:1.55; }
