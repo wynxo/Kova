@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- The web app's live event stream connects again: a merge had made `/events` return 500, so reminders and background updates never arrived (#283).
+- Two high-contrast example themes join the palette — a pure black-and-white dark and a matching light (#284).
+- The app mark is now a monochrome K that stays sharp at 16px and inverts with the theme (#285).
+- A Motion setting (Full, Reduced, Off) in Settings > General controls animations across the web and desktop apps (#286).
+- Tool calls now group into one row showing status, time and failures, opening while a turn runs and folding when it finishes (#287).
+- A green-phosphor Terminal example theme joins the palette (#289).
+- Message actions add copy-as-markdown, retry, edit-and-resend and reply details (model, tokens, speed, timing, cost) (#290).
+- docs/THEMES.md gains a walkthrough for installing or making a theme (#291).
+- A midnight navy example theme joins the palette (#292).
+- Settings > General gains text size, density and font choices that sync across paired devices (#293).
+- The web UI now ships visual regression snapshots across themes and widths (#294).
+- The sidebar is resizable and a side panel — including an "Open in panel" option for long code blocks — opens on wide screens (#295).
+- The composer gains up/down message history, @-mention completion and attachment chips with name, size and a remove button (#296).
+- Markdown renders better now: wide tables scroll on their own, streaming code highlights only when it finishes, and footnotes and task lists work (#297).
+- The start screen no longer shows the app mark twice (#299).
+- Settings > General can export and import UI preferences and installed themes, and the choice syncs across devices (#300).
+- Chats can group under projects with shared instructions, managed from the CLI with `kova projects` (#301).
+- While a turn runs, a compact card above the message box tracks the plan's current step and progress, fading out when the turn ends (#303).
+- On phones, the layout improves with safe-area padding, swipe-to-close sheets, edge-swipe sidebar gestures and larger touch targets (#304).
 - Replies gain GitHub-flavored callouts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) that render as labelled asides with the status tokens, and collapsible `<details>`/`<summary>` blocks keep their native keyboard behaviour (#189). The sanitizer's allowlist now admits only those two extra tags and `open`.
 - The desktop window remembers its place, size and whether it was maximized as you move and resize it rather than only on quit, restores all three where the display it was on still exists, and starts fresh instead of off-screen when it does not (#203).
 - Fix the web app's service worker: a merge had dropped its `CACHE` constant and left the cache names in the list of shell URLs, so install and activate threw, the worker never took over, and the app neither gained an offline shell nor replaced an old one. The cache name is declared again (and bumped), and a test keeps a name out of the URL list. The shell list itself was also incomplete — `tokens.css`, Settings, the palette and the message actions were missing — so an offline load now has every asset the page asks for, with a test that compares the two lists.
