@@ -955,6 +955,20 @@ def _format_changes(rows: list[tuple]) -> str:
     return "  " + " · ".join(f"{name}: {old!r} -> {new!r}" for name, old, new in rows)
 
 
+@_prefs.command("set")
+def prefs_set(
+    name: str = typer.Argument(..., help="A preference name, such as custom_css."),
+    value: str = typer.Argument(..., help="Its new value, such as on or off."),
+):
+    """Change one UI preference from the terminal."""
+    try:
+        client = get_client()
+        saved = client.set_preferences({name: value.strip()})
+    except (KovaError, ui_prefs.UiPrefsError) as exc:
+        _fail(str(exc))
+    _ok(f"{name} = {saved.get(name, value.strip())}")
+
+
 @_prefs.command("export")
 def prefs_export(path: str | None = typer.Argument(
         None, help="JSON path (default: ~/Kova-ui-preferences-YYYY-MM-DD.json).")):

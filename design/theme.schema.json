@@ -40,6 +40,13 @@
         "syntax": { "$ref": "#/$defs/colorGroup" }
       }
     },
+    "background": {
+      "description": "Optional decorative background behind the app shell: a subtle gradient or one image from KOVA_HOME/themes/assets. Panels stay readable; contrast is measured against their surfaces.",
+      "oneOf": [
+        { "$ref": "#/$defs/gradientBackground" },
+        { "$ref": "#/$defs/imageBackground" }
+      ]
+    },
     "terminal": {
       "type": "array",
       "minItems": 16,
@@ -59,6 +66,52 @@
       "additionalProperties": { "$ref": "#/$defs/color" },
       "propertyNames": { "pattern": "^[a-zA-Z0-9-]+$" },
       "description": "A flat group of colour tokens, e.g. { \"default\": \"#ff7a1a\", \"hover\": \"#ff9a52\" }."
+    },
+    "gradientBackground": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "stops"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["gradient"] },
+        "stops": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/color" },
+          "description": "Two to four colours, in painting order."
+        },
+        "angle": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360,
+          "description": "CSS gradient angle in degrees. Defaults to 160, a gentle top-to-bottom wash."
+        }
+      }
+    },
+    "imageBackground": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "file"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["image"] },
+        "file": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}\\.(?:png|jpg|webp)$",
+          "description": "One file name in KOVA_HOME/themes/assets. No paths, URLs or query strings; png, jpg or webp only."
+        },
+        "dim": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.8,
+          "description": "How much of the theme's bg.base is laid over the image. Defaults to 0.35."
+        },
+        "blur": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 24,
+          "description": "Gaussian blur in CSS pixels. Defaults to 0."
+        }
+      }
     }
   }
 }

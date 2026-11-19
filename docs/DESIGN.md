@@ -100,6 +100,11 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
   `default` (and `inter`, `normal`, `on`) writes no override, so it is the scale above.
 - Motion is a setting too: Full, Reduced or Off overrides the duration tokens under
   `data-motion` on `<html>`.
+- A theme background is drawn by one fixed layer under the shell. Panels may use an 88%
+  semantic surface plus backdrop blur while it is active, and must fall back to the
+  opaque `--bg-surface` / `--bg-base` under `prefers-reduced-transparency`, motion off,
+  forced colours, or no `backdrop-filter`. The **Show theme backgrounds** setting turns
+  the layer off without changing the theme.
 
 ## Components
 
@@ -176,6 +181,9 @@ semantic tokens you want to change. A theme that inherits `kova-dark` and change
 - Every theme must pass `python scripts/build_tokens.py --check` before it ships.
 - Reduced motion is honoured: a device that asks for it resolves Full to Reduced, and the
   Motion setting's Reduced or Off always wins. `data-motion` on `<html>` is the one switch.
+- Reduced transparency is honoured: theme backgrounds stay behind panels at no more than
+  12% translucency, and the solid measured surfaces return under
+  `prefers-reduced-transparency` or motion off.
 - Focus is always visible and never removed without a replacement.
 - Streaming text must not live in an `aria-live` region; announce phase changes once instead.
 

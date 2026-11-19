@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 126 endpoints: 125 route handlers plus the static asset mount.
+The app exposes 128 endpoints: 127 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -92,6 +92,7 @@ same commit as the route.
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
 | `GET /app/sw.js` | public | app-shell-only service worker |
+| `GET /app/custom.css` | browser session | optional user stylesheet, served only while the setting is on |
 | `GET /app/gallery` | public | dev-only component gallery, served only with `KOVA_GALLERY=1` |
 | `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |
 | `POST /app/share/{token}` | browser session | consume an owner-bound share once |
@@ -177,6 +178,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /themes/gallery` | token or session | list bundled examples, install state, swatches and resolved preview tokens; `?installed=true` resolves a user theme named `gallery` |
 | `POST /themes/gallery/{theme_id}/install` | token or session | validate and install a bundled example as a theme file (paired phones need `settings:write`) |
 | `GET /themes/{theme_id}` | token or session | resolve one theme's tokens over the base it extends |
+| `GET /themes/assets/{name}` | token or session | one theme background image from `KOVA_HOME/themes/assets`: a plain png/jpg/webp file name, confined to that folder, with its real type |
 | `GET/POST /providers` | token or session | list connected providers / connect one |
 | `GET /providers/catalog` | token or session | the providers and models offered for selection |
 | `GET /extensions/catalog` | token or session | the extensions catalog (configured index or the bundled one), with install state |
@@ -396,8 +398,15 @@ choice - `system`, `light`, `dark` or an installed theme file's id - kept in the
 shared `/preferences` document and cached in `localStorage`; it runs from `<head>`
 so the first frame is already right, sets `data-theme` for the built-in palette, and
 writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
-properties on `<html>`. The `theme-color` meta tag and the web manifest take the
-theme's `bg.base`. The Motion preference (#181) uses the same shared document and
+properties on `<html>`. A theme file may also carry a `background` object (#206): a
+subtle gradient of semantic colours, or one image from `KOVA_HOME/themes/assets` with
+dim and blur. `theme.js` writes that as `--theme-background` and a
+`data-background` marker; one fixed layer in `app.css` draws it behind the shell,
+panels become 88% surfaces with backdrop blur, and the
+`prefers-reduced-transparency`, motion-off and no-backdrop-filter rules return to the
+opaque measured surfaces. The **Show theme backgrounds** preference (default on) turns
+the layer off without changing the theme. The `theme-color` meta tag and the web
+manifest take the theme's `bg.base`. The Motion preference (#181) uses the same shared document and
 first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
 asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
 one block in `app.css` shortens or removes motion through the duration tokens.
@@ -410,7 +419,11 @@ Text size, density, font, content width and avatars (#179, #205) use the same sh
 document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
 `data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
 block in `app.css` swaps the `--type-size-*`, `--space-*`, `--font` and `--column`
-values, so no component repeats a size or a gap. An unsent
+values, so no component repeats a size or a gap. Optional custom CSS (#178) is user content:
+it is off by default, served at `/app/custom.css` only while the shared `custom_css`
+preference is on, stripped of `@import` and any `url(...)` outside `/app/assets/`, capped
+at 64 KiB, and appended last by `web_assets/custom_css.js`. `?safe=1` skips it so a broken
+stylesheet can be turned off. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and
