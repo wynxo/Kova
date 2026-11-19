@@ -28,15 +28,33 @@ APPEARANCES = ("dark", "light")
 GROUPS = ("bg", "fg", "border", "accent", "status", "syntax")
 _TOP_LEVEL = {
     "$schema", "id", "name", "version", "author", "description",
-    "appearance", "extends", "tokens", "terminal",
+    "appearance", "extends", "tokens", "terminal", "background",
 }
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _COLOUR = re.compile(r"^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)|rgba?\([0-9.,%\s/]+\))$")
 
+#: Backgrounds (#206). An image is one file in ``KOVA_HOME/themes/assets``:
+#: a name only, never a path or URL, and one of these three types. Bytes are
+#: capped so a theme cannot make the app fetch an arbitrarily large file.
+BACKGROUND_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}
+BACKGROUND_MAX_BYTES = 4 * 1024 * 1024
+_BACKGROUND_FILE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$")
+_BACKGROUND_KEYS = {
+    "gradient": {"kind", "stops", "angle"},
+    "image": {"kind", "file", "dim", "blur"},
+}
+GRADIENT_DEFAULT_ANGLE = 160
+IMAGE_DEFAULT_DIM = 0.35
+IMAGE_DEFAULT_BLUR = 0
+
 
 class ThemeError(ValueError):
     """A theme file, or a request for one, did not validate."""
+
+
+class ThemeAssetTooLarge(ThemeError):
+    """A background image is valid in shape but larger than Kova will serve."""
 
 
 # ------------------------------------------------------------------------- built-ins
@@ -95,6 +113,64 @@ def base_tokens(theme_id: str) -> dict[str, Any]:
 # ------------------------------------------------------------------------ validation
 def _is_colour(value: Any) -> bool:
     return isinstance(value, str) and bool(_COLOUR.match(value))
+
+
+def _number(value: Any, low: float, high: float, field: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= high:
+        raise ThemeError(f"background.{field} must be a number from {low} to {high}; got {value!r}.")
+    return float(value)
+
+
+def _background(value: Any) -> dict[str, Any]:
+    """Validate one background object and return it with its defaults filled in.
+
+    Two disjoint shapes (mirrored by the schema's ``oneOf``): a gradient of
+    2-4 colours, or one image file name plus dim and blur. Unknown keys are
+    refused, so neither shape can smuggle in a URL or a CSS fragment.
+    """
+    if not isinstance(value, dict):
+        raise ThemeError("background must be an object.")
+    kind = value.get("kind")
+    if kind not in _BACKGROUND_KEYS:
+        raise ThemeError("background.kind must be 'gradient' or 'image'.")
+    allowed = _BACKGROUND_KEYS[kind]
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ThemeError(
+            f"background.{kind} has unexpected key{'s' if len(unknown) > 1 else ''}: "
+            f"{', '.join(unknown)}."
+        )
+
+    if kind == "gradient":
+        stops = value.get("stops")
+        if not isinstance(stops, list) or not 2 <= len(stops) <= 4:
+            raise ThemeError("background.stops must be 2-4 colours.")
+        for index, colour in enumerate(stops):
+            if not _is_colour(colour):
+                raise ThemeError(
+                    f"background.stops[{index}] must be a hex or rgb()/rgba() colour; got {colour!r}."
+                )
+        angle = value.get("angle", GRADIENT_DEFAULT_ANGLE)
+        return {
+            "kind": "gradient",
+            "stops": list(stops),
+            "angle": _number(angle, 0, 360, "angle"),
+        }
+
+    name = value.get("file")
+    if not isinstance(name, str) or not _BACKGROUND_FILE.fullmatch(name):
+        raise ThemeError(
+            "background.file must be one file name in themes/assets "
+            "(lowercase letters, digits, dots and hyphens; png, jpg or webp)."
+        )
+    dim = value.get("dim", IMAGE_DEFAULT_DIM)
+    blur = value.get("blur", IMAGE_DEFAULT_BLUR)
+    return {
+        "kind": "image",
+        "file": name,
+        "dim": _number(dim, 0, 0.8, "dim"),
+        "blur": _number(blur, 0, 24, "blur"),
+    }
 
 
 def _terminal(palette: Any) -> list[str]:
@@ -175,6 +251,8 @@ def validate(payload: Any) -> dict[str, Any]:
 
     if "terminal" in payload:
         _terminal(payload["terminal"])
+    if "background" in payload:
+        _background(payload["background"])
     return payload
 
 
@@ -233,6 +311,42 @@ def theme_dir(home: Path | str) -> Path:
     return Path(home) / "themes"
 
 
+def assets_dir(home: Path | str) -> Path:
+    """Where a theme's background images live: ``KOVA_HOME/themes/assets``."""
+    return theme_dir(home) / "assets"
+
+
+def normalise_background(value: Any) -> dict[str, Any] | None:
+    """The background with defaults filled in, or ``None`` when absent."""
+    return None if value is None else _background(value)
+
+
+def background_asset(home: Path | str, name: str) -> Path:
+    """Resolve one servable background image, or raise :class:`ThemeError`.
+
+    The name is checked before the filesystem is touched. The resolved path
+    must stay inside ``themes/assets`` (a symlink cannot point elsewhere) and
+    the file must be one of the three image types and within the size cap.
+    """
+    if not isinstance(name, str) or not _BACKGROUND_FILE.fullmatch(name):
+        raise ThemeError("Not a theme background image name.")
+    directory = assets_dir(home)
+    try:
+        resolved = (directory / name).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ThemeError("No such theme background image.") from exc
+    root = directory.resolve()
+    if root not in resolved.parents or not resolved.is_file():
+        raise ThemeError("No such theme background image.")
+    if resolved.suffix not in BACKGROUND_TYPES:
+        raise ThemeError("Theme backgrounds are png, jpg or webp.")
+    if resolved.stat().st_size > BACKGROUND_MAX_BYTES:
+        raise ThemeAssetTooLarge(
+            f"Background images must be at most {BACKGROUND_MAX_BYTES // (1024 * 1024)} MiB."
+        )
+    return resolved
+
+
 def discover(home: Path | str) -> list[dict[str, Any]]:
     """Every theme Kova can offer: the built-ins, then the user's files.
 
@@ -288,6 +402,7 @@ def get(theme_id: str, home: Path | str) -> dict[str, Any]:
             "source": "built-in",
             "tokens": tokens,
             "terminal": terminal,
+            "background": None,
         }
     path = theme_dir(home) / f"{theme_id}.json"
     if not path.is_file():
@@ -298,7 +413,13 @@ def get(theme_id: str, home: Path | str) -> dict[str, Any]:
     theme = load_file(path)
     tokens = resolve(theme)
     terminal = tokens.pop("terminal")
-    return {**_summary(theme), "source": str(path), "tokens": tokens, "terminal": terminal}
+    return {
+        **_summary(theme),
+        "source": str(path),
+        "tokens": tokens,
+        "terminal": terminal,
+        "background": normalise_background(theme.get("background")),
+    }
 
 
 # ------------------------------------------------------------------ the browser chrome
@@ -325,7 +446,9 @@ def chrome_colours(choice: str | None, home: Path | str) -> dict[str, str]:
 
 
 __all__ = [
-    "APPEARANCES", "BUILTIN", "CHOICES", "GROUPS", "TOKENS_PATH", "ThemeError",
-    "base_tokens", "builtin_data", "chrome_colours", "default_base", "discover",
-    "display_name", "get", "load_file", "resolve", "theme_dir", "validate",
+    "APPEARANCES", "BACKGROUND_MAX_BYTES", "BACKGROUND_TYPES", "BUILTIN",
+    "CHOICES", "GROUPS", "TOKENS_PATH", "ThemeAssetTooLarge", "ThemeError",
+    "assets_dir", "background_asset", "base_tokens", "builtin_data",
+    "chrome_colours", "default_base", "discover", "display_name", "get",
+    "load_file", "normalise_background", "resolve", "theme_dir", "validate",
 ]
