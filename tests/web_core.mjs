@@ -411,7 +411,7 @@ const reviewBody = new Element(), reviewView = turnView(reviewBody);
 reviewView.accept({type: 'review', checkpoint_id: 7, label: 'fix the notes',
                    files: [{path: 'notes.txt', status: 'modified', additions: 1, deletions: 1}]});
 const changes = byClass(reviewBody, 'changes-card')[0];
-assert.ok(changes.textContent.includes('Changed in this turn'));
+assert.ok(changes.textContent.includes('Changed 1 file'), 'the end-of-turn summary counts the files');
 assert.ok(changes.textContent.includes('fix the notes'));
 assert.equal(byClass(changes, 'status-modified').length, 1);
 assert.ok(changes.textContent.includes('+1 −1'));
@@ -426,6 +426,29 @@ assert.ok(restore.textContent.includes('notes.txt'));
 buttons(restore)[1].onclick(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/restore' && r.body === null));
 reviewView.finish();
+// With the side panel loaded, the summary offers Review changes: every file
+// opens as a panel tab, the first one in front (#190).
+{
+  const opened = [];
+  sandbox.KovaDiffPanel = {open: options => { opened.push(options); return Promise.resolve(); }};
+  sandbox.window.KovaPanel = {open() {}};
+  const body = new Element(), view = turnView(body);
+  view.accept({type: 'review', checkpoint_id: 8, label: 'two files', files: [
+    {path: 'a.txt', status: 'modified', additions: 2, deletions: 1},
+    {path: 'b.txt', status: 'added', additions: 3, deletions: 0}]});
+  const card = byClass(body, 'changes-card')[0];
+  assert.ok(card.textContent.includes('Changed 2 files'));
+  assert.ok(card.textContent.includes('+5 −1'));
+  const review = buttons(card).find(button => button.textContent === 'Review changes');
+  assert.ok(review, 'a Review changes button');
+  assert.equal(review.attrs['aria-label'], 'Review changed 2 files in the side panel');
+  review.onclick(); await tick();
+  assert.deepEqual(opened.map(item => [item.path, item.checkpointId, Boolean(item.background)]),
+                   [['a.txt', 8, false], ['b.txt', 8, true]]);
+  assert.equal(opened[0].returnFocus, review);
+  view.finish();
+  delete sandbox.KovaDiffPanel; delete sandbox.window.KovaPanel;
+}
 console.log('Per-turn change review, preview and restore passed');
 
 // Queue vs steer: both are explicit while a reply runs, and the queue survives a reload.
