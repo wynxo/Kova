@@ -262,6 +262,20 @@ class FakeNode {
   append(...nodes) { for (const node of nodes) { node.parentNode = this; this.children.push(node); } }
   replaceChildren(...nodes) { this._text = ''; this.children = []; this.append(...nodes); }
   setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return Object.hasOwn(this.attrs, name) ? this.attrs[name] : null; }
+  hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
+  remove() {
+    if (!this.parentNode) return;
+    const index = this.parentNode.children.indexOf(this);
+    if (index >= 0) this.parentNode.children.splice(index, 1);
+    this.parentNode = null;
+  }
+  querySelectorAll(selector) {
+    const found = walkNodes(this).filter(node => node !== this);
+    if (selector === '[data-shortcut-row]') return found.filter(node => node.hasAttribute('data-shortcut-row'));
+    if (selector === '[data-shortcut]') return found.filter(node => node.hasAttribute('data-shortcut'));
+    return [];
+  }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   removeEventListener(type, fn) {
     this.listeners[type] = (this.listeners[type] || []).filter(listener => listener !== fn);
@@ -284,15 +298,21 @@ const fireKey = event => {
   return {prevented, stopped};
 };
 const uiStorage = new MemoryStorage();
-const ui = S.create({storage: uiStorage, mac: false});
+const ui = S.create({storage: uiStorage, mac: false, sync: false});
 const host = new FakeNode('div');
 host.ownerDocument = doc;
 S.mount(host, ui);
-const list = host.children[0];
+const presetRow = host.children[0];
+const list = host.children[1];
+const foot = host.children[2];
+const presetSelect = presetRow.children[2];
+const customOption = presetSelect.children[3];
 const rowFor = description => list.children.find(row => row.children[0].textContent.includes(description));
 const rowOf = id => rowFor(entry(id).description);
 assert.equal(list.children.length, S.REGISTRY.length, 'one row per action');
-assert.equal(host.children[1].children[0].disabled, true, 'Reset all starts disabled');
+assert.equal(presetSelect.value, 'default', 'the default preset starts selected');
+assert.equal(customOption.disabled, true, 'Custom is a state, not a choice');
+assert.equal(foot.children[0].disabled, true, 'Reset all starts disabled');
 
 // Clicking the keys starts recording, and the next chord is saved at once.
 const conversation = rowOf('new-conversation');
@@ -304,7 +324,9 @@ assert.equal(ui.binding('new-conversation'), 'mod+alt+j');
 assert.equal(JSON.parse(uiStorage.getItem(S.STORAGE_KEY))['new-conversation'], 'mod+alt+j');
 assert.equal(conversation.children[1].textContent, 'CtrlAltJ', 'the row shows the new keys');
 assert.equal(conversation.children[2].hidden, false, 'a changed row offers Reset');
-assert.equal(host.children[1].children[0].disabled, false, 'Reset all is live now');
+assert.equal(foot.children[0].disabled, false, 'Reset all is live now');
+assert.equal(presetSelect.value, 'custom', 'recording a key leaves the preset');
+assert.equal(customOption.disabled, false, 'Custom is now the current choice');
 
 // A chord another action owns is refused, named, and never saved.
 const paletteRow = rowOf('palette');
@@ -325,5 +347,240 @@ assert.equal(ui.binding('palette'), 'mod+k');
 conversation.children[2].listeners.click[0]();
 assert.equal(ui.binding('new-conversation'), 'mod+shift+k');
 same(ui.overrides(), {});
+assert.equal(presetSelect.value, 'default', 'resetting the last key returns to Default');
 
-console.log('Shortcut registry, overrides, conflicts, storage, dispatch and remap list passed');
+// Picking a preset replaces the whole map; Custom is not a choice.
+presetSelect.value = 'vim';
+presetSelect.listeners.change[0]();
+assert.equal(ui.binding('next-conversation'), 'alt+j');
+assert.equal(ui.binding('previous-conversation'), 'alt+k');
+assert.equal(ui.binding('palette'), 'mod+shift+p');
+assert.equal(presetSelect.value, 'vim');
+assert.equal(customOption.disabled, true);
+presetSelect.value = 'custom';
+presetSelect.listeners.change[0]();
+assert.equal(ui.binding('palette'), 'mod+shift+p', 'Custom cannot be picked, so nothing changes');
+assert.equal(presetSelect.value, 'vim', 'the select snaps back to the preset in use');
+presetSelect.value = 'emacs';
+presetSelect.listeners.change[0]();
+assert.equal(ui.binding('next-conversation'), 'alt+n', 'Emacs-ish moves down with M-n');
+assert.equal(ui.binding('previous-conversation'), 'alt+p', 'and up with M-p');
+presetSelect.value = 'default';
+presetSelect.listeners.change[0]();
+same(ui.overrides(), {});
+
+// ---------------------------------------------------------------- presets
+same(S.PRESET_NAMES, ['default', 'vim', 'emacs']);
+for (const name of S.PRESET_NAMES) {
+  const preset = S.PRESETS[name];
+  assert.equal(typeof preset.label, 'string', `${name} has a label`);
+  for (const [id, binding] of Object.entries(preset.overrides)) {
+    assert.ok(entry(id), `${name} only changes known actions`);
+    assert.equal(S.formatBinding(binding), binding, `${name}: ${id} is canonical`);
+    assert.equal(S.isUsable(binding), true, `${name}: ${id} never steals typing`);
+  }
+  for (const mac of [false, true]) {
+    same(S.conflicts(S.resolveOverrides(preset.overrides), {mac}), [],
+         `${name} never collides (mac: ${mac})`);
+  }
+}
+same(S.PRESETS.default.overrides, {});
+assert.equal(S.PRESETS.vim.overrides['next-conversation'], 'alt+j');
+assert.equal(S.PRESETS.vim.overrides['previous-conversation'], 'alt+k');
+assert.equal(S.PRESETS.emacs.overrides['next-conversation'], 'alt+n');
+assert.equal(S.PRESETS.emacs.overrides['previous-conversation'], 'alt+p');
+assert.equal(S.presetOf({}), 'default');
+assert.equal(S.presetOf(S.PRESETS.vim.overrides), 'vim');
+assert.equal(S.presetOf(S.PRESETS.emacs.overrides), 'emacs');
+assert.equal(S.presetOf({palette: 'mod+shift+p'}), 'custom', 'one preset key alone is Custom');
+assert.equal(S.presetOf({palette: 'mod+k'}), 'default', 'a default entry is not an override');
+
+const presetApp = S.create({storage: new MemoryStorage(), mac: false, sync: false});
+assert.equal(presetApp.preset(), 'default');
+assert.equal(presetApp.applyPreset('nope').error, 'unknown-preset');
+assert.equal(presetApp.applyPreset('vim').ok, true);
+assert.equal(presetApp.preset(), 'vim');
+assert.equal(presetApp.binding('next-conversation'), 'alt+j');
+assert.equal(presetApp.actionFor(press('j', {altKey: true})), 'next-conversation');
+assert.equal(presetApp.set('toggle-theme', 'mod+alt+t').ok, true);
+assert.equal(presetApp.preset(), 'custom', 'recording one key leaves the preset');
+assert.equal(presetApp.applyPreset('emacs').ok, true);
+assert.equal(presetApp.binding('toggle-theme'), 'mod+shift+l', 'a preset replaces the whole map');
+assert.equal(presetApp.applyPreset('default').ok, true);
+same(presetApp.overrides(), {});
+
+// A preset's plain Alt keys never steal typing, but a command chord still works.
+assert.equal(S.actionFor(press('ArrowDown', {altKey: true}), {}, {mac: false}), 'next-conversation');
+assert.equal(S.actionFor(press('ArrowUp', {altKey: true}), {}, {mac: false}), 'previous-conversation');
+const guardApp = S.create({storage: new MemoryStorage(), mac: false, sync: false});
+guardApp.applyPreset('vim');
+assert.equal(guardApp.actionFor(press('j', {altKey: true})), 'next-conversation');
+assert.equal(guardApp.actionFor(press('j', {altKey: true}), {guardTyping: true}), null,
+             'Alt+J inside a text field stays typing');
+assert.equal(guardApp.actionFor(press('b', {ctrlKey: true}), {guardTyping: true}), 'toggle-sidebar',
+             'a Ctrl chord still fires while typing');
+assert.equal(guardApp.actionFor(press('Escape'), {guardTyping: true}), 'stop-reply',
+             'Escape still stops the reply');
+
+// ------------------------------------------------------------ dialog search
+const dialogList = new FakeNode('dl');
+const typingRow = new FakeNode('div');
+const typingTerm = new FakeNode('dt');
+typingTerm.textContent = 'Send the message';
+const typingKeys = new FakeNode('dd');
+const enterKey = new FakeNode('kbd');
+enterKey.textContent = 'Enter';
+typingKeys.append(enterKey);
+typingRow.append(typingTerm, typingKeys);
+dialogList.append(typingRow);
+const search = new FakeNode('input');
+search.value = '';
+const emptyNote = new FakeNode('p');
+emptyNote.hidden = true;
+const dialogPage = {
+  createElement: tag => new FakeNode(tag),
+  getElementById: id => ({
+    'shortcut-list': dialogList, 'shortcut-search': search, 'shortcut-empty': emptyNote,
+  })[id] || null,
+};
+const visibleRows = () => dialogList.children.filter(row => !row.hidden);
+S.renderDialog(presetApp, {doc: dialogPage});
+assert.equal(visibleRows().length, S.REGISTRY.length + 1, 'every action and the typing keys show');
+assert.equal(emptyNote.hidden, true);
+
+S.renderDialog(presetApp, {doc: dialogPage, query: 'sidebar'});
+assert.equal(visibleRows().length, 1, 'a name filters the list');
+assert.equal(visibleRows()[0].getAttribute('data-shortcut-row'), 'toggle-sidebar');
+
+S.renderDialog(presetApp, {doc: dialogPage, query: 'ctrl b'});
+assert.equal(visibleRows()[0].getAttribute('data-shortcut-row'), 'toggle-sidebar',
+             'the keys are searchable too');
+
+S.renderDialog(presetApp, {doc: dialogPage, query: 'ctrl+b'});
+assert.equal(visibleRows()[0].getAttribute('data-shortcut-row'), 'toggle-sidebar',
+             'a chord typed with + is the same search');
+
+S.renderDialog(presetApp, {doc: dialogPage, query: 'sEnd'});
+assert.equal(visibleRows().length, 1);
+assert.equal(visibleRows()[0], typingRow, 'the typing keys filter with the list');
+
+S.renderDialog(presetApp, {doc: dialogPage, query: 'nothing-here'});
+assert.equal(visibleRows().length, 0);
+assert.equal(emptyNote.hidden, false, 'an empty result says so');
+assert.ok(emptyNote.textContent.includes('nothing-here'), emptyNote.textContent);
+
+search.value = 'light';
+S.renderDialog(presetApp, {doc: dialogPage});
+assert.equal(visibleRows().length, 1, 'the dialog reads its own search box');
+assert.equal(visibleRows()[0].getAttribute('data-shortcut-row'), 'toggle-theme');
+search.value = '';
+S.renderDialog(presetApp, {doc: dialogPage});
+assert.equal(visibleRows().length, S.REGISTRY.length + 1);
+assert.equal(emptyNote.hidden, true);
+
+// --------------------------------------------------------- keys on the page
+assert.equal(S.ariaKeyshortcuts('mod+shift+k'), 'Control+Shift+K Meta+Shift+K');
+assert.equal(S.ariaKeyshortcuts('escape'), 'Escape');
+assert.equal(S.ariaKeyshortcuts('ctrl+alt+arrowup'), 'Control+Alt+ArrowUp');
+assert.equal(S.ariaKeyshortcuts('nonsense'), '');
+
+const newChatButton = new FakeNode('button');
+newChatButton.setAttribute('data-shortcut', 'new-conversation');
+newChatButton.textContent = 'New chat';
+const toggleButton = new FakeNode('button');
+toggleButton.setAttribute('data-shortcut', 'toggle-sidebar');
+toggleButton.setAttribute('title', 'Toggle sidebar');
+toggleButton.textContent = 'Toggle sidebar';
+const hintPage = {
+  querySelectorAll: selector => (selector === '[data-shortcut]'
+    ? [newChatButton, toggleButton] : []),
+};
+S.applyHints(presetApp, hintPage);
+assert.equal(newChatButton.getAttribute('aria-keyshortcuts'), 'Control+Shift+K Meta+Shift+K');
+assert.equal(newChatButton.getAttribute('title'), 'New chat (Ctrl Shift K)',
+             'the tooltip carries the keys');
+assert.equal(toggleButton.getAttribute('title'), 'Toggle sidebar (Ctrl B)');
+presetApp.set('toggle-sidebar', 'mod+j');
+S.applyHints(presetApp, hintPage);
+assert.equal(toggleButton.getAttribute('title'), 'Toggle sidebar (Ctrl J)',
+             'the hint follows a recorded key');
+assert.equal(toggleButton.getAttribute('aria-keyshortcuts'), 'Control+J Meta+J');
+assert.equal(toggleButton.getAttribute('data-shortcut-title'), 'Toggle sidebar',
+             'the original title is kept once');
+presetApp.resetAll();
+
+// -------------------------------------------------------------- shared sync
+function fakeServer(shortcuts = {}) {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({url, options});
+    if ((options.method || 'GET') === 'GET') {
+      return {ok: true, json: async () => ({theme: 'system', shortcuts})};
+    }
+    return {ok: true, json: async () => ({})};
+  };
+  const puts = () => calls.filter(call => call.options.method === 'PUT');
+  return {fetchImpl, calls, puts};
+}
+
+// The shared document wins after the first paint, and becomes the next cache.
+const sharedServer = fakeServer({palette: 'mod+shift+p'});
+const sharedCache = new MemoryStorage();
+const shared = S.create({storage: sharedCache, mac: false, fetchImpl: sharedServer.fetchImpl});
+assert.equal(shared.binding('palette'), 'mod+k', 'the cached first paint still has the defaults');
+await shared.ready;
+assert.equal(shared.binding('palette'), 'mod+shift+p', 'the shared document arrives and wins');
+assert.equal(JSON.parse(sharedCache.getItem(S.STORAGE_KEY)).palette, 'mod+shift+p',
+             'the shared keys become the next first paint');
+assert.equal(sharedCache.getItem(S.SYNCED_KEY), '1');
+assert.equal(sharedServer.puts().length, 0, 'adopting does not write the server back');
+
+// Keys from before sync are sent once, into an empty shared document.
+const oldCache = new MemoryStorage({[S.STORAGE_KEY]: JSON.stringify({palette: 'mod+alt+k'})});
+const emptyServer = fakeServer({});
+const migrated = S.create({storage: oldCache, mac: false, fetchImpl: emptyServer.fetchImpl});
+await migrated.ready;
+assert.equal(emptyServer.puts().length, 1, 'the local keys are sent once');
+assert.equal(JSON.parse(emptyServer.puts()[0].options.body).shortcuts.palette, 'mod+alt+k');
+assert.equal(migrated.binding('palette'), 'mod+alt+k');
+assert.equal(oldCache.getItem(S.SYNCED_KEY), '1');
+
+const secondServer = fakeServer({palette: 'mod+alt+k'});
+const again = S.create({storage: oldCache, mac: false, fetchImpl: secondServer.fetchImpl});
+await again.ready;
+assert.equal(secondServer.puts().length, 0, 'the migration happens once');
+assert.equal(again.binding('palette'), 'mod+alt+k');
+
+// A recorded key is written to the shared document as it is saved.
+const liveServer = fakeServer({palette: 'mod+shift+p'});
+const liveApp = S.create({storage: new MemoryStorage(), mac: false,
+                          fetchImpl: liveServer.fetchImpl});
+await liveApp.ready;
+liveApp.set('toggle-sidebar', 'mod+j');
+assert.equal(liveServer.puts().length, 1);
+assert.equal(JSON.parse(liveServer.puts()[0].options.body).shortcuts['toggle-sidebar'], 'mod+j');
+
+// Offline and a key recorded before the first reply both keep the local keys.
+const offlineCache = new MemoryStorage({[S.STORAGE_KEY]: JSON.stringify({palette: 'mod+alt+k'})});
+const offline = S.create({storage: offlineCache, mac: false,
+                          fetchImpl: async () => { throw new Error('offline'); }});
+await offline.ready;
+assert.equal(offline.binding('palette'), 'mod+alt+k', 'offline keeps the cached keys');
+
+let reply;
+const earlyWrites = [];
+const early = S.create({
+  storage: new MemoryStorage(), mac: false,
+  fetchImpl: (url, options = {}) => {
+    if (options.method === 'PUT') { earlyWrites.push(options.body); return Promise.resolve({ok: true}); }
+    return new Promise(resolve => { reply = resolve; });
+  },
+});
+early.set('palette', 'mod+alt+k');
+reply({ok: true, json: async () => ({shortcuts: {palette: 'mod+shift+p'}})});
+await early.ready;
+assert.equal(early.binding('palette'), 'mod+alt+k', 'a key recorded before the first reply stays');
+assert.equal(earlyWrites.length, 1, 'and it is sent to the server');
+
+console.log('Shortcut registry, overrides, conflicts, storage, dispatch, presets, '
+  + 'dialog search, page hints and shared sync passed');
