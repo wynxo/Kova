@@ -65,14 +65,21 @@
       const card = element('li', 'theme-gallery-card');
       const heading = element('div', 'theme-gallery-heading');
       heading.append(element('h3', '', entry.name), element('span', '', entry.appearance === 'light' ? 'Light' : 'Dark'));
-      const swatches = element('div', 'theme-gallery-swatches');
-      swatches.setAttribute('aria-hidden', 'true');
-      for (const colour of entry.swatches) {
-        const sample = element('span');
-        sample.style.backgroundColor = colour;
-        swatches.append(sample);
+      card.append(heading);
+      // A live preview card from the theme's resolved tokens (#175), not the
+      // four-colour swatch strip: surfaces, text, an accent chip and status dots.
+      if (window.KovaThemePreview) {
+        card.append(window.KovaThemePreview.card(entry.tokens));
+      } else {
+        const swatches = element('div', 'theme-gallery-swatches');
+        swatches.setAttribute('aria-hidden', 'true');
+        for (const colour of entry.swatches) {
+          const sample = element('span');
+          sample.style.backgroundColor = colour;
+          swatches.append(sample);
+        }
+        card.append(swatches);
       }
-      card.append(heading, swatches);
       if (entry.description) card.append(element('p', '', entry.description));
 
       const preview = button('Preview');
