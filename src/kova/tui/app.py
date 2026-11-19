@@ -28,7 +28,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from kova import __version__, theme
+from kova import __version__, compare_cli, theme
 from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
@@ -36,7 +36,7 @@ from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
 from .keymap import Keymap
-from .markdown import ACCENT, BASH, MEMORY, display_width
+from .markdown import ACCENT, BASH, MEMORY, MarkdownStream, display_width
 from .render import Renderer, compact_number, duration, shorten
 from .style import ACCENT_SOFT, FAINT, active_theme, colour_level
 from .terminal import KeyReader, RawMode, Screen
@@ -83,6 +83,7 @@ COMMANDS = {
     "permissions": ("/permissions [mode|rules]", "When Kova asks before acting: manual, auto, full"),
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
     "model": ("/model [name]", "List models; /model <name> switches"),
+    "compare": ("/compare [-m a,b] <text>", "Ask several models the same thing, then keep one answer"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "memory": ("/memory [list|show|forget]", "Browse what Kova remembers; /memory show <slug>, /memory forget <slug>"),
     "think": ("/think", "Toggle full reasoning (collapsed by default)"),
@@ -255,6 +256,7 @@ class ChatApp:
         self.overlay = None            # Choice, Picker or TextPrompt
         self.approval: dict | None = None
         self.job: Job | None = None
+        self.compare: compare_cli.Collector | None = None   # the compare a job is following
         self.queued: list[str] = []
         self.context_notes: list[str] = []
         self.state_events: queue.Queue = queue.Queue()
@@ -929,6 +931,10 @@ class ChatApp:
                 else:
                     self._ask(event)
                 continue
+            if job.kind == "compare" and self.compare is not None:
+                self.compare.feed(event)
+                self.renderer.activity = self.compare.progress()
+                continue
             if kind == "plan":
                 self.plan = [item for item in event.get("items") or [] if isinstance(item, dict)]
             self.renderer.handle(event)
@@ -953,6 +959,8 @@ class ChatApp:
             self.context_notes.append(
                 f"I ran this shell command myself in {self.cwd}:\n$ {job.label}\n"
                 f"{output[-SHELL_CONTEXT_CHARS:].rstrip() or '(no output)'}")
+        elif job.kind == "compare":
+            self._show_compare(job, stopped)
         else:
             error = job.outcome.get("error")
             if error is not None and not stopped:
@@ -1009,7 +1017,7 @@ class ChatApp:
         job.cancel.set()
         job.cancelled_at = time.monotonic()
         self.renderer.stopping = True
-        if job.kind == "reply":
+        if job.kind in ("reply", "compare"):
             client, chat_id = self.client, self.chat_id
 
             def stop():
@@ -1160,6 +1168,79 @@ class ChatApp:
                 actions: dict | None = None) -> None:
         self.overlay = Picker(title, items, on_pick, current=current, subtitle=subtitle,
                               groups=groups, actions=actions)
+
+    def _cmd_compare(self, rest: str) -> None:
+        if self.job is not None:
+            self._done("Wait for the reply to finish, then compare.", dim=True)
+            return
+        try:
+            wanted, text = compare_cli.parse(rest)
+            configured = self.client.models_list()
+            self._models = configured
+            models = compare_cli.choose_models(configured, self.model, wanted)
+        except compare_cli.CompareError as exc:
+            self.renderer.error(str(exc))
+            return
+        chat_id = self._ensure_chat()
+        if chat_id is None:
+            return
+        self.compare = compare_cli.Collector()
+        self.renderer.begin_turn()
+        self.renderer.activity = self.compare.progress()
+        client = self.client
+
+        def run(emit, cancel):
+            events = client.stream_compare(chat_id, text, models)
+            try:
+                for event in events:
+                    emit(event)
+                    if event.get("type") in ("done", "stopped", "error"):
+                        break
+            finally:
+                events.close()
+        self.job = Job("compare", run, label=f"/compare {text}")
+
+    def _show_compare(self, job: Job, stopped: bool) -> None:
+        """Print every model's answer once the compare has ended, then offer to keep one."""
+        r, p, state = self.renderer, self.p, self.compare
+        r.pending_tool = None
+        error = job.outcome.get("error")
+        if error is not None and not stopped:
+            r.error(error.message if isinstance(error, KovaError) else str(error))
+        for answer in (state.answers.values() if state else ()):
+            r.line(p.paint("1;" + ACCENT, "\u25c6") + " " + p.bold(answer.model)
+                   + (p.dim("  " + answer.stats()) if answer.stats() else ""))
+            if answer.phase == "error":
+                r.error(answer.error)
+            elif answer.text.strip():
+                stream = MarkdownStream(r.write, r.width, p, margin="  ")
+                stream.feed(answer.text)
+                stream.finish()
+                r.line()
+                if answer.phase == "stopped":
+                    r.line(p.faint("  stopped before it finished"))
+                    r.line()
+            else:
+                r.line(p.faint("  " + ("stopped before it answered" if stopped else "no answer")))
+                r.line()
+        if state is not None and state.error and not stopped:
+            r.error(state.error)
+        r.finish_turn(stopped=stopped)
+        keepable = state.keepable() if state is not None else []
+        if stopped or not keepable or not state.compare_id:
+            return
+        compare_id, chat_id = state.compare_id, self.chat_id
+        items = [(answer.model, answer.stats(), answer.model) for answer in keepable]
+
+        def keep(model: str) -> None:
+            try:
+                self.client.keep_compare(chat_id, compare_id, model)
+            except KovaError as exc:
+                self.renderer.error(f"Could not keep that answer: {exc.message}")
+                return
+            self._done(f"Kept the answer from {self.p.bold(model)}. It is now part of this chat.")
+        self._choose("Keep an answer", items, keep,
+                     subtitle="Saves your message and that answer to this chat. Esc keeps none.")
 
     def _cmd_compact(self, _rest: str) -> None:
         if self.chat_id is None:
