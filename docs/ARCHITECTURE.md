@@ -375,6 +375,11 @@ theme's `bg.base`. The Motion preference (#181) uses the same shared document an
 first-paint pattern: `web_assets/motion.js` resolves Full, Reduced or Off (a device that
 asks for reduced motion resolves Full to Reduced) onto `data-motion` on `<html>`, and
 one block in `app.css` shortens or removes motion through the duration tokens.
+The thinking animation (#171) is the same shared document, without a first-paint
+attribute: `web_assets/thinking.js` resolves off, Thunderstorm, Orbit, Collide,
+Breathe, Charge up or Random (one pick per reply) onto `data-thinking` on the
+activity mark, and `thinking.css` paints each animation's still frame when motion
+is reduced or the choice is off.
 Text size, density, font, content width and avatars (#179, #205) use the same shared
 document and first-paint pattern: `web_assets/typography.js` sets `data-text-size`,
 `data-density`, `data-font`, `data-chat-width` and `data-avatars` on `<html>`, and one
