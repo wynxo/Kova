@@ -750,22 +750,32 @@ which is what the clients read (see *The capability contract* below).
 
 ## Theme
 
-`src/kova/theme.py` is the single palette: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SUCCESS`, `WARNING`, `ERROR`, `BASH`, `MEMORY`,
-`CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code blocks. The
-plain chat, branding, help and status resolve their hex colours through
-`tui.style.colour` (the wordmark, `--help` styling and the status card live in
-`src/kova/tui/brand.py`). `KOVA_THEME` overrides `[tui] theme`, with dark as
-the default. The shared light translation darkens text and pales backgrounds;
-reading the theme for styling never creates or migrates configuration. The
-full-screen chat paints with raw escapes through `src/kova/tui/style.py`, which
-builds each role from the theme's hex value and converts it for the terminal:
-24-bit, the nearest of 256 colours, a hand-picked one of the 16 basic colours,
+`src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
+blocks. The constants are `kova-dark`'s values; every other theme maps onto them
+from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->
+`MUTED`, `status.danger` -> `ERROR` …; `USER` and `BASH` follow the theme's ANSI
+cyan and magenta). `theme.terminal_theme(id)` resolves a built-in or a theme file
+through `kova.themes`, the same resolver the web app's `GET /themes/<id>` uses, so
+the terminal and the browser paint one palette. `kova-light` takes every role from
+its tokens; any other theme moves a role away from its base only when it changes
+the token behind it. A missing or broken theme file falls back to `kova-dark`.
+
+`KOVA_THEME` overrides `[tui] theme` (a theme id, or `dark`/`light` for the
+built-ins), with dark as the default, and `kova themes use <id>` writes the
+setting; reading it for styling never creates or migrates configuration. The
+plain chat, branding, help, status and every CLI table resolve their colours
+through `tui.style.colour` (the wordmark, `--help` styling and the status card
+live in `src/kova/tui/brand.py`). The full-screen chat paints with raw escapes
+through `src/kova/tui/style.py`: codes are written in the role colours, swapped
+for the theme's at paint time and converted for the terminal: 24-bit, the
+nearest of 256 colours, a pinned one of the 16 basic colours (the accent pair
+swaps on light themes, and a coloured accent takes its nearest basic colour),
 or none at all (`NO_COLOR`, `TERM=dumb`). `KOVA_COLORS=truecolor|256|16|none`
-overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit, and the
-web app mirrors them again as CSS variables in `web_assets/app.css` (`:root`
-for dark, `:root[data-theme=light]` for light). Change a colour in both places
-to keep the terminal and the app in step.
+overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit.
+Colours from outside the theme (Pygments) are darkened on a light theme so
+they stay readable.
 
 ## Config and data on disk
 

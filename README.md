@@ -279,7 +279,7 @@ The first setup asks you to name your assistant and choose a tone (warm, concise
 
 Each chat start shows the welcome card plus one short tip, rotating through keyboard and command tips a run at a time, so you learn a little at a time instead of reading a wall of keys. `?` still shows every shortcut at once.
 
-For a light terminal background, set `theme = "light"` under `[tui]` in that file. The default is `"dark"`; colours still adapt to terminal colour depth and `NO_COLOR`. Bindings can be changed under `[tui.keys]`, using terminal key names; for example, to swap the palette and reasoning keys:
+For a light terminal background, run `kova themes use light` (or set `theme = "light"` under `[tui]` in that file). Any theme from `kova themes list` works the same way, so the terminal can match the app. The default is `"dark"`; colours still adapt to terminal colour depth and `NO_COLOR`. Bindings can be changed under `[tui.keys]`, using terminal key names; for example, to swap the palette and reasoning keys:
 
 ```toml
 [tui]

@@ -153,7 +153,7 @@ def test_light_palette_changes_foreground_and_background_before_downscaling():
 @pytest.mark.parametrize("level, foreground, chip", [
     (1, "30", "1;97;40"),
     (2, "38;5;233", "1;38;5;231;48;5;233"),
-    (3, "38;2;20;18;28", "1;38;2;246;246;248;48;2;20;18;28"),
+    (3, "38;2;13;12;19", "1;38;2;255;255;255;48;2;13;12;19"),
 ])
 def test_light_palette_uses_dark_accent_and_reverses_text_on_solid_chips(level, foreground, chip):
     p = Palette(level, theme_name="light")
