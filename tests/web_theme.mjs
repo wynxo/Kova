@@ -292,4 +292,49 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.root.dataset.theme, 'light');
 }
 
-console.log('Theme engine: choice, sync, installed tokens and window colour passed');
+// ---- A theme background is decorative data, painted through the stylesheet --
+{
+  const GRADIENT = {id: 'gradient-theme', name: 'Gradient', appearance: 'dark',
+    tokens: {'bg.base': '#0b1416'},
+    background: {kind: 'gradient', stops: ['#0b1416', '#173a3b', '#0b1416'], angle: 200}};
+  const IMAGE = {id: 'image-theme', name: 'Image', appearance: 'dark',
+    tokens: {'bg.base': '#0b1416'},
+    background: {kind: 'image', file: 'night-sky.png', dim: 0.55, blur: 12}};
+  const page = boot({themes: {'gradient-theme': GRADIENT, 'image-theme': IMAGE}});
+  await settle();
+
+  await page.api.set('gradient-theme');
+  assert.equal(page.root.dataset.background, 'gradient');
+  assert.equal(page.properties.get('--theme-background'),
+    'linear-gradient(200deg, #0b1416, #173a3b, #0b1416)');
+  assert.equal(page.properties.has('--theme-background-dim'), false,
+    'a gradient needs no scrim');
+
+  await page.api.set('image-theme');
+  assert.equal(page.root.dataset.background, 'image');
+  assert.equal(page.properties.get('--theme-background'),
+    'url("/themes/assets/night-sky.png")',
+    'the image is addressed through the authenticated assets route');
+  assert.equal(page.properties.get('--theme-background-dim'), '0.55');
+  assert.equal(page.properties.get('--theme-background-blur'), '12px');
+
+  await page.api.set('light');
+  assert.equal(page.root.dataset.background, undefined, 'a built-in clears the layer');
+  assert.equal(page.properties.size, 0);
+}
+
+// ---- Anything outside the two background shapes is dropped ------------------
+{
+  const BAD = {id: 'bad-bg', name: 'Bad', appearance: 'dark', tokens: {},
+    background: {kind: 'image', file: '../outside.png', dim: 0.3}};
+  const TOO_MANY = {id: 'too-many', name: 'Too many', appearance: 'dark', tokens: {},
+    background: {kind: 'gradient', stops: ['#000', '#111', '#222', '#333', '#444']}};
+  const page = boot({themes: {'bad-bg': BAD, 'too-many': TOO_MANY}});
+  await settle();
+  await page.api.set('bad-bg');
+  assert.equal(page.root.dataset.background, undefined, 'a path is not a file name');
+  await page.api.set('too-many');
+  assert.equal(page.root.dataset.background, undefined, 'two to four stops only');
+}
+
+console.log('Theme engine: choice, sync, installed tokens, backgrounds and window colour passed');

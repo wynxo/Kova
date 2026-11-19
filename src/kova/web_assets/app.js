@@ -1938,12 +1938,18 @@
       // Enter is the only thing that saves it (#183).
       add('Appearance', {title:`Theme: ${option.name}`, hint:option.id === 'system' ? 'Follow this device' : option.source === 'file' ? `Installed theme, ${option.appearance}` : `Built-in ${option.appearance} theme`, keywords:`theme colour color appearance ${option.id}`, previewKey:`theme:${option.id}`, preview:() => themes.preview?.(option.id), previewEnd:() => themes.endPreview?.(), run:() => themes.set(option.id)});
     }
+    // Dialog-specific theme actions live only inside the Settings view (#183);
+    // the palette reaches them directly so every menu action is one command away.
+    add('Appearance', {title:'Customize theme', hint:'Change the colours of the current theme', keywords:'theme editor colours colors customize contrast', run:() => window.KovaThemeEditor?.open()});
+    add('Appearance', {title:'Browse themes', hint:'Preview and apply a theme from the gallery', keywords:'theme gallery browse install preview', run:() => window.KovaThemeGallery?.open()});
 
     if (current) {
       add('This conversation', {title:'Compact now', hint:'Summarise older turns to free context', keywords:'summarise summarize shorten context', run:() => safe(compactChat)});
       add('This conversation', {title:'Fork this conversation', hint:'Continue in an independent copy', keywords:'copy duplicate branch', run:() => safe(() => forkChat(current.id))});
       add('This conversation', {title:'Rename this conversation', hint:current.title || 'New conversation', keywords:'title name edit', run:() => safe(() => editChat(current, false))});
       add('This conversation', {title:'Delete this conversation', hint:'Remove it from this computer', keywords:'remove trash discard', run:() => safe(() => editChat(current, true))});
+      add('This conversation', {title:current.pinned ? 'Unpin this conversation' : 'Pin this conversation', hint:'Keep it at the top of the list', keywords:'pin pinned top favourite favorite', run:() => safe(() => togglePin(current))});
+      add('This conversation', {title:'Colour & icon', hint:'Change how this conversation looks', keywords:'colour color icon appearance avatar', run:() => safe(() => editAppearance(current))});
       if (!state.busy && !$('mode').disabled) {
         const nextMode = $('mode').value === 'chat' ? 'work' : 'chat';
         add('This conversation', {title:`Switch to ${nextMode} mode`, hint:nextMode === 'work' ? 'Tools, files and memory' : 'Conversation only', keywords:'mode chat work tools', run:() => setMode(nextMode)});
@@ -2002,6 +2008,11 @@
     for (const model of state.models) {
       if (state.busy) break;
       add('Models', {title:`Use ${model.model || model.name}`, hint:model.provider_name || 'Custom provider', keywords:`model provider ${model.name}`, run:() => { $('model').value = model.name; $('model').onchange?.(); }});
+    }
+    // Model-picker actions (#183): the chip's Favourite and Make default rows.
+    if (!state.busy && composerModel().model && modelByName(composerModel().model)) {
+      add('Models', {title:'Favourite this model', hint:'Pin it to the top of the model list', keywords:'model favourite favorite pin star', run:() => $('model-favourite').onclick?.()});
+      add('Models', {title:'Make this model the default', hint:'Use it for every new chat', keywords:'model default active new', run:() => $('model-make-default').onclick?.()});
     }
     // MCP servers and extensions can be switched from here because the app
     // already has the endpoints the two panels use (#183).

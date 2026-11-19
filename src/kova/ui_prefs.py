@@ -44,6 +44,9 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     # and avatars are on until they are turned off.
     "chat_width": ("narrow", "normal", "wide"),
     "avatars": ("on", "off"),
+    # Theme backgrounds (#206): on by default; "off" keeps the theme's colours
+    # and leaves every panel solid.
+    "backgrounds": ("on", "off"),
     # Power users only (#178): KOVA_HOME/custom.css, never inlined or remote.
     "custom_css": ("on", "off"),
 }
@@ -95,6 +98,7 @@ DEFAULTS: dict[str, Any] = {
     "chat_width": "normal",
     "avatars": "on",
     "shortcuts": {},
+    "backgrounds": "on",
     "custom_css": "off",
 }
 

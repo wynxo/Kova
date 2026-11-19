@@ -32,6 +32,10 @@
      values: ['narrow', 'normal', 'wide'], fallback: 'normal'},
     {name: 'avatars', key: 'kova-avatars', attr: 'data-avatars',
      values: ['on', 'off'], fallback: 'on'},
+    // Theme backgrounds (#206): on by default, so a theme's gradient or image
+    // shows. Off keeps the same theme and leaves the panels solid.
+    {name: 'backgrounds', key: 'kova-backgrounds', attr: 'data-backgrounds',
+     values: ['on', 'off'], fallback: 'on'},
   ];
 
   const root = document.documentElement;
@@ -128,11 +132,13 @@
     font: () => state.font,
     chatWidth: () => state.chat_width,
     avatars: () => state.avatars,
+    backgrounds: () => state.backgrounds,
     setTextSize: next => store('text_size', next),
     setDensity: next => store('density', next),
     setFont: next => store('font', next),
     setChatWidth: next => store('chat_width', next),
     setAvatars: next => store('avatars', next),
+    setBackgrounds: next => store('backgrounds', next),
   };
   load();
 })();
