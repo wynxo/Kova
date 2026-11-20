@@ -858,7 +858,7 @@ def create_app(
         except ui_prefs.UiPrefsError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    install_theme_routes(api, config.home)
+    install_theme_routes(api, config)
 
     @api.get("/projects")
     async def list_projects() -> list[dict]:

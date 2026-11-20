@@ -154,7 +154,7 @@ def _text(raw: dict, key: str) -> str:
     return " ".join(value.split())
 
 
-def parse_entry(raw: object) -> Entry:
+def parse_entry(raw: object, *, kinds: tuple[str, ...] = KINDS) -> Entry:
     """Validate one index entry; raises :class:`CatalogError` with the reason."""
     if not isinstance(raw, dict):
         raise CatalogError("an entry must be an object")
@@ -162,8 +162,8 @@ def parse_entry(raw: object) -> Entry:
     if not _NAME_RE.match(name) or ".." in name:
         raise CatalogError(f"invalid name {name!r}")
     kind = _text(raw, "kind")
-    if kind not in KINDS:
-        raise CatalogError(f"{name}: kind must be plugin or skill, not {kind!r}")
+    if kind not in kinds:
+        raise CatalogError(f"{name}: unsupported kind {kind!r}")
     version = _text(raw, "version")
     if not _VERSION_RE.match(version):
         raise CatalogError(f"{name}: invalid version {version!r}")
@@ -189,7 +189,7 @@ def parse_entry(raw: object) -> Entry:
                  tags=_strings(raw, "tags"), status=status, issue=issue)
 
 
-def parse_index(data: object, source: str) -> Catalog:
+def parse_index(data: object, source: str, *, kinds: tuple[str, ...] = KINDS) -> Catalog:
     """Turn decoded index JSON into a :class:`Catalog`; bad entries are skipped."""
     if not isinstance(data, dict):
         raise CatalogError("The catalog index must be a JSON object.")
@@ -206,7 +206,7 @@ def parse_index(data: object, source: str) -> Catalog:
     seen: set[str] = set()
     for raw in raw_entries:
         try:
-            entry = parse_entry(raw)
+            entry = parse_entry(raw, kinds=kinds)
         except CatalogError as exc:
             skipped.append(str(exc))
             continue
@@ -241,7 +241,8 @@ def configured_url(config=None) -> str:
     return (url or "").strip() or DEFAULT_URL
 
 
-def _http_get(url: str, *, timeout: float, client: httpx.Client | None = None) -> bytes:
+def _http_get(url: str, *, timeout: float, client: httpx.Client | None = None,
+              limit: int = MAX_DOWNLOAD_BYTES) -> bytes:
     """GET ``url`` and return at most :data:`MAX_DOWNLOAD_BYTES` of its body."""
     if urlparse(url).scheme != "https" and urlparse(url).hostname not in ("127.0.0.1", "localhost"):
         raise CatalogError(f"Refusing a plain-http download: {url}")
@@ -254,8 +255,8 @@ def _http_get(url: str, *, timeout: float, client: httpx.Client | None = None) -
             chunks, size = [], 0
             for chunk in response.iter_bytes():
                 size += len(chunk)
-                if size > MAX_DOWNLOAD_BYTES:
-                    raise CatalogError(f"{url} is larger than {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB")
+                if size > limit:
+                    raise CatalogError(f"{url} exceeds the {limit}-byte download limit")
                 chunks.append(chunk)
             return b"".join(chunks)
     except httpx.HTTPError as exc:
@@ -272,7 +273,7 @@ def load_bundled() -> Catalog:
 
 
 def load(url: str | None = None, *, client: httpx.Client | None = None,
-         fallback: bool = True) -> Catalog:
+         fallback: bool = True, kinds: tuple[str, ...] = KINDS) -> Catalog:
     """Load the index from ``url`` (https, a local file or ``bundled``).
 
     Any failure falls back to the bundled index with ``warning`` set, unless
@@ -290,7 +291,7 @@ def load(url: str | None = None, *, client: httpx.Client | None = None,
             data = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise CatalogError(f"{url} is not valid JSON ({exc})") from exc
-        return parse_index(data, url)
+        return parse_index(data, url, kinds=kinds)
     except (CatalogError, OSError) as exc:
         if not fallback:
             raise CatalogError(str(exc)) from exc
@@ -435,6 +436,25 @@ def _check(entry: Entry, actual: str) -> None:
         raise CatalogError(
             f"Checksum mismatch for {entry.name} {entry.version}: the catalog pins "
             f"{entry.sha256[:12]}…, the download is {actual[:12]}…. Nothing was installed.")
+
+
+def read_theme(entry: Entry, index: Catalog, *, limit: int) -> bytes:
+    """Read a checksum-pinned JSON payload; never unpack or stage it as a plugin."""
+    url = entry.url
+    if _is_remote(url):
+        data = _http_get(url, timeout=INDEX_TIMEOUT, limit=limit)
+    else:
+        if _is_remote(index.source) or url.startswith(BUNDLED_SCHEME):
+            raise CatalogError("A remote theme catalog cannot read local files.")
+        path = Path(url).expanduser()
+        if not path.is_file():
+            raise CatalogError("Catalog themes must be JSON files.")
+        with path.open("rb") as stream:
+            data = stream.read(limit + 1)
+        if len(data) > limit:
+            raise CatalogError("Catalog theme exceeds the download limit.")
+    _check(entry, sha256_bytes(data))
+    return data
 
 
 def _fetch_into(entry: Entry, workdir: Path, client: httpx.Client | None) -> Path:

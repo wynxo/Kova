@@ -605,3 +605,44 @@ def test_chat_view_defaults_are_validated_semantic_theme_tokens(home):
     path = write_theme(home.home, tokens={"chat": {"width": "unknown"}})
     with pytest.raises(themes.ThemeError, match="chat.width"):
         themes.load_file(path)
+
+
+def test_configured_catalog_theme_lifecycle(home, runner):
+    import hashlib
+
+    index = home.home / "catalog.json"
+    source = home.home / "community.json"
+    home.catalog_url = str(index)
+
+    def publish(version, **extra):
+        document = dict(id="community", name="Community", appearance="dark",
+                        version=version, tokens={}, **extra)
+        payload = json.dumps(document).encode()
+        source.write_bytes(payload)
+        entry = {"kind": "theme", "name": "community", "version": version,
+                 "source": {"url": source.name, "sha256": hashlib.sha256(payload).hexdigest()}}
+        index.write_text(json.dumps({"extensions": [entry]}))
+
+    def run(*args):
+        return runner.invoke(cli.app, ["themes", *args])
+
+    publish("1.0.0")
+    assert "Community" in run("gallery", "community").output
+    assert "Community" in run("show", "community", "--gallery").output
+    assert not (themes.theme_dir(home.home) / "community.json").exists()
+    assert run("install", "community").exit_code == 0
+
+    publish("1.1.0", css="not theme data")
+    assert run("update", "community").exit_code != 0
+    publish("1.1.0")
+    source.write_text("{}")
+    assert run("update", "community").exit_code != 0
+    assert "1.0.0" in run("show", "community").output
+    publish("1.1.0")
+    assert run("update", "community").exit_code == 0
+    assert "1.1.0" in run("show", "community").output
+
+    index.unlink()
+    listing = run("gallery")
+    assert listing.exit_code == 0 and "Forest" in listing.output
+    assert run("remove", "community").exit_code == 0

@@ -1,13 +1,14 @@
-/* The bundled gallery previews on the real app; only Use changes preferences.
+/* The theme gallery previews on the real app; only Use changes preferences.
 
    Besides browsing it can search, Try a theme for 30 seconds (it reverts unless
-   kept), install, update an installed theme to a newer bundled copy and remove
+   kept), install, update an installed theme to a newer gallery copy and remove
    an installed theme file. Everything it shows is data from /themes/gallery. */
 (() => {
   'use strict';
 
   const TRY_SECONDS = 30;
   let gallery;
+  let dismissGallery;
   let trial;   // the theme being tried: {entry, banner, timer, ticker, ...}
 
   async function failure(response) {
@@ -128,16 +129,21 @@
     return node;
   }
 
-  async function open(opener) {
+  async function open(opener, {mount, closeHost} = {}) {
     if (gallery) return;
     const theme = window.KovaTheme;
-    const dialog = element('dialog', 'theme-gallery');
-    const title = element('h2', '', 'Theme gallery');
-    title.id = 'theme-gallery-title';
-    dialog.setAttribute('aria-labelledby', title.id);
-    const done = button('Close');
-    const header = element('header', 'theme-gallery-header');
-    header.append(title, done);
+    const dialog = element(mount ? 'section' : 'dialog', 'theme-gallery');
+    const isOpen = () => mount ? dialog.isConnected : dialog.open;
+    let done;
+    if (!mount) {
+      const title = element('h2', '', 'Theme gallery');
+      title.id = 'theme-gallery-title';
+      dialog.setAttribute('aria-labelledby', title.id);
+      done = button('Close');
+      const header = element('header', 'theme-gallery-header');
+      header.append(title, done);
+      dialog.append(header);
+    }
     const search = element('input', 'theme-gallery-search');
     search.type = 'search';
     search.placeholder = 'Search themes';
@@ -147,7 +153,7 @@
     status.setAttribute('role', 'status');
     const grid = element('ul', 'theme-gallery-grid');
     grid.setAttribute('role', 'list');
-    dialog.append(header, search, status, grid);
+    dialog.append(search, status, grid);
     const cards = [];
 
     let hovered;
@@ -163,7 +169,7 @@
     }
 
     function syncPreview() {
-      if (!dialog.open) return;
+      if (!isOpen()) return;
       const next = (hovered || focused || pinned)?.entry;
       if (next === shown?.entry && next?.installed === shown?.installed) return;
       endPreview();
@@ -175,7 +181,12 @@
 
     function close() {
       endPreview();
-      dialog.close();
+      if (mount) {
+        dismissGallery();
+        closeHost();
+      } else {
+        dialog.close();
+      }
     }
 
     function addCard(entry) {
@@ -269,7 +280,7 @@
       tryButton.addEventListener('click', () => {
         endPreview();       // forget the hover preview first, so the trial is the only change
         pinned = hovered = focused = null;
-        dialog.close();
+        close();
         startTrial(entry, opener);
       });
       action.addEventListener('click', async () => {
@@ -285,12 +296,12 @@
         status.textContent = `Installing ${entry.name}…`;
         try {
           await installEntry(entry);
-          if (!dialog.open) return;
+          if (!isOpen()) return;
           updateAction();
           syncPreview();
           status.textContent = `Installed ${entry.name}.`;
         } catch (error) {
-          if (dialog.open) status.textContent = `Could not install ${entry.name}. ${error.message}`;
+          if (isOpen()) status.textContent = `Could not install ${entry.name}. ${error.message}`;
         } finally {
           installing = false;
           action.removeAttribute('aria-disabled');
@@ -308,13 +319,13 @@
           await theme.refresh();
           // The chosen theme repaints from the new file; a preview shows it too.
           if (theme.choice() === entry.id) await theme.set(entry.id);
-          if (!dialog.open) return;
+          if (!isOpen()) return;
           updateAction();
           endPreview();
           syncPreview();
           status.textContent = `Updated ${entry.name} to version ${entry.version}.`;
         } catch (error) {
-          if (dialog.open) status.textContent = `Could not update ${entry.name}. ${error.message}`;
+          if (isOpen()) status.textContent = `Could not update ${entry.name}. ${error.message}`;
         } finally {
           installing = false;
           update.removeAttribute('aria-disabled');
@@ -345,12 +356,12 @@
           pinned?.entry === entry && (pinned = null);
           if (wasChosen) await theme.set('system');   // never leave a deleted theme chosen
           await theme.refresh();
-          if (!dialog.open) return;
+          if (!isOpen()) return;
           preview.setAttribute('aria-pressed', 'false');
           updateAction();
           status.textContent = `Removed ${entry.name}.`;
         } catch (error) {
-          if (dialog.open) status.textContent = `Could not remove ${entry.name}. ${error.message}`;
+          if (isOpen()) status.textContent = `Could not remove ${entry.name}. ${error.message}`;
         } finally {
           installing = false;
           remove.removeAttribute('aria-disabled');
@@ -358,24 +369,30 @@
       });
     }
 
-    done.addEventListener('click', close);
-    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-    dialog.addEventListener('close', () => {
+    dismissGallery = () => {
       endPreview();
       dialog.remove();
       gallery = null;
-      opener?.focus?.();
-    });
+      dismissGallery = null;
+      if (!mount) opener?.focus?.();
+    };
     gallery = dialog;
-    document.body.append(dialog);
-    dialog.showModal();
-    done.focus();
+    if (mount) {
+      mount.append(dialog);
+    } else {
+      done.addEventListener('click', close);
+      dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+      dialog.addEventListener('close', dismissGallery, {once: true});
+      document.body.append(dialog);
+      dialog.showModal();
+      done.focus();
+    }
 
     try {
       const response = await fetch('/themes/gallery');
       if (!response.ok) throw new Error();
       const entries = await response.json();
-      if (!dialog.open) return;
+      if (!isOpen()) return;
       for (const entry of entries) addCard(entry);
       status.textContent = entries.length ? '' : 'No themes in the gallery.';
       search.addEventListener('input', () => {
@@ -390,9 +407,11 @@
             : `No theme matches "${search.value.trim()}".`;
       });
     } catch (_) {
-      if (dialog.open) status.textContent = 'Could not load the theme gallery. Close it and try again.';
+      if (isOpen()) status.textContent = 'Could not load the theme gallery. Close it and try again.';
     }
   }
 
-  window.KovaThemeGallery = {open, matches, TRY_SECONDS};
+  window.KovaThemeGallery = {open, matches, TRY_SECONDS, dismissEmbedded: () => {
+    if (gallery?.tagName === 'SECTION') dismissGallery();
+  }};
 })();
