@@ -1234,6 +1234,11 @@ class Store:
                     variant,
                 ),
             )
+            if role == "user" and variant > 1:
+                self._conn.execute(
+                    "UPDATE messages SET active = 0 WHERE chat_id = ? AND turn_id = ? AND variant != ?",
+                    (chat_id, turn_id, variant),
+                )
             self._conn.commit()
             return cur.lastrowid
 
@@ -1333,10 +1338,9 @@ class Store:
 
     @_chat_scoped
     def start_alternative(self, chat_id: str) -> tuple[str, int] | None:
-        """Archive the active turn and return the turn id and new variant.
+        """Return the turn id and next variant without altering the transcript.
 
-        The previous attempt is kept with ``active = 0`` rather than deleted, so
-        a retry or edit never silently loses what was on screen (#188).
+        The previous attempt stays visible until add_message commits its replacement.
         """
         with self._lock:
             row = self._conn.execute(
@@ -1351,11 +1355,6 @@ class Store:
                 "SELECT MAX(variant) FROM messages WHERE chat_id = ? AND turn_id = ?",
                 (chat_id, turn_id),
             ).fetchone()[0] or 0
-            self._conn.execute(
-                "UPDATE messages SET active = 0 WHERE chat_id = ? AND turn_id = ?",
-                (chat_id, turn_id),
-            )
-            self._conn.commit()
             return turn_id, int(newest) + 1
 
     @_chat_scoped

@@ -75,7 +75,9 @@ def test_export_contains_chats_notes_reminders_and_safe_config(tmp_path):
 def test_backup_keeps_archived_alternatives_but_reads_the_active_one(tmp_path):
     source = _home(tmp_path, "source")
     store, chat_id = _seed(source)
+    before = store.get_chat(chat_id)["messages"]
     turn_id, variant = store.start_alternative(chat_id)
+    assert store.get_chat(chat_id)["messages"] == before
     store.add_message(chat_id, "user", "Try again", turn_id=turn_id, variant=variant)
     store.add_message(chat_id, "assistant", "Second answer", turn_id=turn_id, variant=variant)
     backup = tmp_path / "backup.zip"
