@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from kova import backup as backup_module
 from kova.backup import BackupError, export_archive, import_archive
 from kova.config import ensure_token, load_config, save_config
 from kova.memory import Memory
@@ -28,6 +29,233 @@ def _seed(cfg):
     Memory(cfg.memory_path).save("Dog", "Rex is a good dog")
     store.add_reminder(datetime.now(timezone.utc) + timedelta(days=1), "Buy milk")
     return store, chat["id"]
+
+
+def _seed_project(cfg, *, folder=None, name="Research"):
+    """A project with instructions, a look, a default model and one grouped chat."""
+    store = Store(cfg.home / "kova.db")
+    folder = folder if folder is not None else cfg.home / "project"
+    folder.mkdir(parents=True, exist_ok=True)
+    project = store.create_project(name, "Cite sources.", str(folder),
+                                   colour="info", icon="brain", model="local")
+    chat = store.create_chat(f"{name} chat", project_id=project["id"])
+    store.add_message(chat["id"], "user", "Start the paper.")
+    return store, project, chat["id"]
+
+
+def _rewrite_archive(source, target, *, drop=(), replace=None):
+    """Copy a backup, dropping members and swapping members for raw bytes."""
+    replace = replace or {}
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(target, "w") as dst:
+        for item in src.infolist():
+            if item.filename in drop:
+                continue
+            data = replace.get(item.filename, src.read(item.filename))
+            dst.writestr(item, data)
+
+
+def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path, monkeypatch):
+    """Projects and chat membership survive a backup (#196)."""
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path)
+    source = _home(tmp_path, "source")
+    store, project, chat_id = _seed_project(source)
+    target = tmp_path / "backup.zip"
+
+    stats = export_archive(source, target, store=store)
+    assert stats["projects"] == 1
+    with zipfile.ZipFile(target) as archive:
+        payload = json.loads(archive.read("projects.json"))
+        assert payload == [{
+            "id": project["id"], "name": "Research",
+            "instructions": "Cite sources.", "cwd": "~/source/project",
+            "created": project["created"], "updated": project["updated"],
+            "colour": "info", "icon": "brain", "model": "local",
+        }]
+        assert json.loads(archive.read("manifest.json"))["projects"] == 1
+        assert json.loads(archive.read(f"chats/{chat_id}.json"))["project_id"] == project["id"]
+        assert "1 projects" in archive.read("README.txt").decode()
+
+    target_cfg = _home(tmp_path, "target")
+    restored_stats = import_archive(target_cfg, target)
+    assert (restored_stats["projects"], restored_stats["chats"]) == (1, 1)
+    assert restored_stats["projects_skipped"] == 0
+
+    restored = Store(target_cfg.home / "kova.db")
+    assert restored.get_project(project["id"]) == project
+    assert restored.get_chat(chat_id)["project_id"] == project["id"]
+
+    again = import_archive(target_cfg, target)
+    assert (again["projects"], again["projects_skipped"]) == (0, 1)
+    assert len(restored.list_projects()) == 1
+
+
+def test_merge_skips_a_project_renamed_since_the_backup(tmp_path):
+    """Same id and creation time is the same project, even after a local rename."""
+    source = _home(tmp_path, "source")
+    store, project, _ = _seed_project(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    target_cfg = _home(tmp_path, "target")
+    import_archive(target_cfg, target)
+    restored = Store(target_cfg.home / "kova.db")
+    restored.update_project(project["id"], name="Renamed locally", instructions="Mine now.")
+
+    stats = import_archive(target_cfg, target)
+    assert (stats["projects"], stats["projects_skipped"], stats["projects_remapped"]) == (0, 1, 0)
+    saved = restored.get_project(project["id"])
+    assert (saved["name"], saved["instructions"]) == ("Renamed locally", "Mine now.")
+
+
+def test_merge_imports_a_reused_project_id_under_a_new_id(tmp_path):
+    """An unrelated local project keeps its id; the archive's is remapped."""
+    source = _home(tmp_path, "source")
+    store, project, chat_id = _seed_project(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    target_cfg = _home(tmp_path, "target")
+    target_store = Store(target_cfg.home / "kova.db")
+    local = target_store.create_project("Local", "Keep me.")
+    target_store._conn.execute("UPDATE projects SET id = ? WHERE id = ?",
+                               (project["id"], local["id"]))
+    target_store._conn.commit()
+
+    stats = import_archive(target_cfg, target)
+    assert (stats["projects"], stats["projects_remapped"]) == (1, 1)
+    kept = target_store.get_project(project["id"])
+    assert (kept["name"], kept["instructions"]) == ("Local", "Keep me.")
+    restored_chat = target_store.get_chat(chat_id)
+    assert restored_chat["project_id"] not in (None, project["id"])
+    moved = target_store.get_project(restored_chat["project_id"])
+    assert (moved["name"], moved["instructions"]) == ("Research", "Cite sources.")
+
+
+def test_restore_projects_keeps_first_duplicate_source_id(tmp_path):
+    store = Store(tmp_path / "kova.db")
+    first = store.create_project("Original", "Keep me.")
+    duplicate = {**first, "name": "Duplicate", "created": "2000-01-01T00:00:00Z"}
+    mapping, counts = backup_module._restore_projects(store, [first, duplicate])
+    assert mapping[first["id"]] == first["id"]
+    assert counts == {"imported": 0, "skipped": 2, "remapped": 0}
+    assert len(store.list_projects()) == 1
+
+
+def test_replace_drops_local_projects_and_restores_the_archives(tmp_path):
+    source = _home(tmp_path, "source")
+    store, project, chat_id = _seed_project(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    target_cfg = _home(tmp_path, "target")
+    target_store = Store(target_cfg.home / "kova.db")
+    target_store.create_project("Local only", "Delete me.")
+
+    stats = import_archive(target_cfg, target, merge=False)
+    assert stats["projects"] == 1
+    assert [row["id"] for row in target_store.list_projects()] == [project["id"]]
+    assert target_store.get_chat(chat_id)["project_id"] == project["id"]
+
+
+def test_an_older_archive_imports_its_chats_ungrouped(tmp_path):
+    """Backups written before projects existed still restore, without links."""
+    source = _home(tmp_path, "source")
+    store, project, chat_id = _seed_project(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+    legacy = tmp_path / "legacy.zip"
+    _rewrite_archive(target, legacy, drop=("projects.json",))
+
+    target_cfg = _home(tmp_path, "target")
+    target_store = Store(target_cfg.home / "kova.db")
+    target_store.create_project("Local only", "Delete me with replace.")
+    stats = import_archive(target_cfg, legacy)
+    assert stats["projects"] == 0
+    assert target_store.get_chat(chat_id)["project_id"] is None
+    assert [row["name"] for row in target_store.list_projects()] == ["Local only"]
+
+    replacing = _home(tmp_path, "replacement")
+    imported = import_archive(replacing, legacy, merge=False)
+    assert (imported["projects"], imported["chats"]) == (0, 1)
+    assert Store(replacing.home / "kova.db").list_projects() == []
+
+
+def test_project_folder_below_home_is_written_without_the_account_name(tmp_path, monkeypatch):
+    """The archive stores ``~/...`` and expands it on the restoring machine."""
+    home = tmp_path / "home"
+    folder = home / "projects" / "demo"
+    folder.mkdir(parents=True)
+    cfg = _home(tmp_path, "source")
+    store = Store(cfg.home / "kova.db")
+    project = store.create_project("Demo", "Shared notes.", str(folder))
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: home)
+    target = tmp_path / "backup.zip"
+    export_archive(cfg, target, store=store)
+
+    with zipfile.ZipFile(target) as archive:
+        text = archive.read("projects.json").decode()
+        assert json.loads(text)[0]["cwd"] == "~/projects/demo"
+        assert str(home) not in text
+
+    target_cfg = _home(tmp_path, "target")
+    import_archive(target_cfg, target)
+    restored = Store(target_cfg.home / "kova.db").get_project(project["id"])
+    assert restored["cwd"] == str(folder.resolve())
+
+
+def test_project_folder_missing_here_is_dropped_not_created(tmp_path, monkeypatch):
+    """A folder from another machine never becomes a broken default."""
+    home = tmp_path / "machine-a"
+    folder = home / "projects" / "demo"
+    folder.mkdir(parents=True)
+    cfg = _home(tmp_path, "source")
+    store, project, chat_id = _seed_project(cfg, folder=folder)
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: home)
+    target = tmp_path / "backup.zip"
+    export_archive(cfg, target, store=store)
+
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path / "machine-b")
+    target_cfg = _home(tmp_path, "target")
+    import_archive(target_cfg, target)
+
+    restored = Store(target_cfg.home / "kova.db")
+    assert restored.get_project(project["id"])["cwd"] is None
+    assert not (tmp_path / "machine-b" / "projects" / "demo").exists()
+    # The chat keeps the folder it saved at the time; only the default is gone.
+    assert restored.get_chat(chat_id)["cwd"] == str(folder)
+
+
+@pytest.mark.parametrize("payload", [b"{not json", b'{"id": "p"}'])
+def test_an_unreadable_projects_json_is_rejected(tmp_path, payload):
+    source = _home(tmp_path, "source")
+    _seed(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target)
+    broken = tmp_path / "broken.zip"
+    _rewrite_archive(target, broken, replace={"projects.json": payload})
+    with pytest.raises(BackupError, match="projects.json"):
+        import_archive(_home(tmp_path, "target"), broken)
+
+
+def test_junk_project_entries_are_skipped_but_the_rest_restores(tmp_path):
+    source = _home(tmp_path, "source")
+    _seed(source)
+    store = Store(source.home / "kova.db")
+    project = store.create_project("Kept", "Still here.")
+    chat = store.create_chat("Grouped", project_id=project["id"])
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    payload = [None, 7, {"name": ""}, {"id": "other", "name": "Kept", "instructions": "Still here."}]
+    edited = tmp_path / "edited.zip"
+    _rewrite_archive(target, edited, replace={"projects.json": json.dumps(payload).encode()})
+    target_cfg = _home(tmp_path, "target")
+    stats = import_archive(target_cfg, edited)
+    # The real project is missing from this archive, so its chat is ungrouped.
+    assert (stats["projects"], stats["projects_skipped"]) == (1, 3)
+    restored = Store(target_cfg.home / "kova.db")
+    assert [row["name"] for row in restored.list_projects()] == ["Kept"]
+    assert restored.get_chat(chat["id"])["project_id"] is None
 
 
 def test_export_contains_chats_notes_reminders_and_safe_config(tmp_path):

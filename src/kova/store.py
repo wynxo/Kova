@@ -606,6 +606,50 @@ class Store:
         with self._lock, self._conn:
             return self._conn.execute("DELETE FROM projects WHERE id = ?", (project_id,)).rowcount > 0
 
+    def import_project(self, project: dict) -> bool:
+        """Insert a project from a backup, preserving its id and timestamps.
+
+        Returns False when the id already exists, so a merging import never
+        overwrites local instructions. The caller chooses the id and the
+        folder, which is only meaningful on the machine being restored to.
+        """
+        project_id, name = project.get("id"), project.get("name")
+        if not isinstance(project_id, str) or not project_id:
+            raise ValueError("project has no id")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("project has no name")
+        with self._lock:
+            if self.get_project(project_id) is not None:
+                return False
+            # The look and the instructions are cosmetic or shared text, so a
+            # hand-edited archive falls back to the default look rather than
+            # failing the whole restore, exactly as an imported chat does.
+            try:
+                colour = normalize_colour(project.get("colour"))
+            except ValueError:
+                colour = None
+            try:
+                icon = normalize_icon(project.get("icon"))
+            except ValueError:
+                icon = None
+            instructions = project.get("instructions")
+            cwd, model = project.get("cwd"), project.get("model")
+            now = _utc_now_iso()
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (project_id,
+                     name.strip()[:200],
+                     instructions if isinstance(instructions, str) else "",
+                     cwd if isinstance(cwd, str) and cwd else None,
+                     project["created"] if isinstance(project.get("created"), str) else now,
+                     project["updated"] if isinstance(project.get("updated"), str) else now,
+                     colour, icon,
+                     model if isinstance(model, str) and model else None),
+                )
+            return True
+
     # -- chats ------------------------------------------------------------
     def create_chat(self, title: str | None = None, mode: str = DEFAULT_MODE,
                     web: bool = True, permission: str = "manual", cwd: str | None = None, *,
@@ -1010,6 +1054,14 @@ class Store:
             self._conn.execute("DELETE FROM chats")
             self._conn.commit()
 
+    def clear_projects(self) -> None:
+        """Delete every project (used by a replacing import).
+
+        Chats keep their working folders; the foreign key only unsets a link.
+        """
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM projects")
+
     def import_chat(self, chat: dict) -> bool:
         """Insert a chat and its messages, preserving ids and timestamps.
 
@@ -1053,14 +1105,21 @@ class Store:
                     icon = normalize_icon(chat.get("icon"))
                 except ValueError:
                     icon = None
+                # A link only survives when the project was restored too. An
+                # older backup (or a hand-edited id) imports the chat ungrouped
+                # instead of failing on the foreign key.
+                project_id = chat.get("project_id")
+                if not isinstance(project_id, str) or self.get_project(project_id) is None:
+                    project_id = None
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort, project_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
                      chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
                      colour, icon, 1 if chat.get("pinned") else 0,
                      chat["model"] if isinstance(chat.get("model"), str) else None,
-                     chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None),
+                     chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None,
+                     project_id),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):

@@ -904,13 +904,14 @@ def _restart_server(cfg) -> bool:
 
 @app.command("export")
 def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Kova-backup-YYYY-MM-DD.zip).")):
-    """Write one zip with chats, memory notes, reminders and a safe config."""
+    """Write one zip with chats, projects, memory notes, reminders and a safe config."""
     try:
         stats = backup.export_archive(load_config(), path)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
     _ok(f"Backup written to {stats['path']}")
-    _muted(f"  {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
+    _muted(f"  {stats['chats']} chats · {stats['projects']} projects · "
+           f"{stats['notes']} notes · {stats['reminders']} reminders")
     _muted("API keys were left out of config.toml; the server token is not included.")
 
 
@@ -918,12 +919,12 @@ def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Ko
 def import_archive(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="A Kova backup zip."),
     merge: bool = typer.Option(True, "--merge/--replace",
-                               help="Merge by default; --replace clears existing chats and Kova notes."),
+                               help="Merge by default; --replace clears existing chats, projects and Kova notes."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the replace confirmation."),
 ):
     """Restore a backup; merge is the default."""
     if not merge and not yes:
-        if not typer.confirm("Replace all chats, Kova memory notes and reminders?", default=False):
+        if not typer.confirm("Replace all chats, projects, Kova memory notes and reminders?", default=False):
             _muted("Cancelled.")
             return
     cfg = load_config()
@@ -931,11 +932,17 @@ def import_archive(
         stats = backup.import_archive(cfg, path, merge=merge)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
-    _ok(f"Imported {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
-    skipped = stats["chats_skipped"] + stats["notes_skipped"] + stats["reminders_skipped"]
-    if skipped:
+    _ok(f"Imported {stats['chats']} chats · {stats['projects']} projects · "
+        f"{stats['notes']} notes · {stats['reminders']} reminders")
+    if stats["projects_remapped"]:
+        _muted(f"Restored {stats['projects_remapped']} projects under a new id because "
+               "their id was already used by a different project.")
+    if stats["chats_skipped"] or stats["notes_skipped"] or stats["reminders_skipped"]:
         _muted(f"Skipped {stats['chats_skipped']} chats, {stats['notes_skipped']} notes "
                f"and {stats['reminders_skipped']} reminders that already existed.")
+    if stats["projects_skipped"]:
+        _muted(f"Left {stats['projects_skipped']} projects alone: they were already here "
+               "or could not be read.")
     if _restart_server(cfg):
         _muted("Server restarted to pick up the import.")
     else:
