@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 let focusedElement = null;
+const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
 class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.parentNode = null;
@@ -32,8 +33,14 @@ class Element {
   addEventListener(type, fn) { this.listeners[type] = fn; }
   dispatch(type, event = {}) { this.listeners[type]?.(event); }
   select() {}
-  querySelectorAll() { return []; }
-  querySelector() { return null; }
+  querySelectorAll(selector) {
+    // The quick overlay only asks for classes; anything else stays absent, as
+    // it was before, so the wider app's startup is unchanged.
+    if (typeof selector !== 'string' || !selector.startsWith('.')) return [];
+    const name = selector.slice(1);
+    return descendants(this).filter(node => String(node.className || '').split(' ').includes(name));
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   closest() { return null; }
   getBoundingClientRect() { return {top: 0, bottom: 0, left: 0, right: 0, width: 0}; }
   scrollIntoView() {}
@@ -144,3 +151,51 @@ assert.ok(message.body.text.includes('<selection>\nthe selected words\n</selecti
 const created = [...requests].reverse().find(r => r.path === '/chats' && r.body?.title);
 assert.equal(created.body.title, '[quick] explain this');
 console.log('Quick ask includes the selection in the outgoing message passed');
+
+// Copy uses the reply's own body and only says Copied once the clipboard write
+// has actually succeeded. A failure keeps the neutral label and explains what
+// to do instead, the same feedback the message actions use.
+$('messages').replaceChildren();
+const answer = new Element('article');
+answer.className = 'message assistant';
+const answerLabel = new Element('div'); answerLabel.className = 'message-label'; answerLabel.textContent = 'Kova';
+const answerBody = new Element('div'); answerBody.className = 'message-body';
+const answerMarkdown = new Element('div'); answerMarkdown.className = 'markdown'; answerMarkdown.textContent = 'The answer itself';
+answerBody.append(answerMarkdown);
+const answerActions = new Element('div'); answerActions.className = 'message-actions';
+answerActions.textContent = 'Copied 1.2k in · 340 out';
+answer.append(answerLabel, answerBody, answerActions);
+$('messages').append(answer);
+sandbox.document.querySelectorAll = selector => selector === '#messages .assistant'
+  ? $('messages').children.filter(node => String(node.className || '').split(' ').includes('assistant')) : [];
+test.renderQuickControls();
+assert.equal($('quick-copy').hidden, false, 'an answer reveals Copy');
+
+const copied = [];
+let resolveWrite;
+sandbox.navigator = {clipboard: {writeText: text => {
+  copied.push(text);
+  return new Promise(resolve => { resolveWrite = resolve; });
+}}};
+const pending = $('quick-copy').onclick();
+assert.equal($('quick-copy').textContent, 'Copy', 'a write in flight does not claim Copied');
+await tick();
+assert.equal($('quick-copy').textContent, 'Copy', 'still Copy until the clipboard accepts it');
+resolveWrite();
+await pending;
+assert.equal($('quick-copy').textContent, 'Copied', 'a successful write says Copied');
+assert.deepEqual(copied, ['The answer itself'], 'only the reply body is copied, never the label or action bar');
+console.log('Quick ask copies the reply body after the clipboard succeeds passed');
+
+const toastsBefore = $('toasts').children.length;
+sandbox.navigator = {clipboard: {writeText: async () => { throw new Error('denied'); }}};
+await $('quick-copy').onclick();
+assert.equal($('quick-copy').textContent, 'Copy', 'a rejected write never claims Copied');
+assert.equal($('toasts').children.length, toastsBefore + 1, 'a rejected write explains the failure');
+assert.match($('toasts').textContent, /Clipboard unavailable\. Select the text to copy it\./);
+
+sandbox.navigator = {};
+await $('quick-copy').onclick();
+assert.equal($('quick-copy').textContent, 'Copy', 'a missing clipboard API never claims Copied');
+assert.equal($('toasts').children.length, toastsBefore + 2, 'a missing clipboard API also explains the failure');
+console.log('Quick ask reports clipboard failures without claiming Copied passed');
