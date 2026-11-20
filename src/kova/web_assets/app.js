@@ -1503,9 +1503,9 @@
     let toolGroup = null;
     let plan = null;
     // Parallel tool calls draw as a live tree (agent-tree.js, #192).
-    const stopChatId = state.chat?.id;
+    const chatId = state.chat?.id;
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint,
-      stopTask: id => json(`/chats/${stopChatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
+      stopTask: id => json(`/chats/${chatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with one small movement (#171): still "working", never a
     // loud spinner. thinking.js picks this reply's animation onto the mark.
@@ -1622,6 +1622,13 @@
           window.KovaPlanCard?.update(event.items, next);
         } else if (kind === 'review') {
           current = null; activity.hidden = true;
+          const checkpointId = event.checkpoint_id;
+          if (checkpointId && typeof KovaDiffPanel !== 'undefined' && window.KovaPanel) {
+            const paths = new Set(changeFiles(event.files).map(file => file.path));
+            for (const group of toolGroups) {
+              group.enableFileReview(paths, (path, opener) => reviewChanges(chatId, checkpointId, [{path}], opener));
+            }
+          }
           if (event.files?.length || event.skipped?.length) {
             body.insertBefore(reviewCard({id: event.checkpoint_id, label: event.label, live: true,
                                           files: event.files || [], skipped: event.skipped || []}), activity);
