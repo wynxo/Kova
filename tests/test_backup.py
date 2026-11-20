@@ -54,8 +54,9 @@ def _rewrite_archive(source, target, *, drop=(), replace=None):
             dst.writestr(item, data)
 
 
-def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path):
+def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path, monkeypatch):
     """Projects and chat membership survive a backup (#196)."""
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path)
     source = _home(tmp_path, "source")
     store, project, chat_id = _seed_project(source)
     target = tmp_path / "backup.zip"
@@ -66,7 +67,7 @@ def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path):
         payload = json.loads(archive.read("projects.json"))
         assert payload == [{
             "id": project["id"], "name": "Research",
-            "instructions": "Cite sources.", "cwd": str(source.home / "project"),
+            "instructions": "Cite sources.", "cwd": "~/source/project",
             "created": project["created"], "updated": project["updated"],
             "colour": "info", "icon": "brain", "model": "local",
         }]
