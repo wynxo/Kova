@@ -256,3 +256,147 @@ def test_terminal_pairs_results_with_their_call_by_id():
     first, second = [block for block in turn.blocks if block.kind == 'tool']
     assert (first.ok, first.chunks) == (True, ['first'])
     assert (second.ok, second.chunks) == (False, ['second'])
+
+
+# ------------------------------------------------- stopping one call (#192)
+async def test_one_running_call_can_be_stopped_while_the_others_finish():
+    release = asyncio.Event()
+    started = []
+
+    async def hang(args):
+        started.append('hang')
+        await asyncio.sleep(30)
+
+    async def quick(args):
+        started.append('quick')
+        await release.wait()
+        return 'fast result'
+
+    batch = [(0, {'id': 'slow', 'name': 'web_fetch'}, Tool('web_fetch', '', {}, hang), {}),
+             (1, {'id': 'fast', 'name': 'web_search'}, Tool('web_search', '', {}, quick), {})]
+    results: dict = {}
+    controls: dict = {}
+    events = []
+
+    async def consume():
+        async for event in parallel.run_group(batch, 'm', results, controls=controls):
+            events.append(event)
+
+    task = asyncio.create_task(consume())
+    while len(started) < 2:
+        await asyncio.sleep(0)
+    assert set(controls) == {'slow', 'fast'}
+    assert controls['slow']() is True
+    assert controls['slow']() is False, 'a second stop of the same call does nothing'
+    release.set()
+    await task
+
+    assert results[0] == (parallel.STOPPED_RESULT, False)
+    assert results[1] == ('fast result', True), 'the other call is untouched'
+    stopped = next(e for e in events if e['type'] == 'task_error')
+    assert stopped['id'] == 'slow' and stopped['stopped'] is True
+    assert next(e for e in events if e['type'] == 'task_done' and e['id'] == 'fast')['ok'] is True
+    assert events[-1]['type'] == 'task_done' and events[-1]['id'] == 'group-slow'
+    assert events[-1]['failed'] == 1 and events[-1]['done'] == 2
+    assert controls == {}, 'the controls are removed when the group ends'
+
+
+async def test_a_call_still_waiting_for_its_turn_never_starts_when_stopped():
+    started = []
+    release = asyncio.Event()
+
+    async def run(args):
+        started.append(args['n'])
+        await release.wait()
+        return f"ran {args['n']}"
+
+    tool = Tool('read_file', '', {}, run)
+    batch = [(i, {'id': f'c{i}', 'name': 'read_file'}, tool, {'n': i}) for i in range(3)]
+    results: dict = {}
+    controls: dict = {}
+    consumer = asyncio.create_task(_drain(parallel.run_group(batch, 'm', results, limit=1, controls=controls)))
+    while not started:
+        await asyncio.sleep(0)
+    assert controls['c2']() is True
+    release.set()
+    await consumer
+    assert started == [0, 1], 'the stopped call never ran'
+    assert results[2] == (parallel.STOPPED_RESULT, False)
+    assert results[0] == ('ran 0', True) and results[1] == ('ran 1', True)
+
+
+async def _drain(stream):
+    return [event async for event in stream]
+
+
+async def test_stopping_a_finished_or_unknown_call_does_nothing():
+    controls: dict = {}
+    batch = [(0, {'id': 'a', 'name': 'read_file'}, Tool('read_file', '', {}, lambda a: 'x'), {}),
+             (1, {'id': 'b', 'name': 'list_files'}, Tool('list_files', '', {}, lambda a: 'y'), {})]
+    seen = []
+    async for event in parallel.run_group(batch, 'm', {}, controls=controls):
+        seen.append(event)
+        if event['type'] == 'task_done' and event['id'] == 'a':
+            assert controls['a']() is False, 'a finished call cannot be stopped'
+    assert controls == {}
+    assert all(not event.get('stopped') for event in seen)
+
+
+async def test_the_agent_stops_one_call_and_the_model_carries_on(setup):
+    cfg, store, memory, tools, chat_id = setup
+    started = asyncio.Event()
+
+    async def hang(args):
+        started.set()
+        await asyncio.sleep(30)
+
+    tools.update({'recall': Tool('recall', '', {'type': 'object'}, hang),
+                  'memory_list': Tool('memory_list', '', {'type': 'object'}, lambda a: 'notes')})
+    fake = FakeModel([calls(('recall', {'query': 'a'}), ('memory_list', {})), text('Done without it')])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    assert agent.stop_task(chat_id, 'call_0') is False, 'nothing is running yet'
+    events = []
+
+    async def consume():
+        async for event in agent.run_turn(chat_id, 'look'):
+            events.append(event)
+            if event['type'] == 'task_progress' and event['id'] == 'call_0' and event.get('status') == 'running':
+                await started.wait()
+                assert agent.stop_task('other-chat', 'call_0') is False, 'only this chat\'s calls'
+                assert agent.stop_task(chat_id, 'call_0') is True
+
+    await asyncio.wait_for(consume(), 5)
+    assert events[-1]['type'] == 'done', 'the turn was not stopped'
+    reply = next(m for m in fake.requests[1]['messages'] if m['role'] == 'tool' and m['tool_call_id'] == 'call_0')
+    assert reply['content'] == parallel.STOPPED_RESULT
+    other = next(m for m in fake.requests[1]['messages'] if m['role'] == 'tool' and m['tool_call_id'] == 'call_1')
+    assert other['content'] == 'notes'
+    result = next(e for e in events if e['type'] == 'tool_result' and e['id'] == 'call_0')
+    assert result['ok'] is False
+    assert agent.task_controls == {}, 'no control outlives its group'
+
+
+def test_the_task_stop_route_and_client(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from kova.client import KovaClient
+    from kova.config import ensure_token
+    from kova.server import create_app
+
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path))
+    cfg = load_config()
+    token = ensure_token(cfg.home)
+    with TestClient(create_app(cfg)) as http:
+        auth = {'Authorization': f'Bearer {token}'}
+        chat = http.post('/chats', headers=auth).json()['id']
+        url = f'/chats/{chat}/tasks/call_0/stop'
+        assert http.post(url).status_code == 401
+        assert http.post('/chats/missing/tasks/call_0/stop', headers=auth).status_code == 404
+        assert http.post(url, headers=auth).json() == {'stopped': False}
+        stops = []
+        http.app.state.agent.task_controls[chat] = {'call_0': lambda: stops.append('call_0') or True}
+        assert http.post(url, headers=auth).json() == {'stopped': True}
+        assert stops == ['call_0']
+        client = KovaClient('http://127.0.0.1:7700', token, http=http)
+        assert client.stop_task(chat, 'call_0') is True
+        assert client.stop_task(chat, 'call_9') is False

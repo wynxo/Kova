@@ -228,6 +228,15 @@ def call_fingerprint(name: str, arguments: str) -> str:
 class Agent:
     """Coordinate model streaming, tools, and persistent chat history."""
 
+    def stop_task(self, chat_id: str, task_id: str) -> bool:
+        """Stop one call of a running parallel group; the turn and the others go on.
+
+        False when that call is not running now (already finished, never part of
+        a group, or in another chat).
+        """
+        stop = self.task_controls.get(chat_id, {}).get(task_id)
+        return bool(stop and stop())
+
     def __init__(self, config: Config, store: Store, memory: Memory,
                  tools: dict[str, Tool], transport: httpx.AsyncBaseTransport | None = None,
                  now: Callable[[], datetime] = lambda: datetime.now().astimezone()):
@@ -240,6 +249,8 @@ class Agent:
         self.now = now
         self.approvals = Approvals(path=config.home / "permission-rules.json")
         self.file_sessions: dict[tuple[str, str], FileSession] = {}
+        # Per chat, a stop() for each call of a parallel group that is running now (#192).
+        self.task_controls: dict[str, dict[str, Callable[[], bool]]] = {}
         # Background memory maintenance is opt-in (memory.review / memory.consolidate).
         settings = ReviewSettings.from_config(config)
         self.memory_review = MemoryReview(store, settings) if settings.enabled else None
@@ -651,12 +662,17 @@ class Agent:
                         batch = [(i, calls[i], tools[calls[i]['name']], ready[i])
                                  for i in range(index, groups[index])]
                         try:
-                            async for event in parallel.run_group(batch, entry.name, grouped):
+                            controls = self.task_controls.setdefault(chat_id, {})
+                            async for event in parallel.run_group(batch, entry.name, grouped,
+                                                                  controls=controls):
                                 yield event
                         except asyncio.CancelledError:
                             for _, batched, _, _ in batch:
                                 self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
                             raise
+                        finally:
+                            if not self.task_controls.get(chat_id):
+                                self.task_controls.pop(chat_id, None)
                     ran = index in grouped
                     if ran:
                         args = ready[index]

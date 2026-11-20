@@ -14,11 +14,14 @@ The rules that keep this safe:
 * Results go back to the model in the order it asked for them, whatever order
   they finished in.
 * Stopping the turn cancels every call still running or waiting.
+* One call can also be stopped on its own (``controls``): it ends as a failed
+  call whose result tells the model the user stopped it, and the others carry on.
 
 ``run_group`` streams the group as task events with parent ids, so a client can
 draw it as a live tree: ``task_start`` for the group and each call,
 ``task_progress`` when a call starts running and when the group's count moves,
-then ``task_done`` or ``task_error``.
+then ``task_done`` or ``task_error``. A call the user stopped sends
+``task_error`` with ``stopped: true``.
 """
 
 from __future__ import annotations
@@ -41,6 +44,10 @@ PARALLEL_TOOLS = frozenset({
 
 #: How many grouped calls may run at the same moment.
 PARALLEL_LIMIT = 4
+
+#: What the model reads when the user stopped one call of a group.
+STOPPED_RESULT = ("Error: the user stopped this call before it finished. "
+                  "Do not run it again; carry on without its result.")
 
 
 async def call_tool(tool: Tool, args: dict) -> str:
@@ -78,13 +85,18 @@ def _elapsed(started: float, clock: Callable[[], float]) -> int:
 async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
                     results: dict[int, tuple[str, bool]], *,
                     limit: int = PARALLEL_LIMIT,
-                    clock: Callable[[], float] = time.monotonic) -> AsyncIterator[dict]:
+                    clock: Callable[[], float] = time.monotonic,
+                    controls: dict[str, Callable[[], bool]] | None = None) -> AsyncIterator[dict]:
     """Run ``calls`` concurrently and yield their task events.
 
     ``calls`` holds ``(index, call, tool, args)`` for each call, in request
     order. Each finished call's ``(result, ok)`` lands in ``results`` under its
     index; a tool error becomes an ``Error: …`` result, exactly as it would
     when run alone. Cancelling the consumer cancels every unfinished call.
+
+    ``controls`` (optional) is filled with one ``stop()`` per call id while the
+    group runs, and emptied again at the end. ``controls[id]()`` cancels just
+    that call (running or still waiting its turn) and returns whether it did.
     """
     group = f"group-{calls[0][1]['id']}"
     total = len(calls)
@@ -100,22 +112,44 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
     gate = asyncio.Semaphore(max(1, limit))
     queue: asyncio.Queue = asyncio.Queue()
 
+    stopped: set[str] = set()
+
     async def one(index: int, call: dict, tool: Tool, args: dict) -> None:
-        async with gate:
-            began = clock()
-            queue.put_nowait(('running', index, call, None, None, 0))
-            try:
+        began = clock()
+        try:
+            async with gate:
+                began = clock()
+                queue.put_nowait(('running', index, call, None, None, 0))
                 result, ok = str(await call_tool(tool, args)), True
-            except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
-                    raise  # the turn was stopped
+        except asyncio.CancelledError:
+            if call['id'] in stopped:
+                # Only this call was stopped: swallow the cancellation so the
+                # group, and the turn, carry on.
+                asyncio.current_task().uncancel()
+                result, ok = STOPPED_RESULT, False
+            elif asyncio.current_task().cancelling():
+                raise  # the turn was stopped
+            else:
                 # A tool that cancels its own inner work must not stall the group.
                 result, ok = 'Error: the tool was cancelled', False
-            except Exception as exc:  # a tool error is the model's to read, as in a single call
-                result, ok = f'Error: {exc}', False
-            queue.put_nowait(('finished', index, call, result, ok, _elapsed(began, clock)))
+        except Exception as exc:  # a tool error is the model's to read, as in a single call
+            result, ok = f'Error: {exc}', False
+        queue.put_nowait(('finished', index, call, result, ok, _elapsed(began, clock)))
 
     tasks = [asyncio.create_task(one(*entry)) for entry in calls]
+    by_id = {entry[1]['id']: task for entry, task in zip(calls, tasks)}
+
+    def stop_one(call_id: str) -> bool:
+        task = by_id.get(call_id)
+        if task is None or task.done() or call_id in stopped:
+            return False
+        stopped.add(call_id)
+        task.cancel()
+        return True
+
+    if controls is not None:
+        for call_id in by_id:
+            controls[call_id] = lambda call_id=call_id: stop_one(call_id)
     finished = failed = 0
     try:
         while finished < total:
@@ -131,10 +165,14 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
             else:
                 failed += 1
                 yield {'type': 'task_error', 'id': call['id'], 'parent': group,
-                       'message': result[:200], 'elapsed_ms': elapsed}
+                       'message': result[:200], 'elapsed_ms': elapsed,
+                       **({'stopped': True} if call['id'] in stopped else {})}
             yield {'type': 'task_progress', 'id': group, 'parent': None,
                    'done': finished, 'total': total, 'failed': failed}
     finally:
+        if controls is not None:
+            for call_id in by_id:
+                controls.pop(call_id, None)
         pending = [task for task in tasks if not task.done()]
         for task in pending:
             task.cancel()

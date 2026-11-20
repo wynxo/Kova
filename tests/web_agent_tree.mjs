@@ -22,6 +22,7 @@ class Element {
   append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key]; }
+  removeAttribute(key) { delete this.attrs[key]; }
   addEventListener(type, fn) { this.listeners[type] = fn; }
   focus() { focused = this; }
   remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
@@ -125,6 +126,71 @@ assert.equal(focused, root, 'a closed group hides its tasks from arrow keys');
 key(tree, root, ' ');
 assert.equal(root.attrs['aria-expanded'], 'true', 'Space toggles back');
 assert.equal(key(tree, new Element('button'), 'ArrowDown'), false, 'keys inside a tool card are left alone');
+
+// ---------------------------------------------------------------- stopping one call
+{
+  const stops = [];
+  let answer = {stopped: true};
+  const stoppable = [];
+  const stopTurn = context.tree.turn({insert: node => stoppable.push(node), label: name => `L:${name}`,
+    stopTask: id => { stops.push(id); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer); }});
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  stopTurn.accept({type: 'task_start', id: 'sg', parent: null, model: 'm'});
+  for (const id of ['s1', 's2', 's3']) stopTurn.accept({type: 'task_start', id, parent: 'sg', name: 'web_fetch', status: 'queued'});
+  const [sRoot, s1, s2, s3] = byRole(stoppable[0], 'treeitem');
+  const stopOf = item => byClass(item, 'agent-tree-stop')[0];
+  const said = () => stoppable[0].children.at(-1).textContent;
+  assert.equal(stopOf(sRoot).hidden, true, 'the group itself has no Stop');
+  assert.equal(stopOf(s1).hidden, false, 'a waiting call can be stopped');
+  assert.equal(stopOf(s1).attrs['aria-label'], 'Stop L:web_fetch');
+  assert.equal(stopOf(s1).attrs.tabindex, '-1', 'the tree stays one tab stop');
+  assert.equal(s1.attrs['aria-keyshortcuts'], 'Delete');
+
+  // The pointer: the button asks once, says so, and the row does not toggle.
+  let stopped = false;
+  stopOf(s1).listeners.click({stopPropagation: () => { stopped = true; }});
+  stopOf(s1).listeners.click({stopPropagation() {}});
+  assert.equal(stopped, true, 'the click does not also toggle the row');
+  assert.deepEqual(stops, ['s1'], 'a second click while stopping does nothing');
+  assert.equal(stopOf(s1).text, 'Stopping…');
+  assert.equal(stopOf(s1).attrs['aria-disabled'], 'true');
+  assert.match(said(), /Stopping L:web_fetch/);
+  await settle();
+  // The server's task_error with stopped: true is what ends it, as Stopped (not Failed).
+  stopTurn.accept({type: 'task_error', id: 's1', parent: 'sg', message: 'Error: stopped', stopped: true, elapsed_ms: 50});
+  assert.match(s1.textContent, /Stopped/);
+  assert.doesNotMatch(s1.textContent, /Failed/);
+  assert.ok(s1.classList.contains('failed'), 'it is drawn like a failed call');
+  assert.equal(stopOf(s1).hidden, true, 'a finished call has nothing left to stop');
+  assert.equal(s1.attrs['aria-keyshortcuts'], undefined);
+  assert.match(said(), /L:web_fetch stopped/);
+
+  // The keyboard: Delete on the row.
+  assert.equal(key(stoppable[0], s2, 'Delete'), true);
+  assert.deepEqual(stops, ['s1', 's2']);
+  assert.equal(key(stoppable[0], sRoot, 'Delete'), false, 'the group itself is not stopped from here');
+
+  // Already finished on the server: the button comes back, nothing is shown as stopped.
+  answer = {stopped: false};
+  stopTurn.accept({type: 'task_done', id: 's3', parent: 'sg', ok: true, elapsed_ms: 5});
+  assert.equal(stopOf(s3).hidden, true);
+  // A failed request restores the button and says so.
+  answer = new Error('offline');
+  stopTurn.accept({type: 'task_start', id: 's4', parent: 'sg', name: 'web_search', status: 'running'});
+  const s4 = byRole(stoppable[0], 'treeitem')[4];
+  stopOf(s4).listeners.click({stopPropagation() {}});
+  await settle();
+  assert.equal(stopOf(s4).text, 'Stop');
+  assert.equal(stopOf(s4).attrs['aria-disabled'], undefined);
+  assert.match(said(), /Could not stop L:web_search/);
+  // A turn with no stop handler (an older server, a phone without rights) shows no button.
+  const plain = [];
+  const none = context.tree.turn({insert: node => plain.push(node)});
+  none.accept({type: 'task_start', id: 'pg', parent: null, model: 'm'});
+  none.accept({type: 'task_start', id: 'p1', parent: 'pg', name: 'recall', status: 'running'});
+  assert.equal(stopOf(byRole(plain[0], 'treeitem')[1]).hidden, true);
+  assert.equal(key(plain[0], byRole(plain[0], 'treeitem')[1], 'Delete'), false);
+}
 
 // ---------------------------------------------------------------- the end of the turn
 const fresh = [];

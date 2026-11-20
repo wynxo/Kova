@@ -262,6 +262,11 @@ class KovaClient:
         """Cancel the chat's running turn on the server; True if one was running."""
         return bool(self._request("POST", f"/chats/{chat_id}/stop", timeout=10).json().get("stopped"))
 
+    def stop_task(self, chat_id: str, task_id: str) -> bool:
+        """Stop one call of the chat's running parallel group; True if it was running."""
+        path = f"/chats/{chat_id}/tasks/{quote(task_id, safe='')}/stop"
+        return bool(self._request("POST", path, timeout=10).json().get("stopped"))
+
     def queue_message(self, chat_id: str, text: str, model: str | None = None) -> dict:
         """Persist a message to run after the chat's current turn ends."""
         body = {"text": text}

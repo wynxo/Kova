@@ -1542,6 +1542,19 @@ def create_app(
             await asyncio.gather(*tasks, return_exceptions=True)
         return {"stopped": bool(tasks)}
 
+    @api.post("/chats/{chat_id}/tasks/{task_id}/stop")
+    async def stop_chat_task(chat_id: str, task_id: str) -> dict:
+        """Stop one call of the parallel group running in this chat (#192).
+
+        The turn carries on: the stopped call's result tells the model the user
+        stopped it. ``stopped`` is false when that call is not running now.
+        A synchronous tool already in a worker thread cannot be interrupted;
+        its result is simply dropped.
+        """
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        return {"stopped": app.state.agent.stop_task(chat_id, task_id)}
+
     def checkpoint_or_404(chat_id: str, checkpoint_id: int) -> dict:
         row = app.state.store.get_checkpoint(chat_id, checkpoint_id)
         if row is None:
