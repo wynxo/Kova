@@ -5,11 +5,18 @@
  * built from, so the server refuses when the file moved on in the meantime.
  * File names and source are untrusted: everything here is text, never HTML.
  *
- *   KovaDiffPanel.open({chatId, checkpointId, path, request, returnFocus, onChange})
+ * The diff is unified or split (old beside new); the choice is kept per
+ * device. A removed line and the added line that replaced it get word-level
+ * highlights, so a one-word edit in a long line is easy to find.
+ *
+ *   KovaDiffPanel.open({chatId, checkpointId, path, request, returnFocus, onChange, background})
  *   KovaDiffPanel.render(view, handlers)   the diff alone, for tests
+ *   KovaDiffPanel.wordDiff(before, after)  changed runs of two lines, or null
  */
 const KovaDiffPanel = (() => {
   const CONTEXT = 3;          // unchanged lines kept on each side of a hunk
+  const WORD_CELLS = 40000;   // word diffs bigger than this (tokens × tokens) are skipped
+  const LAYOUT_KEY = 'kova-diff-layout';
   const STATE_LABELS = {applied: '', kept: 'Kept', undone: 'Undone', changed: 'Edited since', missing: 'File removed'};
   const STATE_HINTS = {
     applied: 'still in the file',
@@ -33,19 +40,86 @@ const KovaDiffPanel = (() => {
   }
   const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-  function row(kind, old, next, text) {
+  // ---------- Word-level highlights ----------
+  // Words, runs of spaces and single symbols, so `foo(bar)` → `foo(baz)` marks
+  // only `bar` and `baz`.
+  function tokens(text) { return String(text).match(/[\p{L}\p{N}_]+|\s+|[^\p{L}\p{N}_\s]/gu) || []; }
+  function runs(list, same) {
+    const out = [];
+    list.forEach((text, index) => {
+      const changed = !same[index];
+      const last = out[out.length - 1];
+      if (last && last.changed === changed) last.text += text;
+      else out.push({text, changed});
+    });
+    return out;
+  }
+  // The longest common run of tokens decides what stayed. Returns null when
+  // the lines share too little to be worth marking, or are too long to compare.
+  function wordDiff(before, after) {
+    const a = tokens(before), b = tokens(after);
+    if (!a.length || !b.length || a.length * b.length > WORD_CELLS) return null;
+    const width = b.length + 1;
+    const table = new Uint16Array((a.length + 1) * width);
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) {
+        table[i * width + j] = a[i] === b[j] ? table[(i + 1) * width + j + 1] + 1
+          : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+      }
+    }
+    const keptA = new Array(a.length).fill(false), keptB = new Array(b.length).fill(false);
+    let i = 0, j = 0, shared = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { keptA[i] = keptB[j] = true; shared += a[i].trim() ? a[i].length : 0; i++; j++; }
+      else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) i++;
+      else j++;
+    }
+    // Mostly rewritten: marking every word would only repeat the row's tint.
+    const longer = Math.max(String(before).replace(/\s/g, '').length, String(after).replace(/\s/g, '').length);
+    if (!shared || shared * 3 < longer) return null;
+    if (keptA.every(Boolean) && keptB.every(Boolean)) return null;
+    return {old: runs(a, keptA), new: runs(b, keptB)};
+  }
+
+  function source(text, marks) {
+    const code = node('code', 'file-diff-source');
+    if (!marks) { code.textContent = text; return code; }
+    for (const part of marks) code.append(node(part.changed ? 'mark' : 'span', part.changed ? 'diff-word' : '', part.text));
+    return code;
+  }
+  function row(kind, old, next, text, marks) {
     const line = node('div', `file-diff-row file-diff-${kind}`);
     const sign = kind === 'add' ? '+' : kind === 'del' ? '-' : ' ';
     line.append(node('span', 'file-diff-number', old === '' ? '' : String(old)),
                 node('span', 'file-diff-number', next === '' ? '' : String(next)),
                 node('span', 'diff-sign', sign),
-                node('code', 'file-diff-source', text));
+                source(text, marks));
     return line;
   }
-  function sameRows(segment, from, to) {
+  // Split layout: one side of a row, with its own line number.
+  function side(kind, number, text, marks) {
+    if (kind === 'empty') {
+      const blank = node('div', 'diff-split-side diff-split-empty');
+      blank.setAttribute('aria-hidden', 'true');
+      return blank;
+    }
+    const half = node('div', `file-diff-row file-diff-${kind} diff-split-side`);
+    const sign = kind === 'add' ? '+' : kind === 'del' ? '-' : ' ';
+    half.append(node('span', 'file-diff-number', String(number)), node('span', 'diff-sign', sign), source(text, marks));
+    return half;
+  }
+  function splitRow(left, right) {
+    const line = node('div', 'diff-split-row');
+    line.append(left, right);
+    return line;
+  }
+  function sameRows(segment, from, to, split) {
     const rows = [];
     for (let index = from; index < to; index++) {
-      rows.push(row('context', segment.old + index, segment.new + index, segment.lines[index]));
+      const text = segment.lines[index];
+      rows.push(split
+        ? splitRow(side('context', segment.old + index, text), side('context', segment.new + index, text))
+        : row('context', segment.old + index, segment.new + index, text));
     }
     return rows;
   }
@@ -53,12 +127,12 @@ const KovaDiffPanel = (() => {
   // An unchanged run keeps CONTEXT lines next to each hunk; the middle folds
   // behind a button. The run at the top of the file only keeps its tail, the
   // one at the bottom only its head.
-  function sameSegment(segment, first, last) {
+  function sameSegment(segment, first, last, split) {
     const count = segment.lines.length;
     const head = first ? 0 : CONTEXT, tail = last ? 0 : CONTEXT;
     const parts = [];
-    if (count - head - tail < 2) return sameRows(segment, 0, count);
-    parts.push(...sameRows(segment, 0, head));
+    if (count - head - tail < 2) return sameRows(segment, 0, count, split);
+    parts.push(...sameRows(segment, 0, head, split));
     const hidden = count - head - tail;
     const more = node('button', 'diff-expand', `Show ${plural(hidden, 'more line')}`);
     more.type = 'button';
@@ -67,11 +141,11 @@ const KovaDiffPanel = (() => {
       const shown = node('div', 'diff-expanded');
       shown.setAttribute('tabindex', '-1');
       shown.setAttribute('aria-label', `${plural(hidden, 'unchanged line')}`);
-      shown.append(...sameRows(segment, head, head + hidden));
+      shown.append(...sameRows(segment, head, head + hidden, split));
       more.replaceWith(shown);
       shown.focus({preventScroll: true});
     });
-    parts.push(more, ...sameRows(segment, count - tail, count));
+    parts.push(more, ...sameRows(segment, count - tail, count, split));
     return parts;
   }
 
@@ -98,8 +172,19 @@ const KovaDiffPanel = (() => {
       head.append(actions);
     }
     section.append(head);
-    hunk.removed.forEach((text, offset) => section.append(row('del', hunk.old + offset, '', text)));
-    hunk.added.forEach((text, offset) => section.append(row('add', '', hunk.new + offset, text)));
+    // The n-th removed line is paired with the n-th added line for word marks.
+    const pairs = hunk.removed.map((text, offset) => offset < hunk.added.length ? wordDiff(text, hunk.added[offset]) : null);
+    if (handlers.split) {
+      const rows = Math.max(hunk.removed.length, hunk.added.length);
+      for (let offset = 0; offset < rows; offset++) {
+        const left = offset < hunk.removed.length ? side('del', hunk.old + offset, hunk.removed[offset], pairs[offset]?.old) : side('empty');
+        const right = offset < hunk.added.length ? side('add', hunk.new + offset, hunk.added[offset], pairs[offset]?.new) : side('empty');
+        section.append(splitRow(left, right));
+      }
+      return section;
+    }
+    hunk.removed.forEach((text, offset) => section.append(row('del', hunk.old + offset, '', text, pairs[offset]?.old)));
+    hunk.added.forEach((text, offset) => section.append(row('add', '', hunk.new + offset, text, pairs[offset]?.new)));
     return section;
   }
 
@@ -118,7 +203,7 @@ const KovaDiffPanel = (() => {
   }
 
   function render(view, handlers = {}) {
-    const body = node('div', 'file-diff diff-panel-diff');
+    const body = node('div', `file-diff diff-panel-diff${handlers.split ? ' is-split' : ''}`);
     body.setAttribute('role', 'region');
     body.setAttribute('aria-label', `Diff of ${view.path}`);
     const segments = view.segments || [];
@@ -126,7 +211,7 @@ const KovaDiffPanel = (() => {
     let index = 0;
     segments.forEach((segment, position) => {
       if (segment.type === 'hunk') body.append(hunkSection(segment, index++, total, handlers));
-      else body.append(...sameSegment(segment, position === 0, position === segments.length - 1));
+      else body.append(...sameSegment(segment, position === 0, position === segments.length - 1, handlers.split));
     });
     if (!total) body.append(node('p', 'diff-panel-note', 'No textual changes.'));
     arrows(body);
@@ -144,6 +229,28 @@ const KovaDiffPanel = (() => {
     wrap.append(meta, status, content);
     const kept = new Set();
     let view = null;
+    let split = storedLayout() === 'split';
+    const layout = node('div', 'diff-layout');
+    layout.setAttribute('role', 'group');
+    layout.setAttribute('aria-label', 'Diff layout');
+    const layouts = [['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => {
+      const choice = button(label, 'quiet', `${label} diff`);
+      choice.dataset.layout = value;
+      choice.addEventListener('click', () => {
+        if ((value === 'split') === split) return;
+        split = value === 'split';
+        storeLayout(value);
+        paintLayout();
+        if (view) draw();
+        choice.focus();
+      });
+      return choice;
+    });
+    layout.append(...layouts);
+    function paintLayout() {
+      for (const choice of layouts) choice.setAttribute('aria-pressed', String((choice.dataset.layout === 'split') === split));
+    }
+    paintLayout();
 
     const say = (text, error = false) => { status.textContent = text; status.classList.toggle('is-error', error); };
     function summary() {
@@ -151,7 +258,8 @@ const KovaDiffPanel = (() => {
       const open = counts.filter(hunk => hunk.state === 'applied' && !kept.has(hunk.id)).length;
       meta.replaceChildren(node('span', 'diff-panel-path', path),
                            node('span', 'change-stats', `+${view?.additions || 0} −${view?.deletions || 0}`),
-                           node('span', 'diff-panel-count', `${plural(counts.length, 'change')}${open ? `, ${open} to review` : ''}`));
+                           node('span', 'diff-panel-count', `${plural(counts.length, 'change')}${open ? `, ${open} to review` : ''}`),
+                           layout);
     }
     function retry(text) {
       const again = button('Reload diff', '', `Reload the diff of ${path}`);
@@ -164,7 +272,7 @@ const KovaDiffPanel = (() => {
         content.replaceChildren(node('p', 'diff-panel-note', view.reason || 'This file has no line-by-line view.'));
         return;
       }
-      content.replaceChildren(render(view, {kept, keep, undo}));
+      content.replaceChildren(render(view, {kept, keep, undo, split}));
       if (focusHunk) content.querySelector(`[data-hunk="${CSS.escape(focusHunk)}"]`)?.focus();
     }
     async function load(focusHunk) {
@@ -200,10 +308,19 @@ const KovaDiffPanel = (() => {
       }
     }
 
-    window.KovaPanel.open({title: `Diff · ${path}`, node: wrap, returnFocus: options.returnFocus});
+    // One tab per file and change set: opening it again refreshes that tab.
+    window.KovaPanel.open({title: `Diff · ${path}`, node: wrap, returnFocus: options.returnFocus,
+                           key: `diff:${chatId}:${checkpointId}:${path}`, background: options.background});
     summary();
     return load();
   }
 
-  return {open, render};
+  function storedLayout() {
+    try { return globalThis.localStorage?.getItem(LAYOUT_KEY) || ''; } catch (_) { return ''; }
+  }
+  function storeLayout(value) {
+    try { globalThis.localStorage?.setItem(LAYOUT_KEY, value); } catch (_) { /* the choice just isn't kept */ }
+  }
+
+  return {open, render, wordDiff};
 })();

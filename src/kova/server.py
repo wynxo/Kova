@@ -68,8 +68,12 @@ class ProjectBody(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     instructions: str = Field(default="", max_length=16_384)
     cwd: str | None = None
+    colour: str | None = None
+    icon: str | None = None
+    model: str | None = Field(default=None, max_length=200)
 
     def settings(self) -> dict:
+        """Validated changes. ``null`` or ``""`` clears colour, icon and model."""
         changes = self.model_dump(exclude_unset=True)
         if "name" in changes:
             name = (self.name or "").strip()
@@ -78,6 +82,15 @@ class ProjectBody(BaseModel):
             changes["name"] = name
         if self.cwd is not None:
             changes["cwd"] = working_folder(self.cwd)
+        try:
+            if "colour" in changes:
+                changes["colour"] = normalize_colour(self.colour)
+            if "icon" in changes:
+                changes["icon"] = normalize_icon(self.icon)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if "model" in changes:
+            changes["model"] = (self.model or "").strip() or None
         return changes
 
 
@@ -844,7 +857,16 @@ def create_app(
     # including local ones. Chat-only devices may use it, not change it.
     @api.post("/projects", dependencies=host_exec)
     async def create_project(body: NewProjectBody) -> dict:
-        return app.state.store.create_project(**body.settings())
+        return app.state.store.create_project(**project_model(body.settings()))
+
+    def project_model(changes: dict) -> dict:
+        """A project's default model must be one of the configured models."""
+        model = changes.get("model")
+        if model is not None:
+            entry = config.model_entry(model)
+            if entry is None or not entry.model:
+                raise HTTPException(404, f"Model '{model}' is not configured. Choose another model.")
+        return changes
 
     @api.get("/projects/{project_id}")
     async def get_project(project_id: str) -> dict:
@@ -855,7 +877,7 @@ def create_app(
 
     @api.patch("/projects/{project_id}", dependencies=host_exec)
     async def update_project(project_id: str, body: ProjectBody) -> dict:
-        changes = body.settings()
+        changes = project_model(body.settings())
         if not changes:
             raise HTTPException(422, "nothing to update")
         project = app.state.store.update_project(project_id, **changes)
@@ -892,6 +914,12 @@ def create_app(
             project = await get_project(project_id)
             if folder is None:
                 folder = project["cwd"]
+            # The project's default model applies unless the chat picks one; a
+            # default whose model was removed since is skipped, not an error.
+            if project.get("model") and not body.model_fields_set & {"model", "reasoning_effort"}:
+                entry = config.model_entry(project["model"])
+                if entry is not None and entry.model:
+                    body = body.model_copy(update={"model": project["model"]})
         cwd = working_folder(folder) if folder is not None else None
         limit_chat_settings(request, body.permission if body else None, cwd)
         model_settings = chat_model_settings(body, {})
@@ -939,8 +967,11 @@ def create_app(
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
-        if "project_id" in body.model_fields_set:
-            raise HTTPException(422, "A chat's project is chosen when it is created.")
+        moving = "project_id" in body.model_fields_set
+        if moving and body.model_fields_set != {"project_id"}:
+            raise HTTPException(422, "Move a chat to a project on its own, without other changes.")
+        if moving:
+            return await move_chat(chat_id, body.project_id, request)
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         changes: dict[str, str | bool | None] = {}
@@ -993,6 +1024,27 @@ def create_app(
         if "model" in changes:
             keys += ("model", "reasoning_effort")
         return {key: chat[key] for key in keys}
+
+    async def move_chat(chat_id: str, project_id: str | None, request: Request) -> dict:
+        """Put a chat in a project (``null`` takes it out). Only membership moves:
+        the folder, model and settings stay, and the next turn reads the new
+        project's instructions."""
+        if app.state.store.is_ephemeral(chat_id):
+            raise HTTPException(422, "Incognito chats cannot belong to a project.")
+        if app.state.store.get_chat(chat_id) is None:
+            raise HTTPException(404, "chat not found")
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(409, "Stop the active turn before moving this chat")
+        try:
+            app.state.store.move_chat(chat_id, project_id)
+        except LookupError:
+            raise HTTPException(404, "project not found") from None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        # The model reads the project's instructions from now on: a phone that
+        # moved the chat keeps its limits on it, as if it had written there.
+        wrote_in(chat_id, request)
+        return {"id": chat_id, "project_id": project_id}
 
     @api.get("/files")
     async def list_default_files(q: str = "", limit: int = Query(20, ge=1, le=50)) -> dict:

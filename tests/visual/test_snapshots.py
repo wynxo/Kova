@@ -264,7 +264,7 @@ def test_chat_layouts_reply_outline_and_zen_shortcut(chromium, kova):
         panel = page.get_by_role("complementary", name="Reply outline")
         panel.get_by_role("button", name="Configure").click()
         expect(reply.get_by_role("heading", name="Configure")).to_be_focused()
-        panel.get_by_role("button", name="Close panel").click()
+        page.locator("#side-panel").get_by_role("button", name="Hide panel").click()
 
         page.get_by_role("button", name="Settings", exact=True).click()
         page.get_by_role("tab", name="Chat", exact=True).click()

@@ -158,10 +158,22 @@ class KovaClient:
     def list_projects(self) -> list[dict]:
         return self._request("GET", "/projects").json()
 
-    def create_project(self, name: str, instructions: str = "", cwd: str | None = None) -> dict:
-        return self._request("POST", "/projects", json={
-            "name": name, "instructions": instructions, "cwd": cwd,
-        }).json()
+    def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
+                       colour: str | None = None, icon: str | None = None,
+                       model: str | None = None) -> dict:
+        body = {"name": name, "instructions": instructions, "cwd": cwd}
+        body.update({key: value for key, value in
+                     (("colour", colour), ("icon", icon), ("model", model)) if value is not None})
+        return self._request("POST", "/projects", json=body).json()
+
+    def update_project(self, project_id: str, **changes) -> dict:
+        """Change a project; pass only the fields to change (``None`` clears colour/icon/model)."""
+        return self._request("PATCH", f"/projects/{quote(project_id, safe='')}", json=changes).json()
+
+    def move_chat(self, chat_id: str, project_id: str | None) -> dict:
+        """Put a chat in a project, or take it out with ``None``."""
+        return self._request("PATCH", f"/chats/{quote(chat_id, safe='')}",
+                             json={"project_id": project_id}).json()
 
     def get_project(self, project_id: str) -> dict:
         return self._request("GET", f"/projects/{quote(project_id, safe='')}").json()
@@ -474,6 +486,24 @@ class KovaClient:
         if models is not None:
             payload["models"] = models
         return self._request("POST", "/compare", json=payload, timeout=330).json()
+
+    def stream_compare(self, chat_id: str, text: str, models: list[str]) -> Iterator[dict]:
+        """Ask several models the same message; yields events tagged with ``model``.
+
+        Nothing is written to the chat until :meth:`keep_compare` picks an answer.
+        """
+        finished = False
+        for event in self._stream("POST", f"/chats/{chat_id}/compare",
+                                  json={"text": text, "models": models}, timeout=330):
+            finished = finished or event.get("type") in ("done", "error", "stopped")
+            yield event
+        if not finished:
+            raise KovaError(None, "Compare stream ended before completion. Run kova doctor, then retry.")
+
+    def keep_compare(self, chat_id: str, compare_id: str, model: str) -> dict:
+        """Save the message and one compared answer as the chat's next turn."""
+        return self._request("POST", f"/chats/{chat_id}/compare/keep",
+                             json={"compare_id": compare_id, "model": model}).json()
 
     # MCP servers connect while these requests wait; give them time to start.
     def mcp_list(self) -> list[dict]:

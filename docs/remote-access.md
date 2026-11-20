@@ -106,7 +106,8 @@ same thing for the phone, so the limits follow the phone into the agent:
   case, also through a link) needs `host:exec`, even inside Kova Files. The
   terminal app also lists files with `core.fsmonitor` turned off.
   Saved project instructions are shared with all chats in a project; phones
-  also need `host:exec` to create, edit or remove a project.
+  also need `host:exec` to create, edit or remove a project. Moving a chat into
+  a project needs no capability, but the phone's limits then stay on that chat.
 - **The memory folder** is never a shared folder: if it sits inside Kova Files,
   file tools there need `host:exec`, like memory writes need `memory:write`.
 - **Recall:** searching past chats never returns a chat a phone wrote in to a
