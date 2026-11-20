@@ -983,13 +983,14 @@ html[data-background="noise"]:not([data-backgrounds="off"]) body::after {
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0/160px 160px repeat;
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0/160px 160px repeat;
 }
-html[data-background]:not([data-backgrounds="off"]) #sidebar,
-html[data-background]:not([data-backgrounds="off"]) .composer {
+/* Keep the opt-out check specificity-neutral so the fallbacks below win. */
+html[data-background]:where(:not([data-backgrounds="off"])) #sidebar,
+html[data-background]:where(:not([data-backgrounds="off"])) .composer {
   background:color-mix(in srgb, var(--bg-surface) 88%, transparent);
   -webkit-backdrop-filter:blur(var(--space-4));
   backdrop-filter:blur(var(--space-4));
 }
-html[data-background]:not([data-backgrounds="off"]) main {
+html[data-background]:where(:not([data-backgrounds="off"])) main {
   background:color-mix(in srgb, var(--bg-base) 88%, transparent);
   -webkit-backdrop-filter:blur(var(--space-4));
   backdrop-filter:blur(var(--space-4));
