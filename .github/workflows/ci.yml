@@ -104,6 +104,9 @@ jobs:
         run: node --test
         working-directory: desktop
 
+      - name: Smoke-test Electron startup
+        run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
+
   privacy:
     name: Privacy
     runs-on: ubuntu-latest
