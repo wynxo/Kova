@@ -415,6 +415,12 @@ same `app.js` client into a one-line ask box that creates a `[quick] `-titled
 chat (kept out of the sidebar history like `kova ask`'s `[ask] ` chats), streams
 the answer inline, and offers Open in Kova and Copy.
 
+Window chrome is native by default. `[desktop] title_bar = "themed"` keeps the
+OS window controls and loads `/app?titlebar=themed`, where the page paints a
+40px strip from its own semantic tokens; the renderer reports the active
+background, text colour and height back over IPC so the native controls match.
+The setting is read by the shell only, never by the server.
+
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
 `palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
 (the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`

@@ -41,7 +41,7 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
     assert app.state.token not in page.text
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     assert page.headers["referrer-policy"] == "no-referrer"
-    for name in ("app.js", "app.css", "settings.js", "settings.css",
+    for name in ("app.js", "app.css", "desktop.js", "settings.js", "settings.css",
                  "reasoning.js", "reasoning.css",
                  "theme-preview.js", "theme-preview.css",
                  "focus-trap.js",
@@ -210,3 +210,21 @@ def test_focus_trap_assets():
     assert (assets / "focus-trap.js").is_file()
     assert "focus-trap.js" in (assets / "index.html").read_text()
     assert "focus-trap.js" in (assets / "sw.js").read_text()
+
+
+def test_themed_title_bar_is_desktop_only_and_theme_driven():
+    """#203: a themed bar is opt-in, keeps native controls and paints from tokens."""
+    from pathlib import Path
+    assets = Path(__file__).resolve().parents[1] / "src/kova/web_assets"
+    index = (assets / "index.html").read_text()
+    desktop = (assets / "desktop.js").read_text()
+    css = (assets / "app.css").read_text()
+    main = (Path(__file__).resolve().parents[1] / "desktop" / "main.js").read_text()
+    assert 'id="titlebar"' in index and 'aria-hidden="true"' in index
+    assert "/app/assets/desktop.js" in index and "'/app/assets/desktop.js'" in (assets / "sw.js").read_text()
+    assert "titlebar=themed" in desktop and "/Electron\\//" in desktop
+    assert 'html[data-titlebar="themed"] .titlebar' in css
+    assert "background:var(--bg-base)" in css and "var(--fg-muted)" in css
+    assert "titleBarStyle: 'hiddenInset'" in main and "titleBarOverlay: true" in main
+    assert "titleBarColours(colours)" in main
+    assert "sandbox: true" in main, "the themed bar must not widen the Electron sandbox"

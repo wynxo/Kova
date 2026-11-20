@@ -332,3 +332,10 @@ def test_desktop_quick_ask_section_is_a_known_key():
     # The Electron shell reads [desktop] quick_ask; the server must not warn
     # about it as an unknown key.
     assert unknown_config_keys({"desktop": {"quick_ask": "Alt+Q"}}) == []
+
+
+def test_desktop_title_bar_section_is_a_known_key():
+    from kova.config import unknown_config_keys
+
+    # The optional themed title bar is a desktop-shell setting, not a typo.
+    assert unknown_config_keys({"desktop": {"title_bar": "themed"}}) == []
