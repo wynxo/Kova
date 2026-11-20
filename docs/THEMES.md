@@ -186,6 +186,7 @@ device. Built-in themes cannot be removed, and background images stay in `themes
 
 ```bash
 kova themes gallery                  # bundled and configured catalog themes
+kova themes try forest               # 30-second terminal preview; K keeps, R or Esc reverts
 kova themes gallery green dark       # only themes whose text contains every word
 kova themes show forest --gallery    # preview resolved tokens without installing
 kova themes install forest           # install, without changing the active theme
@@ -193,6 +194,14 @@ kova themes update                   # update every installed theme with a newer
 kova themes update forest            # or just one
 kova themes remove forest            # delete the installed file
 ```
+
+Terminal Try opens a temporary preview, not a chat. It uses the installed copy
+when available. Revert, Ctrl+C or the 30-second timeout closes the preview without
+installing or changing the selected theme. Keep installs the previewed copy if
+needed and saves the terminal preference only; it does not change the web app.
+`KOVA_THEME` still takes precedence if set. Previewing one gallery theme fetches
+at most that theme from the explicitly configured catalog, never its unrelated
+downloads.
 
 The bundled gallery uses `design/themes/` as its source. After editing an example, run
 `python scripts/build_tokens.py` to regenerate the bundled gallery data; the

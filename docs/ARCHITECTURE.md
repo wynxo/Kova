@@ -179,6 +179,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
 | `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
 | `GET /themes/gallery` | token or session | list bundled examples with their version, author (when given), install state, whether a newer copy is bundled, swatches and resolved preview tokens; `?installed=true` resolves a user theme named `gallery` |
+| `GET /themes/gallery/{theme_id}/preview` | token or session | validate and preview one gallery theme without reading unrelated downloads |
 | `POST /themes/gallery/{theme_id}/install` | token or session | validate and install a bundled example as a theme file (paired phones need `settings:write`) |
 | `POST /themes/gallery/{theme_id}/update` | token or session | replace an installed bundled theme with its newer bundled copy (409 when not installed or already current; paired phones need `settings:write`) |
 | `DELETE /themes/{theme_id}` | token or session | delete one installed theme file (built-ins are refused; paired phones need `settings:write`) |

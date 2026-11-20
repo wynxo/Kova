@@ -1155,12 +1155,7 @@ def themes_show(
     """Print one theme's tokens, resolved over the base it extends."""
     try:
         client = get_client()
-        if gallery:
-            data = next((entry for entry in client.theme_gallery() if entry["id"] == theme_id), None)
-            if data is None:
-                _fail("No theme in the gallery with that ID.")
-        else:
-            data = client.theme(theme_id)
+        data = client.preview_gallery_theme(theme_id) if gallery else client.theme(theme_id)
     except KovaError as exc:
         _fail(str(exc))
     header = " ".join(str(part) for part in (data.get("name"), data.get("version")) if part)
@@ -1175,6 +1170,35 @@ def themes_show(
     console.print(table)
     if terminal:
         _muted("Terminal palette: " + " ".join(terminal))
+
+
+@_themes.command("try")
+def themes_try(theme_id: str = typer.Argument(..., help="An installed or gallery theme ID.")):
+    """Try a terminal theme for 30 seconds without changing it unless kept."""
+    from kova.tui.theme_trial import keep_preview
+
+    if not sys.stdin.isatty() or not console.is_terminal:
+        _fail("Trying a theme needs an interactive terminal.",
+              hint="Run: kova themes show ID --gallery")
+    client = None
+    try:
+        data = themes.get(kova_theme.theme_id(theme_id), kova_home())
+    except themes.ThemeError:
+        try:
+            client = get_client()
+            data = client.preview_gallery_theme(theme_id)
+        except KovaError as exc:
+            _fail(str(exc))
+
+    if not keep_preview(data):
+        _muted("Preview reverted. Your terminal theme did not change.")
+        return
+    if client is not None:
+        try:
+            client.save_theme(data["document"])
+        except KovaError as exc:
+            _fail(str(exc))
+    themes_use(data["id"], app_too=False)
 
 
 def _terminal_theme_setting(name: str, home: Path) -> str:
