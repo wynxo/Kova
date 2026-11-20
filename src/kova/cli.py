@@ -2477,12 +2477,15 @@ def projects_create(
     colour: str | None = typer.Option(None, "--colour", help=f"Sidebar colour: {', '.join(CHAT_COLOURS)}."),
     icon: str | None = typer.Option(None, "--icon", help=f"Sidebar icon: {', '.join(CHAT_ICONS)}."),
     model: str | None = typer.Option(None, "--model", help="Default model for new chats (see kova model list)."),
+    pin: list[str] = typer.Option([], "--pin", help="A file to pin, relative to the working folder. Repeatable."),
 ):
     """Create a project."""
+    if pin and folder is None:
+        _fail("A project needs --folder before it can pin files.")
     try:
         project = get_client().create_project(
             name, instructions, str(folder) if folder is not None else None,
-            colour=colour, icon=icon, model=model)
+            colour=colour, icon=icon, model=model, files=pin or None)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f'Created project "{project["name"]}" ({project["id"]}).')
@@ -2498,8 +2501,11 @@ def projects_edit(
     colour: str | None = typer.Option(None, "--colour", help='Sidebar colour, or "none" to clear it.'),
     icon: str | None = typer.Option(None, "--icon", help='Sidebar icon, or "none" to clear it.'),
     model: str | None = typer.Option(None, "--model", help='Default model, or "none" to clear it.'),
+    pin: list[str] = typer.Option([], "--pin", help="A file to pin, relative to the working folder. Repeatable."),
+    unpin: list[str] = typer.Option([], "--unpin", help="A pinned file to remove. Repeatable."),
+    clear_pins: bool = typer.Option(False, "--clear-pins", help="Remove every pinned file."),
 ):
-    """Change a project's name, instructions, folder, colour, icon or default model."""
+    """Change a project's name, instructions, folder, look, model or pinned files."""
     changes: dict = {}
     if name is not None:
         changes["name"] = name
@@ -2510,10 +2516,16 @@ def projects_edit(
     for key, value in (("colour", colour), ("icon", icon), ("model", model)):
         if value is not None:
             changes[key] = None if value.strip().lower() in ("none", "") else value
-    if not changes:
+    if not changes and not pin and not unpin and not clear_pins:
         _fail("Nothing to change.", hint="Pass at least one option, for example: --name NAME")
     client = get_client()
-    _find_project(client, project_id)
+    project = _find_project(client, project_id)
+    if pin or unpin or clear_pins:
+        pinned = [] if clear_pins else list(project.get("files") or [])
+        gone = {item.strip().replace("\\", "/") for item in unpin}
+        pinned = [path for path in pinned if path not in gone]
+        pinned.extend(path for path in pin if path not in pinned)
+        changes["files"] = pinned
     try:
         project = client.update_project(project_id, **changes)
     except KovaError as exc:
@@ -2530,7 +2542,7 @@ def _find_project(client: KovaClient, project_id: str) -> dict:
 
 @_projects.command("show")
 def projects_show(project_id: str):
-    """Show a project by ID, including its folder and instructions."""
+    """Show a project by ID, including its folder, instructions and pinned files."""
     project = _find_project(get_client(), project_id)
     console.print(Text(project["name"], style=f"bold {colour('ACCENT')}"))
     _muted(project["id"])
@@ -2539,6 +2551,10 @@ def projects_show(project_id: str):
     look = " · ".join(part for part in (project.get("colour"), project.get("icon")) if part)
     if look:
         console.print(Text(f"Look: {look}"))
+    if project.get("files"):
+        console.print(Text("Pinned files (references only):"))
+        for path in project["files"]:
+            console.print(Text(f"  {path}"))
     if project["instructions"]:
         console.print()
         console.print(Text(project["instructions"]))

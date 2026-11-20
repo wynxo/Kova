@@ -3,6 +3,7 @@
 import json
 import zipfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -69,7 +70,7 @@ def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path, monkeypa
             "id": project["id"], "name": "Research",
             "instructions": "Cite sources.", "cwd": "~/source/project",
             "created": project["created"], "updated": project["updated"],
-            "colour": "info", "icon": "brain", "model": "local",
+            "colour": "info", "icon": "brain", "model": "local", "files": [],
         }]
         assert json.loads(archive.read("manifest.json"))["projects"] == 1
         assert json.loads(archive.read(f"chats/{chat_id}.json"))["project_id"] == project["id"]
@@ -256,6 +257,66 @@ def test_junk_project_entries_are_skipped_but_the_rest_restores(tmp_path):
     restored = Store(target_cfg.home / "kova.db")
     assert [row["name"] for row in restored.list_projects()] == ["Kept"]
     assert restored.get_chat(chat["id"])["project_id"] is None
+
+
+def test_pinned_files_travel_as_references_only(tmp_path, monkeypatch):
+    """Pins round-trip with their project, but the files themselves do not."""
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path)
+    source = _home(tmp_path, "source")
+    store, project, _ = _seed_project(source)
+    (Path(project["cwd"]) / "notes").mkdir()
+    (Path(project["cwd"]) / "notes" / "a.md").write_text("PRIVATE NOTE BODY\n", encoding="utf-8")
+    store.update_project(project["id"], files=["notes/a.md"])
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    with zipfile.ZipFile(target) as archive:
+        payload = json.loads(archive.read("projects.json"))
+        assert payload[0]["files"] == ["notes/a.md"]
+        assert all("PRIVATE NOTE BODY" not in archive.read(name).decode("utf-8", "ignore")
+                   for name in archive.namelist())
+
+    target_cfg = _home(tmp_path, "target")
+    import_archive(target_cfg, target)
+    assert Store(target_cfg.home / "kova.db").get_project(project["id"])["files"] == ["notes/a.md"]
+
+
+def test_pins_are_dropped_when_the_folder_does_not_exist_here(tmp_path, monkeypatch):
+    """A reference with no base folder would mean nothing, so the restore drops it."""
+    home = tmp_path / "machine-a"
+    folder = home / "projects" / "demo"
+    folder.mkdir(parents=True)
+    source = _home(tmp_path, "source")
+    store, project, _ = _seed_project(source, folder=folder)
+    store.update_project(project["id"], files=["notes/a.md"])
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: home)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path / "machine-b")
+    target_cfg = _home(tmp_path, "target")
+    import_archive(target_cfg, target)
+    restored = Store(target_cfg.home / "kova.db").get_project(project["id"])
+    assert restored["cwd"] is None and restored["files"] == []
+
+
+def test_an_archive_without_pinned_files_restores_the_project(tmp_path, monkeypatch):
+    """projects.json written before pins existed keeps its project, with no pins."""
+    monkeypatch.setattr(backup_module, "_home_folder", lambda: tmp_path)
+    source = _home(tmp_path, "source")
+    store, project, _ = _seed_project(source)
+    target = tmp_path / "backup.zip"
+    export_archive(source, target, store=store)
+    payload = json.loads(zipfile.ZipFile(target).read("projects.json"))
+    for entry in payload:
+        entry.pop("files", None)
+    older = tmp_path / "older.zip"
+    _rewrite_archive(target, older, replace={"projects.json": json.dumps(payload).encode()})
+
+    target_cfg = _home(tmp_path, "target")
+    assert import_archive(target_cfg, older)["projects"] == 1
+    restored = Store(target_cfg.home / "kova.db").get_project(project["id"])
+    assert restored["name"] == "Research" and restored["files"] == []
 
 
 def test_export_contains_chats_notes_reminders_and_safe_config(tmp_path):

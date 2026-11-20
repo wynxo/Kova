@@ -168,10 +168,11 @@ class KovaClient:
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, files: list[str] | None = None) -> dict:
         body = {"name": name, "instructions": instructions, "cwd": cwd}
         body.update({key: value for key, value in
-                     (("colour", colour), ("icon", icon), ("model", model)) if value is not None})
+                     (("colour", colour), ("icon", icon), ("model", model), ("files", files))
+                     if value is not None})
         return self._request("POST", "/projects", json=body).json()
 
     def update_project(self, project_id: str, **changes) -> dict:

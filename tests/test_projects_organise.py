@@ -1,4 +1,4 @@
-"""Projects (#196): colour, icon, a default model, and moving chats in and out."""
+"""Projects (#196): colour, icon, a default model, pinned files and chat moves."""
 from __future__ import annotations
 
 import sqlite3
@@ -28,22 +28,26 @@ def server(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------- store
-def test_older_project_tables_gain_colour_icon_and_model(tmp_path):
+def test_older_project_tables_gain_colour_icon_model_and_pinned_files(tmp_path):
     path = tmp_path / "kova.db"
     old = Store(path)
     project = old.create_project("Research", "Cite sources.")
     old._conn.close()
     with sqlite3.connect(path) as db:
-        for column in ("colour", "icon", "model"):
+        for column in ("colour", "icon", "model", "files"):
             db.execute(f"ALTER TABLE projects DROP COLUMN {column}")
     migrated = Store(path)
     saved = migrated.get_project(project["id"])
     assert (saved["name"], saved["instructions"]) == ("Research", "Cite sources.")
     assert (saved["colour"], saved["icon"], saved["model"]) == (None, None, None)
-    updated = migrated.update_project(project["id"], colour="info", icon="brain", model="second")
+    assert saved["files"] == []
+    updated = migrated.update_project(project["id"], colour="info", icon="brain", model="second",
+                                      files=["notes/a.md"])
     assert (updated["colour"], updated["icon"], updated["model"]) == ("info", "brain", "second")
-    cleared = migrated.update_project(project["id"], colour=None, model="")
+    assert updated["files"] == ["notes/a.md"]
+    cleared = migrated.update_project(project["id"], colour=None, model="", files=[])
     assert (cleared["colour"], cleared["icon"], cleared["model"]) == (None, "brain", None)
+    assert cleared["files"] == []
 
 
 def test_store_moves_chats_without_touching_their_folder(tmp_path):
@@ -70,7 +74,7 @@ def test_store_imports_a_project_and_chat_membership(tmp_path):
         "id": "project-1", "name": "Research", "instructions": "Cite sources.",
         "cwd": str(tmp_path), "created": "2026-01-01T00:00:00+00:00",
         "updated": "2026-01-02T00:00:00+00:00", "colour": "warning",
-        "icon": "sun", "model": "local",
+        "icon": "sun", "model": "local", "files": ["notes/b.md", "notes/a.md"],
     }
     assert store.import_project(saved) is True
     assert store.import_project(saved) is False
@@ -93,9 +97,25 @@ def test_store_import_keeps_a_hand_edited_project_readable(tmp_path):
     saved = store.get_project("p")
     assert (saved["name"], saved["instructions"], saved["cwd"]) == ("Notes", "", None)
     assert (saved["colour"], saved["icon"], saved["model"]) == (None, None, None)
+    assert saved["files"] == []
     assert saved["created"] and saved["updated"]
     with pytest.raises(ValueError):
         store.import_project({"id": "q", "name": "   "})
+
+
+def test_store_import_salvages_pinned_paths_only_with_a_folder(tmp_path):
+    """A damaged archive narrows the pins instead of failing the restore."""
+    store = Store(tmp_path / "kova.db")
+    assert store.import_project({
+        "id": "pinned", "name": "Pinned", "cwd": str(tmp_path),
+        "files": ["notes/a.md", "/etc/passwd", "../out.md", 7, "notes/a.md"],
+    })
+    assert store.get_project("pinned")["files"] == ["notes/a.md"]
+    # Without a restored folder the references have no base, so they are dropped.
+    assert store.import_project({"id": "lost", "name": "Lost", "files": ["notes/a.md"]})
+    assert store.get_project("lost")["files"] == []
+    assert store.import_project({"id": "odd", "name": "Odd", "cwd": str(tmp_path), "files": "a.md"})
+    assert store.get_project("odd")["files"] == []
 
 
 # ------------------------------------------------------------------ server
@@ -164,6 +184,59 @@ def test_chats_move_in_and_out_of_projects(server, tmp_path):
     assert refused.status_code == 422
 
 
+def test_project_pins_are_gated_and_do_not_reach_prompts(server, tmp_path):
+    client, headers, _, fake = server
+    folder = tmp_path / "project"
+    folder.mkdir()
+    elsewhere = tmp_path / "outside.md"
+    elsewhere.write_text("OUTSIDE THE PROJECT", encoding="utf-8")
+
+    # A reference needs a base folder and must stay inside it.
+    no_folder = client.post("/projects", headers=headers, json={"name": "X", "files": ["notes.md"]})
+    assert no_folder.status_code == 422 and "working folder" in no_folder.json()["detail"]
+    escape = client.post("/projects", headers=headers, json={
+        "name": "X", "cwd": str(folder), "files": ["../outside.md"],
+    })
+    assert escape.status_code == 422
+    absolute = client.post("/projects", headers=headers, json={
+        "name": "X", "cwd": str(folder), "files": [str(elsewhere)],
+    })
+    assert absolute.status_code == 422
+
+    project = client.post("/projects", headers=headers, json={
+        "name": "Pinned", "cwd": str(folder), "files": ["notes.md", "./notes.md"],
+    }).json()
+    assert project["files"] == ["notes.md"]
+    path = f"/projects/{project['id']}"
+    assert client.patch(path, headers=headers, json={"files": ["notes.md", "src/app.py"]}).json()["files"] == [
+        "notes.md", "src/app.py"]
+    assert client.patch(path, headers=headers, json={"files": ["/etc/passwd"]}).status_code == 422
+    # Changing or clearing the base without a new list would silently retarget them.
+    assert client.patch(path, headers=headers, json={"cwd": None}).status_code == 422
+    other = tmp_path / "other"
+    other.mkdir()
+    assert client.patch(path, headers=headers, json={"cwd": str(other)}).status_code == 422
+    assert client.patch(path, headers=headers, json={"cwd": str(other), "files": []}).json()["cwd"] == str(other)
+
+    (folder / "notes.md").write_text("PROJECT FILE CONTENTS\n", encoding="utf-8")
+    client.patch(path, headers=headers, json={"cwd": str(folder), "files": ["notes.md"]})
+    work = client.post("/chats", headers=headers, json={"project_id": project["id"]}).json()
+    chat_mode = client.post("/chats", headers=headers,
+                            json={"project_id": project["id"], "mode": "chat"}).json()
+    loose = client.post("/chats", headers=headers, json={"cwd": str(folder)}).json()
+
+    def prompt(chat):
+        result = client.post(f"/chats/{chat['id']}/messages", headers=headers, json={"text": "Hello"})
+        assert result.status_code == 200 and '"type": "done"' in result.text
+        return fake.requests[-1]["messages"][0]["content"]
+
+    for chat in (work, chat_mode, loose):
+        captured = prompt(chat)
+        assert "Pinned project files" not in captured
+        assert "notes.md" not in captured
+        assert "PROJECT FILE CONTENTS" not in captured
+
+
 # --------------------------------------------------------------------- CLI
 @pytest.fixture
 def runner(server, monkeypatch):
@@ -171,6 +244,35 @@ def runner(server, monkeypatch):
     kova = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=client)
     monkeypatch.setattr(cli, "get_client", lambda: kova)
     return CliRunner(), kova
+
+
+def test_cli_pins_and_unpins_project_files(runner, tmp_path):
+    cli_runner, kova = runner
+    needs_folder = cli_runner.invoke(cli.app, ["projects", "create", "Pinned", "--pin", "notes/a.md"])
+    assert needs_folder.exit_code == 1 and "--folder" in needs_folder.output
+
+    created = cli_runner.invoke(cli.app, [
+        "projects", "create", "Pinned", "--folder", str(tmp_path),
+        "--pin", "notes/a.md", "--pin", "src/b.py",
+    ])
+    assert created.exit_code == 0, created.output
+    [project] = kova.list_projects()
+    assert project["files"] == ["notes/a.md", "src/b.py"]
+    shown = cli_runner.invoke(cli.app, ["projects", "show", project["id"]])
+    assert "Pinned files (references only)" in shown.output
+    assert "notes/a.md" in shown.output.replace("\n", "")
+
+    edited = cli_runner.invoke(cli.app, [
+        "projects", "edit", project["id"], "--pin", "notes/c.md", "--unpin", "notes/a.md",
+    ])
+    assert edited.exit_code == 0, edited.output
+    assert kova.get_project(project["id"])["files"] == ["src/b.py", "notes/c.md"]
+
+    invalid = cli_runner.invoke(cli.app, ["projects", "edit", project["id"], "--pin", "../out.md"])
+    assert invalid.exit_code == 1 and "inside the project folder" in invalid.output
+    cleared = cli_runner.invoke(cli.app, ["projects", "edit", project["id"], "--clear-pins"])
+    assert cleared.exit_code == 0, cleared.output
+    assert kova.get_project(project["id"])["files"] == []
 
 
 def test_cli_moves_chats_and_edits_projects(runner):
