@@ -1396,6 +1396,20 @@ assert.equal(byClass(projectSummary, 'i-brain').length, 1);
 assert.equal(projectSummary.textContent, 'Lab notes');
 assert.deepEqual(byClass(group, 'project-fact').map(node => node.textContent),
                  ['Folder/workspace', 'Modellocal', 'InstructionsKeep a log.']);
+// Pinned files are references in the overview and one path per line in the
+// editor; the dialog never reads a file or offers one.
+sidebarProjects[0].files = ['notes/a.md', 'src/b.py'];
+sandbox.test.history(sidebarChats);
+group = byClass(shell, 'project-group')[0];
+assert.equal(byClass(group, 'project-fact').at(-2).textContent, 'Filesnotes/a.md, src/b.py');
+projectButton('Edit project').onclick();
+projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+const pinnedField = walk(projectDialog).find(node => node.tagName === 'textarea' && node.name === 'files');
+assert.equal(pinnedField.value, 'notes/a.md\nsrc/b.py');
+pinnedField.value = 'notes/c.md\n\n';
+await walk(projectDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(requests.findLast(request => request.path === '/projects/research')?.body.files,
+                 ['notes/c.md']);
 // Saving without touching the look sends no colour, icon or model.
 projectButton('Edit project').onclick();
 projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);

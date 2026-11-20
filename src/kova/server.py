@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files
+from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files, project_pins
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -71,6 +71,8 @@ class ProjectBody(BaseModel):
     colour: str | None = None
     icon: str | None = None
     model: str | None = Field(default=None, max_length=200)
+    #: Project-relative references; contents are never read or stored (#196).
+    files: list[str] = Field(default_factory=list, max_length=project_pins.MAX_PINS)
 
     def settings(self) -> dict:
         """Validated changes. ``null`` or ``""`` clears colour, icon and model."""
@@ -866,7 +868,12 @@ def create_app(
     # including local ones. Chat-only devices may use it, not change it.
     @api.post("/projects", dependencies=host_exec)
     async def create_project(body: NewProjectBody) -> dict:
-        return app.state.store.create_project(**project_model(body.settings()))
+        changes = project_model(body.settings())
+        try:
+            changes["files"] = project_pins.pins(changes.get("files", []), changes.get("cwd"))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        return app.state.store.create_project(**changes)
 
     def project_model(changes: dict) -> dict:
         """A project's default model must be one of the configured models."""
@@ -889,6 +896,19 @@ def create_app(
         changes = project_model(body.settings())
         if not changes:
             raise HTTPException(422, "nothing to update")
+        current = app.state.store.get_project(project_id)
+        if current is None:
+            raise HTTPException(404, "project not found")
+        folder = changes["cwd"] if "cwd" in changes else current["cwd"]
+        if "files" in changes:
+            try:
+                changes["files"] = project_pins.pins(changes["files"], folder)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+        elif "cwd" in changes and changes["cwd"] != current["cwd"] and current["files"]:
+            # Every pin is relative to the folder; changing the base without a
+            # new list would silently point them at different files.
+            raise HTTPException(422, "Changing the working folder needs the pinned file list; clear it first or send it with the folder.")
         project = app.state.store.update_project(project_id, **changes)
         if project is None:
             raise HTTPException(404, "project not found")

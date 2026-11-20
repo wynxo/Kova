@@ -18,6 +18,7 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
+from kova import project_pins
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.modes import DEFAULT_MODE, MODES
 from kova.permissions import PERMISSIONS
@@ -247,7 +248,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
                 cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
-                colour TEXT, icon TEXT, model TEXT
+                colour TEXT, icon TEXT, model TEXT,
+                files TEXT NOT NULL DEFAULT '[]'
             );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -414,6 +416,10 @@ class Store:
         for name in ("colour", "icon", "model"):
             if name not in project_columns:
                 self._conn.execute(f"ALTER TABLE projects ADD COLUMN {name} TEXT")
+        # Pinned files are references only (#196): an existing project gains an
+        # empty list and its instructions, folder and look are untouched.
+        if "files" not in project_columns:
+            self._conn.execute("ALTER TABLE projects ADD COLUMN files TEXT NOT NULL DEFAULT '[]'")
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -534,39 +540,51 @@ class Store:
             self.fts_enabled = False
 
     # -- projects ---------------------------------------------------------
+    @staticmethod
+    def _project(row: sqlite3.Row) -> dict:
+        """One project row as a dict, with its pinned file list decoded."""
+        project = dict(row)
+        try:
+            files = json.loads(project.get("files") or "[]")
+        except (TypeError, ValueError):
+            files = []
+        project["files"] = [path for path in files if isinstance(path, str)] if isinstance(files, list) else []
+        return project
+
     def list_projects(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id")
-            return [dict(row) for row in rows]
+            return [self._project(row) for row in rows]
 
     def get_project(self, project_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        return dict(row) if row else None
+        return self._project(row) if row else None
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, files: list[str] | None = None) -> dict:
         """A new project. ``colour``/``icon`` use the chat appearance keys (#213)."""
         timestamp = _utc_now_iso()
+        pinned = list(files or [])
         project = {"id": uuid4().hex[:12], "name": name, "instructions": instructions,
                    "cwd": cwd, "created": timestamp, "updated": timestamp,
                    "colour": normalize_colour(colour), "icon": normalize_icon(icon),
-                   "model": model or None}
+                   "model": model or None, "files": pinned}
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model) "
-                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, :colour, :icon, :model)",
-                project
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model, files) "
+                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, :colour, :icon, :model, :files)",
+                {**project, "files": json.dumps(pinned)}
             )
         return project
 
     def update_project(self, project_id: str, *, name: str | None = None,
                        instructions: str | None = None, cwd: str | None = _UNSET,
                        colour: str | None = _UNSET, icon: str | None = _UNSET,
-                       model: str | None = _UNSET) -> dict | None:
+                       model: str | None = _UNSET, files: list[str] | None = _UNSET) -> dict | None:
         """Change a project; ``_UNSET`` leaves a field alone and ``None`` clears it."""
-        changes = {"updated": _utc_now_iso()}
+        changes: dict = {"updated": _utc_now_iso()}
         if name is not None:
             changes["name"] = name
         if instructions is not None:
@@ -579,6 +597,8 @@ class Store:
             changes["icon"] = normalize_icon(icon)
         if model is not _UNSET:
             changes["model"] = model or None
+        if files is not _UNSET:
+            changes["files"] = json.dumps(list(files or []))
         assignments = ", ".join(f"{field} = ?" for field in changes)
         with self._lock, self._conn:
             self._conn.execute(f"UPDATE projects SET {assignments} WHERE id = ?",
@@ -634,11 +654,16 @@ class Store:
                 icon = None
             instructions = project.get("instructions")
             cwd, model = project.get("cwd"), project.get("model")
+            # Pins are references relative to the folder; a restore keeps only
+            # the valid ones, and none when the folder did not come with it.
+            pinned = project_pins.salvage(
+                project.get("files"), cwd if isinstance(cwd, str) and cwd else None,
+            )
             now = _utc_now_iso()
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model, files) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (project_id,
                      name.strip()[:200],
                      instructions if isinstance(instructions, str) else "",
@@ -646,7 +671,8 @@ class Store:
                      project["created"] if isinstance(project.get("created"), str) else now,
                      project["updated"] if isinstance(project.get("updated"), str) else now,
                      colour, icon,
-                     model if isinstance(model, str) and model else None),
+                     model if isinstance(model, str) and model else None,
+                     json.dumps(pinned)),
                 )
             return True
 

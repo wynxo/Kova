@@ -29,6 +29,7 @@ from kova.tools.sessions import set_current_chat
 from kova.pairing import action_capabilities, narrow
 from kova.permissions import Approvals, needs_approval, action_key
 from kova.project_instructions import project_instructions
+from kova.project_pins import render as render_pinned_files
 from kova.review import MemoryReview, ReviewSettings
 from kova.skills import Skills
 from kova.usage import TurnMeter, summarize, window_start
@@ -494,6 +495,13 @@ class Agent:
                 user_home=self.config.home, saved=project["instructions"] if project else "")
             if instructions:
                 prompt += f"\n\n{instructions}"
+        # Pins are references for the file tools, so they only belong to a mode
+        # that actually offers read_file (which a paired phone may not). Their
+        # contents stay on disk: nothing is read or included.
+        if mode != 'chat' and project and 'read_file' in tools:
+            pinned = render_pinned_files(project.get("files") or [], project.get("cwd"))
+            if pinned:
+                prompt += f"\n\n{pinned}"
         if mode != 'chat':
             if skills:
                 prompt += f"\n\n{skills}"

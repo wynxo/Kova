@@ -49,7 +49,7 @@ $ kova devices allow 3f9a1c2e models:write
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
 | `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder, start at login, and install, update and remove gallery themes | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/…, POST /themes/gallery/{theme_id}/install, POST /themes/gallery/{theme_id}/update, DELETE /themes/{theme_id} |
 | `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
-| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access, manage shared project instructions | POST /jobs, DELETE /jobs/…, POST /projects, PATCH /projects/…, DELETE /projects/…, plus the agent rules below |
+| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access, manage shared project instructions and pinned file references | POST /jobs, DELETE /jobs/…, POST /projects, PATCH /projects/…, DELETE /projects/…, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
 command to run. Some things no capability unlocks, because they choose programs

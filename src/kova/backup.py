@@ -108,7 +108,11 @@ def _local_folder(value: str | None, home: Path | None = None) -> str | None:
 
 
 def _project_entry(project: dict) -> dict:
-    """One project as the archive stores it."""
+    """One project as the archive stores it.
+
+    Pinned files travel as references only. The files themselves are not
+    copied, so a backup never grows by the project's working folder.
+    """
     return {
         "id": project.get("id"),
         "name": project.get("name"),
@@ -119,6 +123,7 @@ def _project_entry(project: dict) -> dict:
         "colour": project.get("colour"),
         "icon": project.get("icon"),
         "model": project.get("model"),
+        "files": [path for path in project.get("files") or [] if isinstance(path, str)],
     }
 
 
@@ -213,9 +218,10 @@ def export_archive(
     """Write one zip backup and return counts plus its path.
 
     Projects are ``projects.json``, with their folders relative to the home
-    folder. Chats are stored twice: ``chats/<id>.json`` for a faithful restore
-    and ``chats/<id>.md`` so the archive is pleasant to read. Memory notes are
-    copied as-is. The server token is never read or written.
+    folder and pinned files as relative references only. Chats are stored
+    twice: ``chats/<id>.json`` for a faithful restore and ``chats/<id>.md`` so
+    the archive is pleasant to read. Memory notes are copied as-is. The server
+    token is never read or written.
     """
     target = _target_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
