@@ -91,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/health` answers from a 15-second cached model status refreshed in the background (`?probe=1` forces a live check), and the web poll pauses while hidden and backs off to 2–5 minutes, so CLI commands and open windows no longer wait on a down model.
 - Approvals and `ask_user` questions are announced to screen readers and move keyboard focus to their first decision button (the transcript itself stays `aria-live="off"`); the web UI announces how a turn ended and returns focus to the composer after an answer.
 - `kova-app` now launches the desktop app (native window; `--browser` for your browser).
+- `./update` (`update.bat`) refreshes an installed `kova` with `uv tool install --editable` directly instead of running the installed command, so a stale tool environment that cannot import a newly added dependency repairs itself, and the failure message gives a recovery command that does not need `kova` (#341).
 - `docs/ARCHITECTURE.md` now documents all 72 endpoints with their auth, plus the SSE event vocabulary; `uv run pytest -k architecture` fails when the table and the code drift apart.
 - Redesigned desktop and web UI, with a new app icon.
 - Reminder notifications now work on macOS and Windows and fall back from `notify-send` to `gdbus` on Linux; `kova doctor` reports the notifier in use, and the desktop app allows the Notification permission.

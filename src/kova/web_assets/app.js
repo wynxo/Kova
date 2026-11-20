@@ -3698,14 +3698,24 @@
     $('quick-open').hidden = !state.chat;
     $('quick-copy').hidden = ![...document.querySelectorAll('#messages .assistant')].length;
   }
-  function quickCopyAnswer() {
+  let quickCopyTimer = null;
+  // The reply's own body: the label, timestamp and action bar around it are
+  // chrome, not answer text.
+  function quickAnswerText() {
     const answers = [...document.querySelectorAll('#messages .assistant')];
-    const text = answers.at(-1)?.textContent?.trim() || '';
-    if (!text) return;
-    const copy = navigator.clipboard ? navigator.clipboard.writeText(text) : null;
-    if (copy && typeof copy.catch === 'function') copy.catch(() => {});
-    $('quick-copy').textContent = 'Copied';
-    setTimeout(() => { if (!isQuick) return; $('quick-copy').textContent = 'Copy'; }, 1600);
+    return answers.at(-1)?.querySelector('.message-body')?.textContent?.trim() || '';
+  }
+  function quickCopyAnswer() {
+    const text = quickAnswerText();
+    if (!text) return null;
+    const button = $('quick-copy');
+    clearTimeout(quickCopyTimer);
+    button.textContent = 'Copy';
+    return copyText(text, () => {
+      if (!isQuick) return;
+      button.textContent = 'Copied';
+      quickCopyTimer = setTimeout(() => { if (isQuick) button.textContent = 'Copy'; }, 1600);
+    });
   }
   window.kovaQuick?.onSelection?.(text => {
     quickSelection = typeof text === 'string' && text.trim() ? text : '';

@@ -25,6 +25,11 @@ find_uv() {
 }
 
 UV="$(find_uv)" || die "uv is not installed. Run ./install first."
+UV_TOOL_BIN_DIR="$HOME/.local/bin"
+UV_TOOL_DIR="$HOME/.local/share/uv/tools"
+UV_PYTHON_INSTALL_DIR="$HOME/.local/share/uv/python"
+UV_CACHE_DIR="$HOME/.cache/uv"
+export UV_TOOL_BIN_DIR UV_TOOL_DIR UV_PYTHON_INSTALL_DIR UV_CACHE_DIR
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "this is not a git checkout. Run: kova update"
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
@@ -46,10 +51,13 @@ say "→ Refreshing dependencies ..."
 "$UV" sync >/dev/null 2>&1 || die "uv sync failed. Run 'uv sync' to see why."
 say "✓ Dependencies are current."
 
-# If Kova is also installed as a uv tool, update that copy too.
+# If Kova is also installed as a uv tool, refresh that copy too. Run uv
+# directly: the installed command may not import until this refresh, for
+# example when the new revision added a dependency the tool environment lacks.
 if [ -x "$HOME/.local/bin/kova" ]; then
     say "→ Updating the installed kova command ..."
-    "$HOME/.local/bin/kova" update || die "the installed kova command could not be updated. Try: kova update"
+    "$UV" tool install --force --refresh --python 3.12 --editable "$here" ||
+        die "the installed kova command could not be updated. Retry: ./install"
 fi
 
 # Keep the desktop app files current, so kova-app runs this checkout's desktop/.
