@@ -125,6 +125,20 @@
   outline-offset:var(--space-0-5);
 }
 
+/* Forced colours (#201): the disclosure and dismiss keep a boundary, the
+   progress track keeps an outline around the selection-coloured fill (a 2px
+   bar has no room for a border), and the in-progress dot stays painted. */
+@media (forced-colors: active) {
+  .plan-card-toggle,
+  .plan-card-dismiss { border:1px solid ButtonText; }
+  .plan-card-bar { outline:1px solid ButtonText; outline-offset:0; }
+  .plan-card-fill { forced-color-adjust:none; background:Highlight; }
+  .plan-card-list .plan-in_progress .plan-mark::after {
+    forced-color-adjust:none;
+    background:CanvasText;
+  }
+}
+
 /* The global data-motion block covers the app; this keeps the card still when
    the device asks for less motion before the setting is applied. */
 @media (prefers-reduced-motion: reduce) {
