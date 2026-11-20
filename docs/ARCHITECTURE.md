@@ -289,7 +289,16 @@ it and not to run it again, and the group and the turn carry on. Every `tool_res
 carries the `id` of its `tool_call`, which is how clients pair them. The web
 client draws the group with `web_assets/agent-tree.js`, with a Stop button (and
 Delete on the row) for each call still waiting or running; the terminal shows the
-calls as ordinary tool rows.
+calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
+action, and a quoted excerpt of each finished tool's output or error when its row
+is expanded. Reloaded transcripts still show ordinary tool cards.
+
+These tasks are calls in the parent model step, not delegated agents. Scheduled
+prompt jobs run separate top-level turns; compare generates separate candidate
+replies, and MCP exposes external tools. None provides a supported child-agent
+lifecycle tied to a parent turn. Real delegation in #192 still needs a child
+runtime with its own context, model and tool permissions, explicit lifecycle
+and cancellation, and a way to return a final result to the parent.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`

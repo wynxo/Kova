@@ -88,12 +88,16 @@ now = 400;
 assert.match(a.textContent, /Running/);
 timers.filter(Boolean).forEach(fn => fn());
 assert.match(a.textContent, /0\.4s/, 'elapsed time ticks while it runs');
-assert.equal(turn.accept({type: 'task_done', id: 'b', parent: 'g', ok: true, summary: 'x', elapsed_ms: 300}), true);
+assert.equal(turn.accept({type: 'task_done', id: 'b', parent: 'g', ok: true, summary: '<b>3 matches</b>', elapsed_ms: 300}), true);
 assert.match(b.textContent, /Done/);
+assert.equal(byClass(root, 'agent-tree-hint')[0].textContent, 'L:search_files: Result received');
+assert.equal(byClass(b, 'agent-tree-result')[0].tagName, 'blockquote');
+assert.equal(byClass(b, 'agent-tree-result')[0].textContent, '<b>3 matches</b>');
 assert.match(b.textContent, /0\.3s/, 'the server\'s elapsed time is shown');
 turn.accept({type: 'task_progress', id: 'g', parent: null, done: 1, total: 3, failed: 0});
 turn.accept({type: 'task_error', id: 'a', parent: 'g', message: 'Error: nope', elapsed_ms: 500});
 assert.match(a.textContent, /Failed/);
+assert.equal(byClass(a, 'agent-tree-result')[0].textContent, 'Error: nope');
 assert.ok(a.classList.contains('failed'));
 turn.accept({type: 'task_progress', id: 'g', parent: null, done: 2, total: 3, failed: 1});
 assert.match(root.textContent, /1 failed/);
@@ -190,6 +194,20 @@ assert.equal(key(tree, new Element('button'), 'ArrowDown'), false, 'keys inside 
   none.accept({type: 'task_start', id: 'p1', parent: 'pg', name: 'recall', status: 'running'});
   assert.equal(stopOf(byRole(plain[0], 'treeitem')[1]).hidden, true);
   assert.equal(key(plain[0], byRole(plain[0], 'treeitem')[1], 'Delete'), false);
+}
+
+// A completed group stops its own clock even while the parent turn is open.
+{
+  const stoppedTimers = [];
+  const group = context.tree.create({
+    now: () => now, every: () => 1, stop: id => stoppedTimers.push(id),
+  });
+  group.setId('clock');
+  group.add({id: 'timed', name: 'recall', status: 'running'});
+  group.update({type: 'task_done', id: 'timed', parent: 'clock', elapsed_ms: 250});
+  group.update({type: 'task_done', id: 'clock', elapsed_ms: 600});
+  assert.deepEqual(stoppedTimers, [1]);
+  assert.equal(byClass(group.node, 'agent-tree-time')[0].textContent, '0.6s');
 }
 
 // ---------------------------------------------------------------- the end of the turn
