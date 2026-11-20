@@ -226,6 +226,7 @@
         if (streaming) pre.setAttribute('data-streaming', '');
       }
       const language = /language-([\w+#.-]+)/.exec(code.className)?.[1] || 'text';
+      const filename = code.getAttribute('data-kova-file');
       const bar = el('div', 'code-bar');
       const actions = el('div', 'code-actions');
       const copy = el('button', 'code-action copy-code');
@@ -253,7 +254,14 @@
       // A fence still arriving has no fixed line count yet.
       if (!streaming && count <= MAX_LINES) actions.append(linesButton(pre));
       actions.append(copy);
-      bar.append(el('span', 'code-lang', language), actions);
+      const labelGroup = el('span', 'code-labels');
+      const languageLabel = el('span', 'code-lang', language);
+      if (filename) {
+        const file = el('span', 'code-filename', filename);
+        file.title = filename;
+        labelGroup.append(file, languageLabel);
+        bar.append(labelGroup, actions);
+      } else bar.append(languageLabel, actions);
       code.parentNode.insertBefore(bar, code);
       if (linesEnabled() && !streaming && count <= MAX_LINES) addGutter(pre, code);
     });

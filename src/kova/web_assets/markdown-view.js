@@ -9,9 +9,9 @@
   // blocks a reply may write (#189).
   const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'del', 'a', 'code', 'pre', 'blockquote',
     'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'table', 'thead', 'tbody',
-    'tr', 'th', 'td', 'sup', 'section', 'input', 'details', 'summary'];
+    'tr', 'th', 'td', 'sup', 'section', 'input', 'details', 'summary', 'span'];
   const ALLOWED_ATTR = ['href', 'title', 'class', 'start', 'id', 'type', 'checked', 'disabled',
-    'aria-label', 'aria-hidden', 'open'];
+    'aria-label', 'aria-hidden', 'open', 'data-kova-file'];
 
   // GitHub-flavored callouts (#189): a quote whose first line is `[!NOTE]` and so
   // on becomes a labelled aside. The marker is replaced by a visible label, so the
@@ -30,6 +30,9 @@
   const DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/;
   const REFERENCE = /\[\^([^\]\s]+)\]/g;
   let scopes = 0;
+  let mathParser, katexScript, diagramFrame, diagramFrameReady, diagramJobs;
+  let diagramId = 0;
+  const diagramSources = new WeakMap();
 
   // Is the last code fence still open? A block that is still being written is
   // rendered as plain text and highlighted only once it closes.
@@ -241,6 +244,170 @@
     });
   }
 
+  // Fenced code supports language:path and language title="file name".
+  function codeRenderer() {
+    const renderer = new window.marked.Renderer();
+    const code = renderer.code;
+    renderer.code = function (token) {
+      const info = token.lang || '';
+      const match = /^([\w+#.-]+)(?::(\S+)|\s+(?:title|filename)=(?:"([^"]+)"|'([^']+)'|(\S+)))\s*$/.exec(info);
+      if (!match) return code.call(this, token);
+      const [, lang, ...names] = match;
+      const name = names.find(Boolean).slice(0, 200);
+      return code.call(this, {...token, lang}).replace(/^<pre><code\b/,
+        () => `<pre><code data-kova-file="${escapeHtml(name)}"`);
+    };
+    return renderer;
+  }
+
+  function parser(source, final) {
+    if (!final || !/[$\\]/.test(source)) return window.marked;
+    if (mathParser) return mathParser;
+    function extension(name, level, pattern) {
+      return {
+        name, level,
+        start: text => {
+          const start = level === 'block' ? /(^|\n)(?=\$\$|\\\[)/ : /(?=\$(?![\s$])|\\\()/;
+          const found = start.exec(text);
+          return found ? found.index + found[0].length : undefined;
+        },
+        tokenizer(text) {
+          const match = pattern.exec(text);
+          if (!match) return undefined;
+          return {type: name, raw: match[0], text: match[1] || match[2]};
+        },
+        renderer(token) {
+          return `<span data-kova-math="${level}">${escapeHtml(token.text)}</span>`;
+        },
+      };
+    }
+    mathParser = new window.marked.Marked({extensions: [
+      extension('kovaBlockMath', 'block', /^(?:\$\$\s*([^$]+?)\s*\$\$|\\\[([\s\S]+?)\\\])[ \t]*(?:\n|$)/),
+      extension('kovaInlineMath', 'inline', /^(?:\$(?![\s$])([^\n$]+?)\$(?![\d$])|\\\((.+?)\\\))/),
+    ]});
+    return mathParser;
+  }
+
+  function renderMath(root) {
+    const formulas = [...root.querySelectorAll('[data-kova-math]')];
+    if (!formulas.length) return Promise.resolve();
+    katexScript ||= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/app/assets/vendor/katex.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    }).catch(() => { katexScript = null; });
+    return katexScript.then(() => {
+      for (const formula of formulas) {
+        if (!window.katex || !root.contains(formula)) continue;
+        const source = formula.textContent;
+        if (source.length > 4000) continue;
+        try {
+          const html = window.katex.renderToString(source, {
+            displayMode: formula.getAttribute('data-kova-math') === 'block',
+            output: 'mathml', trust: false, maxExpand: 1000, maxSize: 12,
+          });
+          formula.innerHTML = window.DOMPurify.sanitize(html, {
+            USE_PROFILES: {mathMl: true},
+            FORBID_ATTR: ['style', 'href', 'src', 'mathcolor', 'mathbackground'],
+          });
+          formula.setAttribute('data-math-source', source);
+        } catch (_) { /* Keep the literal formula if it cannot render. */ }
+      }
+    });
+  }
+
+  function readyDiagramFrame() {
+    if (diagramFrameReady) return diagramFrameReady;
+    diagramJobs = new Map();
+    diagramFrame = document.createElement('iframe');
+    diagramFrame.className = 'diagram-sandbox';
+    diagramFrame.setAttribute('sandbox', 'allow-scripts');
+    diagramFrame.setAttribute('aria-hidden', 'true');
+    diagramFrame.tabIndex = -1;
+    const assets = location.origin + '/app/assets';
+    const library = assets + '/vendor/mermaid.js';
+    const renderer = assets + '/diagram-frame.js';
+    diagramFrame.srcdoc = `<!doctype html><meta charset="utf-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${library} ${renderer}; style-src 'unsafe-inline'">
+      <script defer src="${library}"></script><script defer src="${renderer}"></script>`;
+    diagramFrameReady = new Promise(resolve => {
+      const frame = diagramFrame;
+      const timeout = setTimeout(() => { frame.remove(); resolve(false); }, 10000);
+      window.addEventListener('message', ({source, origin, data}) => {
+        if (source !== frame.contentWindow || origin !== 'null') return;
+        if (data?.ready) { clearTimeout(timeout); resolve(true); }
+        diagramJobs.get(data?.id)?.(data.svg);
+      });
+    });
+    document.body.append(diagramFrame);
+    return diagramFrameReady;
+  }
+
+  function renderDiagram(code) {
+    const source = code.textContent;
+    if (!source.trim() || source.length > 12000 || /^\s*---/m.test(source) || source.includes('%%{')) return Promise.resolve();
+    const style = getComputedStyle(document.documentElement);
+    const token = name => style.getPropertyValue(name).trim();
+    const palette = {
+      darkMode: document.documentElement.dataset.theme !== 'light',
+      background: token('--bg-base'), raised: token('--bg-raised'),
+      text: token('--fg-default'), border: token('--border-strong'),
+    };
+    const key = JSON.stringify(palette);
+    if (diagramSources.get(code) === key) return Promise.resolve();
+    diagramSources.set(code, key);
+    return readyDiagramFrame().then(ready => {
+      if (!ready || !code.isConnected || diagramSources.get(code) !== key) return;
+      const id = ++diagramId;
+      return new Promise(resolve => {
+        const timeout = setTimeout(() => { diagramJobs.delete(id); resolve(); }, 10000);
+        diagramJobs.set(id, svg => {
+          clearTimeout(timeout);
+          diagramJobs.delete(id);
+          if (typeof svg === 'string' && svg.startsWith('<svg') && svg.length < 500000 &&
+              code.isConnected && diagramSources.get(code) === key) {
+            const pre = code.parentElement;
+            let image = pre.previousElementSibling;
+            if (!image?.classList.contains('markdown-diagram')) {
+              image = document.createElement('img');
+              image.className = 'markdown-diagram';
+              pre.before(image);
+            }
+            const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+            image.alt = parsed.querySelector('title')?.textContent || 'Mermaid diagram';
+            image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            image.dataset.diagramTheme = palette.darkMode ? 'dark' : 'light';
+          }
+          resolve();
+        });
+        diagramFrame.contentWindow.postMessage({id, source, palette}, '*');
+      });
+    });
+  }
+
+  function outline(...roots) {
+    const headings = roots.flatMap(root => [...root.querySelectorAll('h1, h2, h3, h4, h5, h6')])
+      .filter(heading => heading.textContent.trim());
+    return headings.length >= 3 ? headings : [];
+  }
+
+  function plainText(root) {
+    function text(node) {
+      if (node.nodeType === 3) return node.textContent;
+      if (node.matches?.('button, .code-bar, .code-gutter, .fn-back')) return '';
+      if (node.hasAttribute?.('data-math-source')) return node.getAttribute('data-math-source');
+      const tag = node.tagName?.toLowerCase();
+      if (tag === 'pre') return `\n${node.querySelector('code')?.textContent || ''}\n`;
+      const contents = Array.from(node.childNodes, text).join('');
+      if (tag === 'td' || tag === 'th') return contents + '\t';
+      if (/^(br|p|h[1-6]|li|blockquote|tr|summary)$/.test(tag)) return contents + '\n';
+      return contents;
+    }
+    return text(root).trim();
+  }
+
   // Render `text` into `root`. `final` is false while the reply streams: an open
   // code fence then stays plain text and cannot be copied yet, and footnotes wait
   // for the finished reply so the note list does not move as the text grows.
@@ -251,7 +418,7 @@
       ? extractFootnotes(source)
       : {text: source, definitions: new Map()};
     const prepared = definitions.size ? replaceReferences(withoutDefinitions, definitions) : {text: withoutDefinitions};
-    const html = window.marked.parse(prepared.text, {breaks: true, gfm: true});
+    const html = parser(prepared.text, final).parse(prepared.text, {breaks: true, gfm: true, renderer: codeRenderer()});
     root.innerHTML = window.DOMPurify.sanitize(html, {
       ALLOWED_TAGS,
       ALLOWED_ATTR,
@@ -265,8 +432,16 @@
     // module's once-per-root marker before asking it to attach again.
     root.classList.remove('code-header-ready');
     window.CodeHeader?.attach(root, final, !final && hasOpenFence(source));
-    return {footnotes: prepared.count || 0};
+    const diagrams = final ? [...root.querySelectorAll('pre code.language-mermaid')] : [];
+    for (const code of diagrams) diagramSources.set(code, null);
+    const ready = final ? Promise.all([renderMath(root), ...diagrams.map(renderDiagram)]) : Promise.resolve();
+    return {footnotes: prepared.count || 0, ready};
   }
 
-  window.KovaMarkdown = {render, hasOpenFence};
+  document.addEventListener('kova:theme', () => {
+    for (const code of document.querySelectorAll('.markdown pre code.language-mermaid')) {
+      if (diagramSources.has(code)) renderDiagram(code);
+    }
+  });
+  window.KovaMarkdown = {render, hasOpenFence, outline, plainText};
 })();

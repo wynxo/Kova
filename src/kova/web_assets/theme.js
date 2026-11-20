@@ -26,6 +26,13 @@
   const TOKEN = /^(bg|fg|border|accent|status|syntax)\.[a-z0-9-]+$/;
   const COLOUR = /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$/;
   const BACKGROUND_FILE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$/;
+  const CHAT_TOKENS = {
+    'chat.width': ['narrow', 'normal', 'wide'],
+    'chat.message-style': ['document', 'bubbles', 'compact'],
+    'chat.avatars': ['on', 'off'],
+    'chat.zen': ['on', 'off'],
+    'chat.bubble-shape': ['round', 'sharp'],
+  };
 
   const root = document.documentElement;
   const media = typeof window.matchMedia === 'function'
@@ -79,7 +86,7 @@
     return systemAppearance();
   }
 
-  // Only semantic tokens with plain colour values reach the style sheet. The
+  // Only semantic tokens with plain colours or known chat values reach CSS. The
   // server already validated the file; this keeps the browser honest anyway.
   function cleanTokens(tokens) {
     const clean = {};
@@ -87,12 +94,14 @@
     for (const [name, value] of Object.entries(tokens)) {
       if (TOKEN.test(name) && typeof value === 'string' && COLOUR.test(value.trim())) {
         clean[name] = value.trim();
+      } else if (Object.hasOwn(CHAT_TOKENS, name) && CHAT_TOKENS[name].includes(value)) {
+        clean[name] = value;
       }
     }
     return clean;
   }
   // A background is decorative data from the server, not CSS: a gradient of
-  // two to four plain colours, or one image file in themes/assets. Anything
+  // two to four plain colours, a noise opacity, or one image file in themes/assets. Anything
   // else is dropped, as with tokens.
   function cleanBackground(value) {
     if (!value || typeof value !== 'object') return null;
@@ -106,11 +115,14 @@
       if (clean.length < 2 || clean.length > 4) return null;
       return {kind: 'gradient', stops: clean, angle: number(value.angle, 0, 360, 160)};
     }
+    if (value.kind === 'noise') {
+      return {kind: 'noise', opacity: number(value.opacity, 0.02, 0.2, 0.06)};
+    }
     if (value.kind === 'image' && typeof value.file === 'string' && BACKGROUND_FILE.test(value.file)) {
       return {
         kind: 'image',
         file: value.file,
-        dim: number(value.dim, 0, 0.8, 0.35),
+        dim: number(value.dim, 0, 0.8, 0.55),
         blur: number(value.blur, 0, 24, 0),
       };
     }
@@ -162,6 +174,9 @@
     if (background.kind === 'gradient') {
       const stops = background.stops.join(', ');
       setBackgroundProperty('--theme-background', `linear-gradient(${background.angle}deg, ${stops})`);
+    } else if (background.kind === 'noise') {
+      setBackgroundProperty('--theme-background', 'var(--bg-base)');
+      setBackgroundProperty('--theme-background-noise', String(background.opacity));
     } else {
       const url = `/themes/assets/${encodeURIComponent(background.file)}`;
       setBackgroundProperty('--theme-background', `url("${url}")`);
@@ -191,7 +206,7 @@
     try {
       if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
         document.dispatchEvent(new CustomEvent('kova:theme', {
-          detail: {choice, appearance: appearance(), name: label(choice)},
+          detail: {choice, appearance: appearance(), name: label(choice), preview: !!draft || previewing !== null},
         }));
       }
     } catch (_) {}
@@ -214,7 +229,8 @@
 
   function previewPalette(palette) {
     if (palette.appearance !== 'light' && palette.appearance !== 'dark') return;
-    draft = {appearance: palette.appearance, tokens: cleanTokens(palette.tokens)};
+    draft = {appearance: palette.appearance, tokens: cleanTokens(palette.tokens),
+      background: cleanBackground(palette.background)};
     paint();
   }
 

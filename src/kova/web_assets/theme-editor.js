@@ -5,6 +5,7 @@
 
   const GROUPS = {bg: 'Backgrounds', fg: 'Text', border: 'Borders', accent: 'Accent', status: 'Status'};
   const HEX = /^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i;
+  const BACKGROUNDS = {none: 'None', gradient: 'Gradient', noise: 'Noise', image: 'Image'};
   const CHECK_URL = '/themes?validate_only=true';
   const MAX_FILE_BYTES = 32 * 1024; // Same limit as theme_routes.py.
   let editor;
@@ -64,6 +65,7 @@
         (draft.tokens[group] ??= {})[name] = value;
       }
       draft.terminal = palette.terminal;
+      if (palette.background) draft.background = JSON.parse(JSON.stringify(palette.background));
     }
     return draft;
   }
@@ -187,7 +189,7 @@
     }
 
     function paint() {
-      theme.previewPalette({appearance: draft.appearance, tokens});
+      theme.previewPalette({appearance: draft.appearance, tokens, background: draft.background});
     }
 
     async function review(ticket) {
@@ -263,6 +265,115 @@
       return row;
     }
 
+    /* The app background (#206): none, a gradient, fine noise or one image file.
+       Every change repaints the preview and asks the server to re-check contrast,
+       which also measures text over the worst-case area behind a panel. */
+    function setBackground(next) {
+      if (next) draft.background = next;
+      else delete draft.background;
+      paint();
+      check();
+    }
+
+    function rangeRow(key, label, {min, max, step, value, unit = ''}, onChange) {
+      const input = el('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(value);
+      const shown = el('output', '', `${value}${unit}`);
+      input.addEventListener('input', () => {
+        const number = Number(input.value);
+        shown.textContent = `${number}${unit}`;
+        onChange(number);
+      });
+      const row = el('div', 'theme-editor-range');
+      row.append(field(`theme-editor-background-${key}`, label, input), shown);
+      return row;
+    }
+
+    function stopRow(index, stops) {
+      const swatch = el('input');
+      swatch.type = 'color';
+      swatch.value = (toHex(stops[index]) || '#000000').slice(0, 7);
+      swatch.addEventListener('input', () => {
+        const next = [...draft.background.stops];
+        next[index] = swatch.value;
+        setBackground({...draft.background, stops: next});
+      });
+      return field(`theme-editor-background-stop-${index + 1}`, `Colour ${index + 1}`, swatch);
+    }
+
+    function backgroundControls(holder) {
+      const current = draft.background;
+      holder.replaceChildren();
+      if (!current) return;
+      if (current.kind === 'gradient') {
+        const stops = current.stops;
+        stops.forEach((_, index) => holder.append(stopRow(index, stops)));
+        const more = button('Add colour', 'quiet');
+        more.disabled = stops.length >= 4;
+        const fewer = button('Remove colour', 'quiet');
+        fewer.disabled = stops.length <= 2;
+        more.addEventListener('click', () => {
+          setBackground({...draft.background, stops: [...draft.background.stops, draft.background.stops.at(-1)]});
+          backgroundControls(holder);
+        });
+        fewer.addEventListener('click', () => {
+          setBackground({...draft.background, stops: draft.background.stops.slice(0, -1)});
+          backgroundControls(holder);
+        });
+        const row = el('div', 'theme-editor-actions');
+        row.append(more, fewer);
+        holder.append(row, rangeRow('angle', 'Angle', {min: 0, max: 360, step: 5, value: current.angle ?? 160, unit: '°'},
+          angle => setBackground({...draft.background, angle})));
+      } else if (current.kind === 'noise') {
+        holder.append(rangeRow('opacity', 'Grain strength', {min: 0.02, max: 0.2, step: 0.01, value: current.opacity ?? 0.06},
+          opacity => setBackground({...draft.background, opacity})));
+      } else if (current.kind === 'image') {
+        const file = el('input');
+        file.type = 'text';
+        file.maxLength = 64;
+        file.spellcheck = false;
+        file.autocapitalize = 'none';
+        file.placeholder = 'wallpaper.png';
+        file.value = current.file || '';
+        file.addEventListener('input', () => setBackground({...draft.background, file: file.value.trim()}));
+        holder.append(field('theme-editor-background-file', 'Image file name', file),
+          el('p', 'theme-editor-hint', 'Put a png, jpg or webp file (up to 4 MiB) in the themes/assets folder of Kova\'s home first.'),
+          rangeRow('dim', 'Dim', {min: 0, max: 0.8, step: 0.05, value: current.dim ?? 0.55},
+            dim => setBackground({...draft.background, dim})),
+          rangeRow('blur', 'Blur', {min: 0, max: 24, step: 1, value: current.blur ?? 0, unit: ' px'},
+            blur => setBackground({...draft.background, blur})));
+      }
+    }
+
+    function backgroundSection() {
+      const section = el('section', 'theme-editor-group theme-editor-background');
+      const kind = el('select');
+      for (const [value, label] of Object.entries(BACKGROUNDS)) {
+        const option = el('option', '', label);
+        option.value = value;
+        kind.append(option);
+      }
+      kind.value = draft.background?.kind || 'none';
+      const holder = el('div', 'theme-editor-background-controls');
+      kind.addEventListener('change', () => {
+        const next = {
+          none: () => null,
+          gradient: () => ({kind: 'gradient', stops: [toHex(tokens['bg.base']).slice(0, 7), toHex(tokens['bg.raised']).slice(0, 7)], angle: 160}),
+          noise: () => ({kind: 'noise', opacity: 0.06}),
+          image: () => ({kind: 'image', file: '', dim: 0.55, blur: 0}),
+        }[kind.value]();
+        setBackground(next);
+        backgroundControls(holder);
+      });
+      section.append(el('h3', '', 'Background'), field('theme-editor-background-kind', 'Behind the app', kind), holder);
+      backgroundControls(holder);
+      return section;
+    }
+
     function loadDraft(next, palette, nextSource) {
       draft = next;
       tokens = {...palette.tokens};
@@ -277,6 +388,7 @@
         section.append(el('h3', '', label), ...keys.map(colourRow));
         groups.append(section);
       }
+      groups.append(backgroundSection());
       paint();
     }
 

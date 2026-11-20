@@ -77,6 +77,24 @@ body:has(> .theme-editor) {
 .theme-editor-colour > span {
   overflow-wrap: anywhere;
 }
+.theme-editor-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+.theme-editor-range output {
+  min-inline-size: var(--space-12);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.theme-editor-hint {
+  margin: var(--space-0);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
 .theme-editor input,
 .theme-editor select {
   min-inline-size: 0;

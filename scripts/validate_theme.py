@@ -165,7 +165,7 @@ def check_theme(theme: dict[str, Any]) -> list[str]:
     """Semantic checks a schema cannot express. Returns failures."""
     merged = merged_tokens(theme)
     terminal = merged.pop("terminal", None)
-    return contrast_failures(merged, terminal)
+    return contrast_failures(merged, terminal, themes.normalise_background(theme.get("background")))
 
 
 def check_file(path: Path) -> list[str]:

@@ -42,8 +42,10 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     ),
     # Content width and avatars (#205). "normal" is the shipped 768px column,
     # and avatars are on until they are turned off.
-    "chat_width": ("narrow", "normal", "wide"),
-    "avatars": ("on", "off"),
+    "chat_width": ("theme", "narrow", "normal", "wide"),
+    "avatars": ("theme", "on", "off"),
+    "message_style": ("theme", "document", "bubbles", "compact"),
+    "message_timestamps": ("never", "hover", "always"),
     # Theme backgrounds (#206): on by default; "off" keeps the theme's colours
     # and leaves every panel solid.
     "backgrounds": ("on", "off"),
@@ -65,7 +67,7 @@ TEXT_LISTS: dict[str, tuple[int, int]] = {
 SHORTCUT_ACTIONS = frozenset({
     "palette", "new-conversation", "new-incognito", "search-conversations",
     "toggle-sidebar", "toggle-theme", "focus-composer", "stop-reply",
-    "shortcuts", "next-conversation", "previous-conversation",
+    "shortcuts", "next-conversation", "previous-conversation", "toggle-zen",
 })
 MAX_BINDING_LENGTH = 40
 _BINDING_MODIFIERS = ("mod", "ctrl", "meta", "alt", "shift")
@@ -95,8 +97,10 @@ DEFAULTS: dict[str, Any] = {
     "font": "inter",
     "motion": "full",
     "thinking_animation": "thunderstorm",
-    "chat_width": "normal",
-    "avatars": "on",
+    "chat_width": "theme",
+    "avatars": "theme",
+    "message_style": "theme",
+    "message_timestamps": "never",
     "shortcuts": {},
     "backgrounds": "on",
     "custom_css": "off",

@@ -134,6 +134,67 @@ await change(byId('theme-editor-base'), 'my-light', 'change');
 assert.equal(previews.at(-1).appearance, 'light');
 assert.equal(previews.at(-1).tokens['syntax.keyword'], '#113355', 'duplicate keeps non-editable tokens');
 
+// ---- Background: none, gradient, noise or image, previewed and checked like colours (#206)
+{
+  const kind = byId('theme-editor-background-kind');
+  assert.equal(kind.value, 'none');
+  assert.deepEqual(kind.children.map(option => option.value), ['none', 'gradient', 'noise', 'image']);
+  assert.equal(previews.at(-1).background, undefined, 'a theme without a background previews without one');
+  const checked = () => calls.at(-1).payload;
+  const plain = value => JSON.parse(JSON.stringify(value));
+
+  change(kind, 'gradient', 'change');
+  assert.deepEqual(plain(previews.at(-1).background), {kind: 'gradient', stops: ['#fafafa', previews.at(-1).background.stops[1]], angle: 160});
+  assert.equal(previews.at(-1).background.stops[1], previews.at(-1).tokens['bg.raised'].slice(0, 7));
+  assert.equal(button('Save').disabled, true, 'save waits for the new check');
+  await settle();
+  assert.equal(checked().background.kind, 'gradient', 'the server checks the background with the colours');
+  assert.equal(button('Save').disabled, false);
+  change(byId('theme-editor-background-stop-2'), '#123456');
+  assert.equal(previews.at(-1).background.stops[1], '#123456');
+  change(byId('theme-editor-background-angle'), '90');
+  assert.equal(previews.at(-1).background.angle, 90);
+  assert.equal(byId('theme-editor-background-angle').parentNode.parentNode.children[1].textContent, '90°');
+  button('Add colour').click();
+  assert.equal(previews.at(-1).background.stops.length, 3);
+  button('Add colour').click();
+  assert.equal(previews.at(-1).background.stops.length, 4);
+  assert.equal(button('Add colour').disabled, true, 'four colours at most');
+  button('Remove colour').click(); button('Remove colour').click();
+  assert.equal(button('Remove colour').disabled, true, 'two colours at least');
+  assert.equal(previews.at(-1).background.stops.length, 2);
+
+  change(kind, 'noise', 'change');
+  assert.deepEqual(plain(previews.at(-1).background), {kind: 'noise', opacity: 0.06});
+  assert.equal(byId('theme-editor-background-stop-1'), undefined, 'the gradient controls are gone');
+  change(byId('theme-editor-background-opacity'), '0.12');
+  assert.equal(previews.at(-1).background.opacity, 0.12);
+
+  change(kind, 'image', 'change');
+  assert.deepEqual(plain(previews.at(-1).background), {kind: 'image', file: '', dim: 0.55, blur: 0});
+  change(byId('theme-editor-background-file'), ' night-sky.png ');
+  assert.equal(previews.at(-1).background.file, 'night-sky.png');
+  change(byId('theme-editor-background-dim'), '0.5');
+  change(byId('theme-editor-background-blur'), '8');
+  assert.deepEqual(plain(previews.at(-1).background), {kind: 'image', file: 'night-sky.png', dim: 0.5, blur: 8});
+  await settle();
+  assert.deepEqual(plain(checked().background), {kind: 'image', file: 'night-sky.png', dim: 0.5, blur: 8});
+
+  change(kind, 'none', 'change');
+  assert.equal(previews.at(-1).background, undefined);
+  await settle();
+  assert.equal('background' in checked(), false, 'None leaves the key out of the file');
+  // A duplicate of a theme that has a background keeps it, so the editor shows and re-saves it.
+  installed.background = {kind: 'noise', opacity: 0.1};
+  await change(byId('theme-editor-base'), 'dark', 'change');
+  await change(byId('theme-editor-base'), 'my-light', 'change');
+  assert.deepEqual(plain(previews.at(-1).background), {kind: 'noise', opacity: 0.1});
+  assert.equal(byId('theme-editor-background-kind').value, 'noise');
+  delete installed.background;
+  await change(byId('theme-editor-base'), 'dark', 'change');
+  await change(byId('theme-editor-base'), 'my-light', 'change');
+}
+
 const file = byId('theme-editor-file');
 const importFile = async payload => {
   const text = JSON.stringify(payload);

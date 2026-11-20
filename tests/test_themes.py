@@ -455,3 +455,19 @@ def test_theme_at_the_upload_limit_can_be_reimported(http, home, editable_theme)
     assert http.post("/themes", content=document).status_code == 201
     installed = (themes.theme_dir(home.home) / "custom-teal.json").read_bytes()
     assert http.post("/themes?validate_only=true", content=installed).status_code == 200
+
+
+def test_chat_view_defaults_are_validated_semantic_theme_tokens(home):
+    write_theme(home.home, tokens={"chat": {
+        "width": "wide", "message-style": "bubbles", "avatars": "off",
+        "zen": "on", "bubble-shape": "sharp",
+    }})
+    tokens = themes.get("midnight-teal", home.home)["tokens"]
+    assert tokens["chat.width"] == "wide"
+    assert tokens["chat.message-style"] == "bubbles"
+    assert tokens["chat.avatars"] == "off"
+    assert tokens["chat.zen"] == "on"
+    assert tokens["chat.bubble-shape"] == "sharp"
+    path = write_theme(home.home, tokens={"chat": {"width": "unknown"}})
+    with pytest.raises(themes.ThemeError, match="chat.width"):
+        themes.load_file(path)
