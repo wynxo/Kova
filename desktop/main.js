@@ -143,7 +143,9 @@ function saveBounds() {
 // the window where the reader put it, once it has stopped moving for a moment.
 function scheduleBounds() { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 400); }
 async function create() {
-  ({home, origin, config} = settings());
+  const desktopSettings = settings();
+  const {config} = desktopSettings;
+  ({home, origin} = desktopSettings);
   fs.mkdirSync(home, {recursive: true, mode: 0o700});
   // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
   app.setPath('userData', path.join(home, 'desktop'));
