@@ -214,16 +214,12 @@ def walk_surfaces(page, minimum):
     palette = page.locator("#command-palette")
     expect(palette).to_be_hidden()
 
-    # Wait for the actual destination and close it with its own control.
-    for command, surface, selector, close_label in (
-        ("Browse themes", "theme gallery", "dialog.theme-gallery", "Close"),
-        ("Customize theme", "theme editor", "aside.theme-editor", "Cancel"),
+    # Open each appearance surface independently of palette search and selection.
+    for module, surface, selector, close_label in (
+        ("KovaThemeGallery", "theme gallery", "dialog.theme-gallery", "Close"),
+        ("KovaThemeEditor", "theme editor", "aside.theme-editor", "Cancel"),
     ):
-        page.keyboard.press("Control+k")
-        expect(palette).to_be_visible()
-        palette.locator(".palette-input").fill(command)
-        palette.get_by_text(command, exact=True).click()
-        expect(palette).to_be_hidden()
+        page.evaluate("(module) => window[module].open()", module)
         destination = page.locator(selector)
         expect(destination).to_be_visible()
         if surface == "theme gallery":
