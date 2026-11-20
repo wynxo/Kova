@@ -1,4 +1,4 @@
-"""Per-hunk review of one file in a change set, and undoing one hunk (issue #190).
+"""Per-file and per-hunk review of a change set, and undoing either (issue #190).
 
 A change set (see :mod:`kova.checkpoints`) stores a file's bytes from before
 and after a turn. The hunks here are the blocks that differ between those two
@@ -10,9 +10,11 @@ sides. Each hunk is then compared against the file *as it is now*:
   throw that edit away, so it is not offered.
 * ``missing``: the file is gone.
 
-Undo reverts exactly one applied hunk in the current file and nothing else. It
-refuses when the file's hash differs from the one the viewer was shown, when the
-path leaves the chat's working folder, and when any part of the path is a
+Undo reverts exactly one applied hunk in the current file and nothing else.
+Undoing the file removes every applied hunk at once, keeping any later edit
+elsewhere in the file; it refuses as a whole when a hunk was edited since.
+Both refuse when the file's hash differs from the one the viewer was shown, when
+the path leaves the chat's working folder, and when any part of the path is a
 symbolic link. Every undo is recorded as a new change set, so it can be reviewed
 and restored like any edit Kova makes.
 """
@@ -316,3 +318,62 @@ def undo(blobs: BlobStore, root: Path, path: str, entry: dict, hunk_id: str,
     additions, deletions = line_counts(old_text, new_text)
     return {"before": blobs.put(current_bytes), "after": blobs.put(updated), "status": "modified",
             "additions": additions, "deletions": deletions, "hash": file_hash(updated)}
+
+
+def undo_file(blobs: BlobStore, root: Path, path: str, entry: dict, expected_hash: str) -> dict:
+    """Revert every change this change set still has in the working file.
+
+    Only the hunks that are still applied are removed, so an edit made
+    elsewhere in the file since the turn survives. If any hunk was edited or
+    the file is gone, the whole undo is refused rather than guessing what the
+    later edit meant. A file this change set created is removed when nothing
+    of it is left.
+
+    Returns the new file's ``before``/``after`` digests and line counts, shaped
+    like a change-set entry so the caller can record it.
+    """
+    with _lock:
+        target = contained(root, path)
+        current_bytes = read_current(target)
+        if current_bytes is None:
+            raise HunkError(409, f"{path} no longer exists, so there is nothing to undo.")
+        if file_hash(current_bytes) != expected_hash:
+            raise HunkError(409, f"{path} changed since you opened this diff. "
+                                 "Reopen it to see the current changes.")
+        sides, reason = _sides(blobs, entry, current_bytes)
+        if sides is None:
+            raise HunkError(409, reason)
+        before, after, current = sides
+        hunks = _analyse(before, after, current)
+        blocked = next((hunk for hunk in hunks if hunk["state"] in ("changed", "missing")), None)
+        if blocked is not None:
+            raise HunkError(409, f"{path} was edited since you opened this diff, so its "
+                                 "entire change set cannot be undone here. Undo the "
+                                 "changes that are still in the file one by one.")
+        applied = [hunk for hunk in hunks if hunk["state"] == "applied"]
+        if not applied:
+            raise HunkError(409, f"{path} has no changes left to undo.")
+        updated_lines = list(current)
+        # Later hunks first: their positions in the current file still hold,
+        # and earlier hunks are not moved by an edit below them.
+        for hunk in reversed(applied):
+            start, end = (index + hunk["offset"] for index in hunk["new"])
+            updated_lines[start:end] = _restyle(hunk["removed"], after, current)
+        updated = "".join(updated_lines).encode("utf-8")
+        # The file must not move under us between the checks and the write.
+        if file_hash(read_current(contained(root, path))) != expected_hash:
+            raise HunkError(409, f"{path} changed while undoing. Reopen it and try again.")
+        deleted = entry.get("before") is None and not updated
+        if deleted:
+            os.unlink(target)
+        else:
+            _write(target, updated)
+    old_text = current_bytes.decode("utf-8")
+    if deleted:
+        return {"before": blobs.put(current_bytes), "after": None, "status": "deleted",
+                "additions": 0, "deletions": len(current), "hash": None, "deleted": True}
+    new_text = updated.decode("utf-8")
+    additions, deletions = line_counts(old_text, new_text)
+    return {"before": blobs.put(current_bytes), "after": blobs.put(updated), "status": "modified",
+            "additions": additions, "deletions": deletions, "hash": file_hash(updated),
+            "deleted": False}

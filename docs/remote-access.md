@@ -116,7 +116,8 @@ same thing for the phone, so the limits follow the phone into the agent:
 - **Older queued messages:** messages queued before capabilities existed have
   no record of who wrote them, so after upgrading they are treated as a phone's
   with only `chat`.
-- **Restoring a checkpoint** outside Kova Files needs `host:exec`.
+- **Restoring a checkpoint or undoing a file's changes** outside Kova Files needs
+  `host:exec`; the same gate also covers `KOVA.md`, `AGENTS.md` and git data.
 - **Compare** (`POST /compare`) runs one prompt on several configured models. It
   is a chat-level route: it needs only `chat`, runs no tools, reads no history
   and writes nothing, so it gives a phone no power that chatting with the

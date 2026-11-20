@@ -117,6 +117,12 @@ class HunkUndoBody(BaseModel):
     expected_hash: str = Field(min_length=64, max_length=64)
 
 
+class FileUndoBody(BaseModel):
+    """One file in a change set, and the file hash the viewer saw."""
+    path: str = Field(min_length=1, max_length=4096)
+    expected_hash: str = Field(min_length=64, max_length=64)
+
+
 class QueuedBody(BaseModel):
     """A message to run after the chat's current turn ends."""
     text: str = Field(min_length=1, max_length=100_000)
@@ -1720,6 +1726,31 @@ def create_app(
         except hunks.HunkError:
             refreshed = None
         return {"ok": True, "checkpoint_id": new_id, "current_hash": change["hash"], "view": refreshed}
+
+
+    @api.post("/chats/{chat_id}/checkpoints/{checkpoint_id}/file/undo")
+    async def undo_file(chat_id: str, checkpoint_id: int, body: FileUndoBody, request: Request) -> dict:
+        """Revert every remaining change to one file and record that as a new change set."""
+        row, entry, root = change_file(chat_id, checkpoint_id, body.path)
+        phone_may_touch(request, row, body.path)
+        if any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
+            raise HTTPException(status_code=409, detail="Stop the active turn before undoing changes")
+        blobs = app.state.agent.blobs
+        try:
+            change = await asyncio.to_thread(hunks.undo_file, blobs, root, body.path, entry,
+                                             body.expected_hash)
+        except hunks.HunkError as exc:
+            raise HTTPException(exc.status, exc.message) from exc
+        recorded = {key: change[key] for key in ("before", "after", "status", "additions", "deletions")}
+        recorded["undo_of"] = {"checkpoint": checkpoint_id, "file": True}
+        new_id = await asyncio.to_thread(app.state.store.add_checkpoint, chat_id, row["root"],
+                                         {body.path: recorded}, f"Undid all changes in {body.path}")
+        try:
+            refreshed = await asyncio.to_thread(hunks.view, blobs, root, body.path, entry)
+        except hunks.HunkError:
+            refreshed = None
+        return {"ok": True, "checkpoint_id": new_id, "current_hash": change["hash"],
+                "deleted": change["deleted"], "view": refreshed}
 
 
     @api.post("/memory/location", dependencies=settings_write)
