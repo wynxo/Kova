@@ -590,10 +590,10 @@ def setup(
     model: str | None = typer.Option(None, "--model", help="Model name to use."),
     name: str | None = typer.Option(None, "--name", help="Name to save this model under."),
     key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Use defaults for scripted setup (never bypasses credential validation)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Run without prompts. Requires --url; credentials are still validated."),
 ):
     """Connect a provider and choose models. No scan or test chat."""
-    if not url and sys.stdin.isatty() and console.is_terminal:
+    if not yes and not url and sys.stdin.isatty() and console.is_terminal:
         brand.setup_banner(console, __version__)
     try:
         onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
