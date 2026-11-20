@@ -98,6 +98,14 @@ const fg = body.find(node => node.attributes['aria-label'] === 'fg.default hex')
 const bgPicker = body.find(node => node.attributes['aria-label'] === 'bg.base colour');
 assert.equal(fg.value, '#e8e6f0');
 assert.equal(button('Save').disabled, false);
+const reset = button('Reset to base');
+assert.equal(reset.disabled, false, 'Reset to base is available once a base loads');
+change(fg, '#123456');
+assert.equal(previews.at(-1).tokens['fg.default'], '#123456', 'the edit paints immediately');
+reset.click();
+await settle();
+assert.equal(previews.at(-1).tokens['fg.default'], '#e8e6f0', 'Reset to base reverts the edit');
+assert.equal(body.find(node => node.attributes['aria-label'] === 'fg.default hex').value, '#e8e6f0', 'the field shows the base colour again');
 
 const beforeInvalid = previews.at(-1);
 change(fg, '#12');
