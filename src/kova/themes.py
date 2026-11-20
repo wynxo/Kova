@@ -50,10 +50,13 @@ _BACKGROUND_FILE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$")
 _BACKGROUND_KEYS = {
     "gradient": {"kind", "stops", "angle"},
     "image": {"kind", "file", "dim", "blur"},
+    "noise": {"kind", "opacity"},
 }
 GRADIENT_DEFAULT_ANGLE = 160
-IMAGE_DEFAULT_DIM = 0.35
+IMAGE_DEFAULT_DIM = 0.55
 IMAGE_DEFAULT_BLUR = 0
+NOISE_DEFAULT_OPACITY = 0.06
+NOISE_MAX_OPACITY = 0.2
 
 
 class ThemeError(ValueError):
@@ -131,15 +134,16 @@ def _number(value: Any, low: float, high: float, field: str) -> float:
 def _background(value: Any) -> dict[str, Any]:
     """Validate one background object and return it with its defaults filled in.
 
-    Two disjoint shapes (mirrored by the schema's ``oneOf``): a gradient of
-    2-4 colours, or one image file name plus dim and blur. Unknown keys are
-    refused, so neither shape can smuggle in a URL or a CSS fragment.
+    Three disjoint shapes (mirrored by the schema's ``oneOf``): a gradient of
+    2-4 colours, a fine noise texture with an opacity, or one image file name
+    plus dim and blur. Unknown keys are refused, so no shape can smuggle in a
+    URL or a CSS fragment.
     """
     if not isinstance(value, dict):
         raise ThemeError("background must be an object.")
     kind = value.get("kind")
     if kind not in _BACKGROUND_KEYS:
-        raise ThemeError("background.kind must be 'gradient' or 'image'.")
+        raise ThemeError("background.kind must be 'gradient', 'noise' or 'image'.")
     allowed = _BACKGROUND_KEYS[kind]
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -163,6 +167,10 @@ def _background(value: Any) -> dict[str, Any]:
             "stops": list(stops),
             "angle": _number(angle, 0, 360, "angle"),
         }
+
+    if kind == "noise":
+        opacity = value.get("opacity", NOISE_DEFAULT_OPACITY)
+        return {"kind": "noise", "opacity": _number(opacity, 0.02, NOISE_MAX_OPACITY, "opacity")}
 
     name = value.get("file")
     if not isinstance(name, str) or not _BACKGROUND_FILE.fullmatch(name):
