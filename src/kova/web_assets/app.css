@@ -969,6 +969,20 @@ html[data-background="image"]:not([data-backgrounds="off"]) body::after {
   background:var(--bg-base);
   opacity:var(--theme-background-dim, 0);
 }
+/* Noise (#206): the base colour with a fine grain in fg.default drawn through a
+   mask, so the grain follows the theme and never uses a colour of its own. The
+   texture is an inline SVG (feTurbulence), so there is no file to fetch. */
+html[data-background="noise"]:not([data-backgrounds="off"]) body::after {
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:-1;
+  pointer-events:none;
+  background:var(--fg-default);
+  opacity:var(--theme-background-noise, 0.06);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0/160px 160px repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0/160px 160px repeat;
+}
 html[data-background]:not([data-backgrounds="off"]) #sidebar,
 html[data-background]:not([data-backgrounds="off"]) .composer {
   background:color-mix(in srgb, var(--bg-surface) 88%, transparent);
@@ -1194,3 +1208,35 @@ html[data-motion="off"][data-background] main {
 [data-avatars="off"] .avatar {
   display:none;
 }
+
+/* Document is the default. Only the Bubbles layout paints a message surface. */
+.messages .message.user { align-self:stretch; max-width:none; }
+.messages .message.user .message-label { position:static; width:auto; height:auto; clip-path:none; }
+.messages .message.user .message-body { padding:0; background:none; }
+.messages .message.user .message-actions { position:static; }
+[data-message-style="bubbles"] .messages .message.user { align-self:flex-end; max-width:var(--type-measure-prose); }
+[data-message-style="bubbles"] .messages .message-body {
+  padding:var(--space-2) var(--space-4);
+  border-radius:var(--radius-lg);
+  background:var(--bg-raised);
+}
+[data-message-style="bubbles"][data-bubble-shape="sharp"] .messages .message-body {
+  border-radius:var(--radius-sm);
+}
+[data-message-style="bubbles"] .messages .message.assistant { align-self:flex-start; max-width:100%; }
+[data-message-style="compact"] .messages { gap:var(--space-3); }
+[data-message-style="compact"] .message {
+  display:grid;
+  grid-template-columns:minmax(0, 1fr) minmax(0, 4fr);
+  column-gap:var(--space-2);
+}
+[data-message-style="compact"] .message-label { align-self:start; margin:0; overflow-wrap:anywhere; }
+[data-message-style="compact"] .message-label .avatar { width:var(--space-4); height:var(--space-4); flex:none; }
+[data-message-style="compact"] .message-body,
+[data-message-style="compact"] .message-body .markdown { font-size:var(--type-size-body); gap:var(--space-1); }
+[data-message-style="compact"] .message > :not(.message-label) { grid-column:2; }
+[data-message-style="compact"] .message.assistant .message-actions { margin-left:0; }
+
+body.zen-mode { grid-template-columns:minmax(0, 1fr); }
+.zen-mode :is(#sidebar, #sidebar-splitter, #backdrop, .topbar, #status-bar) { display:none; }
+#zen-exit { margin-bottom:var(--space-1); }

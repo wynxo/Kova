@@ -109,7 +109,8 @@ def _prepare_theme(payload: Any) -> tuple[dict, bytes]:
         raise HTTPException(422, str(exc)) from exc
 
     resolved.pop("terminal")
-    failures = contrast_failures(resolved, theme.get("terminal"))
+    failures = contrast_failures(resolved, theme.get("terminal"),
+                                 themes.normalise_background(theme.get("background")))
     if failures:
         raise HTTPException(422, failures)
     return {"id": ident, "appearance": theme["appearance"], "tokens": resolved}, serialized

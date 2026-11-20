@@ -57,7 +57,7 @@ THEME_SCHEMES = {"kova-dark": "dark", "kova-light": "light"}
 # --space-*, --radius-*, --motion-* and --type-*.
 SCALES = ("space", "radius", "motion", "type")
 
-ALIAS = re.compile(r"^\{([a-z0-9_.]+)\}$", re.IGNORECASE)
+ALIAS = re.compile(r"^\{([a-z0-9_.-]+)\}$", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------- tokens
 

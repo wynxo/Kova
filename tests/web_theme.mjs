@@ -323,6 +323,32 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.properties.size, 0);
 }
 
+// ---- Noise: only an opacity crosses over; the grain itself is drawn by the stylesheet
+{
+  const NOISE = {id: 'noise-theme', name: 'Noise', appearance: 'dark', tokens: {'bg.base': '#0b1416'},
+    background: {kind: 'noise', opacity: 0.1}};
+  const LOUD = {id: 'loud-noise', name: 'Loud', appearance: 'dark', tokens: {},
+    background: {kind: 'noise', opacity: 0.9, extra: 'url(x)'}};
+  const page = boot({themes: {'noise-theme': NOISE, 'loud-noise': LOUD}});
+  await settle();
+  await page.api.set('noise-theme');
+  assert.equal(page.root.dataset.background, 'noise');
+  assert.equal(page.properties.get('--theme-background'), 'var(--bg-base)');
+  assert.equal(page.properties.get('--theme-background-noise'), '0.1');
+  assert.equal(page.properties.has('--theme-background-dim'), false);
+  await page.api.set('loud-noise');
+  assert.equal(page.properties.get('--theme-background-noise'), '0.06', 'an out-of-range opacity falls back to the default');
+
+  // A draft palette (the editor, the gallery's Try) can carry a background too.
+  page.api.previewPalette({appearance: 'dark', tokens: {'bg.base': '#123456'},
+    background: {kind: 'gradient', stops: ['#123456', '#234567'], angle: 90}});
+  assert.equal(page.root.dataset.background, 'gradient');
+  assert.equal(page.properties.get('--theme-background'), 'linear-gradient(90deg, #123456, #234567)');
+  page.api.previewPalette({appearance: 'dark', tokens: {'bg.base': '#123456'}, background: {kind: 'image', file: '../x.png'}});
+  assert.equal(page.root.dataset.background, undefined, 'a draft goes through the same cleaning');
+  page.api.clearPalettePreview();
+}
+
 // ---- Anything outside the two background shapes is dropped ------------------
 {
   const BAD = {id: 'bad-bg', name: 'Bad', appearance: 'dark', tokens: {},

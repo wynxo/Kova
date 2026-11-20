@@ -405,8 +405,10 @@ shared `/preferences` document and cached in `localStorage`; it runs from `<head
 so the first frame is already right, sets `data-theme` for the built-in palette, and
 writes a theme file's resolved tokens (`GET /themes/{id}`) into the semantic custom
 properties on `<html>`. A theme file may also carry a `background` object (#206): a
-subtle gradient of semantic colours, or one image from `KOVA_HOME/themes/assets` with
-dim and blur. `theme.js` writes that as `--theme-background` and a
+subtle gradient of semantic colours, a fine noise texture (an SVG mask in `fg.default`,
+no file) or one image from `KOVA_HOME/themes/assets` with dim and blur. The contrast
+gate also measures text over the worst-case background area (`theme_contrast.background_failures`).
+The theme editor sets a background too. `theme.js` writes that as `--theme-background` and a
 `data-background` marker; one fixed layer in `app.css` draws it behind the shell,
 panels become 88% surfaces with backdrop blur, and the
 `prefers-reduced-transparency`, motion-off and no-backdrop-filter rules return to the

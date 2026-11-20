@@ -234,6 +234,12 @@ def test_chat_stream_events(server):
     assert events[-1]["usage"]["completion_tokens"] > 0
     messages = client.get(f"/chats/{chat_id}", headers=headers).json()["messages"]
     usage = messages[1].pop("usage")
+    assert messages[1]["id"] == events[-1]["message_id"]
+    assert messages[1]["created"] == events[-1]["created"]
+    assert messages[0]["created"] <= messages[1]["created"]
+    for message in messages:
+        message.pop("id")
+        message.pop("created")
     assert messages == [{"role": "user", "content": "hello"},
                          {"role": "assistant", "content": "Hello there!"}]
     # The fake server sends no usage block, so the counts are marked as estimates.

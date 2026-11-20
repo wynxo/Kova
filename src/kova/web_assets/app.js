@@ -337,12 +337,25 @@
   function messageActions(article, read, role, usage = null, options = {}) {
     const module = globalThis.KovaMessageActions;
     if (module) {
-      article.append(module.bar({
+      const md = window.KovaMarkdown;
+      const blocks = [...article.querySelectorAll('.message-body > .markdown')];
+      const headings = md?.outline?.(...blocks) || [];
+      const bar = module.bar({
         role, text: read, usage, model: options.model || usage?.model || '',
         toolCount: options.toolCount, onRetry: options.onRetry, onEdit: options.onEdit,
+        onRetryModel: options.onRetry && state.models.some(entry => entry.model && entry.name !== options.model)
+          ? () => chooseRetryModel(options.model, options.messageId) : null,
+        onBranch: options.messageId && !state.chat?.ephemeral
+          ? () => safe(() => forkChat(state.chat?.id, options.messageId)) : null,
+        plainText: blocks.length && md?.plainText ? () => blocks.map(md.plainText).join('\n\n') : null,
+        onOutline: headings.length && window.KovaPanel?.open ? () => openReplyOutline(headings) : null,
         editLabel: options.editLabel, onError: toastError,
-      }));
-      if (usage) article.querySelector('.message-actions').append(usageMeter(usage));
+      });
+      const stamp = module.timestamp(options.created);
+      if (stamp) article.append(stamp);
+      article.append(bar);
+      if (usage) bar.append(usageMeter(usage));
+      module.touchActions(article, bar);
       return;
     }
     // An older cached shell may not have message-actions.js yet.
@@ -363,11 +376,25 @@
     if (usage) bar.append(usageMeter(usage));
     article.append(bar);
   }
-  // Editing and retrying both rewrite the last turn, so only its message keeps
-  // the action. Older buttons would silently point at newer words.
-  function onlyNewest(selector) {
-    const found = [...document.querySelectorAll(selector)];
-    for (const node of found.slice(0, -1)) node.remove();
+  function openReplyOutline(headings) {
+    const list = el('ol', 'reply-outline');
+    for (const heading of headings) {
+      const item = el('li');
+      const button = el('button', 'nav-row', heading.textContent.trim());
+      button.type = 'button';
+      button.onclick = () => {
+        if (!wide?.matches) window.KovaPanel.close();
+        for (let parent = heading.parentElement; parent && parent.id !== 'messages'; parent = parent.parentElement) {
+          if (parent.tagName === 'DETAILS') parent.open = true;
+        }
+        heading.tabIndex = -1;
+        heading.focus({preventScroll: true});
+        heading.scrollIntoView({block: 'start'});
+      };
+      item.append(button);
+      list.append(item);
+    }
+    window.KovaPanel.open({title: 'Reply outline', node: list});
   }
   // Drop the last turn's DOM, keeping the user's words when a retry replaces
   // only the reply. The server is the source of truth; this just stops the
@@ -379,10 +406,41 @@
     if (cut < 0) return;
     for (const node of nodes.slice(includeUser ? cut : cut + 1)) node.remove();
   }
-  async function retryLastTurn() {
+  async function retryLastTurn(model = null, messageId = null) {
     if (state.busy) return toast('Wait for the current reply to finish.');
     if (!state.chat) return;
-    await sendText('', {action: 'retry', omitUser: true, clear: 'reply'});
+    await sendText('', {action: 'retry', model, messageId, omitUser: true, clear: 'reply'});
+  }
+  function retrySameModel(model, messageId) {
+    return retryLastTurn(state.models.some(entry => entry.model && entry.name === model) ? model : null, messageId);
+  }
+  function chooseRetryModel(previous, messageId) {
+    if (state.busy) return toast('Wait for the current reply to finish.');
+    const entries = state.models.filter(entry => entry.model && entry.name !== previous);
+    if (!entries.length) return;
+    const dialog = el('dialog', 'panel edit-dialog');
+    dialog.setAttribute('aria-label', 'Retry with another model');
+    const heading = el('h2', '', 'Retry with another model');
+    const label = el('label');
+    const models = el('select');
+    for (const entry of entries) {
+      const option = el('option', '', entry.name);
+      option.value = entry.name;
+      models.append(option);
+    }
+    label.append(el('span', '', 'Model'), models);
+    const note = el('p', 'provider-footnote', 'Retry replaces this reply without changing the chat’s model.');
+    const row = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn quiet', 'Cancel');
+    cancel.onclick = () => dialog.close();
+    const submit = el('button', 'btn primary', 'Retry');
+    submit.onclick = () => { dialog.close(); safe(() => retryLastTurn(models.value, messageId)); };
+    row.append(cancel, submit);
+    dialog.append(heading, label, note, row);
+    document.body.append(dialog);
+    dialog.onclose = () => dialog.remove();
+    dialog.showModal();
+    models.focus();
   }
   function editLastMessage(text) {
     if (state.busy) return toast('Wait for the current reply to finish.');
@@ -440,7 +498,7 @@
     node.append(row);
     return {node, row, detail, hint: detail.textContent};
   }
-  function message(role, content, heading, attachments = []) {
+  function message(role, content, heading, attachments = [], metadata = {}) {
     const article = el('article', `message ${role}`);
     const label = el('div', 'message-label');
     if (role === 'user') label.append(document.createTextNode(heading || 'You'));
@@ -459,12 +517,11 @@
       }
     } else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
-    if (role === 'assistant') onlyNewest('#messages .message.assistant .message-action-retry');
-    if (role === 'user' && content) {
+    if (role === 'user') {
       messageActions(article, () => content, 'user', null, {
-        onEdit: () => editLastMessage(content),
+        created: metadata.created,
+        onEdit: metadata.edit && content ? () => editLastMessage(content) : null,
       });
-      onlyNewest('#messages .message.user .message-action-edit');
     }
     return body;
   }
@@ -885,11 +942,39 @@
     menuState();
   }
   function toggleSidebar(show) {
+    if (inZen()) toggleZen(false);
     if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'));
     const collapsed = !(show ?? document.body.classList.contains('sidebar-collapsed'));
     document.body.classList.toggle('sidebar-collapsed', collapsed); menuState();
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
   }
+  const inZen = () => document.body.classList.contains('zen-mode');
+  let zenOverride = false;
+  function toggleZen(open = !inZen(), {fromTheme = false} = {}) {
+    if (!fromTheme) zenOverride = true;
+    if (open === inZen()) return;
+    if (open) {
+      window.KovaSettings?.close?.();
+      window.KovaPanel?.close?.();
+      if (state.activityOpen) activityPanel(false);
+      $('chat-menu').open = false;
+      sidebar(false);
+    }
+    document.body.classList.toggle('zen-mode', open);
+    $('zen-exit').hidden = !open;
+    if (open && !fromTheme && !document.activeElement?.closest?.('#composer, #messages')) $('prompt').focus();
+    if (!open && document.activeElement === $('zen-exit')) $('prompt').focus();
+    announce(open ? 'Zen mode on.' : 'Zen mode off.');
+  }
+  $('zen-enter').onclick = () => toggleZen(true);
+  $('zen-exit').onclick = () => toggleZen(false);
+  function applyThemeZen(event) {
+    if (zenOverride || event?.detail?.preview || typeof getComputedStyle !== 'function') return;
+    const value = getComputedStyle(document.documentElement).getPropertyValue('--chat-zen').trim();
+    toggleZen(value === 'on', {fromTheme: true});
+  }
+  document.addEventListener('kova:theme', applyThemeZen);
+  applyThemeZen();
   function pageTitle() {
     chatAppearance()?.decorateTopbar?.(state.chat);
     $('incognito-note').hidden = !state.chat?.ephemeral;
@@ -966,15 +1051,19 @@
     $('messages').replaceChildren();
     window.KovaPlanCard?.reset();
     // A saved turn reads like a live one: every round of it sits under one heading.
-    const turns = []; let turn = null, savedTools = null;
+    const turns = []; let turn = null, savedTools = null, retryable = false;
+    const lastUser = chat?.messages?.findLast(msg => msg.role === 'user');
     for (const msg of chat?.messages || []) {
       if (msg.role === 'user') {
-        message('user', msg.content, undefined, msg.attachments || []); turn = null; savedTools = null;
+        retryable = msg === lastUser;
+        message('user', msg.content, undefined, msg.attachments || [], {created: msg.created, edit: retryable});
+        turn = null; savedTools = null;
         if (msg.model_switch) modelSwitch(msg.model_switch);
       }
       else if (msg.role === 'assistant') {
-        if (!turn) turns.push(turn = {body: message('assistant'), parts: [], tools: 0});
+        if (!turn) turns.push(turn = {body: message('assistant'), parts: [], tools: 0, retry: retryable});
         if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
+        if (msg.content && !msg.tool_calls?.length) turn.reply = msg;
         if (msg.usage) turn.usage = msg.usage;
         if (msg.tool_calls?.length) {
           turn.tools += msg.tool_calls.length;
@@ -987,10 +1076,10 @@
       else if (msg.role === 'tool' && savedTools) savedTools.result({id: msg.tool_call_id, output: msg.content});
       // Raw tool payloads stay in the server history, never masquerade as replies.
     }
-    const lastTurn = turns.reduce((last, saved, index) => saved.parts.length ? index : last, -1);
-    for (const [index, saved] of turns.entries()) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
+    for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
       saved.usage, {model: saved.usage?.model || chat?.model, toolCount: saved.tools,
-                    onRetry: index === lastTurn ? () => safe(retryLastTurn) : null});
+                    created: saved.reply?.created, messageId: saved.reply?.id,
+                    onRetry: saved.retry ? () => safe(() => retrySameModel(saved.usage?.model, saved.reply?.id)) : null});
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     $('prompt').value = draftOf(chat); resize();
     if (chat?.id) safe(() => loadChanges(chat.id));
@@ -1399,6 +1488,7 @@
   }
   function turnView(body, model = '') {
     let current = null, scheduled = false, finished = false, usage = null, toolCount = 0;
+    let completed = null;
     const blocks = [], approvals = new Map(), toolGroups = [];
     let toolGroup = null;
     let plan = null;
@@ -1542,6 +1632,7 @@
           announce('Reply finished.');
           window.KovaSounds?.play('done');
           usage = event.usage || null;
+          completed = event;
           const budget = event.budget_warning;
           if (budget?.monthly_usd) toast(`This month's estimated spend is ~${money(budget.spent_usd)} of your ${money(budget.monthly_usd)} budget. Nothing is blocked.`, 'Budget', {severity: 'warning'});
         }
@@ -1557,7 +1648,8 @@
         paint();
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
         if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage,
-          {model: usage?.model || model, toolCount, onRetry: () => safe(retryLastTurn)});
+          {model: usage?.model || model, toolCount, created: completed?.created,
+            messageId: completed?.message_id, onRetry: () => safe(() => retrySameModel(usage?.model, completed?.message_id))});
       }
     };
   }
@@ -1575,11 +1667,12 @@
     const match = /^\/(\S+)(?:\s+(.*))?$/.exec(text.trim());
     return match && Object.hasOwn(commands, match[1]) ? {name: match[1], args: match[2] || ''} : null;
   }
-  async function forkChat(id = state.chat?.id) {
+  async function forkChat(id = state.chat?.id, through = null) {
     if (state.chat?.ephemeral && id === state.chat.id) throw new Error('Incognito chats cannot be forked or exported.');
     if (!id) throw new Error('Open a conversation to fork first.');
     if (state.busy) throw new Error('Wait for the current reply before forking.');
-    const chat = await json(`/chats/${id}/fork`, {method: 'POST'});
+    const suffix = through == null ? '' : `?through=${encodeURIComponent(through)}`;
+    const chat = await json(`/chats/${id}/fork${suffix}`, {method: 'POST'});
     await openChat(chat.id); await refreshChats();
   }
   async function compactChat() {
@@ -1661,24 +1754,32 @@
     let turn, terminal = false, submittedChat = null;
     try {
       if (!state.chat) state.chat = await createComposerChat();
-      if (sendOptions.clear) clearLastTurn(sendOptions.clear === 'turn');
       const outgoing = sendOptions.queued || sendOptions.action ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       // Send to the model the chip showed, even if another window just changed
       // the default or the saved chat settings.
-      const model = composerModel().model || null;
+      const model = sendOptions.model || composerModel().model || null;
+      const action = sendOptions.action || 'messages';
+      const payload = action === 'retry' ? {model: sendOptions.model || null, expected_reply: sendOptions.messageId || null} : {text, model,
+        attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})};
+      const stream = () => api(`/chats/${state.chat.id}/${action}`, write('POST', payload));
+      const replacement = sendOptions.clear ? await stream() : null;
+      if (replacement) clearLastTurn(sendOptions.clear === 'turn');
       if (sendOptions.draft !== undefined && $('prompt').value === sendOptions.draft) {
         submittedChat = state.chat;
         consumeDraft(submittedChat, sendOptions.draft);
       }
       if (sendOptions.omitUser) empty(false);
-      else { empty(false); message('user', text, undefined, outgoing); options(false); }
+      else {
+        empty(false);
+        $('messages').querySelectorAll('.message-action-edit').forEach(button => button.remove());
+        message('user', text, undefined, outgoing, {created: new Date().toISOString(), edit: true});
+        options(false);
+      }
+      $('messages').querySelectorAll('.message-action-retry').forEach(button => button.remove());
       composerModules.history?.reset(); composerModules.mentions?.close();
       const reply = message('assistant');
       nearBottom = true; turn = turnView(reply, model); follow();
-      const action = sendOptions.action || 'messages';
-      const payload = action === 'retry' ? {} : {text, model,
-        attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})};
-      const response = await api(`/chats/${state.chat.id}/${action}`, write('POST', payload));
+      const response = replacement || await stream();
       submittedChat = null;
       if (!sendOptions.queued && !sendOptions.action) { for (let i = pendingAttachments.length - 1; i >= 0; i--) { if (pendingAttachments[i].chat_id === state.chat.id) pendingAttachments.splice(i, 1); } renderAttachments(); }
       state.turnReady = true;
@@ -1953,6 +2054,7 @@
     add('Actions', {title:'Sign out of this window', hint:'End this browser session', keywords:'logout sign out leave disconnect', run:() => $('disconnect').onclick?.()});
 
     add('Appearance', {title:`Switch to ${document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'} theme`, hint:'Light and dark', keywords:'theme colour color mode appearance', shortcut:shortcutKeys('toggle-theme'), run:() => $('theme').onclick?.()});
+    add('Appearance', {title:inZen() ? 'Exit zen mode' : 'Enter zen mode', hint:'Show or hide the chat chrome', keywords:'focus distraction sidebar', shortcut:shortcutKeys('toggle-zen'), run:() => toggleZen()});
     const themes = globalThis.KovaTheme;
     for (const option of themes?.choices?.() || []) {
       if (option.id === themes.choice()) continue;
@@ -2146,6 +2248,7 @@
     'previous-conversation': () => stepConversation(-1),
     'next-conversation': () => stepConversation(1),
     'toggle-sidebar': () => toggleSidebar(),
+    'toggle-zen': () => toggleZen(),
     // panes.js owns the side panel and the panes; false lets the key through.
     'toggle-panel': () => window.KovaPanel?.toggle?.() || false,
     'next-pane': () => window.KovaPanes?.focusNext?.() || false,
@@ -2156,6 +2259,7 @@
       if (state.activityOpen) activityPanel(false, true);
       else if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
+      else if (inZen()) toggleZen(false);
       else return false;
     },
     shortcuts: () => $('shortcuts-dialog').showModal(),
@@ -2493,6 +2597,7 @@
       await json('/chats'); state.connected = true; clearNotice();
       // Signed in now: the shared theme choice and installed themes are readable.
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
+      globalThis.KovaTypography?.sync?.();
       globalThis.KovaCustomCss?.sync?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();

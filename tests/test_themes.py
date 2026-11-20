@@ -591,3 +591,17 @@ def test_the_cli_updates_and_removes_installed_themes(runner, home, monkeypatch)
     assert missing.exit_code == 1
     builtin = runner.invoke(cli.app, ["themes", "remove", "kova-dark"])
     assert builtin.exit_code == 1 and "Built-in" in builtin.output
+def test_chat_view_defaults_are_validated_semantic_theme_tokens(home):
+    write_theme(home.home, tokens={"chat": {
+        "width": "wide", "message-style": "bubbles", "avatars": "off",
+        "zen": "on", "bubble-shape": "sharp",
+    }})
+    tokens = themes.get("midnight-teal", home.home)["tokens"]
+    assert tokens["chat.width"] == "wide"
+    assert tokens["chat.message-style"] == "bubbles"
+    assert tokens["chat.avatars"] == "off"
+    assert tokens["chat.zen"] == "on"
+    assert tokens["chat.bubble-shape"] == "sharp"
+    path = write_theme(home.home, tokens={"chat": {"width": "unknown"}})
+    with pytest.raises(themes.ThemeError, match="chat.width"):
+        themes.load_file(path)

@@ -54,6 +54,7 @@
     const rows = [];
     const named = u.model || model;
     if (named) rows.push(['Model', named]);
+    if (u.provider) rows.push(['Provider', u.provider]);
     if (u.prompt_tokens != null || u.completion_tokens != null) {
       const mark = u.estimated ? '~' : '';
       rows.push(['Tokens', `${mark}${shortTokens(u.prompt_tokens)} in · ${mark}${shortTokens(u.completion_tokens)} out`]);
@@ -85,13 +86,14 @@
     return card;
   }
 
-  function copyAction(text, note, label, onError) {
+  function copyAction(text, note, label, onError, format = '') {
     const glyph = icon('copy');
-    const button = node('button', 'message-action-copy message-action');
+    const button = node('button', `message-action-copy message-action${format}`);
     button.type = 'button';
     button.title = label;
     button.setAttribute('aria-label', label);
     button.append(glyph);
+    if (format) button.append(node('span', '', 'Plain text'));
     let timer = null;
     button.onclick = async () => {
       try {
@@ -116,23 +118,87 @@
     return button;
   }
 
+  function timestamp(created) {
+    if (!created) return null;
+    const date = new Date(created);
+    if (!Number.isFinite(date.getTime())) return null;
+    const stamp = node('time', 'message-timestamp', date.toLocaleTimeString([], {
+      hour: 'numeric', minute: '2-digit',
+    }));
+    stamp.setAttribute('datetime', date.toISOString());
+    stamp.title = date.toLocaleString();
+    stamp.setAttribute('aria-label', stamp.title);
+    return stamp;
+  }
+
   // One bar per message. Callbacks are optional: an older cached shell, a
   // message with no usage, or a turn that cannot be retried simply shows less.
   function bar(options = {}) {
-    const {role, text, usage = null, model = '', toolCount = null, onRetry, onEdit,
+    const {role, text, plainText, usage = null, model = '', toolCount = null, onRetry, onRetryModel, onEdit, onBranch, onOutline,
            editLabel = 'Edit and resend', onError} = options;
     const bar = node('div', 'message-actions');
     const note = node('span', 'message-action-note');
     note.setAttribute('role', 'status');
     bar.append(copyAction(text, note, role === 'user' ? 'Copy your message' : 'Copy as Markdown', onError));
+    if (role === 'assistant' && plainText) bar.append(copyAction(plainText, note, 'Copy as plain text', onError, ' message-action-copy-plain'));
     if (role === 'user' && onEdit) bar.append(action('pencil', editLabel, 'message-action-edit', onEdit));
     if (role === 'assistant' && onRetry) bar.append(action('refresh', 'Retry this reply', 'message-action-retry', onRetry));
+    if (onRetryModel) bar.append(action('sliders-horizontal', 'Retry with another model', 'message-action-retry', onRetryModel));
+    if (onBranch) bar.append(action('external-link', 'Branch from here', 'message-action-branch', onBranch));
+    if (onOutline) bar.append(action('menu', 'Open reply outline', 'message-action-outline', onOutline));
     if (role === 'assistant') {
       const details = detailsAction({usage, model, toolCount});
       if (details) bar.append(details);
     }
     bar.append(note);
     return bar;
+  }
+
+  function touchActions(article, bar) {
+    const trigger = action('ellipsis', 'Open message actions', 'message-sheet-trigger');
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    article.append(trigger);
+
+    function open() {
+      if (!article.isConnected || !article.contains(bar)) return;
+      const sheet = node('dialog', 'panel message-sheet');
+      sheet.setAttribute('aria-label', 'Message actions');
+      const head = node('div', 'dialog-head');
+      const close = action('x', 'Close message actions', 'icon-button', () => sheet.close());
+      head.append(node('h2', '', 'Message actions'), close);
+      sheet.append(head, bar);
+      document.body.append(sheet);
+      function restore() {
+        if (!sheet.isConnected) return;
+        for (const details of bar.querySelectorAll('details[open]')) details.open = false;
+        article.insertBefore(bar, trigger);
+        sheet.remove();
+        if (!document.querySelector('dialog[open]')) trigger.focus();
+      }
+      sheet.addEventListener('close', restore);
+      sheet.addEventListener('click', event => {
+        if (!event.target.closest('.message-action-edit, .message-action-retry, .message-action-branch, .message-action-outline')) return;
+        sheet.close();
+        restore();
+      }, true);
+      sheet.showModal();
+      bar.querySelector('button')?.focus();
+    }
+
+    trigger.onclick = open;
+    let timer, start;
+    const cancel = () => { clearTimeout(timer); start = null; };
+    article.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch' || !event.isPrimary ||
+          event.target.closest('button, a, summary, input, pre, .table-wrap')) return;
+      start = {x: event.clientX, y: event.clientY};
+      timer = setTimeout(open, 500);
+    });
+    article.addEventListener('pointermove', event => {
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) cancel();
+    });
+    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) article.addEventListener(type, cancel);
+    article.addEventListener('contextmenu', event => { if (start) event.preventDefault(); });
   }
 
   // A details card closes when attention leaves it, like any other popover,
@@ -153,5 +219,5 @@
     });
   }
 
-  globalThis.KovaMessageActions = {bar, detailRows};
+  globalThis.KovaMessageActions = {bar, detailRows, timestamp, touchActions};
 })();
