@@ -665,7 +665,7 @@ def test_windows_update_refreshes_a_broken_tool_without_running_it(windows_insta
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (home / "kova-ran").exists()
-    args = (home / "uv-args").read_text(encoding="utf-8").splitlines()
+    args = (home / "uv-args").read_text(encoding="utf-8-sig").splitlines()
     assert args[:7] == ["tool", "install", "--force", "--refresh", "--python", "3.12", "--editable"]
     assert Path(args[7]) == checkout
 

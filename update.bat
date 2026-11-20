@@ -15,7 +15,7 @@ if not exist "%USERPROFILE%\.local\bin\uv.exe" goto no_uv
 set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 
 :have_uv
-git rev-parse --is-inside-work-tree >nul 2>nul
+call git rev-parse --is-inside-work-tree >nul 2>nul
 if errorlevel 1 (
     echo Could not update Kova: this is not a git checkout. Run: kova update
     exit /b 1
@@ -28,7 +28,7 @@ if defined DIRTY (
 )
 
 echo - Pulling the latest Kova ...
-git pull --ff-only >nul 2>nul
+call git pull --ff-only >nul 2>nul
 if errorlevel 1 (
     echo Could not update Kova: git pull failed ^(no upstream, offline, or your branch has diverged^). Try: git pull --ff-only
     exit /b 1
@@ -36,7 +36,7 @@ if errorlevel 1 (
 echo + Pulled the latest code.
 
 echo - Refreshing dependencies ...
-uv sync >nul 2>nul
+call uv sync >nul 2>nul
 if errorlevel 1 (
     echo Could not update Kova: uv sync failed. Run "uv sync" to see why.
     exit /b 1
@@ -49,7 +49,7 @@ rem example when the new revision added a dependency the tool environment lacks.
 where kova >nul 2>nul
 if not errorlevel 1 (
     echo - Updating the installed kova command ...
-    uv tool install --force --refresh --python 3.12 --editable "%CD%"
+    call uv tool install --force --refresh --python 3.12 --editable "%CD%"
     if errorlevel 1 (
         echo Could not update Kova: the installed kova command could not be updated. Retry: install.bat --dev
         exit /b 1
