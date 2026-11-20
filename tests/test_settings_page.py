@@ -2,7 +2,7 @@
 
 The view is plain files with no bundler or type checker, so these tests pin the
 things a browser would only reveal late: the page loads both assets, every
-control the view links to exists, the sections are the agreed eight (every row that left the sidebar), and the
+control the view links to exists, the sections stay in navigation order, and the
 stylesheet keeps to tokens instead of inventing colours.
 """
 
@@ -17,7 +17,7 @@ INDEX = ASSETS / "index.html"
 SETTINGS_JS = ASSETS / "settings.js"
 SETTINGS_CSS = ASSETS / "settings.css"
 
-SECTIONS = ["General", "Models and providers", "Memory", "Reminders", "Extensions and MCP",
+SECTIONS = ["General", "Chat", "Models and providers", "Memory", "Reminders", "Extensions and MCP",
             "Privacy", "Phone", "Install and notifications"]
 
 # Colour syntax a stylesheet may not carry when the semantic layer owns colour.
@@ -83,7 +83,7 @@ def test_every_linked_control_exists_in_the_page():
         assert literal in ids, f"settings.js looks up missing id {literal!r}"
 
 
-def test_sections_are_the_agreed_eight_in_order():
+def test_settings_sections_are_in_navigation_order():
     source = SETTINGS_JS.read_text(encoding="utf-8")
     labels = re.findall(r"id: '[a-z]+', label: '([^']+)'", source)
     assert labels == SECTIONS

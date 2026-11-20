@@ -6,6 +6,18 @@
 .markdown { font-family:var(--font-chat); font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); overflow-wrap:anywhere; }
 .markdown > :first-child { margin-top:0; }
 .markdown > :last-child { margin-bottom:0; }
+/* Let code and tables use the chosen chat width; keep ordinary prose readable. */
+.message .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, details, section) {
+  max-inline-size:var(--type-measure-prose);
+}
+.reply-outline { margin:0; padding-inline-start:var(--space-6); }
+.reply-outline button { height:auto; padding-block:var(--space-2); overflow-wrap:anywhere; }
+.markdown [data-kova-math="block"] { display:block; overflow-x:auto; margin-block:var(--space-3); }
+.markdown-diagram { display:block; max-inline-size:100%; margin-block-end:var(--space-3); }
+.diagram-sandbox {
+  position:absolute; inline-size:var(--space-1); block-size:var(--space-1);
+  visibility:hidden; pointer-events:none;
+}
 /* The reply being written ends in a soft pulsing dot. */
 .markdown.live > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
 .markdown.live > :is(ul, ol):last-child > li:last-child::after {

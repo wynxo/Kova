@@ -134,6 +134,16 @@ function matches(node, part) {
 }
 
 function selectAll(root, selector) {
+  if (selector.includes(',')) {
+    const options = selector.split(',').map(value => value.trim());
+    const found = [];
+    const visit = node => {
+      if (options.some(option => matches(node, option))) found.push(node);
+      node.children.forEach(visit);
+    };
+    visit(root);
+    return found;
+  }
   const parts = selector.trim().split(/\s+/);
   const out = [];
   const walk = (node) => {
@@ -322,3 +332,21 @@ assert.ok(later.querySelector('pre').classList.contains('wrap-lines'), 'later bl
 assert.equal(later.querySelector('.wrap-code').getAttribute('aria-pressed'), 'true');
 
 console.log('Markdown view passed');
+
+{
+  const root = new Element();
+  window.KovaMarkdown.render(root, '```js title="example file.js"\nconst x = 1;\n```', {final: true});
+  const code = root.querySelector('pre code');
+  assert.equal(code.getAttribute('data-kova-file'), 'example file.js');
+  assert.equal(code.className, 'language-js');
+}
+
+{
+  const root = new Element();
+  window.KovaMarkdown.render(root, '# Setup\n\n## Configure\n\n## Run', {final: true});
+  const headings = window.KovaMarkdown.outline(root);
+  assert.deepEqual(Array.from(headings, item => item.textContent), ['Setup', 'Configure', 'Run']);
+  const short = new Element();
+  window.KovaMarkdown.render(short, '# Only heading', {final: true});
+  assert.equal(window.KovaMarkdown.outline(short).length, 0);
+}

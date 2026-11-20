@@ -42,7 +42,7 @@ def test_gallery_serves_the_components_with_the_flag(client, monkeypatch):
                        "switch", "send", "menu-button", "search", "chat-option-input",
                        "popover", "option", "compose-menu-item", "option-empty",
                        "message user", "message assistant", "markdown", "markdown live",
-                       "table-wrap", "footnotes", "task-item", "code-bar",
+                       "data-markdown-example", "markdown-view.js", "code-header.js",
                        "tool-row failed", "tool-card", "plan-view", "plan-done",
                        "plan-in_progress", "approval-card", "approval-status",
                        "spinner", "activity", "diff-line add", "diff-line del",

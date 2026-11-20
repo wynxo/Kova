@@ -20,6 +20,8 @@
 .code-actions { display:inline-flex; flex:none; align-items:center; gap:var(--space-1); }
 
 .code-lang { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-labels { display:flex; flex-wrap:wrap; gap:var(--space-1); min-width:0; }
+.code-filename { color:var(--fg-muted); font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .code-actions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
 

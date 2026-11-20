@@ -107,3 +107,17 @@ const walk = node => [node, ...node.children.flatMap(child => child.className ==
 
 assert.equal(detailRows({usage: null, model: '', toolCount: null}).length, 0);
 console.log('message actions: ok');
+
+{
+  const actions = bar({role: 'assistant', text: '**hello**', plainText: () => 'hello',
+    usage: {provider: 'Demo provider'}});
+  sandbox.navigator.clipboard = {writeText: async text => written.push(text)};
+  const plain = byClass(actions, 'message-action-copy-plain');
+  assert.equal(plain.getAttribute('aria-label'), 'Copy as plain text');
+  await plain.onclick();
+  assert.equal(written.at(-1), 'hello');
+  assert.equal(sandbox.KovaMessageActions.timestamp('2026-01-02T03:04:05Z').getAttribute('datetime'),
+    '2026-01-02T03:04:05.000Z');
+  assert.ok(detailRows({usage: {provider: 'Demo provider'}}).some(([key, value]) =>
+    key === 'Provider' && value === 'Demo provider'));
+}

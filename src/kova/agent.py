@@ -7,7 +7,7 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import AsyncIterator, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -607,7 +607,8 @@ class Agent:
                         # answer, then let the model respond to the steer.
                         self.store.add_message(chat_id, 'assistant', answer or None)
                         continue
-                    message_id = self.store.add_message(chat_id, 'assistant', answer)
+                    created = datetime.now(timezone.utc).isoformat()
+                    message_id = self.store.add_message(chat_id, 'assistant', answer, created=created)
                     usage = meter.summary(entry, pricing)
                     self.store.record_usage(chat_id, message_id, usage)
                     if needs_title:
@@ -627,7 +628,7 @@ class Agent:
                                 chat_id=chat_id, mode=mode, memory=self.memory,
                                 client=client, now=self.now()):
                             yield notice
-                    done = {'type': 'done', 'message_id': message_id, 'model': entry.name, 'usage': usage}
+                    done = {'type': 'done', 'message_id': message_id, 'created': created, 'model': entry.name, 'usage': usage}
                     if not incognito:
                         try:
                             warning = self._budget_warning()

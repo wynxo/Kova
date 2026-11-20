@@ -29,9 +29,13 @@
      values: ['inter', 'system', 'mono'], fallback: 'inter'},
     // Room around the conversation, then the two reading details (#205).
     {key: 'kova-chat-width', name: 'chat_width', attr: 'data-chat-width',
-     values: ['narrow', 'normal', 'wide'], fallback: 'normal'},
+     theme: '--chat-width', values: ['narrow', 'normal', 'wide'], fallback: 'normal'},
     {name: 'avatars', key: 'kova-avatars', attr: 'data-avatars',
-     values: ['on', 'off'], fallback: 'on'},
+     theme: '--chat-avatars', values: ['on', 'off'], fallback: 'on'},
+    {name: 'message_style', key: 'kova-message-style', attr: 'data-message-style',
+     theme: '--chat-message-style', values: ['document', 'bubbles', 'compact'], fallback: 'document'},
+    {name: 'message_timestamps', key: 'kova-message-timestamps', attr: 'data-message-timestamps',
+     values: ['never', 'hover', 'always'], fallback: 'never'},
     // Theme backgrounds (#206): on by default, so a theme's gradient or image
     // shows. Off keeps the same theme and leaves the panels solid.
     {name: 'backgrounds', key: 'kova-backgrounds', attr: 'data-backgrounds',
@@ -40,15 +44,16 @@
 
   const root = document.documentElement;
   const state = {};
+  let revision = 0;
 
   function known(pref, candidate) {
-    return pref.values.includes(candidate) ? candidate : null;
+    return pref.values.includes(candidate) || (pref.theme && candidate === 'theme') ? candidate : null;
   }
 
   for (const pref of PREFS) {
     let stored = null;
     try { stored = known(pref, localStorage.getItem(pref.key)); } catch (_) {}
-    state[pref.name] = stored || pref.fallback;
+    state[pref.name] = stored || (pref.theme ? 'theme' : pref.fallback);
   }
 
   function remember(pref) {
@@ -56,7 +61,19 @@
   }
 
   function paint(pref) {
-    try { root?.setAttribute?.(pref.attr, state[pref.name]); } catch (_) {}
+    let value = state[pref.name];
+    if (value === 'theme') {
+      try { value = getComputedStyle(root).getPropertyValue(pref.theme).trim(); } catch (_) {}
+      if (!pref.values.includes(value)) value = pref.fallback;
+    }
+    root?.setAttribute?.(pref.attr, value);
+  }
+
+  function paintChatTheme() {
+    for (const target of PREFS) if (target.theme) paint(target);
+    const shape = typeof getComputedStyle === 'function'
+      ? getComputedStyle(root).getPropertyValue('--chat-bubble-shape').trim() : '';
+    root?.setAttribute?.('data-bubble-shape', shape === 'sharp' ? 'sharp' : 'round');
   }
 
   function announce() {
@@ -94,12 +111,13 @@
     if (changed) announce();
   }
 
-  function load() {
+  function sync() {
+    const requested = ++revision;
     const pending = request('/preferences', {headers: {'Accept': 'application/json'}});
     if (!pending || typeof pending.then !== 'function') return;
-    pending
+    return pending
       .then(response => (response && response.ok ? response.json() : null))
-      .then(payload => { if (payload) adopt(payload); })
+      .then(payload => { if (payload && requested === revision) adopt(payload); })
       .catch(() => {});
   }
 
@@ -112,6 +130,7 @@
     if (!target) return;
     const value = known(target, next);
     if (!value || value === state[name]) return;
+    revision += 1;
     state[name] = value;
     remember(target);
     paint(target);
@@ -125,20 +144,27 @@
   }
 
   for (const target of PREFS) paint(target);
+  paintChatTheme();
+  document.addEventListener?.('kova:theme', paintChatTheme);
 
   window.KovaTypography = {
+    sync,
     textSize: () => state.text_size,
     density: () => state.density,
     font: () => state.font,
     chatWidth: () => state.chat_width,
     avatars: () => state.avatars,
+    messageStyle: () => state.message_style,
+    messageTimestamps: () => state.message_timestamps,
     backgrounds: () => state.backgrounds,
     setTextSize: next => store('text_size', next),
     setDensity: next => store('density', next),
     setFont: next => store('font', next),
     setChatWidth: next => store('chat_width', next),
     setAvatars: next => store('avatars', next),
+    setMessageStyle: next => store('message_style', next),
+    setMessageTimestamps: next => store('message_timestamps', next),
     setBackgrounds: next => store('backgrounds', next),
   };
-  load();
+  sync();
 })();
