@@ -18,6 +18,11 @@ Outputs:
   plus ``docs/screenshots/app-icon.png`` (the mark from 160px down to 16px on light
   and dark). PNGs are written with IHDR, IDAT and IEND chunks only: no text, time or
   colour-profile chunks, so there is no metadata to strip.
+* ``desktop/assets/tray-working.png`` and ``desktop/assets/tray-waiting.png``: the
+  tray icon carrying Kova's status — the mark with a small dot in the lower-right.
+  Working adds a white dot, waiting an amber one, and idle shows the mark alone.
+  The dot is composited over the mark at build time, so the tray reflects state
+  without opening Kova.
 
 Usage:
     python scripts/build_icons.py            # write all icon files
@@ -49,6 +54,22 @@ PREVIEW_BACKGROUNDS = ((0x0B, 0x0B, 0x0E), (0xF7, 0xF7, 0xF8))
 VIEW = 512
 TILE_INSET = 24          # transparent margin around the tile
 TILE_RADIUS = 112        # corner radius of the tile
+
+def circle(cx: float, cy: float, r: float, steps: int = 64):
+    """Polygon for a filled circle, for the tray status badge."""
+    return [(cx + r * math.cos(a), cy + r * math.sin(a))
+            for a in map(math.radians, range(0, 360, 360 // steps))]
+
+# The tray status dot: a small accent circle in the lower-right, composited over the
+# mark so the tray reflects Kova working or waiting without opening it. ~24px at the
+# 64px output (the OS downscales the composed tray icon). Working = white (INK),
+# waiting = amber (#ffaf5f); idle shows the mark alone. Fixed, not theme tokens: the
+# tray is drawn by the OS, where Kova's theme does not reach (like the mark itself).
+DOT_STATUS = {
+    'working': INK,
+    'waiting': (0xFF, 0xAF, 0x5F),
+}
+OVERLAY_DOT = (circle(384, 384, 96),)
 
 # The K, as one outline: a heavy stem and two straight arms that meet in a notch
 # right of the stem. Every vertical and horizontal edge sits on the 16px pixel grid
@@ -239,6 +260,27 @@ def mark_svg() -> str:
         "</svg>\n"
     )
 
+def tray(status: str, size: int = 64, mark: list | None = None) -> list:
+    """A status-carrying tray icon: the mark with a small dot in the lower-right.
+    'idle' renders the mark alone; 'working' adds a white dot, 'waiting' an amber
+    one, so the tray reflects Kova without opening it. The dot is composited over
+    the mark with source-over, so it blends onto any tray background."""
+    rows = render(size) if mark is None else mark
+    color = DOT_STATUS.get(status)
+    if color is None:
+        return rows
+    dot = coverage(OVERLAY_DOT, size)
+    out = []
+    for row, dotrow in zip(rows, dot):
+        out.append([
+            (round(color[0] * cov + mr * (1 - cov)),
+             round(color[1] * cov + mg * (1 - cov)),
+             round(color[2] * cov + mb * (1 - cov)),
+             255)
+            for (mr, mg, mb, _ma), cov in zip(row, dotrow)
+        ])
+    return out
+
 
 # --------------------------------------------------------------------------- outputs
 
@@ -260,11 +302,20 @@ def outputs() -> dict[Path, bytes]:
         DESKTOP / "icon.svg": icon_svg().encode(),
         WEB / "mark.svg": mark_svg().encode(),
     }
-    cache: dict[int, bytes] = {}
-    for path, size in PNG_SIZES.items():
+    cache: dict[int, list] = {}
+
+    def render_once(size: int) -> list:
         if size not in cache:
-            cache[size] = png_bytes(render(size))
-        files[path] = cache[size]
+            cache[size] = render(size)
+        return cache[size]
+
+    for path, size in PNG_SIZES.items():
+        files[path] = png_bytes(render_once(size))
+
+    # Tray images: the 64px mark with the per-state dot composited over it.
+    mark64 = render_once(64)
+    files[DESKTOP / "tray-working.png"] = png_bytes(tray('working', 64, mark64))
+    files[DESKTOP / "tray-waiting.png"] = png_bytes(tray('waiting', 64, mark64))
     files[SHOTS / "app-icon.png"] = png_bytes(strip())
     return files
 

@@ -165,6 +165,11 @@ never edit the icon files by hand.
   surface behind it and the mark follows every theme.
 - **Outside the UI** (favicon, OS icons, notifications) the static `icon.svg` and PNGs use
   a near-black tile `#14121c` with a white K, because no theme reaches there.
+- The Electron tray icon carries the same mark plus a small status dot in the lower-right:
+  white while working, amber (`#ffaf5f`) while waiting for approval, none while idle. The
+  dot is composited over the mark at build time
+  ([`scripts/build_icons.py`](../scripts/build_icons.py); `DOT_STATUS`), so it is a fixed
+  colour like the mark itself and the tray reflects state without opening Kova.
 - It must read at 16px: no thin strokes, no circles, square ends. Check the 16px render
   before changing it.
 

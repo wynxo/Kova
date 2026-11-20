@@ -76,3 +76,63 @@ def test_the_start_screen_shows_the_mark_once():
     welcome = re.search(r'<div id="welcome".*?</div>', page, re.S).group(0)
     assert welcome.count("welcome-mark") == 1
     assert welcome.index("welcome-mark") < welcome.index("welcome-greeting"), "the greeting sits under the mark"
+import struct
+import zlib
+
+
+def _tray_png(name: str) -> tuple[int, int, list[int]]:
+    """Decode a tray PNG to (width, height, flat RGBA bytes)."""
+    data = (ROOT / "desktop" / "assets" / name).read_bytes()
+    width, height = struct.unpack(">II", data[16:24])
+    idx, idat = 8, b""
+    while idx < len(data):
+        length = int.from_bytes(data[idx:idx + 4], "big")
+        if data[idx + 4:idx + 8] == b"IDAT":
+            idat += data[idx + 8:idx + 8 + length]
+        idx += 12 + length
+    raw = zlib.decompress(idat)
+    stride = width * 4
+    px = bytearray()
+    for y in range(height):
+        pos = y * (stride + 1) + 1
+        px += raw[pos:pos + stride]
+    return width, height, px
+
+
+def _dot_peak(name: str) -> tuple[int, int, int]:
+    """The composited status dot: brightest opaque pixel in the dot's window.
+
+    The dot sits at a fixed spot — center (384,384) at 512px -> (48,48) at 64px,
+    radius 12. Sample a window there, clear of the K which sits in the middle, so
+    the K's white glyph cannot masquerade as the dot."""
+    width, height, px = _tray_png(name)
+    peak, best = (0, 0, 0), -1
+    for y in range(44, 53):
+        for x in range(44, 53):
+            i = (y * width + x) * 4
+            r, g, b, a = px[i], px[i + 1], px[i + 2], px[i + 3]
+            if a > 200 and r + g + b > best:
+                best, peak = r + g + b, (r, g, b)
+    return peak
+
+
+def test_tray_working_carries_a_white_dot():
+    r, g, b = _dot_peak("tray-working.png")
+    assert r > 200 and g > 200 and b > 200, (r, g, b)
+
+
+def test_tray_waiting_carries_an_amber_dot():
+    r, g, b = _dot_peak("tray-waiting.png")
+    assert r > 200 and 130 < g < 200 and 50 < b < 120, (r, g, b)
+
+
+def test_tray_dots_differ():
+    """Working (white) and waiting (amber) must not render the same dot."""
+    assert _dot_peak("tray-working.png") != _dot_peak("tray-waiting.png")
+
+
+def test_tray_outputs_are_working_and_waiting_only():
+    """The tray assets are the per-state dots; the old single overlay is gone."""
+    names = {p.name for p in build_icons.outputs() if p.name.startswith("tray-")}
+    assert names == {"tray-working.png", "tray-waiting.png"}
+    assert not any(p.name == "overlay.png" for p in build_icons.outputs())

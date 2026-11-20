@@ -8,6 +8,14 @@ let win, tray, child, quick, quitting = false, starting = false, origin, home;
 let appName = 'Kova', trayState = 'idle';
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
+// Tray state -> asset. The tray icon is OS chrome, so the status dot is baked
+// into the mark at build time (scripts/build_icons.py:tray + DOT_STATUS): idle
+// shows the mark alone, working a white dot, waiting amber.
+const TRAY_ASSETS = {
+  idle: trayIcon,
+  working: path.join(__dirname, 'assets/tray-working.png'),
+  waiting: path.join(__dirname, 'assets/tray-waiting.png'),
+};
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => show());
@@ -83,6 +91,7 @@ function sendAction(id) {
 }
 function refreshTray() {
   if (!tray) return;
+  tray.setImage(TRAY_ASSETS[trayState] || trayIcon);
   const status = trayStatus(appName, trayState);
   tray.setToolTip(status.tooltip);
   tray.setContextMenu(Menu.buildFromTemplate([
