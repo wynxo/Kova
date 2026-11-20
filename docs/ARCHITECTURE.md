@@ -136,6 +136,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compare/keep` | token or session | save the message and one compared answer as a normal turn |
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks` | token or session | one changed file as hunks, each still applied, undone or edited since; contained to the chat's working folder |
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo` | token or session | revert one hunk in the working file, refused if the file's hash changed or the path leaves the folder or crosses a symlink; recorded as a new change set |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/file/undo` | token or session | revert every remaining hunk in one file, keeping later edits elsewhere and refusing the whole undo if any hunk was edited since; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
@@ -1301,5 +1302,9 @@ paths are inserted only as text. Each file of a change set also opens in the sid
 panel (`diff-panel.js`, #190): the full diff, unified or split (kept per device in
 `localStorage`), with word-level marks on a removed line and the added line that
 replaced it, folded unchanged runs, and Undo or Keep per hunk through `kova/hunks.py`.
+**Undo file** reverts every remaining hunk of one file in a single write, keeps edits
+made elsewhere in the file, refuses when any hunk was edited since, and removes a
+file the change set created when nothing is left. Both undos are recorded as new
+change sets, so Restore files brings them back.
 The end-of-turn summary says *Changed N files (+A −D)*, and **Review changes** opens
 every file as a panel tab, the first one in front. Whole-checkpoint restore is unchanged.

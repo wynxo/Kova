@@ -237,6 +237,93 @@ def test_a_symbolic_link_is_never_followed(workspace):
     assert (outside / "notes.txt").read_bytes().decode() == AFTER
 
 
+# -- undoing the whole file ----------------------------------------------------
+
+def test_undo_file_reverts_every_hunk_and_keeps_later_edits_elsewhere(workspace):
+    root, blobs, entry = workspace
+    (root / "other.txt").write_bytes(b"not part of this change set\n")
+    edited = "typed at the top\n" + AFTER + "typed at the end\n"
+    (root / "notes.txt").write_bytes(edited.encode())
+    view = hunks.view(blobs, root, "notes.txt", entry)
+    assert [segment["state"] for segment in hunk_segments(view)] == ["applied", "applied"]
+    change = hunks.undo_file(blobs, root, "notes.txt", entry, view["current_hash"])
+    assert (root / "notes.txt").read_bytes().decode() == \
+        "typed at the top\n" + BEFORE + "typed at the end\n"
+    assert change["status"] == "modified" and change["deleted"] is False
+    assert blobs.get(change["before"]) == edited.encode()
+    assert (root / "other.txt").read_bytes() == b"not part of this change set\n"
+
+    again = hunks.view(blobs, root, "notes.txt", entry)
+    assert {segment["state"] for segment in hunk_segments(again)} == {"undone"}
+
+
+def test_undo_file_refuses_when_any_hunk_was_edited_since(workspace):
+    root, blobs, entry = workspace
+    edited = AFTER.replace("LINE 3\n", "LINE THREE\n")
+    (root / "notes.txt").write_bytes(edited.encode())
+    view = hunks.view(blobs, root, "notes.txt", entry)
+    with pytest.raises(hunks.HunkError) as caught:
+        hunks.undo_file(blobs, root, "notes.txt", entry, view["current_hash"])
+    assert caught.value.status == 409
+    assert (root / "notes.txt").read_bytes().decode() == edited
+
+
+def test_undo_file_refuses_a_stale_hash(workspace):
+    root, blobs, entry = workspace
+    view = hunks.view(blobs, root, "notes.txt", entry)
+    (root / "notes.txt").write_bytes((AFTER + "typed by hand\n").encode())
+    with pytest.raises(hunks.HunkError) as caught:
+        hunks.undo_file(blobs, root, "notes.txt", entry, view["current_hash"])
+    assert caught.value.status == 409
+    assert (root / "notes.txt").read_bytes().decode() == AFTER + "typed by hand\n"
+
+
+def test_undo_file_refuses_when_nothing_is_left_to_undo(workspace):
+    root, blobs, entry = workspace
+    view = hunks.view(blobs, root, "notes.txt", entry)
+    (root / "notes.txt").write_bytes(BEFORE.encode())
+    current = hunks.view(blobs, root, "notes.txt", entry)
+    assert {segment["state"] for segment in hunk_segments(current)} == {"undone"}
+    with pytest.raises(hunks.HunkError) as caught:
+        hunks.undo_file(blobs, root, "notes.txt", entry, current["current_hash"])
+    assert caught.value.status == 409
+    assert (root / "notes.txt").read_bytes().decode() == BEFORE
+    assert view["current_hash"] != current["current_hash"]
+
+
+def test_undo_file_removes_a_file_the_change_set_created(tmp_path):
+    blobs = BlobStore(tmp_path / "blobs")
+    root = tmp_path / "project"
+    root.mkdir()
+    created = "one\nnew file\n"
+    (root / "created.txt").write_bytes(created.encode())
+    entry = entry_for(blobs, None, created)
+    view = hunks.view(blobs, root, "created.txt", entry)
+    change = hunks.undo_file(blobs, root, "created.txt", entry, view["current_hash"])
+    assert not (root / "created.txt").exists()
+    assert change["status"] == "deleted" and change["deleted"] is True and change["after"] is None
+    assert blobs.get(change["before"]) == created.encode()
+
+
+def test_undo_file_refuses_a_missing_file(workspace):
+    root, blobs, entry = workspace
+    (root / "notes.txt").unlink()
+    with pytest.raises(hunks.HunkError) as caught:
+        hunks.undo_file(blobs, root, "notes.txt", entry, sha(AFTER.encode()))
+    assert caught.value.status == 409
+
+
+def test_undo_file_follows_line_endings_rewritten_after_the_turn(tmp_path):
+    blobs = BlobStore(tmp_path / "blobs")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "notes.txt").write_bytes(crlf(AFTER).encode())
+    entry = entry_for(blobs, BEFORE, AFTER)
+    view = hunks.view(blobs, root, "notes.txt", entry)
+    hunks.undo_file(blobs, root, "notes.txt", entry, view["current_hash"])
+    assert (root / "notes.txt").read_bytes() == crlf(BEFORE).encode()
+
+
 # -- the routes ----------------------------------------------------------------------
 
 @pytest.fixture
@@ -329,3 +416,48 @@ def test_route_refuses_while_a_turn_is_running(server):
         "path": "notes.txt", "hunk": hunk_segments(view)[0]["id"], "expected_hash": view["current_hash"]})
     assert response.status_code == 409
     app.state.chat_turns[chat_id] = set()
+
+
+def file_undo_url(chat_id: int | str, checkpoint: int) -> str:
+    return f"/chats/{chat_id}/checkpoints/{checkpoint}/file/undo"
+
+
+def test_route_undoes_the_whole_file_and_records_it(server):
+    client, app, project, chat_id, checkpoint = server
+    (project / "sibling.txt").write_bytes(b"not ours to undo\n")
+    view = call(client, "GET", f"/chats/{chat_id}/checkpoints/{checkpoint}/hunks",
+                params={"path": "notes.txt"}).json()
+    response = call(client, "POST", file_undo_url(chat_id, checkpoint), json={
+        "path": "notes.txt", "expected_hash": view["current_hash"]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True and body["deleted"] is False
+    assert (project / "notes.txt").read_bytes().decode() == BEFORE
+    assert (project / "sibling.txt").read_bytes() == b"not ours to undo\n"
+
+    recorded = app.state.store.get_checkpoint(chat_id, body["checkpoint_id"])
+    assert recorded["label"] == "Undid all changes in notes.txt"
+    assert recorded["files"]["notes.txt"]["undo_of"] == {"checkpoint": checkpoint, "file": True}
+    client.restore_checkpoint(chat_id, body["checkpoint_id"])
+    assert (project / "notes.txt").read_bytes().decode() == AFTER
+
+
+def test_route_refuses_a_whole_file_undo_after_a_later_edit(server):
+    client, _, project, chat_id, checkpoint = server
+    (project / "notes.txt").write_bytes(AFTER.replace("added\n", "edited by hand\n").encode())
+    view = call(client, "GET", f"/chats/{chat_id}/checkpoints/{checkpoint}/hunks",
+                params={"path": "notes.txt"}).json()
+    response = call(client, "POST", file_undo_url(chat_id, checkpoint), json={
+        "path": "notes.txt", "expected_hash": view["current_hash"]})
+    assert response.status_code == 409
+    assert "edited since" in response.json()["detail"]
+    assert (project / "notes.txt").read_bytes().decode() == AFTER.replace("added\n", "edited by hand\n")
+
+
+def test_route_whole_file_undo_only_knows_files_in_the_change_set(server):
+    client, _, project, chat_id, checkpoint = server
+    (project.parent / "outside.txt").write_bytes(AFTER.encode())
+    response = call(client, "POST", file_undo_url(chat_id, checkpoint), json={
+        "path": "../outside.txt", "expected_hash": sha(AFTER.encode())})
+    assert response.status_code == 404
+    assert (project.parent / "outside.txt").read_bytes().decode() == AFTER
