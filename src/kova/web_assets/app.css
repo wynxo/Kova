@@ -192,6 +192,8 @@ noscript { position:fixed; inset:auto 16px 16px; padding:12px 14px; border-radiu
 .icon-button:disabled { opacity:.4; }
 
 input:not([type="checkbox"]), textarea { min-width:0; }
+/* A select with no height rule falls under the 24px target floor (#201). */
+dialog select { min-height:var(--space-6); }
 dialog input:not([type="checkbox"]), dialog textarea {
   width:100%;
   min-height:36px;
@@ -513,6 +515,19 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .switch[aria-checked="true"] { background:var(--fg-default); box-shadow:none; }
 .switch[aria-checked="true"] .switch-thumb { transform:translateX(16px); background:var(--bg-base); }
 .switch:disabled { opacity:.45; }
+/* The switch keeps its 20px shape; the 24px minimum target is its hit area
+   (#201). mobile.css replaces it with the 44px touch size. */
+.switch::after {
+  content:""; position:absolute; top:50%; left:50%;
+  width:var(--space-6); height:var(--space-6);
+  transform:translate(-50%, -50%);
+}
+/* A checkbox row is one target, not a 16px box (#201): the label carries the
+   minimum hit area, so the text is as clickable as the box. */
+label:has(> input[type="checkbox"]) {
+  display:flex; align-items:center; gap:var(--space-2);
+  min-height:var(--space-6);
+}
 
 .segmented { display:inline-flex; flex:none; gap:2px; padding:2px; border-radius:var(--radius-md); background:var(--bg-base); box-shadow:inset 0 0 0 1px var(--border-subtle); }
 .segmented button {
@@ -806,7 +821,7 @@ dialog label.shortcuts-search {
 #provider-details, #provider-models-step { display:grid; gap:14px; }
 .provider-intro, .provider-footnote { color:var(--fg-muted); font-size:13px; line-height:1.55; }
 .provider-footnote { color:var(--fg-faint); font-size:12px; }
-#provider-key-link { display:inline-flex; align-items:center; gap:5px; justify-self:start; margin-top:-6px; font-size:12.5px; }
+#provider-key-link { display:inline-flex; align-items:center; gap:5px; justify-self:start; margin-top:-6px; min-height:var(--space-6); font-size:12.5px; }
 #provider-key-link .icon { width:12px; height:12px; }
 #provider-status { min-height:20px; color:var(--fg-muted); font-size:13px; overflow-wrap:anywhere; }
 #provider-status:empty { display:none; }
@@ -1183,6 +1198,8 @@ html[data-motion="off"][data-background] main {
 .privacy-switch input { width: auto; }
 .privacy-report { max-height: 45vh; overflow: auto; }
 .privacy-row { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+/* The timeline disclosure is a target on its own, not a 21px text line (#201). */
+.privacy-timeline-toggle { min-height: var(--space-6); }
 
 /* ---------- Typography, density and font (#179) ----------
    typography.js resolves the three Settings > General choices onto

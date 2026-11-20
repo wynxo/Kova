@@ -128,7 +128,9 @@
     title.id = `${id}-title`;
 
     const panel = node(doc, 'div', 'palette-panel');
-    const field = node(doc, 'div', 'palette-field');
+    // A label, so the whole field row focuses the input and the target is the
+    // row rather than its ~21px text line (#201).
+    const field = node(doc, 'label', 'palette-field');
     const searchIcon = node(doc, 'span', 'icon i-search');
     searchIcon.setAttribute('aria-hidden', 'true');
     const input = node(doc, 'input', 'palette-input');

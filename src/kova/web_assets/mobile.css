@@ -140,6 +140,26 @@
      line per action, and the touch target the platform expects. */
   .compose-menu-item { min-height:var(--touch-target); border-radius:var(--radius-md); }
   .option { min-height:var(--touch-target); }
+  /* Rows that are the target for a field or box: the whole row is thumb size,
+     the same as the buttons around it. */
+  .search, .settings-search { height:auto; min-height:var(--touch-target); }
+  .chat-option { min-height:var(--touch-target); }
+  .shortcut-preset { height:auto; min-height:var(--touch-target); }
+  /* A dialog field is thumb height too. The palette's own field already puts
+     the target in its row, so it keeps its measured line. The theme editor is
+     an aside rather than a dialog, so it says so explicitly. */
+  dialog input:not([type="checkbox"]):not(.palette-input),
+  dialog select,
+  .theme-editor input,
+  .theme-editor select { min-height:var(--touch-target); }
+  .theme-editor input, .theme-editor select { block-size:auto; }
+  .privacy-timeline-toggle,
+  #provider-key-link { min-height:var(--touch-target); }
+  /* The colour swatch is a target too, so its column is thumb wide. */
+  .theme-editor-colour {
+    grid-template-columns:minmax(0, 1fr) var(--touch-target) calc(var(--space-12) * 2);
+  }
+  label:has(> input[type="checkbox"]) { min-height:var(--touch-target); }
 }
 
 @keyframes sheet-rise { from { transform:translateY(100%); } }
@@ -170,7 +190,12 @@
   .option,
   .message-action,
   .starter,
-  .switch {
+  .switch,
+  .settings-segment,
+  .settings-tab,
+  .message-details-toggle,
+  .starters-edit,
+  .brand {
     position:relative;
   }
   .icon-button::after,
@@ -191,7 +216,12 @@
   .option::after,
   .message-action::after,
   .starter::after,
-  .switch::after {
+  .switch::after,
+  .settings-segment::after,
+  .settings-tab::after,
+  .message-details-toggle::after,
+  .starters-edit::after,
+  .brand::after {
     content:"";
     position:absolute; top:50%; left:50%;
     width:var(--touch-target); height:var(--touch-target);
