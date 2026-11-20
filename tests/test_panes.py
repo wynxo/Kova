@@ -49,3 +49,40 @@ def test_panel_api_and_phone_sheet() -> None:
 def test_panel_motion_follows_the_setting_and_the_system() -> None:
     assert '[data-motion="reduced"] .side-panel' in PANES_CSS
     assert "prefers-reduced-motion:reduce" in PANES_CSS
+
+
+def test_panel_tabs_are_an_aria_tablist() -> None:
+    for attribute in ("role: 'tablist'", "role: 'tab'", "role: 'tabpanel'", "'aria-selected'", "'aria-controls'"):
+        assert attribute in PANES_JS
+    for key in ("'Delete'", "'Home'", "'End'"):
+        assert key in PANES_JS
+    # Selection is never colour alone: the selected tab is also bold and underlined.
+    selected = PANES_CSS[PANES_CSS.index('.side-panel-tab[aria-selected="true"]'):]
+    assert "font-weight:600" in selected.split("}")[0]
+
+
+def test_pop_out_windows_match_what_the_desktop_app_allows() -> None:
+    assert "window.open('', `kova-panel-${tab.id}`" in PANES_JS
+    core = (Path(__file__).resolve().parents[1] / "desktop" / "core.js").read_text(encoding="utf-8")
+    assert "url === 'about:blank'" in core and "kova-panel-" in core
+    main = (Path(__file__).resolve().parents[1] / "desktop" / "main.js").read_text(encoding="utf-8")
+    assert "panelWindow(url, frameName)" in main
+    assert "'did-create-window'" in main
+    # Theme tokens reach the window through the CSSOM, never a style attribute.
+    assert "setAttribute('style'" not in PANES_JS
+
+
+def test_icon_rail_only_on_wide_screens() -> None:
+    assert ".sidebar-rail { display:none; }" in PANES_CSS
+    wide = PANES_CSS[PANES_CSS.index("@media (min-width:721px)"):PANES_CSS.index("@media (max-width:720px)")]
+    assert "body.sidebar-collapsed .sidebar-rail" in wide
+    assert "var(--pane-rail-w)" in wide
+
+
+def test_panel_and_pane_shortcuts_are_registered() -> None:
+    shortcuts = (ASSETS / "shortcuts.js").read_text(encoding="utf-8")
+    for action in ("toggle-panel", "next-pane", "previous-pane"):
+        assert f"id: '{action}'" in shortcuts
+    app = (ASSETS / "app.js").read_text(encoding="utf-8")
+    assert "'toggle-panel': () => window.KovaPanel?.toggle?.()" in app
+    assert "'next-pane': () => window.KovaPanes?.focusNext?.()" in app

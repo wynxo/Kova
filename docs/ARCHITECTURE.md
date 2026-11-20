@@ -450,6 +450,17 @@ finished reply only chimes while the window is unfocused. The same toast stack
 window is hidden, with the toast's own title and text; the *Notify me* switch
 and the service worker decide whether it appears.
 
+The three panes (`web_assets/panes.js` and `panes.css`, #182) are the sidebar, the
+conversation and an optional side panel. Both outer panes resize with a keyboard-operable
+splitter whose width each device remembers. The panel holds one tab per thing opened in
+it (`window.KovaPanel.open({title, node, key})`: long code blocks, long tool output,
+diffs), and a tab can pop out into its own same-origin window, which the Electron shell
+allows only for blank `kova-panel-<n>` windows (`desktop/core.js` `panelWindow`). On wide
+screens a collapsed sidebar leaves an icon rail (show sidebar, new chat, search,
+settings); on phones the panel is a full-screen sheet. Ctrl/Cmd+Alt+B shows or hides the
+panel and F6 / Shift+F6 move focus between the panes, through the same shortcut
+registry as every other key.
+
 The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
 search field that filters chats, the chat list and a single **Settings** row.
 The message box shows **+** (attach files, slash commands, and an incognito chat
@@ -1234,5 +1245,9 @@ route or restore permission is introduced.
 The web client renders this in a collapsed per-file tool card with old/new line
 numbers; saved change sets reuse the same `diff.js` renderer through the existing
 checkpoint diff route above. `diff.css` uses semantic status colours. Source and
-paths are inserted only as text. Per-hunk accept/undo, word highlights and a
-side-panel review are deferred; existing whole-checkpoint restore is unchanged.
+paths are inserted only as text. Each file of a change set also opens in the side
+panel (`diff-panel.js`, #190): the full diff, unified or split (kept per device in
+`localStorage`), with word-level marks on a removed line and the added line that
+replaced it, folded unchanged runs, and Undo or Keep per hunk through `kova/hunks.py`.
+The end-of-turn summary says *Changed N files (+A −D)*, and **Review changes** opens
+every file as a panel tab, the first one in front. Whole-checkpoint restore is unchanged.

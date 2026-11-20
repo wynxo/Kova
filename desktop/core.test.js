@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, permissionAllowed, serverCommand, windowState, isAction, trayStatus} = require('./core');
+const {settings, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -86,4 +86,13 @@ test('window memory keeps a sane place, size and maximized state', () => {
   assert.deepEqual(windowState('nonsense', displays).bounds, {width: 1180, height: 800});
   assert.deepEqual(windowState({x: 0, y: 0, width: '900', height: 700}, displays).bounds,
     {width: 1180, height: 800}, 'strings are not coordinates');
+});
+
+test('only blank side-panel windows may open', () => {
+  assert.ok(panelWindow('about:blank', 'kova-panel-1'));
+  assert.ok(panelWindow('about:blank', 'kova-panel-42'));
+  for (const [url, name] of [['about:blank', ''], ['about:blank', '_blank'], ['about:blank', 'kova-panel-'],
+                             ['about:blank', 'kova-panel-1x'], ['https://example.com', 'kova-panel-1'],
+                             ['http://127.0.0.1:7700/app', 'kova-panel-1'], ['about:blank#x', 'kova-panel-1']])
+    assert.equal(panelWindow(url, name), false, `${url} ${name}`);
 });

@@ -35,6 +35,26 @@
 .diff-sign { flex:none; width:2ch; text-align:center; color:var(--fg-muted); user-select:none; }
 :is(.file-diff-add, .file-diff-del) > .diff-sign { color:var(--fg-default); font-weight:700; }
 
+/* Word-level highlights: a little more of the row's own tint, plus an
+   underline so the mark does not rely on colour alone. 10% on top of the
+   row's 14% keeps --fg-default at 4.6:1 or more in every shipped theme
+   (lowest: the terminal example on the added tint). */
+.diff-panel-diff .diff-word { color:inherit; border-radius:var(--radius-sm); text-decoration:underline; text-decoration-thickness:var(--space-0-5); text-underline-offset:var(--space-0-5); }
+.diff-panel-diff .file-diff-add .diff-word { background:color-mix(in srgb, var(--status-success) 10%, transparent); }
+.diff-panel-diff .file-diff-del .diff-word { background:color-mix(in srgb, var(--status-danger) 10%, transparent); }
+
+/* Split layout: the old file on the left, the new one on the right. */
+.diff-split-row { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+.diff-split-side { min-width:0; }
+.diff-split-side + .diff-split-side { border-left:1px solid var(--border-subtle); }
+.diff-split-empty { background:var(--bg-raised); }
+.diff-panel-diff.is-split .file-diff-number { flex-basis:5ch; }
+
+/* Unified / Split: a two-button toggle; the pressed one is filled. */
+.diff-layout { display:inline-flex; gap:var(--space-0-5); padding:var(--space-0-5); border:1px solid var(--border-strong); border-radius:var(--radius-sm); }
+.diff-layout .btn[aria-pressed="true"] { background:var(--bg-raised); color:var(--fg-default); font-weight:600; }
+.diff-layout .btn:focus-visible { outline:var(--space-0-5) solid var(--accent-default); outline-offset:var(--space-0-5); }
+
 .diff-hunk { border-block:1px solid var(--border-subtle); }
 .diff-hunk:focus-visible {
   outline:var(--space-0-5) solid var(--accent-default);

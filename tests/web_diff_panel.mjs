@@ -40,6 +40,7 @@ const context = {
   document: {createElement: tag => new Element(tag)},
   CSS: {escape: value => value},
   window: {KovaPanel: {open: options => { panel = options; }}},
+  localStorage: {data: {}, getItem(key) { return this.data[key] ?? null; }, setItem(key, value) { this.data[key] = String(value); }},
 };
 vm.createContext(context);
 vm.runInContext(readFileSync(new URL('../src/kova/web_assets/diff-panel.js', import.meta.url), 'utf8') + '\nglobalThis.panel = KovaDiffPanel;', context);
@@ -131,4 +132,57 @@ assert.ok(status.className.includes('is-error'));
 assert.match(status.textContent, /changed since you opened this diff/);
 assert.ok(!buttons[1].disabled);
 assert.equal(byClass(status, 'btn')[0].textContent, 'Reload diff');
+
+// Word-level highlights: only the words that changed are marked (#190).
+const words = context.panel.wordDiff('const total = add(a, b);', 'const total = add(a, c);');
+assert.deepEqual(JSON.parse(JSON.stringify(words)), {
+  old: [{text: 'const total = add(a, ', changed: false}, {text: 'b', changed: true}, {text: ');', changed: false}],
+  new: [{text: 'const total = add(a, ', changed: false}, {text: 'c', changed: true}, {text: ');', changed: false}],
+});
+assert.equal(context.panel.wordDiff('hello world', 'goodbye moon'), null, 'a rewritten line is not marked word by word');
+assert.equal(context.panel.wordDiff('same', 'same'), null);
+assert.equal(context.panel.wordDiff('a '.repeat(400), 'b '.repeat(400)), null, 'very long lines are not compared');
+const edited = {path: 'app.py', supported: true, segments: [
+  {type: 'hunk', id: 'w1', header: '@@ -1,2 +1,1 @@', state: 'applied', old: 1, new: 1,
+   removed: ['total = add(a, b)', 'print(total)'], added: ['total = add(a, c)']},
+]};
+const unified = context.panel.render(edited, {});
+const marks = byClass(unified, 'diff-word');
+assert.deepEqual(marks.map(mark => [mark.tagName, mark.textContent]), [['mark', 'b'], ['mark', 'c']]);
+assert.equal(byClass(unified, 'file-diff-del')[0].textContent, '1-total = add(a, b)', 'marks keep the line text whole');
+
+// Split layout: removed lines on the left, added on the right, blanks where one side is shorter.
+const split = context.panel.render({...view, segments: [...view.segments.slice(0, 2), ...edited.segments]}, {split: true});
+assert.ok(split.className.includes('is-split'));
+const pairs = byClass(split, 'diff-split-row');
+const last = pairs.slice(-2);
+assert.deepEqual(last[0].children.map(half => half.className.split(' ').find(name => name.startsWith('file-diff-') && name !== 'file-diff-row')),
+                 ['file-diff-del', 'file-diff-add']);
+assert.ok(last[1].children[1].className.includes('diff-split-empty'), 'an unpaired removed line has a blank right side');
+assert.equal(last[1].children[1].attrs['aria-hidden'], 'true');
+assert.equal(last[1].children[0].textContent, '2-print(total)', 'each side numbers its own file');
+const context3 = pairs.find(pair => pair.children[0].className.includes('file-diff-context'));
+assert.equal(context3.children[0].textContent, context3.children[1].textContent, 'unchanged lines show on both sides');
+const splitFold = byClass(split, 'diff-expand')[0];
+splitFold.click();
+assert.ok(byClass(split, 'diff-expanded')[0].children.every(child => child.className === 'diff-split-row'), 'a fold opens in the same layout');
+
+// The panel opens one tab per file and remembers Unified or Split on this device.
+await context.panel.open({chatId: 'c1', checkpointId: 9, path: 'app.py', background: true, request: async () => structuredClone(edited)});
+assert.equal(panel.key, 'diff:c1:9:app.py', 'the same file and change set reuse one tab');
+assert.equal(panel.background, true);
+const toggle = byClass(panel.node, 'diff-layout')[0];
+assert.equal(toggle.attrs.role, 'group');
+const [unifiedButton, splitButton] = byClass(toggle, 'btn');
+assert.equal(unifiedButton.attrs['aria-pressed'], 'true');
+splitButton.click();
+assert.equal(splitButton.attrs['aria-pressed'], 'true');
+assert.equal(context.localStorage.data['kova-diff-layout'], 'split');
+assert.ok(byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split'));
+assert.equal(focused, splitButton, 'focus stays on the toggle');
+await context.panel.open({chatId: 'c1', checkpointId: 9, path: 'app.py', request: async () => structuredClone(edited)});
+assert.ok(byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split'), 'the next diff opens split');
+context.localStorage.getItem = () => { throw new Error('blocked'); };
+await context.panel.open({chatId: 'c1', checkpointId: 9, path: 'app.py', request: async () => structuredClone(edited)});
+assert.ok(!byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split'), 'blocked storage falls back to unified');
 console.log('diff panel ok');
