@@ -1,6 +1,7 @@
 const {contextBridge, ipcRenderer} = require('electron');
-// The startup page (file:) gets only Retry. The local app page gets two
-// narrow channels: native menu/tray actions in, its own aggregate state out.
+// The startup page (file:) gets only Retry. The local app page gets narrow,
+// validated channels: native menu/tray actions in and its own aggregate state
+// out (kovaDesktop), plus the Quick ask overlay's channels (kovaQuick).
 if (location.protocol === 'file:') {
   contextBridge.exposeInMainWorld('kovaStartup', {retry: () => ipcRenderer.invoke('retry')});
 } else {
@@ -10,5 +11,20 @@ if (location.protocol === 'file:') {
       ipcRenderer.on('app-action', (_event, id) => callback(typeof id === 'string' ? id : ''));
     },
     reportState: state => ipcRenderer.send('app-state', typeof state === 'string' ? state : ''),
+  });
+  // Quick ask (#71). Strings are re-checked in the main process before anything
+  // is trusted, so a compromised page can at most hide the overlay or open a
+  // chat id the store would already accept.
+  contextBridge.exposeInMainWorld('kovaQuick', {
+    hide: () => ipcRenderer.send('quick-hide'),
+    openChat: chatId => ipcRenderer.send('quick-open-chat', typeof chatId === 'string' ? chatId : ''),
+    onSelection: callback => {
+      if (typeof callback !== 'function') return;
+      ipcRenderer.on('quick-selection', (_event, text) => callback(typeof text === 'string' ? text : ''));
+    },
+    onOpenChat: callback => {
+      if (typeof callback !== 'function') return;
+      ipcRenderer.on('open-chat', (_event, chatId) => callback(typeof chatId === 'string' ? chatId : ''));
+    },
   });
 }

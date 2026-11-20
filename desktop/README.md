@@ -30,7 +30,10 @@ external links go to your system browser. No renderer Node access.
 Closing the window hides it to the tray. Open restores it; Quit or Ctrl/Cmd+Q
 exits and terminates only a server this shell spawned. A pre-existing server
 is left running. Ctrl/Cmd+W hides, Ctrl/Cmd+R reconnects, F11 toggles fullscreen.
-Startup failures show Retry and the exact server log path.
+`Ctrl/Cmd+Shift+Space` (configurable as `[desktop] quick_ask` in `config.toml`)
+opens the Quick ask overlay from anywhere; the tray's Quick ask item is the
+fallback where the OS blocks global shortcuts. Startup failures show Retry and
+the exact server log path.
 
 The one-line installers register Kova by default: a Linux menu entry and icon
 (with cache refresh), a Windows Start-menu shortcut, or a per-user macOS

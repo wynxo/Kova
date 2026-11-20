@@ -6,6 +6,14 @@
   let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
   let compare = null;  // compare.js (#96), created once the helpers it borrows exist
   const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
+  // Quick ask overlay (#71). The Electron shell opens /app?quick=1 in a small
+  // always-on-top window; the same client then behaves as a one-line ask box.
+  const QUICK_TITLE_PREFIX = '[quick] ';
+  const isQuick = typeof location !== 'undefined' && new URLSearchParams(typeof location.search === 'string' ? location.search : '').get('quick') === '1';
+  let quickSelection = '';  // clipboard selection the shell handed over, shown as a chip
+  // Quick ask chats keep their [quick] title prefix so the sidebar and the
+  // palette skip them, exactly as `kova ask` hides its [ask] chats.
+  const isQuickChat = chat => typeof chat?.title === 'string' && chat.title.startsWith(QUICK_TITLE_PREFIX);
   let autostartBusy = false;
   async function refreshAutostart(action) {
     if (autostartBusy) return;
@@ -841,17 +849,19 @@
     ]);
     if (version !== state.searchVersion) return;
     if (!query) projects?.setProjects(projectRows);
-    state.chats = chats;
+    // Quick ask chats are one-off asks; they never clutter the sidebar history.
+    const listed = chats.filter(chat => !isQuickChat(chat));
+    state.chats = listed;
     // A full list is also the moment a chat deleted elsewhere disappears from
     // activity; a search result must not hide the others.
     if (!query) {
-      const live = new Set(chats.map(chat => chat.id));
+      const live = new Set(listed.map(chat => chat.id));
       for (const id of [...state.activity.keys()]) {
         if (!live.has(id)) removeActivity(id);
       }
     }
-    for (const chat of chats) absorbChatState(chat);
-    history(chats); renderActivity();
+    for (const chat of listed) absorbChatState(chat);
+    history(listed); renderActivity();
   }
   (function privacyPanel() {
     const dialog = el('dialog', 'panel privacy-dialog');
@@ -1733,7 +1743,11 @@
   });
   async function send(event) {
     event.preventDefault();
-    const chat = state.chat, draft = $('prompt').value, text = draft.trim();
+    const chat = state.chat, draft = $('prompt').value;
+    let text = draft.trim();
+    // Quick ask includes the selection the shell read, delimited so the model
+    // can tell it apart from the question. The chip already told the user.
+    if (isQuick && quickSelection && text) text = `${text}\n\n<selection>\n${quickSelection.trim()}\n</selection>`;
     if ((!text && !pendingAttachments.length) || readingAttachments || !state.connected) return;
     const command = text ? parseCommand(text) : null;
     if (command) {
@@ -1821,6 +1835,7 @@
       if (!interrupted) {
         try { await runNextQueued(); } catch (error) { report(error); }
       }
+      if (isQuick) renderQuickControls();
     }
   }
   async function cancelTurn() {
@@ -2191,7 +2206,7 @@
   async function paletteLoad() {
     const read = url => json(url).catch(() => null);
     const [chats, servers, plugins] = await Promise.all([read('/chats'), read('/mcp'), read('/extensions/plugins')]);
-    if (Array.isArray(chats)) paletteChats = chats;
+    if (Array.isArray(chats)) paletteChats = chats.filter(chat => !isQuickChat(chat));
     if (Array.isArray(servers)) paletteMcp = servers;
     if (Array.isArray(plugins)) palettePlugins = plugins;
   }
@@ -2203,7 +2218,7 @@
     try { rows = await json(`/chats/search?q=${encodeURIComponent(query)}&limit=20`); }
     catch (_) { return; }
     if (version !== paletteSearchVersion || !commandPalette?.isOpen()) return;
-    paletteMatches = Array.isArray(rows) ? rows : [];
+    paletteMatches = (Array.isArray(rows) ? rows : []).filter(row => !isQuickChat(row));
     commandPalette.refresh();
   }
   function paletteSearch(value) {
@@ -2259,6 +2274,7 @@
       if (state.activityOpen) activityPanel(false, true);
       else if (document.body.classList.contains('sidebar-open')) sidebar(false);
       else if (state.busy) safe(stop);
+      else if (isQuick) window.kovaQuick?.hide?.();
       else if (inZen()) toggleZen(false);
       else return false;
     },
@@ -2353,8 +2369,15 @@
   }
   function createComposerChat() {
     const folder = $('cwd').value.trim();
-    return json('/chats', write('POST', {mode: $('mode').value, web: webOn(),
-      permission: $('permission').value, ...(folder ? {cwd: folder} : {}), ...modelForNewChat()}));
+    const body = {mode: $('mode').value, web: webOn(),
+      permission: $('permission').value, ...(folder ? {cwd: folder} : {}), ...modelForNewChat()};
+    // Quick ask chats are titled so they stay out of the normal sidebar history
+    // (the same trick `kova ask` uses with its [ask] prefix).
+    if (isQuick) {
+      const firstLine = ($('prompt').value.trim().split('\n')[0] || '').slice(0, 54);
+      body.title = QUICK_TITLE_PREFIX + (firstLine || 'quick ask');
+    }
+    return json('/chats', write('POST', body));
   }
   function syncComposerModel() {
     const selection = composerModel(), select = $('model'), effort = $('reasoning-effort');
@@ -3659,6 +3682,41 @@
     scheduleHealth();
   });
   window.addEventListener('hashchange', () => { if (/(ticket|pair|share)=/.test(location.hash) && !state.busy) { state.events?.close(); start(); } });
+
+  // Quick ask overlay (#71). The shell hands over a clipboard selection and
+  // asks this window to open a chat in the main window; this client hides the
+  // full chrome and behaves as a one-line ask box. No Node reaches the page:
+  // every string is re-checked in the main process before anything is trusted.
+  function renderQuickSelection() {
+    if (!isQuick) return;
+    $('quick-selection').hidden = !quickSelection;
+  }
+  function renderQuickControls() {
+    if (!isQuick) return;
+    $('quick-open').hidden = !state.chat;
+    $('quick-copy').hidden = ![...document.querySelectorAll('#messages .assistant')].length;
+  }
+  function quickCopyAnswer() {
+    const answers = [...document.querySelectorAll('#messages .assistant')];
+    const text = answers.at(-1)?.textContent?.trim() || '';
+    if (!text) return;
+    const copy = navigator.clipboard ? navigator.clipboard.writeText(text) : null;
+    if (copy && typeof copy.catch === 'function') copy.catch(() => {});
+    $('quick-copy').textContent = 'Copied';
+    setTimeout(() => { if (!isQuick) return; $('quick-copy').textContent = 'Copy'; }, 1600);
+  }
+  window.kovaQuick?.onSelection?.(text => {
+    quickSelection = typeof text === 'string' && text.trim() ? text : '';
+    renderQuickSelection();
+  });
+  window.kovaQuick?.onOpenChat?.(chatId => { if (chatId) safe(() => openChat(chatId)); });
+  $('quick-open').onclick = () => window.kovaQuick?.openChat?.(state.chat?.id || '');
+  $('quick-copy').onclick = quickCopyAnswer;
+  $('quick-selection-remove').onclick = () => { quickSelection = ''; renderQuickSelection(); };
+  if (isQuick) {
+    document.body.classList.add('quick');
+    $('quick-open').hidden = true; $('quick-copy').hidden = true; $('quick-selection').hidden = true;
+  }
 
   controls(); start();
 })();

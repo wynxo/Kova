@@ -96,6 +96,13 @@ compare. Defaults are what a fresh install writes.
 | `[voice] language` | `voice_language` | unset | an ISO language code, or empty to clear | Language for speech-to-text and text-to-speech. Defaults to the model's primary language when unset. |
 | `[voice] max_seconds` | `voice_max_seconds` | `60` | integer ≥ 1 | Longest voice clip the server accepts, in seconds. |
 
+The desktop shell reads one key the server never interprets: `[desktop] quick_ask`
+is the Electron global-shortcut accelerator for the Quick ask overlay, default
+`CommandOrControl+Shift+Space`. It is an Electron accelerator string (for example
+`"CommandOrControl+Shift+Space"` or `"Alt+Q"`); a missing or malformed value falls
+back to the default. The server recognises the section so `kova config` and the
+doctor never flag it as an unknown key.
+
 Booleans accept `on`/`off`, `true`/`false`, `yes`/`no`, `1`/`0`, `enabled` and
 `disabled` on the command line. Path values are expanded (`~`) and resolved
 before they are saved.

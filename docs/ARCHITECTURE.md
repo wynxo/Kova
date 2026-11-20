@@ -386,6 +386,18 @@ the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
 and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
 over `uv run kova-app`.
 
+The Electron shell also owns the Quick ask overlay (#71): a second, frameless
+`BrowserWindow` (`720×220`, always-on-top, `skipTaskbar`) that loads
+`/app?quick=1` through the same ticket flow. A configurable `globalShortcut`
+(`[desktop] quick_ask`, default `CommandOrControl+Shift+Space`) toggles it, with
+the tray's Quick ask item as the fallback on platforms that block global
+shortcuts (Wayland often does). The overlay reads the clipboard in the main
+process and passes it over a narrow, allowlisted IPC bridge, so a selection can
+be pulled in with a removable "Using your selection" chip. `?quick=1` turns the
+same `app.js` client into a one-line ask box that creates a `[quick] `-titled
+chat (kept out of the sidebar history like `kova ask`'s `[ask] ` chats), streams
+the answer inline, and offers Open in Kova and Copy.
+
 The UI itself is `src/kova/web_assets/`: `index.html`, `tokens.css`, `app.css`, `app.js`,
 `palette.css`, `palette.js`, `settings.css`, `settings.js`, `chat_list.js` and `chat_list.css`
 (the sidebar's pins and date groups), `chat-appearance.js` and `chat-appearance.css`

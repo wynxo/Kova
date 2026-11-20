@@ -30,7 +30,7 @@ MAX_VOICE_SECONDS = 60
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice',
+    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -45,6 +45,8 @@ CONFIG_SECTION_KEYS = {
     'catalog': frozenset({'url'}),
     'usage': frozenset({'monthly_budget_usd'}),
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
+    #: Desktop shell options read by the Electron app, not the server.
+    'desktop': frozenset({'quick_ask'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',

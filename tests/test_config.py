@@ -324,3 +324,11 @@ def test_unknown_key_helper_reports_paths_and_suggestions_only():
     warnings = config_key_warnings(data)
     assert len(warnings) == 3
     assert all("placeholder-secret" not in line for line in warnings)
+
+
+def test_desktop_quick_ask_section_is_a_known_key():
+    from kova.config import unknown_config_keys
+
+    # The Electron shell reads [desktop] quick_ask; the server must not warn
+    # about it as an unknown key.
+    assert unknown_config_keys({"desktop": {"quick_ask": "Alt+Q"}}) == []

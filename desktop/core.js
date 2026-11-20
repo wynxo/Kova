@@ -15,7 +15,7 @@ function settings(env = process.env, argv = process.argv) {
   const match = top.match(/^\s*port\s*=\s*(\d+)\s*(?:#.*)?$/m);
   const port = match ? Number(match[1]) : 7700;
   if (port < 1 || port > 65535) throw new Error('Invalid Kova port');
-  return {home, origin: `http://127.0.0.1:${port}`};
+  return {home, origin: `http://127.0.0.1:${port}`, config};
 }
 function executable(name) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
@@ -68,6 +68,29 @@ function trayStatus(name, state) {
 }
 const DEFAULT_WINDOW = {width: 1180, height: 800};
 const MIN_WINDOW = {width: 760, height: 540};
+// The Quick ask global shortcut (#71), read from config.toml. A missing or
+// malformed value falls back to the default: globalShortcut.register throws on
+// a bad accelerator, and the shell must never refuse to start over one.
+const DEFAULT_QUICK_ASK = 'CommandOrControl+Shift+Space';
+function sectionString(text, name, key) {
+  const start = new RegExp(`^\\[${name}\\]\\s*$`, 'm').exec(String(text || ''));
+  if (!start) return undefined;
+  const rest = String(text || '').slice(start.index + start[0].length);
+  const next = rest.match(/^\s*\[/m);
+  const body = next ? rest.slice(0, next.index) : rest;
+  const line = body.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"\\s*(?:#.*)?$`, 'm'));
+  return line ? line[1] : undefined;
+}
+function quickAsk(configText) {
+  const value = sectionString(configText, 'desktop', 'quick_ask');
+  return typeof value === 'string' && value.trim() ? value : DEFAULT_QUICK_ASK;
+}
+// A chat id the page may ask the shell to open in the main window. The store
+// itself only deletes ids matching this shape, so an arbitrary string never
+// reaches the renderer's navigation.
+function quickChatId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
 // Remember where the window was, but never trust it blindly: a saved position
 // on a display that is no longer connected starts fresh instead of opening
 // somewhere the reader cannot reach, and a silly size is clamped.
@@ -90,4 +113,4 @@ function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
   result.maximized = saved.maximized === true;
   return result;
 }
-module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus};
+module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK};

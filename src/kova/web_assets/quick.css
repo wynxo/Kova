@@ -1,0 +1,66 @@
+/* Quick ask overlay (#71). The Electron shell opens /app?quick=1 in a small
+   always-on-top window; body.quick turns the full app into that one-line box.
+   Everything reads the semantic tokens, so light, dark and high-contrast themes
+   still apply, and no colour is ever hard-coded here. */
+
+body.quick { grid-template-columns:minmax(0, 1fr); }
+body.quick #sidebar,
+body.quick .topbar,
+body.quick #welcome,
+body.quick #incognito-note,
+body.quick #status-bar { display:none; }
+
+.quick-bar {
+  display:none;
+  flex:none;
+  align-items:center;
+  gap:var(--space-3);
+  padding:var(--space-2) var(--space-3);
+  border-bottom:1px solid var(--border-subtle);
+}
+body.quick .quick-bar { display:flex; }
+
+.quick-title {
+  flex:none;
+  color:var(--fg-muted);
+  font-size:var(--type-size-label);
+  font-weight:600;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+
+.quick-selection {
+  display:inline-flex;
+  align-items:center;
+  gap:var(--space-2);
+  min-width:0;
+  padding:var(--space-1) var(--space-2);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-pill);
+  color:var(--fg-muted);
+  font-size:var(--type-size-label);
+}
+.quick-selection .icon { width:14px; height:14px; flex:none; }
+.quick-selection-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.quick-selection .icon-button { width:20px; height:20px; flex:none; }
+
+.quick-actions { display:flex; flex:none; margin-left:auto; gap:var(--space-2); }
+
+body.quick #scroll-area { padding:var(--space-3); }
+body.quick .compose-wrap {
+  max-width:none;
+  padding:0 var(--space-3) max(var(--space-2), env(safe-area-inset-bottom));
+}
+body.quick .compose-more,
+body.quick .chat-options-wrap { display:none; }
+body.quick .composer { margin:0; }
+
+/* The quick bar's buttons get their own visible focus ring, independent of the
+   shared app.css rule, so the overlay stays keyboard-reachable on its own. */
+.quick-bar button:focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
+
+@media (prefers-reduced-motion:reduce) {
+  .quick-bar button, .quick-selection { transition:none; }
+}
+[data-motion="reduced"] .quick-bar button,
+[data-motion="reduced"] .quick-selection { transition:none; }
