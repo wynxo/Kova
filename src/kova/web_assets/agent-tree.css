@@ -61,3 +61,12 @@
 
 @media (prefers-reduced-motion: reduce) { .agent-tree-chevron { transition: none; } }
 [data-motion="reduced"] .agent-tree-chevron { transition: none; }
+
+.agent-tree-result {
+  margin: 0;
+  padding: var(--space-2);
+  border-inline-start: var(--space-0-5) solid var(--border-strong);
+  color: var(--fg-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

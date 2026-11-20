@@ -25,6 +25,10 @@
    go on. The server tells the model the user stopped it. */
 const KovaAgentTree = (() => {
   const STATUS = {queued: 'Waiting', running: 'Running', ok: 'Done', failed: 'Failed', interrupted: 'Interrupted', stopped: 'Stopped'};
+  const ACTION = {
+    queued: 'Waiting to start', running: 'Running tool', ok: 'Result received',
+    failed: 'Tool failed', stopped: 'Stopped by user', interrupted: 'Turn interrupted',
+  };
   let nextId = 0;
   function node(tag, cls, text) {
     const result = document.createElement(tag);
@@ -129,8 +133,9 @@ const KovaAgentTree = (() => {
       for (const task of tasks.values()) task.paint(now);
     }
     function tick() {
-      paintAll();
       const busy = !finished && (root.state === 'running' || [...tasks.values()].some(t => t.state === 'running'));
+      root.paint(now);
+      for (const task of tasks.values()) if (task.state === 'running') task.paint(now);
       if (!busy && timer != null) { stop(timer); timer = null; }
     }
     function startTimer() { if (timer == null && !finished) timer = every(tick, 1000); }
@@ -199,6 +204,11 @@ const KovaAgentTree = (() => {
     }
     clickable(root);
 
+    function paintTask(task) {
+      const action = ACTION[task.state];
+      task.hint.textContent = task.argument ? `${action} · ${task.argument}` : action;
+      task.paint(now);
+    }
     function add(event) {
       total += 1;
       const task = item(2, `${uid}-${tasks.size}`);
@@ -208,7 +218,7 @@ const KovaAgentTree = (() => {
       task.stopButton.setAttribute('aria-label', `Stop ${label(event.name || event.label)}`);
       task.stopButton.addEventListener('click', clickEvent => { clickEvent?.stopPropagation?.(); stopOne(task); });
       task.label.textContent = label(event.name || event.label);
-      task.hint.textContent = hint(event.args);
+      task.argument = hint(event.args);
       task.model.textContent = event.model || model;
       task.state = event.status === 'running' ? 'running' : 'queued';
       if (task.state === 'running') task.start = now();
@@ -219,7 +229,7 @@ const KovaAgentTree = (() => {
       tasks.set(event.id, task);
       root.children.append(task.element);
       if (!root.touched) root.open(true);
-      rootLabel(); task.paint(now); root.paint(now);
+      rootLabel(); paintTask(task); root.paint(now);
       startTimer();
       return task;
     }
@@ -231,6 +241,7 @@ const KovaAgentTree = (() => {
           root.end = now(); root.state = event.ok === false || event.type === 'task_error' ? 'failed' : 'ok';
           done = event.done ?? done; failed = event.failed ?? failed;
           if (event.elapsed_ms != null) root.end = root.start + event.elapsed_ms;
+          tick();
           announce(`${total} parallel tools finished${failed ? `, ${failed} failed` : ''}.`);
         }
         rootLabel(); root.paint(now);
@@ -244,11 +255,15 @@ const KovaAgentTree = (() => {
         if (task.start == null) task.start = now();
         task.end = event.elapsed_ms != null ? task.start + event.elapsed_ms : now();
         task.state = event.stopped ? 'stopped' : event.type === 'task_error' || event.ok === false ? 'failed' : 'ok';
+        const excerpt = event.type === 'task_error' ? event.message : event.summary;
+        if (typeof excerpt === 'string' && excerpt.trim()) {
+          task.children.append(node('blockquote', 'agent-tree-result', excerpt));
+        }
         if (task.state === 'stopped') announce(`${task.label.textContent} stopped.`);
         else if (task.state === 'failed') announce(`${task.label.textContent} failed.`);
       }
-      task.paint(now);
-      startTimer();
+      paintTask(task);
+      root.hint.textContent = `${task.label.textContent}: ${ACTION[task.state]}`;
     }
     function toolCall(event) {
       tasks.get(event.id)?.card?.add({...event, label: label(event.name), hint: hint(event.args)});
@@ -264,6 +279,7 @@ const KovaAgentTree = (() => {
         if (task.state === 'queued' || task.state === 'running') {
           task.state = 'interrupted';
           if (task.start != null) task.end = now();
+          paintTask(task);
         }
         task.card?.finish();
         if (!task.touched) task.open(false);
