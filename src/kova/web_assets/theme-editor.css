@@ -110,6 +110,9 @@ body:has(> .theme-editor) {
   padding: var(--space-0-5);
   cursor: pointer;
 }
+.theme-editor-share {
+  min-inline-size: 16rem;
+}
 :is(.theme-editor, .settings-theme-control) :where(button, input, select):focus-visible {
   outline: var(--space-0-5) solid var(--accent-default);
   outline-offset: var(--space-0-5);
