@@ -255,6 +255,44 @@ def _setup_local_model(cfg: Config, *, transport=None) -> None:
             client.http.close()
 
 
+def _first_local_server(*, transport=None, timeout: float = 10):
+    """The first local model server that answers, or None.
+
+    Probes only this computer and the local network (never a cloud
+    provider). Uses an injected transport when present so tests skip the
+    TCP pre-scan and just probe the targets.
+    """
+    for found in server_finder.discover(transport=transport, connect_timeout=timeout):
+        if found.answered:
+            return found
+    return None
+
+
+def _scripted_local(cfg, *, transport=None, timeout: float = 10):
+    """Noninteractive default for `kova setup --yes` with no connection info.
+
+    Probe the local model servers Kova already knows about, pick the first
+    that answers, and use its first model. This is the "defaults" promise:
+    it just works when a local server (Ollama, llama.cpp, kova, ...) is
+    running. It probes local only (never guesses a cloud provider), connects
+    and lists models to validate, and fails with an actionable error when
+    nothing is reachable.
+    """
+    found = _first_local_server(transport=transport, timeout=timeout)
+    if found is None:
+        raise SetupError(
+            'No model server answered on this computer. '
+            'Start one (for example: ollama serve), or run '
+            'kova setup --url URL --model MODEL.')
+    provider = make_provider('local', identifier='local', name='local',
+                             base_url=found.base_url)
+    available = list_models(provider, transport=transport, timeout=timeout)
+    if not available:
+        raise SetupError('That model server has no models. Run kova setup.')
+    selected, active = available, available[0]
+    _save_provider(cfg, provider, selected, active)
+
+
 def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
               name: str | None = None, api_key: str | None = None, yes: bool = False,
               provider_kind: str | None = None, transport=None, timeout: float = 10, **kwargs) -> None:
@@ -280,6 +318,9 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
                     _setup_persona(cfg)
                 except SetupError:  # the provider is saved; only the name is skipped
                     console.print('Skipping the name and tone — run kova setup again to choose them.')
+            return
+        if yes:
+            _scripted_local(cfg, transport=transport, timeout=timeout)
             return
         if model or name or api_key:
             raise SetupError('Pass --url along with --model, --name, or --key.')

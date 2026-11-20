@@ -114,3 +114,21 @@ def test_cli_setup_flags_and_error(home, monkeypatch):
     monkeypatch.setattr(onboarding, 'run_setup', fail)
     result = CliRunner().invoke(cli.app, ['setup'])
     assert result.exit_code == 1 and 'Provider unavailable.' in result.output
+
+def test_setup_yes_defaults_to_local(home, monkeypatch):
+    # `kova setup --yes` with no connection info defaults to a local server
+    # that answers, using its first model, with no interactive prompt.
+    monkeypatch.setattr(builtins, 'input', lambda: pytest.fail('unexpected prompt'))
+    answered = onboarding.server_finder.Found(base_url='http://homelab:8080', kind='Ollama')
+    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: [answered])
+    onboarding.run_setup(load_config(), yes=True, transport=httpx.MockTransport(catalog))
+    cfg = load_config()
+    assert cfg.active_model().model == 'alpha'
+    assert cfg.providers[0].kind == 'local'
+
+
+def test_setup_yes_errors_without_local_server(home, monkeypatch):
+    # With no local server answering, `--yes` fails with an actionable error.
+    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: [])
+    with pytest.raises(onboarding.SetupError, match='No model server answered'):
+        onboarding.run_setup(load_config(), yes=True)
