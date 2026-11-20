@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool calls now group into one row showing status, time and failures, opening while a turn runs and folding when it finishes (#287).
 - A green-phosphor Terminal example theme joins the palette (#289).
 - Message actions add copy-as-markdown, retry, edit-and-resend and reply details (model, tokens, speed, timing, cost) (#290).
+- Retry and edit keep every earlier attempt instead of deleting it (#188): the newest turn gets a quiet `‹ 2 / 3 ›` stepper to flip between replies, `POST /chats/{id}/alternatives` switches one back by `turn_id` and index, and archived attempts never enter model context, search, usage or a fork. Older turns and stamped history stay stored but cannot be flipped once a newer message exists.
 - docs/THEMES.md gains a walkthrough for installing or making a theme (#291).
 - A midnight navy example theme joins the palette (#292).
 - Settings > General gains text size, density and font choices that sync across paired devices (#293).

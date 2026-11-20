@@ -119,6 +119,8 @@ def render_chat_markdown(chat: dict) -> str:
     lines.extend([" · ".join(meta), ""])
     wrote = False
     for message in chat.get("messages", []):
+        if message.get("active") is False:
+            continue
         role = message.get("role")
         content = message.get("content")
         names = [row.get("name") for row in message.get("attachments") or []
@@ -189,7 +191,7 @@ def export_archive(
             archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
             archive.writestr("config.toml", _config_bytes(cfg))
             for chat in chats:
-                full = store.get_chat(chat["id"], include_created=True)
+                full = store.get_chat(chat["id"], include_created=True, include_inactive=True)
                 if full is None:
                     continue
                 base = f"chats/{_safe_component(chat['id'])}"

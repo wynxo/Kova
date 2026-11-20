@@ -42,6 +42,25 @@ dialog.message-sheet .message-details-list { position:static; width:100%; max-wi
 }
 .message-action-edit .icon, .message-action-retry .icon { width:14px; height:14px; }
 
+/* Earlier retries and edits (#188): one quiet stepper, never a second reply. */
+.message-alternatives {
+  display:inline-flex; align-items:center; gap:var(--space-0-5);
+  align-self:center; margin-left:var(--space-1); color:var(--fg-muted);
+  font-size:var(--type-size-label); font-variant-numeric:tabular-nums;
+}
+.message-alternative-step {
+  display:grid; place-items:center; width:var(--space-6); height:var(--space-6);
+  border-radius:var(--radius-sm); color:var(--fg-muted);
+  transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
+}
+.message-alternative-step:hover:not(:disabled) { background:var(--bg-raised); color:var(--fg-default); }
+.message-alternative-step:focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
+.message-alternative-step:disabled { opacity:0.35; cursor:default; }
+.message-alternative-glyph { font-size:var(--type-size-body); line-height:1; }
+.message-alternative-count { min-width:var(--space-8); text-align:center; }
+@media (prefers-reduced-motion:reduce) { .message-alternative-step { transition:none; } }
+[data-motion="reduced"] .message-alternative-step { transition:none; }
+
 .message-details { position:relative; }
 .message-details-toggle {
   display:inline-flex; align-items:center; gap:var(--space-1);
