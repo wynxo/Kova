@@ -159,6 +159,8 @@ def install_theme_routes(api: APIRouter, config: Config) -> None:
         return document
 
     def gallery_document(theme_id: str) -> dict:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,39}", theme_id):
+            raise HTTPException(404, "No theme in the gallery with that ID.")
         bundled = _gallery_documents()
         if theme_id in bundled:
             return bundled[theme_id]
@@ -234,6 +236,15 @@ def install_theme_routes(api: APIRouter, config: Config) -> None:
                 "update": installed and offered is not None and (have is None or offered > have),
             })
         return entries
+
+    @api.get("/themes/gallery/{theme_id}/preview")
+    def preview_gallery_theme(theme_id: str) -> dict:
+        """Read one validated theme without loading unrelated catalog documents."""
+        document = gallery_document(theme_id)
+        result, _ = _prepare_gallery_theme(theme_id, document)
+        return {**result, "name": document["name"], "version": document["version"],
+                "extends": document.get("extends"),
+                "terminal": themes.resolve(document)["terminal"], "document": document}
 
     @api.post("/themes/gallery/{theme_id}/install", status_code=201,
               dependencies=[Depends(_require_settings_write)])

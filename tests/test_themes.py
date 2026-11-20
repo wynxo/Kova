@@ -646,3 +646,88 @@ def test_configured_catalog_theme_lifecycle(home, runner):
     listing = run("gallery")
     assert listing.exit_code == 0 and "Forest" in listing.output
     assert run("remove", "community").exit_code == 0
+
+
+@pytest.mark.parametrize("keep", [False, True])
+def test_cli_try_only_installs_and_selects_after_keep(home, runner, monkeypatch, keep):
+    from kova.tui import theme_trial
+
+    config = home.home / "config.toml"
+    before = config.read_bytes()
+    target = themes.theme_dir(home.home) / "forest.json"
+
+    def preview(data):
+        assert data["id"] == "forest"
+        assert not target.exists()
+        assert config.read_bytes() == before
+        return keep
+
+    monkeypatch.setattr(type(cli.console), "is_terminal", property(lambda self: True))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(theme_trial, "keep_preview", preview)
+    cli.themes_try("forest")
+    assert target.exists() is keep
+    if keep:
+        assert load_config().tui_theme == "forest"
+    else:
+        assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize(("keys", "keep"), [("k", True), ("r", False), ("", False)])
+def test_terminal_preview_keeps_reverts_and_times_out(monkeypatch, keys, keep):
+    from prompt_toolkit import Application
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    from kova.tui import theme_trial
+
+    with create_pipe_input() as pipe:
+        pipe.send_text(keys)
+        monkeypatch.setattr(theme_trial, "Application",
+                            lambda **kwargs: Application(input=pipe, output=DummyOutput(), **kwargs))
+        monkeypatch.setattr(theme_trial, "TRY_SECONDS", 0.2)
+        assert theme_trial.keep_preview(themes.get("kova-dark", ".")) is keep
+
+
+def test_bundled_preview_and_noninteractive_try_do_not_open_catalog(home, http, runner, monkeypatch):
+    from kova import catalog
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Catalog must not be opened")
+
+    home.catalog_url = "https://example.com/catalog.json"
+    monkeypatch.setattr(catalog, "load", unexpected)
+    result = runner.invoke(cli.app, ["themes", "show", "forest", "--gallery"])
+    assert result.exit_code == 0 and "Forest" in result.output
+    monkeypatch.setattr(cli, "get_client", unexpected)
+    result = runner.invoke(cli.app, ["themes", "try", "forest"])
+    assert result.exit_code != 0 and "interactive terminal" in result.output
+
+
+def test_gallery_preview_fetches_only_the_opted_in_theme(home, http, monkeypatch):
+    from types import SimpleNamespace
+    from kova import catalog
+
+    requested = []
+    entries = [catalog.Entry(name=name, kind="theme", version="1.0.0")
+               for name in ("unrelated", "community")]
+
+    def load(url, **kwargs):
+        requested.append(url)
+        return SimpleNamespace(entries=entries)
+
+    def read(entry, index, *, limit):
+        requested.append(entry.name)
+        return json.dumps(dict(id=entry.name, name="Community", appearance="dark",
+                               version="1.0.0", tokens={})).encode()
+
+    monkeypatch.setattr(catalog, "load", load)
+    monkeypatch.setattr(catalog, "read_theme", read)
+    route = "/themes/gallery/community/preview"
+    assert http.get(route).status_code == 404
+    assert requested == []
+
+    home.catalog_url = "https://example.com/catalog.json"
+    response = http.get(route)
+    assert response.status_code == 200
+    assert response.json()["document"]["id"] == "community"
+    assert requested == [home.catalog_url, "community"]

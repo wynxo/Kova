@@ -125,6 +125,12 @@ class KovaClient:
         """Themes bundled in the offline gallery, including their install status."""
         return self._request('GET', '/themes/gallery').json()
 
+    def preview_gallery_theme(self, theme_id: str) -> dict:
+        return self._request('GET', f'/themes/gallery/{quote(theme_id, safe="")}/preview').json()
+
+    def save_theme(self, document: dict) -> dict:
+        return self._request('POST', '/themes', json=document).json()
+
     def install_gallery_theme(self, theme_id: str) -> dict:
         """Install one theme from the bundled gallery."""
         return self._request('POST', f'/themes/gallery/{quote(theme_id, safe="")}/install').json()
