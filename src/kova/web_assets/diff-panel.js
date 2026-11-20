@@ -225,6 +225,7 @@ const KovaDiffPanel = (() => {
     const meta = node('div', 'diff-panel-meta');
     const status = node('p', 'diff-panel-status');
     status.setAttribute('role', 'status');
+    status.tabIndex = -1;
     const content = node('div', 'diff-panel-content');
     wrap.append(meta, status, content);
     const kept = new Set();
@@ -253,13 +254,26 @@ const KovaDiffPanel = (() => {
     paintLayout();
 
     const say = (text, error = false) => { status.textContent = text; status.classList.toggle('is-error', error); };
+    const keepFile = button('Keep file', 'quiet', `Keep all changes in ${path}`);
+    function pendingHunks() {
+      return (view?.segments || []).filter(hunk => hunk.type === 'hunk' && hunk.state === 'applied' && !kept.has(hunk.id));
+    }
+    keepFile.addEventListener('click', () => {
+      const pending = pendingHunks();
+      if (!pending.length || keepFile.disabled) return;
+      for (const hunk of pending) kept.add(hunk.id);
+      draw();
+      say(`Kept ${plural(pending.length, 'change')} in this file.`);
+      status.focus();
+    });
     function summary() {
       const counts = (view?.segments || []).filter(segment => segment.type === 'hunk');
-      const open = counts.filter(hunk => hunk.state === 'applied' && !kept.has(hunk.id)).length;
+      const open = pendingHunks().length;
+      keepFile.disabled = !view?.supported || !open;
       meta.replaceChildren(node('span', 'diff-panel-path', path),
                            node('span', 'change-stats', `+${view?.additions || 0} −${view?.deletions || 0}`),
                            node('span', 'diff-panel-count', `${plural(counts.length, 'change')}${open ? `, ${open} to review` : ''}`),
-                           layout);
+                           layout, keepFile);
     }
     function retry(text) {
       const again = button('Reload diff', '', `Reload the diff of ${path}`);
@@ -277,6 +291,7 @@ const KovaDiffPanel = (() => {
     }
     async function load(focusHunk) {
       say('');
+      keepFile.disabled = true;
       content.replaceChildren(node('p', 'diff-panel-note', 'Loading the diff…'));
       try {
         view = await request(`${base}/hunks?path=${encodeURIComponent(path)}`);
@@ -291,6 +306,7 @@ const KovaDiffPanel = (() => {
       say(`Kept change ${index + 1}.`);
     }
     async function undo(hunk, index, buttons) {
+      keepFile.disabled = true;
       for (const control of buttons) control.disabled = true;
       say(`Undoing change ${index + 1}…`);
       try {
@@ -300,6 +316,7 @@ const KovaDiffPanel = (() => {
         say(`Undid change ${index + 1}. Saved as change set ${result.checkpoint_id}, so Restore files can bring it back.`);
         options.onChange?.(result);
       } catch (error) {
+        keepFile.disabled = !pendingHunks().length;
         for (const control of buttons) control.disabled = false;
         say(`${error.message || 'The change could not be undone.'}`, true);
         const again = button('Reload diff', '', `Reload the diff of ${path}`);
