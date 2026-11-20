@@ -211,18 +211,32 @@ def walk_surfaces(page, minimum):
     problems += scan(page, minimum, "command palette")
     page.keyboard.press("Escape")
 
-    # The two appearance dialogs the palette owns.
-    for command, surface in (("Browse themes", "theme gallery"),
-                             ("Customize theme", "theme editor")):
+    palette = page.locator("#command-palette")
+    expect(palette).to_be_hidden()
+
+    # Wait for the actual destination and close it with its own control.
+    for command, surface, selector, close_label in (
+        ("Browse themes", "theme gallery", "dialog.theme-gallery", "Close"),
+        ("Customize theme", "theme editor", "aside.theme-editor", "Cancel"),
+    ):
         page.keyboard.press("Control+k")
-        expect(page.locator(".palette-field")).to_be_visible()
-        page.locator(".palette-input").fill(command)
-        page.wait_for_timeout(150)
-        page.locator(".palette-option", has_text=command).first.click()
-        page.wait_for_timeout(600)
+        expect(palette).to_be_visible()
+        palette.locator(".palette-input").fill(command)
+        palette.get_by_text(command, exact=True).click()
+        expect(palette).to_be_hidden()
+        destination = page.locator(selector)
+        expect(destination).to_be_visible()
+        if surface == "theme gallery":
+            expect(destination.locator(".theme-gallery-card").first).to_be_visible()
+        else:
+            expect(destination.locator(".theme-editor-identity input").first).to_be_enabled()
+        close = destination.get_by_role("button", name=close_label, exact=True)
+        expect(close).to_be_enabled()
+        # The dialog animates from a slightly smaller box. Measure the final target.
+        destination.evaluate("(el) => Promise.allSettled(el.getAnimations().map(animation => animation.finished))")
         problems += scan(page, minimum, surface)
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
+        close.click()
+        expect(destination).to_be_hidden()
 
     if not page.locator("#open-settings").is_visible():
         # Phones keep Settings in the conversation drawer.
