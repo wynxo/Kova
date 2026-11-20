@@ -16,23 +16,33 @@ const KovaDiff = (() => {
       return {text, kind, old: numbered && kind !== 'add' ? old++ : '', next: numbered && kind !== 'del' ? next++ : ''};
     });
   }
-  function render(preview) {
+  const INLINE_CHANGED_LINES = 12;
+
+  function render(preview, changedLimit = Infinity) {
     const view = node('div', 'file-diff');
     view.setAttribute('role', 'region');
     view.setAttribute('aria-label', 'Unified diff');
     view.setAttribute('tabindex', '0');
-    for (const line of rows(preview.diff)) {
+    const lines = rows(preview.diff);
+    let changed = 0;
+    let cutoff = lines.length;
+    lines.forEach((line, index) => {
+      if ((line.kind === 'add' || line.kind === 'del') && ++changed === changedLimit) cutoff = index + 1;
+    });
+    const omitted = Math.max(0, changed - changedLimit);
+    for (const line of omitted ? lines.slice(0, cutoff) : lines) {
       const row = node('div', `file-diff-row file-diff-${line.kind}`);
       row.append(node('span', 'file-diff-number', String(line.old)), node('span', 'file-diff-number', String(line.next)), node('code', 'file-diff-source', line.text));
       view.append(row);
     }
     if (!preview.diff) view.append(node('p', '', 'No textual changes.'));
     if (preview.truncated) view.append(node('p', '', 'Preview truncated; not all changes are shown.'));
+    else if (omitted) view.append(node('p', '', `+${omitted} more changed line${omitted === 1 ? '' : 's'}`));
     return view;
   }
   function file(preview) {
     const details = node('details', 'file-diff-file');
-    details.append(node('summary', '', `${preview.path} · ${preview.status} · Changes so far this turn`), render(preview));
+    details.append(node('summary', '', `${preview.path} · ${preview.status} · Changes so far this turn`), render(preview, INLINE_CHANGED_LINES));
     return details;
   }
   return {rows, render, file};

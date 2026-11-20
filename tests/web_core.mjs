@@ -1285,11 +1285,28 @@ const renderedDiff = diffComponent.file({path: unsafe, status: 'added', diff: '@
 assert.equal(renderedDiff.tagName, 'details');
 assert.ok(renderedDiff.textContent.includes(unsafe));
 assert.equal(renderedDiff.children[1].children[1].children[2].tagName, 'code');
+const reviewedFiles = [];
+sandbox.KovaDiffPanel = {open: options => reviewedFiles.push(options)};
+sandbox.window.KovaPanel = {open() {}};
+state.chat = {id: 'review-chat'};
 const fileToolBody = new Element(), fileToolView = turnView(fileToolBody);
 fileToolView.accept({type: 'tool_call', name: 'write_file', args: {path: 'demo.txt'}});
 fileToolView.accept({type: 'tool_result', name: 'write_file', ok: true, output: 'Written', file_change: {path: 'demo.txt', status: 'added', diff: '@@ -0,0 +1 @@\n+hello'}});
 assert.equal(byClass(fileToolBody, 'file-diff-file').length, 1);
 assert.ok(fileToolBody.textContent.includes('+hello'));
+const inlineDiff = byClass(fileToolBody, 'file-diff-file')[0];
+assert.equal(buttons(inlineDiff).length, 0, 'a live preview is not a saved checkpoint');
+fileToolView.accept({type: 'review', checkpoint_id: 12, files: [{path: 'demo.txt', status: 'added'}]});
+const [inlineReview] = buttons(inlineDiff);
+state.chat = {id: 'different-chat'};
+inlineReview.onclick();
+await tick();
+assert.equal(reviewedFiles.length, 1);
+assert.equal(reviewedFiles[0].chatId, 'review-chat');
+assert.equal(reviewedFiles[0].checkpointId, 12);
+assert.equal(reviewedFiles[0].path, 'demo.txt');
+assert.equal(reviewedFiles[0].returnFocus, inlineReview);
+delete sandbox.KovaDiffPanel; delete sandbox.window.KovaPanel;
 
 
 // Project groups are quiet by default, keep a pinned member inside its own
