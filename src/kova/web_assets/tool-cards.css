@@ -94,6 +94,16 @@
 .tool-card-failures { display: grid; gap: var(--space-1); padding-inline: var(--space-2); }
 .tool-card-error { margin: 0; color: var(--status-danger); font-size: var(--type-size-label); overflow-wrap: anywhere; }
 
+/* Forced colours (#201): the group row and each step keep a button boundary,
+   and the two status marks that were a fill only keep a shape. The tick and
+   the alert are icons, so the shared .icon paint in app.css keeps them. */
+@media (forced-colors: active) {
+  .tool-card-summary,
+  .tool-card-title { border:1px solid ButtonText; }
+  .tool-card-mark.running { forced-color-adjust:none; background:CanvasText; }
+  .tool-card-mark.unknown { forced-color-adjust:none; background:Canvas; border:1px solid ButtonText; }
+}
+
 /* Motion explains the fold; it never loops for attention and is optional. */
 @keyframes tool-card-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {

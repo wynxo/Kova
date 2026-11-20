@@ -1041,6 +1041,51 @@ html[data-motion="off"][data-background] main {
   .tool-card-hint, .agent-tree-hint { color: var(--fg-muted); }
 }
 
+/* Forced colours (#201): the system paints every fill and text colour, so a
+   chat control that was drawn with one keeps a real boundary and its state,
+   and the masked icon set — painted with background-color — keeps a paint
+   colour instead of flattening into the surface. System colours only; nothing
+   here is a theme value. */
+@media (forced-colors: active) {
+  .icon { forced-color-adjust:none; background-color:CanvasText; }
+  .stop-round .icon { background-color:CanvasText; }
+  .thinking summary::before,
+  .tool-row::after,
+  .change-file > summary::before { forced-color-adjust:none; background:CanvasText; }
+
+  .icon-button,
+  .compose-icon,
+  .model-chip,
+  .send,
+  .message-action { border:1px solid ButtonText; }
+  .icon-button:disabled,
+  .compose-icon:disabled,
+  .model-chip:disabled,
+  .send:disabled,
+  .stop:disabled { border-color:GrayText; color:GrayText; }
+
+  /* A switch and a radio group say their state with a fill: keep the track
+     boundary and paint the chosen state with the system selection colours. */
+  .switch { border:1px solid ButtonText; background:Canvas; box-shadow:none; }
+  .switch-thumb { background:ButtonText; }
+  .switch[aria-checked="true"] { background:Highlight; border-color:Highlight; }
+  .switch[aria-checked="true"] .switch-thumb { background:HighlightText; }
+  .segmented { border:1px solid ButtonText; box-shadow:none; }
+  .segmented button[aria-checked="true"],
+  .segmented button[aria-selected="true"],
+  .btn[aria-pressed="true"] {
+    forced-color-adjust:none;
+    background:Highlight;
+    color:HighlightText;
+  }
+  .segmented button[aria-checked="true"] .icon,
+  .segmented button[aria-selected="true"] .icon,
+  .btn[aria-pressed="true"] .icon { background-color:HighlightText; }
+
+  /* The transcript plan's in-progress dot was a fill only. */
+  .plan-in_progress .plan-mark::after { forced-color-adjust:none; background:CanvasText; }
+}
+
 /* Motion preference (#181). motion.js resolves the setting onto
    <html data-motion="full|reduced|off">, and this one block carries it for
    every component: Full is the untouched token set, Reduced shortens the
