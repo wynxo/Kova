@@ -104,6 +104,11 @@ jobs:
         run: node --test
         working-directory: desktop
 
+      - name: Configure Electron sandbox for the CI runner
+        run: |
+          sudo chown root:root desktop/node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 desktop/node_modules/electron/dist/chrome-sandbox
+
       - name: Smoke-test Electron startup
         run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
 
