@@ -176,12 +176,28 @@ const KovaToolCards = (() => {
       tool.time.textContent = duration(saved ? null : tool.end - tool.start);
       const output = String(event.output ?? event.summary ?? '');
       if (output) addOutput(tool.body, output, tool.name);
-      if (event.file_change) tool.body.append(KovaDiff.file(event.file_change));
+      if (event.file_change) {
+        const details = KovaDiff.file(event.file_change);
+        tool.fileDiff = {path: event.file_change.path, details};
+        tool.body.append(details);
+      }
       if (tool.status === 'failed') {
         failures.append(node('p', 'tool-card-error', `${tool.name}: ${output.slice(0, 300) || 'Tool failed.'}`));
         announce(`${tool.name} failed.`);
       }
       refresh();
+    }
+    function enableFileReview(paths, openReview) {
+      for (const tool of tools) {
+        const diff = tool.fileDiff;
+        if (!diff || diff.review || !paths.has(diff.path)) continue;
+        const review = node('button', 'tool-card-all', 'Review full diff');
+        review.type = 'button';
+        review.setAttribute('aria-label', `Review full diff for ${diff.path}`);
+        review.onclick = () => openReview(diff.path, review);
+        diff.details.append(review);
+        diff.review = review;
+      }
     }
     function finish() {
       if (!tools.length) return;
@@ -199,7 +215,7 @@ const KovaToolCards = (() => {
       // A turn that ends folds its tools away, unless the reader opened them.
       if (!touched) show(false);
     }
-    return {node: card, add, result, finish};
+    return {node: card, add, result, enableFileReview, finish};
   }
   return {create, duration};
 })();

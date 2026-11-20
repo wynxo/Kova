@@ -116,3 +116,33 @@ console.log('tool cards: ok');
   assert.equal(byClass(short.body, 'tool-card-all').length, 0, 'short output needs no panel');
   console.log('Tool output opens in the side panel passed');
 }
+
+// Live file diffs only offer full review once the saved change set confirms the path.
+vm.runInContext(readFileSync(new URL('../src/kova/web_assets/diff.js', import.meta.url), 'utf8'), context);
+const changes = context.cards.create();
+const diff = ['--- a/file.txt', '+++ b/file.txt', '@@ -1,2 +1,15 @@', ' context', '-old',
+  ...Array.from({length: 14}, (_, index) => `+line ${index + 1}`)].join('\n');
+const tool = changes.add({name: 'write_file', id: 'write'});
+changes.result({id: 'write', ok: true, file_change: {path: 'file.txt', status: 'created', diff}});
+assert.equal(byClass(tool.body, 'file-diff-context').length, 1);
+assert.equal(byClass(tool.body, 'file-diff-del').length, 1);
+assert.equal(byClass(tool.body, 'file-diff-add').length, 11);
+assert.match(tool.body.textContent, /\+3 more changed lines/);
+assert.equal(byClass(tool.body, 'tool-card-all').length, 0);
+const reviewed = [];
+const openReview = (path, opener) => reviewed.push([path, opener]);
+changes.enableFileReview(new Set(['other.txt']), openReview);
+assert.equal(byClass(tool.body, 'tool-card-all').length, 0);
+changes.enableFileReview(new Set(['file.txt']), openReview);
+const [review] = byClass(tool.body, 'tool-card-all');
+assert.equal(review.tagName, 'button');
+assert.equal(review.attrs['aria-label'], 'Review full diff for file.txt');
+review.onclick();
+assert.deepEqual(reviewed, [['file.txt', review]]);
+const clipped = vm.runInContext('KovaDiff.file', context)({path: 'file.txt', diff, truncated: true});
+assert.match(clipped.textContent, /not all changes are shown/);
+assert.doesNotMatch(clipped.textContent, /\+3 more/);
+changes.enableFileReview(new Set(['file.txt']), openReview);
+assert.equal(byClass(tool.body, 'tool-card-all').length, 1, 'repeated review events do not duplicate controls');
+const savedDiff = vm.runInContext('KovaDiff.render', context)({diff});
+assert.equal(byClass(savedDiff, 'file-diff-add').length, 14, 'saved change-set previews keep their existing rendering');
