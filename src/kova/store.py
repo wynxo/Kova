@@ -249,7 +249,8 @@ class Store:
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
                 cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
                 colour TEXT, icon TEXT, model TEXT,
-                files TEXT NOT NULL DEFAULT '[]'
+                files TEXT NOT NULL DEFAULT '[]',
+                memory_scope INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -314,6 +315,7 @@ class Store:
                 after TEXT,
                 chat_id TEXT,
                 detail TEXT,
+                scope TEXT,
                 undone INTEGER NOT NULL DEFAULT 0,
                 created TEXT NOT NULL
             );
@@ -420,6 +422,11 @@ class Store:
         # empty list and its instructions, folder and look are untouched.
         if "files" not in project_columns:
             self._conn.execute("ALTER TABLE projects ADD COLUMN files TEXT NOT NULL DEFAULT '[]'")
+        # Project memory is opt-in and off for every existing project (#196).
+        if "memory_scope" not in project_columns:
+            self._conn.execute(
+                "ALTER TABLE projects ADD COLUMN memory_scope INTEGER NOT NULL DEFAULT 0"
+            )
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -435,6 +442,11 @@ class Store:
         ):
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
+        # A revision made in a project scope records which project, so undo
+        # restores the right store even when two projects use the same slug.
+        revisions = {row["name"] for row in self._conn.execute("PRAGMA table_info(memory_revisions)")}
+        if "scope" not in revisions:
+            self._conn.execute("ALTER TABLE memory_revisions ADD COLUMN scope TEXT")
         self._conn.commit()
 
     def _backfill_turn_ids(self) -> None:
@@ -542,13 +554,14 @@ class Store:
     # -- projects ---------------------------------------------------------
     @staticmethod
     def _project(row: sqlite3.Row) -> dict:
-        """One project row as a dict, with its pinned file list decoded."""
+        """One project row as a dict, with pins decoded and the scope flag a boolean."""
         project = dict(row)
         try:
             files = json.loads(project.get("files") or "[]")
         except (TypeError, ValueError):
             files = []
         project["files"] = [path for path in files if isinstance(path, str)] if isinstance(files, list) else []
+        project["memory_scope"] = bool(project.get("memory_scope"))
         return project
 
     def list_projects(self) -> list[dict]:
@@ -563,26 +576,32 @@ class Store:
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None, files: list[str] | None = None) -> dict:
+                       model: str | None = None, files: list[str] | None = None,
+                       memory_scope: bool = False) -> dict:
         """A new project. ``colour``/``icon`` use the chat appearance keys (#213)."""
         timestamp = _utc_now_iso()
         pinned = list(files or [])
         project = {"id": uuid4().hex[:12], "name": name, "instructions": instructions,
                    "cwd": cwd, "created": timestamp, "updated": timestamp,
                    "colour": normalize_colour(colour), "icon": normalize_icon(icon),
-                   "model": model or None, "files": pinned}
+                   "model": model or None, "files": pinned,
+                   "memory_scope": bool(memory_scope)}
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model, files) "
-                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, :colour, :icon, :model, :files)",
-                {**project, "files": json.dumps(pinned)}
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated, "
+                "colour, icon, model, files, memory_scope) "
+                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, "
+                ":colour, :icon, :model, :files, :memory_scope)",
+                {**project, "files": json.dumps(pinned),
+                 "memory_scope": 1 if memory_scope else 0}
             )
         return project
 
     def update_project(self, project_id: str, *, name: str | None = None,
                        instructions: str | None = None, cwd: str | None = _UNSET,
                        colour: str | None = _UNSET, icon: str | None = _UNSET,
-                       model: str | None = _UNSET, files: list[str] | None = _UNSET) -> dict | None:
+                       model: str | None = _UNSET, files: list[str] | None = _UNSET,
+                       memory_scope: bool | None = _UNSET) -> dict | None:
         """Change a project; ``_UNSET`` leaves a field alone and ``None`` clears it."""
         changes: dict = {"updated": _utc_now_iso()}
         if name is not None:
@@ -599,6 +618,8 @@ class Store:
             changes["model"] = model or None
         if files is not _UNSET:
             changes["files"] = json.dumps(list(files or []))
+        if memory_scope is not _UNSET:
+            changes["memory_scope"] = 1 if memory_scope else 0
         assignments = ", ".join(f"{field} = ?" for field in changes)
         with self._lock, self._conn:
             self._conn.execute(f"UPDATE projects SET {assignments} WHERE id = ?",
@@ -634,8 +655,10 @@ class Store:
         folder, which is only meaningful on the machine being restored to.
         """
         project_id, name = project.get("id"), project.get("name")
-        if not isinstance(project_id, str) or not project_id:
-            raise ValueError("project has no id")
+        if not isinstance(project_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", project_id):
+            # A project id becomes a folder name for its memory scope, so an
+            # unsafe one from a hand-edited archive is skipped, never joined.
+            return False
         if not isinstance(name, str) or not name.strip():
             raise ValueError("project has no name")
         with self._lock:
@@ -662,8 +685,9 @@ class Store:
             now = _utc_now_iso()
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model, files) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO projects (id, name, instructions, cwd, created, updated, "
+                    "colour, icon, model, files, memory_scope) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (project_id,
                      name.strip()[:200],
                      instructions if isinstance(instructions, str) else "",
@@ -672,7 +696,8 @@ class Store:
                      project["updated"] if isinstance(project.get("updated"), str) else now,
                      colour, icon,
                      model if isinstance(model, str) and model else None,
-                     json.dumps(pinned)),
+                     json.dumps(pinned),
+                     1 if project.get("memory_scope") is True else 0),
                 )
             return True
 
@@ -1648,22 +1673,23 @@ class Store:
     # -- memory maintenance ------------------------------------------------
     def record_memory_revision(self, slug: str, kind: str, *, before: str | None = None,
                                after: str | None = None, chat_id: str | None = None,
-                               detail: dict | None = None) -> int:
+                               detail: dict | None = None, scope: str | None = None) -> int:
         """Store a memory preimage, so every write behind a background pass is reversible.
 
         ``before`` is the note's whole previous file text (``None`` when the
         note did not exist) and ``after`` what replaced it; ``detail`` carries
-        whatever the caller needs to describe the change to a person.
+        whatever the caller needs to describe the change to a person. ``scope``
+        is a project id when the write belonged to a project's own memory.
         """
         if chat_id is not None and self.is_ephemeral(chat_id):
             raise ValueError("Incognito chats cannot record memories.")
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, created) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, scope, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (slug, kind, before, after, chat_id,
                  json.dumps(detail, ensure_ascii=False) if detail is not None else None,
-                 _utc_now_iso()),
+                 scope, _utc_now_iso()),
             )
             self._conn.commit()
             return cur.lastrowid
@@ -1788,6 +1814,7 @@ class Store:
             "after": row["after"],
             "chat_id": row["chat_id"],
             "detail": json.loads(row["detail"]) if row["detail"] else None,
+            "scope": row["scope"],
             "undone": bool(row["undone"]),
             "created": row["created"],
         }

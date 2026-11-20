@@ -75,6 +75,7 @@ def test_store_imports_a_project_and_chat_membership(tmp_path):
         "cwd": str(tmp_path), "created": "2026-01-01T00:00:00+00:00",
         "updated": "2026-01-02T00:00:00+00:00", "colour": "warning",
         "icon": "sun", "model": "local", "files": ["notes/b.md", "notes/a.md"],
+        "memory_scope": False,
     }
     assert store.import_project(saved) is True
     assert store.import_project(saved) is False

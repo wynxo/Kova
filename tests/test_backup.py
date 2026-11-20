@@ -71,6 +71,7 @@ def test_round_trip_keeps_a_projects_definition_and_its_chats(tmp_path, monkeypa
             "instructions": "Cite sources.", "cwd": "~/source/project",
             "created": project["created"], "updated": project["updated"],
             "colour": "info", "icon": "brain", "model": "local", "files": [],
+            "memory_scope": False,
         }]
         assert json.loads(archive.read("manifest.json"))["projects"] == 1
         assert json.loads(archive.read(f"chats/{chat_id}.json"))["project_id"] == project["id"]

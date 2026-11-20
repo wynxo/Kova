@@ -297,7 +297,8 @@ class MemoryReview:
             except ValueError as exc:
                 return f"Error: {exc}"
             record_revision(self.store, memory, note.slug, REVIEW_KIND, before=None,
-                            chat_id=chat_id, detail={"title": fact.title, "quote": fact.quote})
+                            chat_id=chat_id, scope=memory.scope_id or None,
+                            detail={"title": fact.title, "quote": fact.quote})
             self.store.add_memory_diary(
                 REVIEW_KIND, f"Learned '{fact.title}' from chat {chat_id} (quoted: {fact.quote[:120]})")
             stored.append(fact)
@@ -354,14 +355,20 @@ class MemoryReview:
         return stored
 
     async def after_turn(self, *, chat_id: str, mode: str, memory: Memory,
-                         client: ModelClient, now: datetime) -> list[dict]:
-        """Run whichever opt-in passes are due, as notice events to show the user."""
+                         client: ModelClient, now: datetime,
+                         review_memory: Memory | None = None) -> list[dict]:
+        """Run whichever opt-in passes are due, as notice events to show the user.
+
+        ``review_memory`` is the chat's project scope when it has one, so a
+        reviewed fact lands only where that chat could already read and write
+        it. Consolidation remains global: it must never merge across projects.
+        """
         if self.store.is_ephemeral(chat_id) or mode == "chat" or not self.enabled:
             return []
         notices: list[dict] = []
         if self.settings.review and self.review_due(chat_id, self.store.get_messages(chat_id)):
             try:
-                facts = await self.review(chat_id, memory, client)
+                facts = await self.review(chat_id, review_memory or memory, client)
             except (ModelError, OSError, ValueError) as exc:
                 self.store.add_memory_diary(REVIEW_KIND, f"Review skipped: {exc}")
             else:
@@ -385,17 +392,18 @@ class MemoryReview:
 
 
 def record_revision(store: Store, memory: Memory, slug: str, kind: str, *, before: str | None,
-                    chat_id: str | None = None, detail: dict | None = None) -> int:
+                    chat_id: str | None = None, detail: dict | None = None,
+                    scope: str | None = None) -> int:
     """Record a note revision around a write a background pass just made.
 
     ``before`` is the note's previous file text, or ``None`` when the pass
     created it; the after text is read from disk so the record is always what
-    actually landed.
+    actually landed. ``scope`` names the project when the note is not global.
     """
     path = memory.write_dir / f"{slug}.md"
     after = path.read_text() if path.is_file() else None
     return store.record_memory_revision(slug, kind, before=before, after=after,
-                                        chat_id=chat_id, detail=detail)
+                                        chat_id=chat_id, detail=detail, scope=scope)
 
 
 def undo(memory: Memory, store: Store, *, revision_id: int | None = None,
@@ -415,10 +423,18 @@ def undo(memory: Memory, store: Store, *, revision_id: int | None = None,
     for revision in revisions:
         if revision["undone"]:
             continue
-        if revision["before"] is None:
-            if not memory.delete(revision["slug"]) and memory.get(revision["slug"]) is not None:
+        # A project revision goes back to that project's scope, never to the
+        # global store where a same-named note could belong to someone else.
+        store_memory = memory
+        if revision.get("scope"):
+            try:
+                store_memory = memory.project_scope(revision["scope"])
+            except ValueError:
                 continue
-        elif not memory.restore(revision["slug"], revision["before"]):
+        if revision["before"] is None:
+            if not store_memory.delete(revision["slug"]) and store_memory.get(revision["slug"]) is not None:
+                continue
+        elif not store_memory.restore(revision["slug"], revision["before"]):
             continue
         store.mark_memory_revision_undone(revision["id"])
         touched.append(revision["slug"])

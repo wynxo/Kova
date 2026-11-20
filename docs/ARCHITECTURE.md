@@ -153,14 +153,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
 | `DELETE /jobs/{jid}` | token or session | delete a job |
-| `GET/POST /memory` | token or session | list/search / save notes |
+| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id` |
 | `POST /memory/consolidate` | token or session | plan one consolidation run, and apply it unless asked to dry-run |
 | `GET /memory/diary` | token or session | what the background memory passes did, oldest first |
 | `POST /memory/location` | token or session | switch memory folder at runtime |
 | `GET /memory/revisions` | token or session | recent background memory writes with their undo state |
 | `GET/PATCH /memory/settings` | token or session | read / change the background passes' switches and gates |
 | `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
-| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it |
+| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global or a `project_id` scope |
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
@@ -628,9 +628,17 @@ in a chat's menu moves an existing chat. The CLI supports
 `--clear-pins` on `create`/`edit`) and `kova chats move <chat> <project|none>`;
 project commands take the ID from list.
 
-Project-scoped memory files are a follow-up. Backups carry project definitions,
-pinned references and chat membership, including archives written before
-projects existed (see the data-layout section above).
+A project may keep its own memory when **Give this project its own memory** is
+turned on (off by default; `memory_scope` on the project, `--memory` in the
+CLI). Its chats read global recall plus only that project's notes, and memory
+tools and the opt-in post-turn review write into the project scope. The notes
+live in a hidden `.kova-projects/<project-id>/` folder under the memory write
+directory, so the global store, the memory browser and every other project
+never list or search them. Deleting a project deletes that scope. The two
+stores have separate budgets, and nightly consolidation remains global.
+Backups carry project definitions, pinned references, chat membership and
+project memory, including archives written before projects existed (see the
+data-layout section above).
 
 ### Usage and cost
 
@@ -725,6 +733,16 @@ or `POST /memory/location`) the root becomes the vault, so Kova can read all
 your notes, but `memory.write_subdir` is `Kova` and every write and delete
 stays in `<vault>/Kova/`. `POST /memory/location` swaps the in-memory `Memory` object on
 the server, agent and tool context without a restart.
+
+A project with its own memory is another `Memory` rooted at the hidden
+`<write dir>/.kova-projects/<project-id>/`. Hidden folders are already skipped
+by `list`, `get` and `search`, so the global store cannot return a project
+note, and the scope object has no parent store, so it cannot reach a sibling
+project. The HTTP memory routes accept `project_id` to list, search, add, edit
+or delete inside exactly one scope; without it they behave as before. Project
+scope ids are matched against a filename-safe pattern, never joined from raw
+input. Each turn mounts at most the chat's current project, and a chat moved to
+another project stops reading the old scope on its next turn.
 
 ## Tools
 
@@ -901,15 +919,20 @@ context = 32768                          # token budget for history trimming
 ```
 
 Backups (`src/kova/backup.py`, `kova export` / `kova import`) are ordinary
-zips: `manifest.json`, `projects.json`, chat JSON plus Markdown, memory notes,
-reminders, and `config.toml` with API keys, provider headers and MCP
-`env`/`headers` stripped. The token is never included. Update and
+zips: `manifest.json`, `projects.json`, chat JSON plus Markdown, global memory
+notes, each project's notes under `project-memory/<project-id>/`, reminders,
+and `config.toml` with API keys, provider headers and MCP `env`/`headers`
+stripped. A merge keeps existing projects, notes and chats, and follows a
+remapped project id to its restored notes; a replacing import clears project
+scopes too. Project notes whose project did not arrive are skipped rather than
+attached to a stranger. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
 
 `projects.json` keeps each project's name, instructions, look, default model,
-pinned file references and folder, and every chat JSON keeps its `project_id`,
-so a restore returns chats to their project. Pinned files travel as relative
+pinned file references, memory flag and folder, and every chat JSON keeps its
+`project_id`, so a restore returns chats to their project. Project memory notes
+travel separately and follow a remapped project id. Pinned files travel as relative
 references only; the files themselves are never copied. A folder below the home
 folder is written as `~/...`,
 so an archive never spells out the account name. A restore expands it and keeps

@@ -99,6 +99,14 @@
       const model = choice('model', 'The active model', modelKeys, current, key => key);
       const look = el('div', 'project-look');
       look.append(field('Colour', colour), field('Icon', icon));
+      const memory = el('input');
+      memory.type = 'checkbox'; memory.name = 'memory_scope';
+      memory.checked = Boolean(project?.memory_scope);
+      const memoryField = el('div', 'project-memory');
+      const memoryRow = el('label', 'project-checkbox');
+      memoryRow.append(memory, el('span', '', 'Give this project its own memory'));
+      memoryField.append(memoryRow, el('p', 'project-note',
+        'Its chats remember project facts here, separate from global memory and from every other project.'));
 
       const actions = el('div', 'dialog-actions');
       const cancel = button('Cancel', () => dialog.close());
@@ -118,6 +126,7 @@
         }
         const files = pinned.value.split('\n').map(line => line.trim()).filter(Boolean);
         if (JSON.stringify(files) !== JSON.stringify(project?.files ?? [])) values.files = files;
+        if (memory.checked !== Boolean(project?.memory_scope)) values.memory_scope = memory.checked;
         error.hidden = true;
         cancel.disabled = submit.disabled = true;
         let saved;
@@ -143,7 +152,7 @@
 
       form.append(title, field('Name', name), field('Instructions', instructions),
         field('Pinned files (optional)', pinned), field('Working folder (optional)', cwd),
-        field('Default model', model), look, error, actions);
+        field('Default model', model), look, memoryField, error, actions);
       dialog.append(form);
       show(dialog, () => submit.disabled, name);
     }
@@ -215,6 +224,7 @@
         ['Folder', project.cwd],
         ['Model', project.model],
         ['Files', (project.files || []).join(', ')],
+        ['Memory', project.memory_scope ? 'Project-scoped' : ''],
         ['Instructions', (project.instructions || '').trim()],
       ].filter(([, value]) => value);
       if (!facts.length) return null;
