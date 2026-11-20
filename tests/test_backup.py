@@ -130,6 +130,16 @@ def test_merge_imports_a_reused_project_id_under_a_new_id(tmp_path):
     assert (moved["name"], moved["instructions"]) == ("Research", "Cite sources.")
 
 
+def test_restore_projects_keeps_first_duplicate_source_id(tmp_path):
+    store = Store(tmp_path / "kova.db")
+    first = store.create_project("Original", "Keep me.")
+    duplicate = {**first, "name": "Duplicate", "created": "2000-01-01T00:00:00Z"}
+    mapping, counts = backup_module._restore_projects(store, [first, duplicate])
+    assert mapping[first["id"]] == first["id"]
+    assert counts == {"imported": 0, "skipped": 2, "remapped": 0}
+    assert len(store.list_projects()) == 1
+
+
 def test_replace_drops_local_projects_and_restores_the_archives(tmp_path):
     source = _home(tmp_path, "source")
     store, project, chat_id = _seed_project(source)

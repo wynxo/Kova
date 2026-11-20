@@ -426,6 +426,9 @@ def _restore_projects(store: Store, projects: list[dict]) -> tuple[dict[str, str
             skipped += 1
             continue
         source_id = project.get("id") if isinstance(project.get("id"), str) else ""
+        if source_id in mapping:
+            skipped += 1
+            continue
         target_id = source_id
         local = store.get_project(target_id) if target_id else None
         if local is not None and _same_project(local, project):
