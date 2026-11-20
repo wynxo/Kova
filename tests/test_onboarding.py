@@ -115,20 +115,19 @@ def test_cli_setup_flags_and_error(home, monkeypatch):
     result = CliRunner().invoke(cli.app, ['setup'])
     assert result.exit_code == 1 and 'Provider unavailable.' in result.output
 
-def test_setup_yes_defaults_to_local(home, monkeypatch):
-    # `kova setup --yes` with no connection info defaults to a local server
-    # that answers, using its first model, with no interactive prompt.
-    monkeypatch.setattr(builtins, 'input', lambda: pytest.fail('unexpected prompt'))
-    answered = onboarding.server_finder.Found(base_url='http://homelab:8080', kind='Ollama')
-    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: [answered])
-    onboarding.run_setup(load_config(), yes=True, transport=httpx.MockTransport(catalog))
-    cfg = load_config()
-    assert cfg.active_model().model == 'alpha'
-    assert cfg.providers[0].kind == 'local'
+
+def test_setup_yes_requires_explicit_url_without_prompt_or_probe(home, monkeypatch):
+    monkeypatch.setattr(onboarding, '_select', lambda *a, **kw: pytest.fail('unexpected prompt'))
+    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: pytest.fail('network scan'))
+    monkeypatch.setattr(onboarding.server_finder, 'connect', lambda *a, **kw: pytest.fail('unexpected connection'))
+    result = CliRunner().invoke(cli.app, ['setup', '--yes'])
+    assert result.exit_code == 1
+    assert 'Scripted setup requires --url' in result.output
 
 
-def test_setup_yes_errors_without_local_server(home, monkeypatch):
-    # With no local server answering, `--yes` fails with an actionable error.
-    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: [])
-    with pytest.raises(onboarding.SetupError, match='No model server answered'):
-        onboarding.run_setup(load_config(), yes=True)
+def test_setup_yes_skips_persona_even_in_a_terminal(home, monkeypatch):
+    monkeypatch.setattr(onboarding.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(onboarding, '_setup_persona', lambda cfg: pytest.fail('unexpected persona prompt'))
+    onboarding.run_setup(load_config(), url='http://homelab:8080', yes=True,
+                         transport=httpx.MockTransport(catalog))
+    assert load_config().active_model().model == 'alpha'
