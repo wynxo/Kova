@@ -1,4 +1,4 @@
-"""Retry and edit rewrite one turn in place; neither appends a duplicate."""
+"""Retry and edit show one turn at a time, keeping earlier attempts as alternatives."""
 
 from tests.test_server import server  # noqa: F401 - fixture
 
@@ -31,6 +31,87 @@ def test_retry_replaces_the_reply_without_duplicating_the_message(server):
     # The model saw the words once, not the old round plus a copy of them.
     sent = [m for m in fake.requests[-1]["messages"] if m["role"] == "user"]
     assert [m["content"] for m in sent] == ["hello"]
+
+
+def test_retry_keeps_the_replaced_reply_as_an_alternative(server):
+    client, headers, cfg, fake = server
+    chat = client.post("/chats", headers=headers, json={}).json()["id"]
+    _turn(client, headers, chat, "hello")
+
+    response = client.post(f"/chats/{chat}/retry", headers=headers)
+    assert response.status_code == 200
+
+    saved = client.get(f"/chats/{chat}", headers=headers).json()
+    assert [m["content"] for m in saved["messages"]] == ["hello", "Second"]
+    assert saved["alternatives"]["index"] == 2
+    assert saved["alternatives"]["count"] == 2
+    # Nothing was deleted: the first attempt is still on disk, inactive.
+    stored = client.app.state.store.get_messages(chat, include_inactive=True)
+    assert [(m["role"], m["content"], m["active"]) for m in stored] == [
+        ("user", "hello", False),
+        ("assistant", "Hello there!", False),
+        ("user", "hello", True),
+        ("assistant", "Second", True),
+    ]
+
+    flipped = client.post(f"/chats/{chat}/alternatives", headers=headers,
+                          json={"turn_id": saved["alternatives"]["turn_id"], "index": 1})
+    assert flipped.status_code == 200
+    assert [m["content"] for m in flipped.json()["messages"]] == ["hello", "Hello there!"]
+    assert flipped.json()["alternatives"]["index"] == 1
+    assert [m["content"] for m in _messages(client, headers, chat)] == ["hello", "Hello there!"]
+
+    back = client.post(f"/chats/{chat}/alternatives", headers=headers,
+                       json={"turn_id": saved["alternatives"]["turn_id"], "index": 2})
+    assert back.status_code == 200
+    assert [m["content"] for m in back.json()["messages"]] == ["hello", "Second"]
+
+
+def test_edit_keeps_the_old_words_and_reply_as_an_alternative(server):
+    client, headers, cfg, fake = server
+    chat = client.post("/chats", headers=headers, json={}).json()["id"]
+    _turn(client, headers, chat, "first words")
+
+    response = client.post(f"/chats/{chat}/edit", headers=headers, json={"text": "rewritten"})
+    assert response.status_code == 200
+
+    saved = client.get(f"/chats/{chat}", headers=headers).json()
+    assert [m["content"] for m in saved["messages"]] == ["rewritten", "Second"]
+    assert saved["alternatives"]["count"] == 2
+    stored = client.app.state.store.get_messages(chat, include_inactive=True)
+    assert [(m["role"], m["content"], m["active"]) for m in stored] == [
+        ("user", "first words", False),
+        ("assistant", "Hello there!", False),
+        ("user", "rewritten", True),
+        ("assistant", "Second", True),
+    ]
+
+    first = client.post(f"/chats/{chat}/alternatives", headers=headers,
+                        json={"turn_id": saved["alternatives"]["turn_id"], "index": 1})
+    assert first.status_code == 200
+    assert [m["content"] for m in first.json()["messages"]] == ["first words", "Hello there!"]
+    assert first.json()["messages"][0]["role"] == "user"
+
+
+def test_an_older_turn_cannot_be_flipped_after_a_new_message(server):
+    from tests.fake_model import text
+
+    client, headers, cfg, fake = server
+    fake.scripts.append(text("Third"))
+    chat = client.post("/chats", headers=headers, json={}).json()["id"]
+    _turn(client, headers, chat, "hello")
+    assert client.post(f"/chats/{chat}/retry", headers=headers).status_code == 200
+    old_turn = client.get(f"/chats/{chat}", headers=headers).json()["alternatives"]
+    _turn(client, headers, chat, "carry on")
+
+    stale = client.post(f"/chats/{chat}/alternatives", headers=headers,
+                        json={"turn_id": old_turn["turn_id"], "index": 1})
+    assert stale.status_code == 409
+    # The archived attempt is still stored; a stale control only changes nothing.
+    stored = client.app.state.store.get_messages(chat, include_inactive=True)
+    assert [m["content"] for m in stored if m["role"] == "assistant"] == [
+        "Hello there!", "Second", "Third",
+    ]
 
 
 def test_edit_rewrites_the_last_message_and_runs_it_again(server):

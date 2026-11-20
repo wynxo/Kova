@@ -139,8 +139,9 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
-| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again in place, replacing the reply it produced |
-| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run its turn again |
+| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again as a new alternative; the previous reply stays stored |
+| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run it again as a new alternative |
+| `POST /chats/{chat_id}/alternatives` | token or session | show one stored attempt of the newest turn by `turn_id` and 1-based `index`; nothing is deleted |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
 | `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |

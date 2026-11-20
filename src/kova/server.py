@@ -131,6 +131,12 @@ class RetryTurnBody(BaseModel):
     expected_reply: int | None = None
 
 
+class AlternativeBody(BaseModel):
+    """Which attempt of the newest turn to show, counting from one."""
+    turn_id: str = Field(min_length=1, max_length=64)
+    index: int = Field(ge=1)
+
+
 def working_folder(value: str) -> str:
     if not value.strip() or "\0" in value:
         raise HTTPException(status_code=422, detail="working folder must be a non-empty path")
@@ -664,12 +670,13 @@ def create_app(
 
     def turn_stream(chat_id: str, text: str, *, model: str | None,
                     attachments: list[str], capabilities: frozenset[str] | None,
-                    record_user: bool = True) -> StreamingResponse:
+                    record_user: bool = True, turn_id: str | None = None,
+                    variant: int | None = None) -> StreamingResponse:
         """Run one turn in its own task and stream its events to this client.
 
         The task outlives the HTTP stream, so a reload or a closed tab never
-        loses an answer. ``record_user`` is false for a retry, whose message is
-        already in the transcript.
+        loses an answer. A retry or edit names the ``turn_id`` and ``variant``
+        it writes, so earlier attempts stay stored as alternatives.
         """
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
@@ -689,10 +696,12 @@ def create_app(
                             async for event in app.state.agent.run_turn(
                                     chat_id, text, model=model, steering=steering,
                                     attachment_ids=attachments, capabilities=capabilities,
-                                    record_user=record_user):
+                                    record_user=record_user, turn_id=turn_id, variant=variant):
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
+                                if event.get('type') == 'done':
+                                    event['alternatives'] = app.state.store.turn_alternatives(chat_id)
                                 queue.put_nowait(event)
                         finally:
                             app.state.conversation_states.transition(chat_id, "turn_end")
@@ -963,7 +972,8 @@ def create_app(
         chat = app.state.store.get_chat(chat_id, include_usage=True, include_message_meta=True)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        return {**chat, "state": app.state.conversation_states.get(chat_id)}
+        return {**chat, "state": app.state.conversation_states.get(chat_id),
+                "alternatives": app.state.store.turn_alternatives(chat_id)}
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
@@ -1263,10 +1273,11 @@ def create_app(
 
     @api.post("/chats/{chat_id}/retry")
     async def retry_chat(chat_id: str, request: Request, body: RetryTurnBody | None = None) -> StreamingResponse:
-        """Run the last user turn again, replacing the reply it produced.
+        """Run the last user turn again as a new alternative.
 
-        Nothing is appended to the transcript: the stored words and their files
-        are reused, so a retry never grows the conversation with a duplicate.
+        The stored words and their files are reused, so the active transcript
+        keeps one copy of the message. The reply it replaces stays stored as an
+        earlier variant and can be flipped back to (#188).
         """
         model = body.model if body is not None else None
         reject_while_turning(chat_id)
@@ -1287,19 +1298,23 @@ def create_app(
                     raise HTTPException(409, "This reply is no longer the latest. Reopen the conversation to retry.")
             reject_if_compacted(chat_id, message)
             validate_turn_model(chat, model, message["attachments"])
-            app.state.store.delete_messages_from(chat_id, message["id"], include=False)
+            started = app.state.store.start_alternative(chat_id)
+            if started is None:
+                raise HTTPException(status_code=409, detail="There is no message to retry.")
+            turn_id, variant = started
             capabilities = pairing.narrow(pairing.request_capabilities(request),
                                           app.state.store.chat_capabilities(chat_id))
         return turn_stream(chat_id, message["content"], model=model, attachments=message["attachments"],
-                           capabilities=capabilities, record_user=False)
+                           capabilities=capabilities, turn_id=turn_id, variant=variant)
 
 
     @api.post("/chats/{chat_id}/edit")
     async def edit_last_message(chat_id: str, body: EditedTurnBody, request: Request) -> StreamingResponse:
-        """Replace the last user message and run its turn again.
+        """Replace the last user message and run its turn again as an alternative.
 
         The files that message carried stay on it, so editing words never drops
-        the attachments the model was reading.
+        the attachments the model was reading. The message and reply it replaces
+        stay stored as an earlier variant (#188).
         """
         if app.state.store.get_chat(chat_id) is None:
             raise HTTPException(status_code=404, detail="chat not found")
@@ -1309,13 +1324,29 @@ def create_app(
             if message is None:
                 raise HTTPException(status_code=409, detail="There is no message to edit.")
             reject_if_compacted(chat_id, message)
-            app.state.store.delete_messages_from(chat_id, message["id"])
+            started = app.state.store.start_alternative(chat_id)
+            if started is None:
+                raise HTTPException(status_code=409, detail="There is no message to edit.")
+            turn_id, variant = started
         wrote_in(chat_id, request)
         capabilities = pairing.narrow(pairing.request_capabilities(request),
                                       app.state.store.chat_capabilities(chat_id))
         return turn_stream(chat_id, body.text, model=None, attachments=message["attachments"],
-                           capabilities=capabilities)
+                           capabilities=capabilities, turn_id=turn_id, variant=variant)
 
+    @api.post("/chats/{chat_id}/alternatives")
+    async def choose_alternative(chat_id: str, body: AlternativeBody) -> dict:
+        """Show one stored attempt of the newest turn; nothing is deleted."""
+        reject_while_turning(chat_id)
+        async with chat_lock(chat_id):
+            if app.state.store.get_chat(chat_id) is None:
+                raise HTTPException(status_code=404, detail="chat not found")
+            if not app.state.store.select_turn_alternative(chat_id, body.turn_id, body.index):
+                raise HTTPException(status_code=409,
+                                    detail="That alternative is no longer available. Reopen the conversation.")
+            chat = app.state.store.get_chat(chat_id, include_usage=True, include_message_meta=True)
+        return {**chat, "state": app.state.conversation_states.get(chat_id),
+                "alternatives": app.state.store.turn_alternatives(chat_id)}
 
     @api.get("/chats/{chat_id}/queue")
     async def list_queue(chat_id: str) -> list[dict]:

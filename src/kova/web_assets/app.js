@@ -357,6 +357,7 @@
           ? () => safe(() => forkChat(state.chat?.id, options.messageId)) : null,
         plainText: blocks.length && md?.plainText ? () => blocks.map(md.plainText).join('\n\n') : null,
         onOutline: headings.length && window.KovaPanel?.open ? () => openReplyOutline(headings) : null,
+        alternatives: options.alternatives, onAlternative: options.onAlternative,
         editLabel: options.editLabel, onError: toastError,
       });
       const stamp = module.timestamp(options.created);
@@ -421,6 +422,14 @@
   }
   function retrySameModel(model, messageId) {
     return retryLastTurn(state.models.some(entry => entry.model && entry.name === model) ? model : null, messageId);
+  }
+  // Flip the newest turn between attempts. The server keeps every variant, so
+  // this only changes which one is active; a full reload draws the same result.
+  async function switchAlternative(turnId, index) {
+    if (state.busy) return toast('Wait for the current reply to finish.');
+    if (!state.chat || !turnId) return;
+    const chat = await json(`/chats/${state.chat.id}/alternatives`, write('POST', {turn_id: turnId, index}));
+    if (state.chat?.id === chat.id) { setChat(chat); follow(); }
   }
   function chooseRetryModel(previous, messageId) {
     if (state.busy) return toast('Wait for the current reply to finish.');
@@ -1062,6 +1071,7 @@
     window.KovaPlanCard?.reset();
     // A saved turn reads like a live one: every round of it sits under one heading.
     const turns = []; let turn = null, savedTools = null, retryable = false;
+    const alternatives = chat?.alternatives;
     const lastUser = chat?.messages?.findLast(msg => msg.role === 'user');
     for (const msg of chat?.messages || []) {
       if (msg.role === 'user') {
@@ -1089,6 +1099,9 @@
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
       saved.usage, {model: saved.usage?.model || chat?.model, toolCount: saved.tools,
                     created: saved.reply?.created, messageId: saved.reply?.id,
+                    alternatives: saved.retry ? alternatives : null,
+                    onAlternative: saved.retry && alternatives?.turn_id
+                      ? index => safe(() => switchAlternative(alternatives.turn_id, index)) : null,
                     onRetry: saved.retry ? () => safe(() => retrySameModel(saved.usage?.model, saved.reply?.id)) : null});
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     $('prompt').value = draftOf(chat); resize();
@@ -1668,7 +1681,10 @@
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
         if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage,
           {model: usage?.model || model, toolCount, created: completed?.created,
-            messageId: completed?.message_id, onRetry: () => safe(() => retrySameModel(usage?.model, completed?.message_id))});
+            messageId: completed?.message_id, alternatives: completed?.alternatives,
+            onAlternative: completed?.alternatives?.turn_id
+              ? index => safe(() => switchAlternative(completed.alternatives.turn_id, index)) : null,
+            onRetry: () => safe(() => retrySameModel(usage?.model, completed?.message_id))});
       }
     };
   }

@@ -105,6 +105,49 @@ const walk = node => [node, ...node.children.flatMap(child => child.className ==
   assert.equal(bar({role: 'assistant', text: 'x'}).children.filter(n => n.className === 'message-action-retry message-action').length, 0);
 }
 
+// Retry and edit alternatives (#188): a quiet stepper flips this turn only,
+// with the first and last attempt disabled where there is nowhere to go.
+{
+  const chosen = [];
+  const actions = bar({role: 'assistant', text: 'x',
+    alternatives: {turn_id: 'turn-1', index: 2, count: 3},
+    onAlternative: index => chosen.push(index)});
+  const group = byClass(actions, 'message-alternatives');
+  assert.equal(group.getAttribute('role'), 'group');
+  assert.equal(group.getAttribute('aria-label'), 'Message alternatives');
+  const previous = byClass(group, 'message-alternative-step');
+  const next = group.children.filter(child => child.className === 'message-alternative-step').at(-1);
+  assert.equal(previous.disabled, false);
+  assert.equal(next.disabled, false);
+  assert.equal(previous.getAttribute('aria-label'), 'Show previous alternative');
+  assert.equal(next.getAttribute('aria-label'), 'Show next alternative');
+  previous.onclick();
+  next.onclick();
+  assert.deepEqual(chosen, [1, 3]);
+  assert.equal(byClass(group, 'message-alternative-count').textContent, '2 / 3');
+
+  const first = bar({role: 'assistant', text: 'x',
+    alternatives: {turn_id: 'turn-1', index: 1, count: 2}, onAlternative: () => {}});
+  const firstGroup = byClass(first, 'message-alternatives');
+  const [firstPrevious] = firstGroup.children.filter(child => child.className === 'message-alternative-step');
+  const [lastNext] = firstGroup.children.filter(child => child.className === 'message-alternative-step').slice(-1);
+  assert.equal(firstPrevious.disabled, true);
+  assert.equal(lastNext.disabled, false);
+
+  const last = bar({role: 'assistant', text: 'x',
+    alternatives: {turn_id: 'turn-1', index: 2, count: 2}, onAlternative: () => {}});
+  const lastGroup = byClass(last, 'message-alternatives');
+  const [lastPrevious] = lastGroup.children.filter(child => child.className === 'message-alternative-step');
+  const [lastNextAgain] = lastGroup.children.filter(child => child.className === 'message-alternative-step').slice(-1);
+  assert.equal(lastPrevious.disabled, false);
+  assert.equal(lastNextAgain.disabled, true);
+
+  assert.equal(byClass(bar({role: 'assistant', text: 'x',
+    alternatives: {turn_id: 'turn-1', index: 1, count: 1}, onAlternative: () => {}}), 'message-alternatives'), undefined);
+  assert.equal(byClass(bar({role: 'assistant', text: 'x',
+    alternatives: {turn_id: 'turn-1', index: 1, count: 2}}), 'message-alternatives'), undefined);
+}
+
 assert.equal(detailRows({usage: null, model: '', toolCount: null}).length, 0);
 const partialUsage = detailRows({usage: {completion_tokens: 17, cost_usd: 0}});
 assert.deepEqual(Array.from(partialUsage, row => Array.from(row)),

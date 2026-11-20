@@ -268,7 +268,10 @@ class Store:
                 tool_calls TEXT,
                 tool_call_id TEXT,
                 created TEXT,
-                turn_model TEXT
+                turn_model TEXT,
+                turn_id TEXT,
+                variant INTEGER NOT NULL DEFAULT 1,
+                active INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS message_attachments (
                 message_id INTEGER NOT NULL,
@@ -340,6 +343,16 @@ class Store:
             self._conn.execute("ALTER TABLE messages ADD COLUMN created TEXT")
         if "turn_model" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN turn_model TEXT")
+        # A turn is one user message and every round under it. Retry and edit
+        # keep earlier attempts as inactive variants instead of deleting them
+        # (#188), so the transcript can flip between them later.
+        if "turn_id" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN turn_id TEXT")
+        if "variant" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN variant INTEGER NOT NULL DEFAULT 1")
+        if "active" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+            self._backfill_turn_ids()
         self._conn.execute(
             "UPDATE messages SET created = "
             "(SELECT created FROM chats WHERE chats.id = messages.chat_id) "
@@ -418,6 +431,36 @@ class Store:
                 self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
         self._conn.commit()
 
+    def _backfill_turn_ids(self) -> None:
+        """Give older rows the turn and variant they were written under.
+
+        A message before the first user message gets a turn of its own so every
+        stored row has a stable group; nothing is reordered or dropped.
+        """
+        turn_id = None
+        for row in self._conn.execute("SELECT id, role FROM messages ORDER BY id").fetchall():
+            if row["role"] == "user" or turn_id is None:
+                turn_id = uuid4().hex
+            self._conn.execute(
+                "UPDATE messages SET turn_id = ?, variant = 1, active = 1 WHERE id = ?",
+                (turn_id, row["id"]),
+            )
+
+    def _backfill_chat_turns(self, chat_id: str) -> None:
+        """Give imported rows a turn before they are read as a transcript."""
+        turn_id = None
+        for row in self._conn.execute(
+            "SELECT id, role, turn_id FROM messages WHERE chat_id = ? ORDER BY id",
+            (chat_id,),
+        ).fetchall():
+            if row["turn_id"]:
+                turn_id = row["turn_id"]
+                continue
+            if row["role"] == "user" or turn_id is None:
+                turn_id = uuid4().hex
+            self._conn.execute("UPDATE messages SET turn_id = ? WHERE id = ?",
+                               (turn_id, row["id"]))
+
     def _setup_fts(self) -> None:
         """Create (or migrate) the full-text index and keep it in sync.
 
@@ -434,24 +477,30 @@ class Store:
                 "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts "
                 "USING fts5(content, chat_id UNINDEXED, role UNINDEXED)"
             )
+            # Recreate the triggers so a database made before alternatives
+            # stops indexing a reply the moment it is archived.
+            for name in ("messages_fts_ai", "messages_fts_ad", "messages_fts_au"):
+                self._conn.execute(f"DROP TRIGGER IF EXISTS {name}")
             self._conn.executescript(
                 """
-                CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages
+                CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages
                 WHEN NEW.role IN ('user', 'assistant') AND NEW.content IS NOT NULL
+                     AND NEW.active = 1
                 BEGIN
                     INSERT INTO messages_fts(rowid, content, chat_id, role)
                     VALUES (NEW.id, NEW.content, NEW.chat_id, NEW.role);
                 END;
-                CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages
+                CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages
                 BEGIN
                     DELETE FROM messages_fts WHERE rowid = OLD.id;
                 END;
-                CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages
+                CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages
                 BEGIN
                     DELETE FROM messages_fts WHERE rowid = OLD.id;
                     INSERT INTO messages_fts(rowid, content, chat_id, role)
                     SELECT NEW.id, NEW.content, NEW.chat_id, NEW.role
-                    WHERE NEW.role IN ('user', 'assistant') AND NEW.content IS NOT NULL;
+                    WHERE NEW.role IN ('user', 'assistant') AND NEW.content IS NOT NULL
+                          AND NEW.active = 1;
                 END;
                 """
             )
@@ -459,7 +508,12 @@ class Store:
                 "INSERT INTO messages_fts(rowid, content, chat_id, role) "
                 "SELECT m.id, m.content, m.chat_id, m.role FROM messages m "
                 "WHERE m.role IN ('user', 'assistant') AND m.content IS NOT NULL "
+                "AND m.active = 1 "
                 "AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id)"
+            )
+            self._conn.execute(
+                "DELETE FROM messages_fts WHERE rowid IN "
+                "(SELECT id FROM messages WHERE active = 0)"
             )
             self._conn.commit()
             self.fts_enabled = True
@@ -599,8 +653,8 @@ class Store:
                 return None
             rows = self._conn.execute(
                 "SELECT id, role, content, tool_calls, tool_call_id, created, "
-                "COALESCE(turn_model, usage_model) AS turn_model FROM messages "
-                "WHERE chat_id = ? AND (? IS NULL OR id <= ?) ORDER BY id",
+                "COALESCE(turn_model, usage_model) AS turn_model, turn_id, variant FROM messages "
+                "WHERE chat_id = ? AND active = 1 AND (? IS NULL OR id <= ?) ORDER BY id",
                 (chat_id, through, through)).fetchall()
             if through is not None:
                 if not rows or rows[-1]["id"] != through:
@@ -612,7 +666,8 @@ class Store:
             links = self._conn.execute(
                 "SELECT ma.message_id, ma.attachment_id, ma.name, ma.position "
                 "FROM message_attachments ma JOIN messages m ON m.id = ma.message_id "
-                "WHERE m.chat_id = ? AND (? IS NULL OR m.id <= ?) ORDER BY ma.message_id, ma.position",
+                "WHERE m.chat_id = ? AND m.active = 1 AND (? IS NULL OR m.id <= ?) "
+                "ORDER BY ma.message_id, ma.position",
                 (chat_id, through, through)).fetchall()
             compact = self._conn.execute(
                 "SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
@@ -662,10 +717,12 @@ class Store:
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute(
-                        "INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, "
+                        "created, turn_model, turn_id, variant, active) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                         (cid, row['role'], remap(row['content']), remap(row['tool_calls']),
-                         row['tool_call_id'], row['created'], row['turn_model']))
+                         row['tool_call_id'], row['created'], row['turn_model'],
+                         row['turn_id'], row['variant']))
                     ids[row['id']] = cur.lastrowid
                 for link in links:
                     if link['message_id'] in ids:
@@ -690,7 +747,7 @@ class Store:
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
                 "c.colour, c.icon, c.pinned, c.project_id, COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
-                "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+                "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id AND m.active = 1 "
                 "GROUP BY c.id "
                 "ORDER BY c.pinned DESC, last_message DESC, c.created DESC, c.id DESC"
             ).fetchall()
@@ -722,7 +779,8 @@ class Store:
 
     @_chat_scoped
     def get_chat(self, chat_id: str, include_created: bool = False,
-                 include_usage: bool = False, *, include_message_meta: bool = False) -> dict | None:
+                 include_usage: bool = False, *, include_message_meta: bool = False,
+                 include_inactive: bool = False) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
@@ -749,7 +807,8 @@ class Store:
                if row["capabilities"] is not None else {}),
             **({"ephemeral": True} if self._memory_only else {}),
             "messages": self.get_messages(chat_id, include_created=include_created,
-                                          include_usage=include_usage, include_message_meta=include_message_meta),
+                                          include_usage=include_usage, include_message_meta=include_message_meta,
+                                          include_inactive=include_inactive),
         }
 
     @_chat_scoped
@@ -1012,10 +1071,11 @@ class Store:
                     tool_calls = message.get("tool_calls")
                     if tool_calls is not None and not isinstance(tool_calls, str):
                         tool_calls = json.dumps(tool_calls)
+                    variant = message.get("variant")
                     cur = self._conn.execute(
                         "INSERT INTO messages "
-                        "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model, "
+                        "turn_id, variant, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             chat_id,
                             role,
@@ -1024,11 +1084,15 @@ class Store:
                             message.get("tool_call_id"),
                             message.get("created") or created,
                             message["turn_model"] if isinstance(message.get("turn_model"), str) else None,
+                            message["turn_id"] if isinstance(message.get("turn_id"), str) else None,
+                            int(variant) if isinstance(variant, int) and variant >= 1 else 1,
+                            0 if message.get("active") is False else 1,
                         ),
                     )
                     rows = message.get("attachments")
                     if isinstance(rows, list):
                         self._add_message_attachments(cur.lastrowid, rows)
+                self._backfill_chat_turns(chat_id)
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
@@ -1060,7 +1124,7 @@ class Store:
                            snippet(messages_fts, 0, '', '', '…', 12) AS snippet
                     FROM messages_fts
                     JOIN messages m ON m.id = messages_fts.rowid
-                    WHERE messages_fts MATCH ?
+                    WHERE messages_fts MATCH ? AND m.active = 1
                     ORDER BY bm25(messages_fts)
                     """,
                     (match,),
@@ -1075,6 +1139,7 @@ class Store:
                     "         ROW_NUMBER() OVER (PARTITION BY m.chat_id ORDER BY m.id DESC) AS rank"
                     "  FROM messages m"
                     "  WHERE m.role IN ('user', 'assistant') AND m.content IS NOT NULL"
+                    "   AND m.active = 1"
                     f"   AND ({where})"
                     ") WHERE rank = 1",
                     tuple(_like_pattern(term) for term in terms),
@@ -1113,6 +1178,17 @@ class Store:
         return results[: max(1, limit)]
 
     # -- messages ---------------------------------------------------------
+    def _active_turn(self, chat_id: str) -> tuple[str, int] | None:
+        """The turn the next assistant or tool row belongs to."""
+        row = self._conn.execute(
+            "SELECT turn_id, variant FROM messages "
+            "WHERE chat_id = ? AND active = 1 ORDER BY id DESC LIMIT 1",
+            (chat_id,),
+        ).fetchone()
+        if row is None or row["turn_id"] is None:
+            return None
+        return row["turn_id"], row["variant"]
+
     @_chat_scoped
     def add_message(
         self,
@@ -1124,12 +1200,28 @@ class Store:
         *,
         turn_model: str | None = None,
         created: str | None = None,
+        turn_id: str | None = None,
+        variant: int | None = None,
     ) -> int:
+        """Store one message under a turn and variant.
+
+        A user message without ``turn_id`` starts a new turn. Later rows follow
+        the active turn unless a caller names one, so a retry or edit can write
+        its new variant while the old one stays on disk.
+        """
         with self._lock:
+            if turn_id is None:
+                current = None if role == "user" else self._active_turn(chat_id)
+                if current is None:
+                    turn_id = uuid4().hex
+                else:
+                    turn_id, inherited = current
+                    variant = variant or inherited
+            variant = variant or 1
             cur = self._conn.execute(
                 "INSERT INTO messages "
-                "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model, "
+                "turn_id, variant, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                 (
                     chat_id,
                     role,
@@ -1138,8 +1230,15 @@ class Store:
                     tool_call_id,
                     created or _utc_now_iso(),
                     turn_model,
+                    turn_id,
+                    variant,
                 ),
             )
+            if role == "user" and variant > 1:
+                self._conn.execute(
+                    "UPDATE messages SET active = 0 WHERE chat_id = ? AND turn_id = ? AND variant != ?",
+                    (chat_id, turn_id, variant),
+                )
             self._conn.commit()
             return cur.lastrowid
 
@@ -1187,7 +1286,7 @@ class Store:
             rows = self._conn.execute(
                 "SELECT chat_id, created, prompt_tokens, completion_tokens, usage_estimated, "
                 "ms_generation, cost_usd, usage_local, usage_model FROM messages "
-                "WHERE prompt_tokens IS NOT NULL AND created >= ? ORDER BY id",
+                "WHERE prompt_tokens IS NOT NULL AND active = 1 AND created >= ? ORDER BY id",
                 (since,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1199,7 +1298,7 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT usage_model, completion_tokens, ms_generation, usage_estimated FROM messages "
-                "WHERE id IN (SELECT MAX(id) FROM messages WHERE usage_local = 1 "
+                "WHERE id IN (SELECT MAX(id) FROM messages WHERE usage_local = 1 AND active = 1 "
                 "AND ms_generation > 0 AND completion_tokens > 0 AND usage_model IS NOT NULL GROUP BY usage_model)"
             ).fetchall()
         return {row["usage_model"]: {
@@ -1212,17 +1311,19 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT COALESCE(turn_model, usage_model) FROM messages WHERE chat_id = ? "
-                "AND (turn_model IS NOT NULL OR usage_model IS NOT NULL) ORDER BY id DESC LIMIT 1",
+                "AND active = 1 AND (turn_model IS NOT NULL OR usage_model IS NOT NULL) "
+                "ORDER BY id DESC LIMIT 1",
                 (chat_id,),
             ).fetchone()
         return row[0] if row else None
 
     @_chat_scoped
     def last_user_message(self, chat_id: str) -> dict | None:
-        """The newest message the user wrote, with the files it came with."""
+        """The newest active message the user wrote, with its files and turn."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, content FROM messages WHERE chat_id = ? AND role = 'user' "
+                "SELECT id, content, turn_id, variant FROM messages "
+                "WHERE chat_id = ? AND role = 'user' AND active = 1 "
                 "ORDER BY id DESC LIMIT 1", (chat_id,)
             ).fetchone()
             if row is None:
@@ -1232,7 +1333,84 @@ class Store:
                 "ORDER BY position", (row["id"],)
             ).fetchall()
         return {"id": row["id"], "content": row["content"] or "",
+                "turn_id": row["turn_id"], "variant": row["variant"],
                 "attachments": [link["attachment_id"] for link in links]}
+
+    @_chat_scoped
+    def start_alternative(self, chat_id: str) -> tuple[str, int] | None:
+        """Return the turn id and next variant without altering the transcript.
+
+        The previous attempt stays visible until add_message commits its replacement.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT turn_id, variant FROM messages "
+                "WHERE chat_id = ? AND role = 'user' AND active = 1 "
+                "ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+            if row is None or row["turn_id"] is None:
+                return None
+            turn_id = row["turn_id"]
+            newest = self._conn.execute(
+                "SELECT MAX(variant) FROM messages WHERE chat_id = ? AND turn_id = ?",
+                (chat_id, turn_id),
+            ).fetchone()[0] or 0
+            return turn_id, int(newest) + 1
+
+    @_chat_scoped
+    def turn_alternatives(self, chat_id: str) -> dict | None:
+        """How many attempts the newest turn has and which one is active.
+
+        Only the newest turn can be flipped: choosing an older one would leave
+        later turns in the transcript describing a history that no longer
+        happened. Earlier attempts stay stored either way.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT turn_id, variant FROM messages "
+                "WHERE chat_id = ? AND role = 'user' AND active = 1 "
+                "ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+            if row is None or row["turn_id"] is None:
+                return None
+            variants = [r[0] for r in self._conn.execute(
+                "SELECT DISTINCT variant FROM messages WHERE chat_id = ? AND turn_id = ? "
+                "ORDER BY variant", (chat_id, row["turn_id"])
+            ).fetchall()]
+        if not variants:
+            return None
+        active = row["variant"] if row["variant"] in variants else variants[-1]
+        return {"turn_id": row["turn_id"], "index": variants.index(active) + 1,
+                "count": len(variants)}
+
+    @_chat_scoped
+    def select_turn_alternative(self, chat_id: str, turn_id: str, index: int) -> bool:
+        """Make the ``index``-th variant of ``turn_id`` the active transcript."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT turn_id, variant FROM messages "
+                "WHERE chat_id = ? AND role = 'user' AND active = 1 "
+                "ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+            if row is None or row["turn_id"] != turn_id:
+                return False
+            variants = [r[0] for r in self._conn.execute(
+                "SELECT DISTINCT variant FROM messages WHERE chat_id = ? AND turn_id = ? "
+                "ORDER BY variant", (chat_id, turn_id)
+            ).fetchall()]
+            if not 1 <= index <= len(variants):
+                return False
+            chosen = variants[index - 1]
+            self._conn.execute(
+                "UPDATE messages SET active = 0 WHERE chat_id = ? AND turn_id = ?",
+                (chat_id, turn_id),
+            )
+            self._conn.execute(
+                "UPDATE messages SET active = 1 WHERE chat_id = ? AND turn_id = ? AND variant = ?",
+                (chat_id, turn_id, chosen),
+            )
+            self._conn.commit()
+            return True
 
     @_chat_scoped
     def delete_messages_from(self, chat_id: str, message_id: int, *, include: bool = True) -> int:
@@ -1257,12 +1435,15 @@ class Store:
 
     @_chat_scoped
     def get_messages(self, chat_id: str, include_created: bool = False,
-                     include_usage: bool = False, *, include_message_meta: bool = False) -> list[dict]:
+                     include_usage: bool = False, *, include_message_meta: bool = False,
+                     include_inactive: bool = False) -> list[dict]:
+        """The active transcript, or every variant when ``include_inactive``."""
         with self._lock:
+            where = "chat_id = ?" + ("" if include_inactive else " AND active = 1")
             rows = self._conn.execute(
                 "SELECT id, role, content, tool_calls, tool_call_id, created, turn_model, "
-                + ", ".join(USAGE_COLUMNS) +
-                " FROM messages WHERE chat_id = ? ORDER BY id",
+                "turn_id, variant, active, " + ", ".join(USAGE_COLUMNS) +
+                f" FROM messages WHERE {where} ORDER BY id",
                 (chat_id,),
             ).fetchall()
             links = self._conn.execute(
@@ -1290,6 +1471,10 @@ class Store:
                 message["id"] = message_id
             if include_created or has_meta:
                 message["created"] = created
+            if include_inactive:
+                message["active"] = bool(row["active"])
+                message["turn_id"] = row["turn_id"]
+                message["variant"] = row["variant"]
             if include_usage and row["prompt_tokens"] is not None:
                 message["usage"] = _usage_dict(row)
             used_model = row["turn_model"] or row["usage_model"]
@@ -1310,7 +1495,11 @@ class Store:
         with self._lock:
             compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
             cutoff, summary = (compact[0], compact[1]) if compact else (0, None)
-            rows = self._conn.execute("SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE chat_id = ? AND id > ? ORDER BY id", (chat_id, cutoff)).fetchall()
+            rows = self._conn.execute(
+                "SELECT id, role, content, tool_calls, tool_call_id FROM messages "
+                "WHERE chat_id = ? AND active = 1 AND id > ? ORDER BY id",
+                (chat_id, cutoff),
+            ).fetchall()
         messages = []
         for row in rows:
             message = {"role": row[1], "content": row[2]}
@@ -1343,7 +1532,10 @@ class Store:
             current = self._conn.execute("SELECT cutoff FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
             if (current[0] if current else 0) != expected_cutoff:
                 return False
-            if not self._conn.execute("SELECT 1 FROM messages WHERE chat_id = ? AND id = ?", (chat_id, cutoff)).fetchone():
+            if not self._conn.execute(
+                "SELECT 1 FROM messages WHERE chat_id = ? AND id = ? AND active = 1",
+                (chat_id, cutoff),
+            ).fetchone():
                 return False
             self._conn.execute("INSERT INTO chat_compactions (chat_id, cutoff, summary) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET cutoff=excluded.cutoff, summary=excluded.summary", (chat_id, cutoff, summary))
             self._conn.commit()

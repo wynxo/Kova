@@ -72,6 +72,36 @@ def test_export_contains_chats_notes_reminders_and_safe_config(tmp_path):
         assert manifest["token"] == "omitted"
 
 
+def test_backup_keeps_archived_alternatives_but_reads_the_active_one(tmp_path):
+    source = _home(tmp_path, "source")
+    store, chat_id = _seed(source)
+    before = store.get_chat(chat_id)["messages"]
+    turn_id, variant = store.start_alternative(chat_id)
+    assert store.get_chat(chat_id)["messages"] == before
+    store.add_message(chat_id, "user", "Try again", turn_id=turn_id, variant=variant)
+    store.add_message(chat_id, "assistant", "Second answer", turn_id=turn_id, variant=variant)
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup, store=store)
+
+    target = load_config(tmp_path / "target")
+    import_archive(target, backup)
+    restored = Store(target.home / "kova.db")
+    chat = restored.get_chat(chat_id, include_inactive=True)
+    assert [(m["content"], m["active"]) for m in chat["messages"]] == [
+        ("How do I bake an apple pie?", False),
+        ("Use apples, flour and butter.", False),
+        ("Try again", True),
+        ("Second answer", True),
+    ]
+    assert [m["content"] for m in restored.get_chat(chat_id)["messages"]] == [
+        "Try again", "Second answer",
+    ]
+    with zipfile.ZipFile(backup) as archive:
+        markdown = archive.read(f"chats/{chat_id}.md").decode()
+    assert "Try again" in markdown and "Second answer" in markdown
+    assert "How do I bake an apple pie?" not in markdown
+
+
 def test_export_in_obsidian_mode_only_includes_kova_folder(tmp_path):
     cfg = load_config(tmp_path / "home")
     vault = tmp_path / "vault"
