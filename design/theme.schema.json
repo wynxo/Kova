@@ -37,13 +37,25 @@
         "border": { "$ref": "#/$defs/colorGroup" },
         "accent": { "$ref": "#/$defs/colorGroup" },
         "status": { "$ref": "#/$defs/colorGroup" },
-        "syntax": { "$ref": "#/$defs/colorGroup" }
+        "syntax": { "$ref": "#/$defs/colorGroup" },
+        "chat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "width": { "enum": ["narrow", "normal", "wide"] },
+            "message-style": { "enum": ["document", "bubbles", "compact"] },
+            "avatars": { "enum": ["on", "off"] },
+            "zen": { "enum": ["on", "off"] },
+            "bubble-shape": { "enum": ["round", "sharp"] }
+          }
+        }
       }
     },
     "background": {
-      "description": "Optional decorative background behind the app shell: a subtle gradient or one image from KOVA_HOME/themes/assets. Panels stay readable; contrast is measured against their surfaces.",
+      "description": "Optional decorative background behind the app shell: a subtle gradient, a fine noise texture or one image from KOVA_HOME/themes/assets. Panels stay readable; text contrast is measured against the surfaces and against the worst-case background area behind them.",
       "oneOf": [
         { "$ref": "#/$defs/gradientBackground" },
+        { "$ref": "#/$defs/noiseBackground" },
         { "$ref": "#/$defs/imageBackground" }
       ]
     },
@@ -88,6 +100,20 @@
         }
       }
     },
+    "noiseBackground": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["noise"] },
+        "opacity": {
+          "type": "number",
+          "minimum": 0.02,
+          "maximum": 0.2,
+          "description": "How strongly the grain shows, drawn in the theme's fg.default over bg.base. Defaults to 0.06."
+        }
+      }
+    },
     "imageBackground": {
       "type": "object",
       "additionalProperties": false,
@@ -103,7 +129,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 0.8,
-          "description": "How much of the theme's bg.base is laid over the image. Defaults to 0.35."
+          "description": "How much of the theme's bg.base is laid over the image. Defaults to 0.55."
         },
         "blur": {
           "type": "number",

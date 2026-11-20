@@ -38,6 +38,11 @@
 
 :root, [data-theme="dark"] {
   color-scheme:dark;
+  --chat-width: normal;
+  --chat-message-style: document;
+  --chat-avatars: on;
+  --chat-zen: off;
+  --chat-bubble-shape: round;
   --bg-base: #14121c;
   --bg-surface: #1c1b24;
   --bg-raised: #26262e;
@@ -68,6 +73,11 @@
 
 [data-theme="light"] {
   color-scheme:light;
+  --chat-width: normal;
+  --chat-message-style: document;
+  --chat-avatars: on;
+  --chat-zen: off;
+  --chat-bubble-shape: round;
   --bg-base: #ffffff;
   --bg-surface: #f6f6f8;
   --bg-raised: #ececf1;

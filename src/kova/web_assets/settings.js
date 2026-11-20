@@ -28,12 +28,6 @@
         {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
          keywords: 'density spacing compact comfortable padding layout tight roomy air',
          control: 'density'},
-        {title: 'Content width', help: 'Narrow the conversation for reading, or let it use more of the window.',
-         keywords: 'width narrow wide column layout margins reading measure',
-         control: 'chat_width'},
-        {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
-         keywords: 'avatar picture face icon label name reading',
-         control: 'avatars'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',
          control: 'font'},
@@ -63,6 +57,22 @@
          keywords: 'import restore upload preferences themes file', control: 'prefs_import'},
         {title: 'Sign out', help: 'End this session in this window. On a paired phone, this unpairs it.',
          keywords: 'logout sign out disconnect unpair leave', action: 'disconnect', actionLabel: 'Sign out'},
+      ],
+    },
+    {
+      id: 'chat', label: 'Chat', icon: 'message-square',
+      keywords: 'conversation appearance layout reading timestamps zen distraction',
+      items: [
+        {title: 'Content width', help: 'Narrow the conversation for reading, or let it use more of the window.',
+         keywords: 'width narrow wide column layout margins reading measure', control: 'chat_width'},
+        {title: 'Message style', help: 'Read the conversation as a document, in bubbles, or in compact rows.',
+         keywords: 'document bubble compact density layout', control: 'message_style'},
+        {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
+         keywords: 'avatar picture face icon label name reading', control: 'avatars'},
+        {title: 'Message timestamps', help: 'Show when each message was sent, on hover and focus only, or not at all.',
+         keywords: 'timestamp clock time date hover', control: 'message_timestamps'},
+        {title: 'Zen mode', help: 'Hide the sidebar, top bar and status bar for this window.',
+         keywords: 'hide focus distraction fullscreen shortcut', action: 'zen-enter', actionLabel: 'Enter'},
       ],
     },
     {
@@ -589,13 +599,25 @@
      items: [['inter', 'Inter', 'The bundled typeface'],
              ['system', 'System', "This device's interface font"],
              ['mono', 'Monospace', 'Set the conversation in the bundled mono face']]},
-    {name: 'chat_width', label: 'Content width', read: 'chatWidth', write: 'setChatWidth', fallback: 'normal',
-     items: [['narrow', 'Narrow', 'A narrower column, easier on long answers'],
+    {name: 'chat_width', label: 'Content width', read: 'chatWidth', write: 'setChatWidth', fallback: 'theme',
+     items: [['theme', 'Theme default', 'Use the width set by the active theme'],
+             ['narrow', 'Narrow', 'A narrower column, easier on long answers'],
              ['normal', 'Normal', 'The shipped 768px column'],
              ['wide', 'Wide', 'Use more of the window']]},
-    {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'on',
-     items: [['on', 'On', 'Show the avatar beside each reply'],
+    {name: 'avatars', label: 'Avatars', read: 'avatars', write: 'setAvatars', fallback: 'theme',
+     items: [['theme', 'Theme default', 'Use the avatar setting from the active theme'],
+             ['on', 'On', 'Show the avatar beside each reply'],
              ['off', 'Off', 'Hide avatars and keep the names']]},
+    {name: 'message_style', label: 'Message style', read: 'messageStyle', write: 'setMessageStyle', fallback: 'theme',
+     items: [['theme', 'Theme default', 'Use the message style set by the active theme'],
+             ['document', 'Document', 'Full-width conversation without bubbles'],
+             ['bubbles', 'Bubbles', 'Give messages a rounded surface'],
+             ['compact', 'Compact', 'Keep names and messages on the same row']]},
+    {name: 'message_timestamps', label: 'Message timestamps', read: 'messageTimestamps',
+     write: 'setMessageTimestamps', fallback: 'never',
+     items: [['never', 'Never', 'Hide timestamps'],
+             ['hover', 'On hover', 'Reveal timestamps when hovering or focusing a message'],
+             ['always', 'Always', 'Show timestamps on every message']]},
     {name: 'backgrounds', label: 'Show theme backgrounds', read: 'backgrounds', write: 'setBackgrounds', fallback: 'on',
      items: [['on', 'On', "Show the theme's gradient or image behind the app"],
              ['off', 'Off', 'Keep solid panels and hide the background']]},
@@ -650,6 +672,7 @@
       }
     }
   }
+  document.addEventListener?.('kova:typography', syncTypography);
 
   // Export, import and sync of every UI preference (#212). The server holds
   // one validated document; `kova prefs export` writes the same file the web
@@ -835,6 +858,7 @@
         syncControls();
         window.KovaTheme?.sync?.();
         window.KovaTheme?.refresh?.();
+        window.KovaTypography?.sync?.();
       } catch (error) {
         status.textContent = (error && error.message) || 'Import failed. Nothing changed.';
         status.classList.add('shortcut-error');

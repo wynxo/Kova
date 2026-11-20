@@ -81,3 +81,64 @@ def test_retry_needs_a_message_and_a_turn_that_is_not_compacted(server):
     assert client.post(f"/chats/{chat}/retry", headers=headers).status_code == 409
     assert client.post(f"/chats/{chat}/edit", headers=headers,
                        json={"text": "too late"}).status_code == 409
+
+
+def test_retry_with_another_model_validates_before_replacing_the_reply(server):
+    from dataclasses import replace
+
+    client, headers, cfg, fake = server
+    cfg.models.append(replace(cfg.models[0], name="alternate", model="other-model"))
+    chat = client.post("/chats", headers=headers, json={"model": cfg.models[0].name}).json()["id"]
+    _turn(client, headers, chat, "hello")
+    before = _messages(client, headers, chat)
+    invalid = client.post(f"/chats/{chat}/retry", headers=headers, json={"model": "missing"})
+    assert invalid.status_code == 404
+    assert _messages(client, headers, chat) == before
+    stale = client.post(f"/chats/{chat}/retry", headers=headers,
+                        json={"expected_reply": before[0]["id"]})
+    assert stale.status_code == 409
+    assert _messages(client, headers, chat) == before
+
+    response = client.post(f"/chats/{chat}/retry", headers=headers,
+                           json={"model": "alternate", "expected_reply": before[-1]["id"]})
+    assert response.status_code == 200
+    assert "event: done" in response.text
+    assert fake.requests[-1]["model"] == "other-model"
+    assert client.get(f"/chats/{chat}", headers=headers).json()["model"] == cfg.models[0].name
+    assert len(_messages(client, headers, chat)) == 2
+
+
+def test_branch_from_reply_copies_only_its_history(server):
+    client, headers, cfg, fake = server
+    chat = client.post("/chats", headers=headers, json={}).json()["id"]
+    store = client.app.state.store
+    store.add_message(chat, "user", "first")
+    # Imported history may explicitly store an empty tool-call list.
+    store.add_message(chat, "assistant", "first answer", tool_calls=[])
+    _turn(client, headers, chat, "second")
+    messages = _messages(client, headers, chat)
+    assert all(msg.get("created") for msg in messages)
+    first_reply = messages[1]["id"]
+    created = client.post(f"/chats/{chat}/fork", headers=headers, params={"through": first_reply})
+    assert created.status_code == 200
+    fork = created.json()
+    assert fork["id"] != chat
+    assert [msg["content"] for msg in fork["messages"]] == [msg["content"] for msg in messages[:2]]
+    assert _messages(client, headers, chat) == messages
+    for invalid in (messages[0]["id"], messages[-1]["id"] + 1):
+        assert client.post(f"/chats/{chat}/fork", headers=headers,
+                           params={"through": invalid}).status_code == 404
+
+
+def test_reply_usage_keeps_the_provider_used_at_generation(server):
+    client, headers, cfg, _ = server
+    from kova.config import ProviderEntry
+
+    cfg.providers.append(ProviderEntry(id="demo", name="Demo provider", kind="custom",
+                                       base_url=cfg.models[0].base_url))
+    cfg.models[0].provider = "demo"
+    chat = client.post("/chats", headers=headers, json={}).json()["id"]
+    reply = _turn(client, headers, chat, "hello")
+    assert '"provider": "Demo provider"' in reply.text
+    cfg.providers[0].name = "Renamed provider"
+    assert _messages(client, headers, chat)[-1]["usage"]["provider"] == "Demo provider"
