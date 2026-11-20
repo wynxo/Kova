@@ -106,8 +106,12 @@ jobs:
 
       - name: Configure Electron sandbox for the CI runner
         run: |
-          sudo chown root:root desktop/node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 desktop/node_modules/electron/dist/chrome-sandbox
+          # Resolving the executable also downloads it if npm left it lazy-installed.
+          electron_bin="$(node -p "require('./desktop/node_modules/electron')")"
+          sandbox_helper="$(dirname "$electron_bin")/chrome-sandbox"
+          test -f "$sandbox_helper"
+          sudo chown root:root "$sandbox_helper"
+          sudo chmod 4755 "$sandbox_helper"
 
       - name: Smoke-test Electron startup
         run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
