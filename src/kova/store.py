@@ -244,7 +244,8 @@ class Store:
             );
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
-                cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL
+                cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
+                colour TEXT, icon TEXT, model TEXT
             );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -392,6 +393,12 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE chats ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL"
             )
+        # A project's colour, icon and default model (#196) are nullable, so an
+        # older database keeps its projects with the default look and model.
+        project_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(projects)")}
+        for name in ("colour", "icon", "model"):
+            if name not in project_columns:
+                self._conn.execute(f"ALTER TABLE projects ADD COLUMN {name} TEXT")
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -481,19 +488,28 @@ class Store:
             row = self._conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         return dict(row) if row else None
 
-    def create_project(self, name: str, instructions: str = "", cwd: str | None = None) -> dict:
+    def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
+                       colour: str | None = None, icon: str | None = None,
+                       model: str | None = None) -> dict:
+        """A new project. ``colour``/``icon`` use the chat appearance keys (#213)."""
         timestamp = _utc_now_iso()
         project = {"id": uuid4().hex[:12], "name": name, "instructions": instructions,
-                   "cwd": cwd, "created": timestamp, "updated": timestamp}
+                   "cwd": cwd, "created": timestamp, "updated": timestamp,
+                   "colour": normalize_colour(colour), "icon": normalize_icon(icon),
+                   "model": model or None}
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO projects (id, name, instructions, cwd, created, updated) "
-                "VALUES (:id, :name, :instructions, :cwd, :created, :updated)", project
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model) "
+                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, :colour, :icon, :model)",
+                project
             )
         return project
 
     def update_project(self, project_id: str, *, name: str | None = None,
-                       instructions: str | None = None, cwd: str | None = _UNSET) -> dict | None:
+                       instructions: str | None = None, cwd: str | None = _UNSET,
+                       colour: str | None = _UNSET, icon: str | None = _UNSET,
+                       model: str | None = _UNSET) -> dict | None:
+        """Change a project; ``_UNSET`` leaves a field alone and ``None`` clears it."""
         changes = {"updated": _utc_now_iso()}
         if name is not None:
             changes["name"] = name
@@ -501,11 +517,33 @@ class Store:
             changes["instructions"] = instructions
         if cwd is not _UNSET:
             changes["cwd"] = cwd
+        if colour is not _UNSET:
+            changes["colour"] = normalize_colour(colour)
+        if icon is not _UNSET:
+            changes["icon"] = normalize_icon(icon)
+        if model is not _UNSET:
+            changes["model"] = model or None
         assignments = ", ".join(f"{field} = ?" for field in changes)
         with self._lock, self._conn:
             self._conn.execute(f"UPDATE projects SET {assignments} WHERE id = ?",
                                (*changes.values(), project_id))
             return self.get_project(project_id)
+
+    def move_chat(self, chat_id: str, project_id: str | None) -> bool:
+        """Put a saved chat in a project, or take it out with ``None``.
+
+        Only membership changes: the chat keeps its working folder, model and
+        settings, and from its next turn reads the new project's instructions.
+        Returns False for an unknown chat; raises ``LookupError`` for an unknown
+        project and ``ValueError`` for an incognito chat.
+        """
+        if self.is_ephemeral(chat_id) or self._memory_only:
+            raise ValueError("Incognito chats cannot belong to a project.")
+        with self._lock, self._conn:
+            if project_id is not None and self.get_project(project_id) is None:
+                raise LookupError("project not found")
+            return self._conn.execute("UPDATE chats SET project_id = ? WHERE id = ?",
+                                      (project_id, chat_id)).rowcount > 0
 
     def delete_project(self, project_id: str) -> bool:
         """Remove the project, ungrouping its chats without changing their cwd."""

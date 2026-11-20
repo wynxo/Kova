@@ -15,6 +15,10 @@
   --pane-panel-max:960px;
   /* The conversation never gets narrower than this while a pane grows. */
   --pane-chat-min:360px;
+  /* A collapsed sidebar leaves an icon rail this wide (wide screens only). */
+  --pane-rail-w:var(--space-12);
+  /* A tab label never takes more than this; the full title is its tooltip. */
+  --pane-tab-max:24ch;
   /* Wide enough to grab, drawn as a hairline. */
   --pane-splitter-hit:var(--space-2);
 }
@@ -78,19 +82,40 @@ body.panes-dragging iframe { pointer-events:none; }
   padding:var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   border-bottom:1px solid var(--border-subtle);
 }
-.side-panel-title {
+.side-panel-tabs {
+  display:flex;
   flex:1;
   min-width:0;
+  gap:var(--space-1);
+  overflow-x:auto;
+  scrollbar-width:thin;
+}
+.side-panel-tab {
+  flex:none;
+  max-width:var(--pane-tab-max);
   overflow:hidden;
-  font-size:var(--type-size-body);
-  font-weight:600;
+  padding:var(--space-1) var(--space-3);
+  border-radius:var(--radius-sm);
+  color:var(--fg-muted);
+  font-size:var(--type-size-label);
   line-height:var(--type-leading-tight);
   text-overflow:ellipsis;
   white-space:nowrap;
+  box-shadow:inset 0 calc(var(--space-0-5) * -1) 0 transparent;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
 }
-.side-panel-close:focus-visible {
+.side-panel-tab:hover { background:var(--bg-raised); color:var(--fg-default); }
+/* The selected tab is marked by weight and an underline, not colour alone. */
+.side-panel-tab[aria-selected="true"] {
+  background:var(--bg-raised);
+  color:var(--fg-default);
+  font-weight:600;
+  box-shadow:inset 0 calc(var(--space-0-5) * -1) 0 var(--border-strong);
+}
+.side-panel-tab:focus-visible,
+.side-panel-head .icon-button:focus-visible {
   outline:var(--space-0-5) solid var(--accent-default);
-  outline-offset:var(--space-0-5);
+  outline-offset:calc(var(--space-0-5) * -1);
 }
 .side-panel-body {
   flex:1;
@@ -99,16 +124,68 @@ body.panes-dragging iframe { pointer-events:none; }
   padding:var(--space-4);
   overscroll-behavior:contain;
 }
-.side-panel-body:focus-visible {
+.side-panel-tabpanel { min-width:0; }
+.side-panel-tabpanel:focus-visible {
   outline:var(--space-0-5) solid var(--accent-default);
   outline-offset:calc(var(--space-0-5) * -1);
 }
+/* A tool's full output, opened from its card (tool-cards.js). */
+.side-panel-output {
+  margin:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font:var(--type-size-label)/var(--type-leading-body) var(--mono);
+}
+
+/* ---------- A tab popped out into its own window ---------- */
+body.panel-window {
+  display:flex;
+  flex-direction:column;
+  height:100vh;
+  height:100dvh;
+}
+.panel-window-title {
+  flex:1;
+  min-width:0;
+  margin:0;
+  overflow:hidden;
+  font-size:var(--type-size-body);
+  font-weight:600;
+  line-height:var(--type-leading-tight);
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* ---------- The collapsed sidebar's icon rail ---------- */
+.sidebar-rail { display:none; }
+
 /* A code block shown in the panel keeps app.css's block look (code-header.js). */
 .side-panel-code pre { margin:0; }
 
 @media (min-width:721px) {
   body.panel-open { grid-template-columns:var(--sidebar-w) minmax(0, 1fr) var(--pane-panel-w); }
-  body.panel-open.sidebar-collapsed { grid-template-columns:0 minmax(0, 1fr) var(--pane-panel-w); }
+  body.sidebar-collapsed { grid-template-columns:var(--pane-rail-w) minmax(0, 1fr); }
+  body.panel-open.sidebar-collapsed { grid-template-columns:var(--pane-rail-w) minmax(0, 1fr) var(--pane-panel-w); }
+  body.sidebar-collapsed .sidebar-rail {
+    position:fixed;
+    top:0;
+    bottom:0;
+    left:0;
+    z-index:20;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:var(--space-1);
+    width:var(--pane-rail-w);
+    padding:var(--space-3) 0;
+    background:var(--bg-surface);
+    border-right:1px solid var(--border-subtle);
+  }
+  .sidebar-rail-spacer { flex:1; }
+  .sidebar-rail-button:focus-visible {
+    outline:var(--space-0-5) solid var(--accent-default);
+    outline-offset:var(--space-0-5);
+  }
   .side-panel { grid-column:3; grid-row:1; animation:panes-panel-in var(--motion-base) var(--motion-ease-standard); }
 }
 
@@ -133,9 +210,11 @@ body.panes-dragging iframe { pointer-events:none; }
 
 /* Motion: the setting wins in both directions, then the system preference. */
 [data-motion="reduced"] .side-panel,
+[data-motion="reduced"] .side-panel-tab,
 [data-motion="reduced"] .pane-splitter::after { animation:none; transition:none; }
 @media (prefers-reduced-motion:reduce) {
   :root:not([data-motion="full"]) .side-panel,
+  :root:not([data-motion="full"]) .side-panel-tab,
   :root:not([data-motion="full"]) .pane-splitter::after { animation:none; transition:none; }
 }
 

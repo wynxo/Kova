@@ -577,7 +577,7 @@
         the panel is a full-screen sheet.</p>
       <div class="gallery-grid wide">
         <article class="gallery-item">
-          <h3>Sidebar, chat and side panel <code>.pane-splitter .side-panel</code></h3>
+          <h3>Sidebar, chat and side panel <code>.pane-splitter .side-panel .side-panel-tab</code></h3>
           <div class="gallery-demo block"><span class="gallery-label">Sidebar splitter hovered, panel splitter focused</span>
             <div class="gallery-panes">
               <div class="gallery-pane-stub" aria-hidden="true"></div>
@@ -585,9 +585,9 @@
               <div class="gallery-pane-chat">Conversation</div>
               <div class="pane-splitter" data-state="focus" aria-hidden="true"></div>
               <aside class="side-panel" aria-label="Sample side panel">
-                <header class="side-panel-head"><h2 class="side-panel-title">python · 240 lines</h2><button type="button" class="icon-button side-panel-close" aria-label="Close panel"><span class="icon i-x" aria-hidden="true"></span></button></header>
-                <div class="side-panel-body"><div class="markdown side-panel-code"><pre><code class="language-python">def brew(cup):
-    return cup.fill("oat flat white")</code></pre></div></div>
+                <header class="side-panel-head"><div class="side-panel-tabs" role="tablist" aria-label="Sample panel tabs"><button type="button" class="side-panel-tab" role="tab" aria-selected="true" tabindex="0">python · 240 lines</button><button type="button" class="side-panel-tab" role="tab" aria-selected="false" tabindex="-1">Diff · app.py</button></div><button type="button" class="icon-button side-panel-popout" aria-label="Open this tab in its own window"><span class="icon i-external-link" aria-hidden="true"></span></button><button type="button" class="icon-button side-panel-close-tab" aria-label="Close this tab"><span class="icon i-x" aria-hidden="true"></span></button><button type="button" class="icon-button side-panel-close" aria-label="Hide panel"><span class="icon i-panel-right" aria-hidden="true"></span></button></header>
+                <div class="side-panel-body"><div class="side-panel-tabpanel" role="tabpanel"><div class="markdown side-panel-code"><pre><code class="language-python">def brew(cup):
+    return cup.fill("oat flat white")</code></pre></div></div></div>
               </aside>
             </div>
           </div>

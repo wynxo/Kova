@@ -263,7 +263,8 @@
   }
   const json = async (path, options) => (await api(path, options)).json();
   const write = (method, value) => ({method, body: JSON.stringify(value)});
-  const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat});
+  const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat,
+    models: () => state.models || []});
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.
@@ -745,6 +746,7 @@
         actions.append(more); actions.setAttribute('aria-label', `Actions for ${title}`);
         const items = [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)]];
         if (chatAppearance()) items.push(['sliders-horizontal', 'Colour & icon', () => editAppearance(chat)]);
+        if (!chat.ephemeral && (chat.project_id || projects?.hasProjects())) items.push(['folder', 'Move to project', () => projects.move(chat)]);
         items.push(['trash-2', 'Delete', () => editChat(chat, true)]);
         for (const [symbol, name, fn] of items) {
           if (chat.ephemeral && symbol === 'copy') continue;
@@ -1265,13 +1267,24 @@
       document.body.append(dialog); dialog.onclose = () => dialog.remove(); dialog.showModal();
     });
   }
+  const REVIEW_TABS = 10;   // the side panel keeps at most this many tabs
+  function reviewChanges(chatId, checkpointId, files, opener) {
+    if (!chatId) return;
+    const refresh = () => { if (state.chat?.id === chatId) safe(() => loadChanges(chatId)); };
+    files.slice(0, REVIEW_TABS).forEach((file, index) => {
+      safe(() => KovaDiffPanel.open({chatId, checkpointId, path: file.path, request: json, returnFocus: opener,
+                                     background: index > 0, onChange: refresh}));
+    });
+    if (files.length > REVIEW_TABS) toast(`Opened the first ${REVIEW_TABS} of ${files.length} files. The rest are in the list.`);
+  }
   function reviewCard(checkpoint) {
     const files = changeFiles(checkpoint.files), skipped = checkpoint.skipped || [];
     const card = el('section', 'changes-card');
     card.setAttribute('aria-label', 'Changes Kova made');
     const totals = changeTotals(files);
     const head = el('div', 'changes-head');
-    head.append(icon('pencil'), el('strong', '', checkpoint.live ? 'Changed in this turn' : `Change set ${checkpoint.id}`));
+    const changed = `Changed ${files.length} file${files.length === 1 ? '' : 's'}`;
+    head.append(icon('pencil'), el('strong', '', checkpoint.live ? (files.length ? changed : 'Changed in this turn') : `Change set ${checkpoint.id}`));
     if (checkpoint.label) head.append(el('span', 'changes-label', checkpoint.label));
     if (files.length) head.append(el('span', 'change-stats', `+${totals.additions} −${totals.deletions}`));
     card.append(head);
@@ -1282,9 +1295,18 @@
     }
     if (skipped.length) card.append(el('small', 'changes-skipped', `${skipped.length} file${skipped.length === 1 ? ' is' : 's are'} too large to checkpoint: ${skipped.join(', ')}`));
     if (files.length && checkpoint.id) {
+      const actions = el('div', 'changes-actions');
+      // Every changed file opens as a tab in the side panel, the first one on top (#190).
+      if (typeof KovaDiffPanel !== 'undefined' && window.KovaPanel) {
+        const review = el('button', 'btn', 'Review changes'); review.type = 'button';
+        review.setAttribute('aria-label', `Review ${changed.toLowerCase()} in the side panel`);
+        review.onclick = () => reviewChanges(state.chat?.id, checkpoint.id, files, review);
+        actions.append(review);
+      }
       const restore = el('button', 'btn quiet', 'Restore files'); restore.type = 'button';
       restore.onclick = () => confirmRestore(checkpoint);
-      card.append(restore);
+      actions.append(restore);
+      card.append(actions);
     }
     return card;
   }
@@ -1925,6 +1947,8 @@
     add('Actions', {title:'Next conversation', hint:'Move down the conversation list', keywords:'chat history navigate down next newer', shortcut:shortcutKeys('next-conversation'), run:() => stepConversation(1)});
     add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
     add('Actions', {title:'Show or hide the sidebar', hint:'Give the conversation more room', keywords:'drawer panel collapse', shortcut:shortcutKeys('toggle-sidebar'), run:() => toggleSidebar()});
+    if (window.KovaPanel?.tabCount?.()) add('Actions', {title:'Show or hide the side panel', hint:'Diffs, code and output opened beside the chat', keywords:'panel tabs right side drawer', shortcut:shortcutKeys('toggle-panel'), run:() => window.KovaPanel.toggle()});
+    add('Actions', {title:'Move focus to the next pane', hint:'Sidebar, conversation, side panel', keywords:'pane focus region f6 sidebar panel', shortcut:shortcutKeys('next-pane'), run:() => window.KovaPanes?.focusNext?.()});
     if (state.busy) add('Actions', {title:'Stop the reply', hint:'Cancel the turn that is running now', keywords:'cancel halt interrupt', shortcut:shortcutKeys('stop-reply'), run:() => safe(stop)});
     add('Actions', {title:'Sign out of this window', hint:'End this browser session', keywords:'logout sign out leave disconnect', run:() => $('disconnect').onclick?.()});
 
@@ -2122,6 +2146,10 @@
     'previous-conversation': () => stepConversation(-1),
     'next-conversation': () => stepConversation(1),
     'toggle-sidebar': () => toggleSidebar(),
+    // panes.js owns the side panel and the panes; false lets the key through.
+    'toggle-panel': () => window.KovaPanel?.toggle?.() || false,
+    'next-pane': () => window.KovaPanes?.focusNext?.() || false,
+    'previous-pane': () => window.KovaPanes?.focusPrevious?.() || false,
     'toggle-theme': () => $('theme').onclick?.(),
     'focus-composer': () => $('prompt').focus(),
     'stop-reply': () => {

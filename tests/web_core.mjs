@@ -411,7 +411,7 @@ const reviewBody = new Element(), reviewView = turnView(reviewBody);
 reviewView.accept({type: 'review', checkpoint_id: 7, label: 'fix the notes',
                    files: [{path: 'notes.txt', status: 'modified', additions: 1, deletions: 1}]});
 const changes = byClass(reviewBody, 'changes-card')[0];
-assert.ok(changes.textContent.includes('Changed in this turn'));
+assert.ok(changes.textContent.includes('Changed 1 file'), 'the end-of-turn summary counts the files');
 assert.ok(changes.textContent.includes('fix the notes'));
 assert.equal(byClass(changes, 'status-modified').length, 1);
 assert.ok(changes.textContent.includes('+1 −1'));
@@ -426,6 +426,29 @@ assert.ok(restore.textContent.includes('notes.txt'));
 buttons(restore)[1].onclick(); await tick(); await tick();
 assert.ok(requests.some(r => r.path === '/chats/chat-1/checkpoints/7/restore' && r.body === null));
 reviewView.finish();
+// With the side panel loaded, the summary offers Review changes: every file
+// opens as a panel tab, the first one in front (#190).
+{
+  const opened = [];
+  sandbox.KovaDiffPanel = {open: options => { opened.push(options); return Promise.resolve(); }};
+  sandbox.window.KovaPanel = {open() {}};
+  const body = new Element(), view = turnView(body);
+  view.accept({type: 'review', checkpoint_id: 8, label: 'two files', files: [
+    {path: 'a.txt', status: 'modified', additions: 2, deletions: 1},
+    {path: 'b.txt', status: 'added', additions: 3, deletions: 0}]});
+  const card = byClass(body, 'changes-card')[0];
+  assert.ok(card.textContent.includes('Changed 2 files'));
+  assert.ok(card.textContent.includes('+5 −1'));
+  const review = buttons(card).find(button => button.textContent === 'Review changes');
+  assert.ok(review, 'a Review changes button');
+  assert.equal(review.attrs['aria-label'], 'Review changed 2 files in the side panel');
+  review.onclick(); await tick();
+  assert.deepEqual(opened.map(item => [item.path, item.checkpointId, Boolean(item.background)]),
+                   [['a.txt', 8, false], ['b.txt', 8, true]]);
+  assert.equal(opened[0].returnFocus, review);
+  view.finish();
+  delete sandbox.KovaDiffPanel; delete sandbox.window.KovaPanel;
+}
 console.log('Per-turn change review, preview and restore passed');
 
 // Queue vs steer: both are explicit while a reply runs, and the queue survives a reload.
@@ -1313,3 +1336,50 @@ assert.equal(requests.findLast(request => request.path === '/chats' && request.b
 assert.equal(state.chat?.project_id, 'research');
 assert.equal(byClass(byClass(shell, 'project-group')[0], 'history-row').length, 1);
 console.log('Project groups, editor and chat creation passed');
+
+// A project's colour, icon and default model, its at-a-glance overview, and
+// moving an existing chat into it (#196).
+state.models = [{name: 'local', model: 'demo'}, {name: 'unset', model: ''}];
+sidebarProjects[0].cwd = '/workspace';
+sidebarChats.push({id: 'loose', title: 'Loose chat', last_message: at(0)});
+await sandbox.test.refreshChats();
+projectButton('Edit project').onclick();
+let projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+const selects = walk(projectDialog).filter(node => node.tagName === 'select');
+const select = name => selects.find(node => node.name === name);
+assert.deepEqual(selects.map(node => node.name), ['model', 'colour', 'icon']);
+assert.deepEqual(select('model').options.map(option => option.value), ['', 'local'],
+                 'only configured models are offered as a default');
+assert.equal(select('colour').options.length, 9);
+select('model').value = 'local'; select('colour').value = 'info'; select('icon').value = 'brain';
+await walk(projectDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(requests.findLast(request => request.path === '/projects/research')?.body,
+                 {name: 'Lab notes', instructions: 'Keep a log.', cwd: '/workspace',
+                  colour: 'info', icon: 'brain', model: 'local'});
+group = byClass(shell, 'project-group')[0];
+const projectSummary = group.children[0];
+assert.equal(projectSummary.dataset.chatColour, 'info');
+assert.equal(byClass(projectSummary, 'i-brain').length, 1);
+assert.equal(projectSummary.textContent, 'Lab notes');
+assert.deepEqual(byClass(group, 'project-fact').map(node => node.textContent),
+                 ['Folder/workspace', 'Modellocal', 'InstructionsKeep a log.']);
+// Saving without touching the look sends no colour, icon or model.
+projectButton('Edit project').onclick();
+projectDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+await walk(projectDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(Object.keys(requests.findLast(request => request.path === '/projects/research').body),
+                 ['name', 'instructions', 'cwd']);
+
+const looseRow = rowFor('Loose chat');
+const moveAction = buttons(looseRow).find(node => node.textContent === 'Move to project');
+assert.ok(moveAction, 'saved chats offer a move once a project exists');
+moveAction.onclick();
+await tick();
+const moveDialog = walk(sandbox.document.body).filter(node => node.tagName === 'dialog').at(-1);
+const radios = walk(moveDialog).filter(node => node.tagName === 'input' && node.type === 'radio');
+assert.deepEqual(radios.map(node => node.value), ['', 'research']);
+assert.equal(radios[0].checked, true, 'an ungrouped chat starts on "No project"');
+radios[0].checked = false; radios[1].checked = true;
+await walk(moveDialog).find(node => node.tagName === 'form').onsubmit({preventDefault() {}});
+assert.deepEqual(requests.findLast(request => request.path === '/chats/loose')?.body, {project_id: 'research'});
+console.log('Project look, overview and chat moves passed');
