@@ -145,18 +145,33 @@ def export_archive(
 
     Chats are stored twice: ``chats/<id>.json`` for a faithful restore and
     ``chats/<id>.md`` so the archive is pleasant to read. Memory notes are
-    copied as-is. The server token is never read or written.
+    copied as-is, and each project's own notes travel under
+    ``project-memory/<project-id>/`` with ``projects.json``. The server token
+    is never read or written.
     """
     target = _target_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     store = store or Store(cfg.home / "kova.db")
     memory = Memory(cfg.memory_path, cfg.memory_write_subdir)
     chats = store.list_chats()
+    projects = store.list_projects()
     reminders = store.list_reminders(include_done=True)
     notes = [
         (note.relative_to(memory.write_dir).as_posix(), note.read_bytes())
         for note in _note_files(memory.write_dir)
     ]
+    project_notes: list[tuple[str, bytes]] = []
+    for project in projects:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(project.get("id") or "")):
+            continue
+        try:
+            scope = memory.project_scope(project["id"])
+        except ValueError:
+            continue
+        for note in _note_files(scope.write_dir):
+            project_notes.append(
+                (f'{project["id"]}/{note.relative_to(scope.write_dir).as_posix()}',
+                 note.read_bytes()))
 
     created = datetime.now().astimezone().isoformat()
     manifest = {
@@ -165,14 +180,17 @@ def export_archive(
         "app_version": __version__,
         "created": created,
         "chats": len(chats),
+        "projects": len(projects),
         "notes": len(notes),
+        "project_notes": len(project_notes),
         "reminders": len(reminders),
         "api_keys": "omitted",
         "token": "omitted",
     }
     readme = (
         f"Kova backup — {created}\n\n"
-        f"{len(chats)} chats, {len(notes)} memory notes, {len(reminders)} reminders.\n\n"
+        f"{len(chats)} chats, {len(projects)} projects, {len(notes)} memory notes, "
+        f"{len(project_notes)} project memory notes, {len(reminders)} reminders.\n\n"
         "config.toml is included without API keys. Re-add a key with:\n"
         "  kova model add NAME URL MODEL --key KEY\n\n"
         "The server token file is never included.\n"
@@ -188,6 +206,8 @@ def export_archive(
             archive.writestr("README.txt", readme)
             archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
             archive.writestr("config.toml", _config_bytes(cfg))
+            archive.writestr("projects.json",
+                             json.dumps(projects, indent=2, ensure_ascii=False) + "\n")
             for chat in chats:
                 full = store.get_chat(chat["id"], include_created=True)
                 if full is None:
@@ -197,6 +217,8 @@ def export_archive(
                 archive.writestr(base + ".md", render_chat_markdown(full))
             for name, data in notes:
                 archive.writestr(f"memory/{name}", data)
+            for name, data in project_notes:
+                archive.writestr(f"project-memory/{name}", data)
             archive.writestr(
                 "reminders.json",
                 json.dumps(reminders, indent=2, ensure_ascii=False) + "\n",
@@ -208,7 +230,9 @@ def export_archive(
     return {
         "path": str(target),
         "chats": len(chats),
+        "projects": len(projects),
         "notes": len(notes),
+        "project_notes": len(project_notes),
         "reminders": len(reminders),
         "created": created,
     }
@@ -239,6 +263,19 @@ def _memory_relative(name: str) -> PurePosixPath | None:
     if any(part in ("", ".", "..") or part.startswith(".") for part in relative):
         return None
     return PurePosixPath(*relative)
+
+
+def _project_memory_relative(name: str) -> tuple[str, PurePosixPath] | None:
+    """A ``project-memory/<project-id>/<note>`` entry as (id, relative note path)."""
+    parts = PurePosixPath(name).parts
+    if len(parts) < 3 or parts[0] != "project-memory" or not name.endswith(".md"):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", parts[1]):
+        return None
+    relative = parts[2:]
+    if any(part in ("", ".", "..") or part.startswith(".") for part in relative):
+        return None
+    return parts[1], PurePosixPath(*relative)
 
 
 def _reminder_key(when: str, text: str) -> tuple:
@@ -341,8 +378,21 @@ def import_archive(
             name for name in names
             if _memory_relative(name) is not None and name.endswith(".md")
         ]
-        if not chat_names and not memory_names and "reminders.json" not in names:
+        project_memory_names = [
+            name for name in names if _project_memory_relative(name) is not None
+        ]
+        if (not chat_names and not memory_names and not project_memory_names
+                and "projects.json" not in names and "reminders.json" not in names):
             raise BackupError("That zip does not look like a Kova backup.")
+
+        projects = []
+        if "projects.json" in names:
+            try:
+                projects = json.loads(archive.read("projects.json"))
+            except ValueError as exc:
+                raise BackupError("Invalid projects.json in the backup.") from exc
+            if not isinstance(projects, list):
+                raise BackupError("Invalid projects.json in the backup.")
 
         chats = []
         for name in chat_names:
@@ -368,6 +418,12 @@ def import_archive(
             relative = _memory_relative(name)
             if relative is not None:
                 notes.append((relative, archive.read(name)))
+        project_notes: list[tuple[str, PurePosixPath, bytes]] = []
+        for name in project_memory_names:
+            parsed = _project_memory_relative(name)
+            if parsed is not None:
+                project_id, relative = parsed
+                project_notes.append((project_id, relative, archive.read(name)))
 
         config_data = None
         if not merge and "config.toml" in names:
@@ -380,6 +436,15 @@ def import_archive(
     if not merge:
         store.clear_chats()
         store.clear_reminders()
+        if "projects.json" in names:
+            store.clear_projects()
+
+    projects_imported = projects_skipped = 0
+    for project in projects:
+        if store.import_project(project):
+            projects_imported += 1
+        else:
+            projects_skipped += 1
 
     chat_ids = {chat["id"] for chat in store.list_chats()} if merge else set()
     chats_imported = chats_skipped = 0
@@ -420,6 +485,33 @@ def import_archive(
         existing_slugs.add(relative.stem)
         notes_imported += 1
 
+    if not merge:
+        memory.clear_scopes()
+    project_notes_imported = project_notes_skipped = 0
+    seen_project_notes: set[tuple[str, str]] = set()
+    for project_id, relative, data in project_notes:
+        if store.get_project(project_id) is None:
+            project_notes_skipped += 1
+            continue
+        try:
+            scope = memory.project_scope(project_id)
+        except ValueError:
+            project_notes_skipped += 1
+            continue
+        target = scope.write_dir / relative
+        try:
+            target.resolve().relative_to(scope.write_dir.resolve())
+        except ValueError as exc:
+            raise BackupError(f"Unsafe project memory path in backup: {relative}") from exc
+        key = (project_id, relative.as_posix())
+        if merge and (key in seen_project_notes or target.exists()):
+            project_notes_skipped += 1
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        seen_project_notes.add(key)
+        project_notes_imported += 1
+
     existing_reminders = set()
     if merge:
         existing_reminders = {
@@ -450,8 +542,12 @@ def import_archive(
         "path": str(source),
         "chats": chats_imported,
         "chats_skipped": chats_skipped,
+        "projects": projects_imported,
+        "projects_skipped": projects_skipped,
         "notes": notes_imported,
         "notes_skipped": notes_skipped,
+        "project_notes": project_notes_imported,
+        "project_notes_skipped": project_notes_skipped,
         "reminders": reminders_imported,
         "reminders_skipped": reminders_skipped,
         "config_restored": config_restored,

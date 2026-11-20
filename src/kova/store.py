@@ -247,7 +247,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
                 cwd TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
-                colour TEXT, icon TEXT, model TEXT
+                colour TEXT, icon TEXT, model TEXT,
+                memory_scope INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -309,6 +310,7 @@ class Store:
                 after TEXT,
                 chat_id TEXT,
                 detail TEXT,
+                scope TEXT,
                 undone INTEGER NOT NULL DEFAULT 0,
                 created TEXT NOT NULL
             );
@@ -401,6 +403,11 @@ class Store:
         for name in ("colour", "icon", "model"):
             if name not in project_columns:
                 self._conn.execute(f"ALTER TABLE projects ADD COLUMN {name} TEXT")
+        # Project memory is opt-in and off for every existing project (#196).
+        if "memory_scope" not in project_columns:
+            self._conn.execute(
+                "ALTER TABLE projects ADD COLUMN memory_scope INTEGER NOT NULL DEFAULT 0"
+            )
         # Jobs share the reminders table: a job is a row with kind 'job', a repeat
         # schedule and either a shell command or a prompt. One table, one loop.
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
@@ -416,6 +423,11 @@ class Store:
         ):
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
+        # A revision made in a project scope records which project, so undo
+        # restores the right store even when two projects use the same slug.
+        revisions = {row["name"] for row in self._conn.execute("PRAGMA table_info(memory_revisions)")}
+        if "scope" not in revisions:
+            self._conn.execute("ALTER TABLE memory_revisions ADD COLUMN scope TEXT")
         self._conn.commit()
 
     def _setup_fts(self) -> None:
@@ -480,29 +492,38 @@ class Store:
             self.fts_enabled = False
 
     # -- projects ---------------------------------------------------------
+    @staticmethod
+    def _project_row(row: sqlite3.Row) -> dict:
+        """A project row as JSON-shaped data; ``memory_scope`` is a real boolean."""
+        project = dict(row)
+        project["memory_scope"] = bool(project.get("memory_scope"))
+        return project
+
     def list_projects(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id")
-            return [dict(row) for row in rows]
+            return [self._project_row(row) for row in rows]
 
     def get_project(self, project_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        return dict(row) if row else None
+        return self._project_row(row) if row else None
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, memory_scope: bool = False) -> dict:
         """A new project. ``colour``/``icon`` use the chat appearance keys (#213)."""
         timestamp = _utc_now_iso()
         project = {"id": uuid4().hex[:12], "name": name, "instructions": instructions,
                    "cwd": cwd, "created": timestamp, "updated": timestamp,
                    "colour": normalize_colour(colour), "icon": normalize_icon(icon),
-                   "model": model or None}
+                   "model": model or None, "memory_scope": bool(memory_scope)}
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO projects (id, name, instructions, cwd, created, updated, colour, icon, model) "
-                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, :colour, :icon, :model)",
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated, "
+                "colour, icon, model, memory_scope) "
+                "VALUES (:id, :name, :instructions, :cwd, :created, :updated, "
+                ":colour, :icon, :model, :memory_scope)",
                 project
             )
         return project
@@ -510,7 +531,8 @@ class Store:
     def update_project(self, project_id: str, *, name: str | None = None,
                        instructions: str | None = None, cwd: str | None = _UNSET,
                        colour: str | None = _UNSET, icon: str | None = _UNSET,
-                       model: str | None = _UNSET) -> dict | None:
+                       model: str | None = _UNSET,
+                       memory_scope: bool | None = _UNSET) -> dict | None:
         """Change a project; ``_UNSET`` leaves a field alone and ``None`` clears it."""
         changes = {"updated": _utc_now_iso()}
         if name is not None:
@@ -525,11 +547,62 @@ class Store:
             changes["icon"] = normalize_icon(icon)
         if model is not _UNSET:
             changes["model"] = model or None
+        if memory_scope is not _UNSET:
+            changes["memory_scope"] = 1 if memory_scope else 0
         assignments = ", ".join(f"{field} = ?" for field in changes)
         with self._lock, self._conn:
             self._conn.execute(f"UPDATE projects SET {assignments} WHERE id = ?",
                                (*changes.values(), project_id))
             return self.get_project(project_id)
+
+    def import_project(self, project: dict) -> bool:
+        """Insert a project from a backup, preserving its id and scope flag.
+
+        Returns False for an existing or unusable row, so a merging import keeps
+        local projects; chats whose project did not arrive stay ungrouped.
+        """
+        if not isinstance(project, dict):
+            return False
+        project_id = project.get("id")
+        name = project.get("name")
+        if not isinstance(project_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", project_id):
+            return False
+        if not isinstance(name, str) or not name.strip():
+            return False
+        with self._lock:
+            if self._conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone():
+                return False
+        try:
+            colour = normalize_colour(project.get("colour"))
+        except ValueError:
+            colour = None
+        try:
+            icon = normalize_icon(project.get("icon"))
+        except ValueError:
+            icon = None
+        timestamp = _utc_now_iso()
+        row = {
+            "id": project_id, "name": name.strip()[:200],
+            "instructions": str(project.get("instructions") or "")[:16_384],
+            "cwd": project.get("cwd") if isinstance(project.get("cwd"), str) else None,
+            "created": project.get("created") if isinstance(project.get("created"), str) else timestamp,
+            "updated": project.get("updated") if isinstance(project.get("updated"), str) else timestamp,
+            "colour": colour, "icon": icon,
+            "model": project.get("model") if isinstance(project.get("model"), str) else None,
+            "memory_scope": 1 if project.get("memory_scope") is True else 0,
+        }
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO projects (id, name, instructions, cwd, created, updated, "
+                "colour, icon, model, memory_scope) VALUES (:id, :name, :instructions, "
+                ":cwd, :created, :updated, :colour, :icon, :model, :memory_scope)", row)
+        return True
+
+    def clear_projects(self) -> None:
+        """Delete every project, leaving its chats in place and ungrouped."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM projects")
+            self._conn.commit()
 
     def move_chat(self, chat_id: str, project_id: str | None) -> bool:
         """Put a saved chat in a project, or take it out with ``None``.
@@ -994,14 +1067,20 @@ class Store:
                     icon = normalize_icon(chat.get("icon"))
                 except ValueError:
                     icon = None
+                # Membership survives only when its project was restored first;
+                # an older backup simply leaves the chat ungrouped.
+                project_id = chat.get("project_id")
+                if not isinstance(project_id, str) or self.get_project(project_id) is None:
+                    project_id = None
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort, project_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
                      chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
                      colour, icon, 1 if chat.get("pinned") else 0,
                      chat["model"] if isinstance(chat.get("model"), str) else None,
-                     chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None),
+                     chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None,
+                     project_id),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -1371,22 +1450,23 @@ class Store:
     # -- memory maintenance ------------------------------------------------
     def record_memory_revision(self, slug: str, kind: str, *, before: str | None = None,
                                after: str | None = None, chat_id: str | None = None,
-                               detail: dict | None = None) -> int:
+                               detail: dict | None = None, scope: str | None = None) -> int:
         """Store a memory preimage, so every write behind a background pass is reversible.
 
         ``before`` is the note's whole previous file text (``None`` when the
         note did not exist) and ``after`` what replaced it; ``detail`` carries
-        whatever the caller needs to describe the change to a person.
+        whatever the caller needs to describe the change to a person. ``scope``
+        is a project id when the write belonged to a project's own memory.
         """
         if chat_id is not None and self.is_ephemeral(chat_id):
             raise ValueError("Incognito chats cannot record memories.")
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, created) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO memory_revisions (slug, kind, before, after, chat_id, detail, scope, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (slug, kind, before, after, chat_id,
                  json.dumps(detail, ensure_ascii=False) if detail is not None else None,
-                 _utc_now_iso()),
+                 scope, _utc_now_iso()),
             )
             self._conn.commit()
             return cur.lastrowid
@@ -1511,6 +1591,7 @@ class Store:
             "after": row["after"],
             "chat_id": row["chat_id"],
             "detail": json.loads(row["detail"]) if row["detail"] else None,
+            "scope": row["scope"],
             "undone": bool(row["undone"]),
             "created": row["created"],
         }

@@ -46,6 +46,12 @@ ORIGINS = ("user", "model")
 INDEX_SLUG = "index"
 INDEX_MAX_LINES = 200
 
+#: Hidden folder under a memory write directory holding one subfolder per
+#: project scope. Hidden means the global store never scans it as ordinary
+#: notes, so a project's facts cannot leak into other chats or the memory browser.
+PROJECT_SCOPE_DIR = ".kova-projects"
+_PROJECT_ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+
 #: How much the lexical signal may move a hybrid ranking, relative to keyword score.
 HYBRID_WEIGHT = 0.5
 
@@ -182,6 +188,29 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+def _remove_tree(path: Path) -> bool:
+    """Remove a directory's contents without ever following a symlink."""
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+    for child in children:
+        try:
+            if child.is_symlink():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                _remove_tree(child)
+            else:
+                child.unlink(missing_ok=True)
+        except OSError:
+            return False
+    try:
+        path.rmdir()
+    except OSError:
+        return False
+    return True
+
+
 _WORD = re.compile(r"\w+", re.UNICODE)
 
 
@@ -233,14 +262,62 @@ class Memory:
     """
 
     def __init__(self, root: Path, write_subdir: str | None = None,
-                 budget: int | None = DEFAULT_MEMORY_BUDGET) -> None:
+                 budget: int | None = DEFAULT_MEMORY_BUDGET, scope_id: str = "") -> None:
         self.root = Path(root)
         self.write_subdir = write_subdir
         self.budget = budget or 0
+        #: The project id when this instance is a project scope, else empty.
+        self.scope_id = scope_id
 
     @property
     def write_dir(self) -> Path:
         return self.root / self.write_subdir if self.write_subdir else self.root
+
+    @property
+    def scopes_dir(self) -> Path:
+        """Where project scopes live, hidden from the global store and backups."""
+        return self.write_dir / PROJECT_SCOPE_DIR
+
+    def project_scope(self, project_id: str) -> "Memory":
+        """One project's private store, nested under the write directory.
+
+        The folder is hidden, so :meth:`list`, :meth:`get` and :meth:`search`
+        on the global store never see it. A project chat mounts exactly one
+        scope, which is what keeps two projects from reading each other's notes.
+        """
+        if not _PROJECT_ID.match(project_id or ""):
+            raise MemoryStoreError(f'Not a project id: "{project_id}".')
+        return Memory(self.scopes_dir / project_id, None, self.budget, scope_id=project_id)
+
+    def remove_scope(self, project_id: str) -> bool:
+        """Delete one project's whole scope, used when the project is removed."""
+        if not _PROJECT_ID.match(project_id or ""):
+            return False
+        path = self.scopes_dir / project_id
+        if path.is_symlink() or not path.is_dir():
+            return False
+        with _WRITE_LOCK:
+            return _remove_tree(path)
+
+    def clear_scopes(self) -> int:
+        """Delete every project scope, for a replacing backup restore."""
+        root = self.scopes_dir
+        if root.is_symlink() or not root.is_dir():
+            return 0
+        removed = 0
+        with _WRITE_LOCK:
+            try:
+                children = list(root.iterdir())
+            except OSError:
+                return 0
+            for child in children:
+                if child.is_dir() and not child.is_symlink() and _remove_tree(child):
+                    removed += 1
+            try:
+                root.rmdir()
+            except OSError:
+                pass
+        return removed
 
     def usage(self) -> int:
         """Characters currently used by every note, against :attr:`budget`."""

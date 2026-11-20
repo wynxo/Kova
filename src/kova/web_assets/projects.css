@@ -106,8 +106,8 @@ dialog.project-dialog {
 .project-dialog form { gap: var(--space-3); }
 .project-dialog label { gap: var(--space-1); font-size: var(--type-size-label); }
 
-dialog.project-dialog input:not([type="radio"]), dialog.project-dialog textarea,
-dialog.project-dialog select {
+dialog.project-dialog input:not([type="radio"]):not([type="checkbox"]),
+dialog.project-dialog textarea, dialog.project-dialog select {
   min-height: var(--space-8);
   padding: var(--space-2);
   border-radius: var(--radius-md);
@@ -120,6 +120,24 @@ dialog.project-dialog textarea { min-height: calc(2 * var(--space-10)); }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.project-memory {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.project-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-8);
+  font-size: var(--type-size-body);
+}
+
+.project-checkbox input:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
 }
 
 .project-move-options {

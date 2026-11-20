@@ -23,6 +23,7 @@ from kova.modes import DEFAULT_MODE, capabilities as mode_capabilities
 from kova.store import Store
 from kova.tools import Tool, ToolError, openai_schemas
 from kova.tools.core import CORE_TOOLS, FILE_TOOLS, FileSession, validate
+from kova.tools.memory import tools_for as memory_tools_for
 from kova.tools import core
 from kova.tools.sessions import set_current_chat
 from kova.pairing import action_capabilities, narrow
@@ -70,12 +71,18 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
                         memory_usage: int | None = None,
                         memory_budget: int | None = None,
                         persona: Persona | None = None,
-                        index: str | None = None) -> str:
+                        index: str | None = None,
+                        project_name: str | None = None,
+                        project_memories: list[Note] | None = None,
+                        project_memory_usage: int | None = None,
+                        project_memory_budget: int | None = None,
+                        project_index: str | None = None) -> str:
     """Build the identity, current context, and relevant memory prompt.
 
     ``memories`` are the topic notes recall picked for this message; ``index``
     is the small index note that is always loaded, so the model knows what
-    exists even when nothing matched.
+    exists even when nothing matched. A project chat also gets its own scope,
+    labelled with the project's name so the two stores never look like one.
     """
     persona = persona or Persona()
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
@@ -103,6 +110,25 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     if index:
         prompt += ("\n\nMemory index (always loaded; open a topic note or run memory_search "
                    f"when you need the detail):\n{index}")
+    if project_name is not None or project_memories or project_memory_budget is not None:
+        label = f' for project "{project_name}"' if project_name else ""
+        if project_memory_budget:
+            used = project_memory_usage or 0
+            percent = round(used * 100 / project_memory_budget)
+            header = (f"What this project remembers{label} (memory {used:,} of "
+                      f"{project_memory_budget:,} chars used, {percent}% full):")
+        elif project_memory_budget == 0:
+            header = f"What this project remembers{label} (memory size is unlimited):"
+        else:
+            header = f"What this project remembers{label}:"
+        if project_memories:
+            notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in project_memories)
+            prompt += f"\n\n{header}\n{notes}"
+        else:
+            prompt += f"\n\n{header} nothing yet."
+        if project_index:
+            prompt += ("\n\nProject memory index (always loaded; open a topic note or run "
+                       f"memory_search for the detail):\n{project_index}")
     return prompt
 
 
@@ -398,6 +424,18 @@ class Agent:
         web = (chat or {}).get('web', True)
         cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
         permission = (chat or {}).get('permission', 'manual')
+        # A chat in a project with its own memory mounts exactly that scope.
+        # Incognito never reads or writes memory, and a project without the
+        # opt-in keeps today's global store. No other project is ever reachable.
+        project = None
+        project_memory = None
+        if chat is not None and chat.get('project_id') and not incognito:
+            project = self.store.get_project(chat['project_id'])
+            if project is not None and project.get('memory_scope'):
+                try:
+                    project_memory = self.memory.project_scope(project['id'])
+                except ValueError:  # a hand-edited id must not break the turn
+                    project_memory = None
         # Full access is the user's explicit choice to run unconfined; every
         # other mode runs commands inside the OS sandbox when the kernel
         # supports one, and asks when it does not.
@@ -412,6 +450,11 @@ class Agent:
 
         if capabilities is not None:
             tools = {name: tool for name, tool in tools.items() if needs(name, tool) <= capabilities}
+        if project_memory is not None:
+            # Rebind only the memory tools; the same permission checks decide
+            # whether a phone may write, and provenance stays exactly as before.
+            scoped = {tool.name: tool for tool in memory_tools_for(project_memory)}
+            tools = {name: scoped.get(name, tool) for name, tool in tools.items()}
         if rows:
             def read_attachment(args):
                 row = rows.get(args.get('id'))
@@ -459,6 +502,20 @@ class Agent:
         except Exception:  # a broken index must not block the prompt either
             index = ""
         memories = [note for note in memories if note.slug != "index"]
+        project_memories: list[Note] = []
+        project_usage = 0
+        project_index = ""
+        if project_memory is not None:
+            try:
+                project_memories = await asyncio.to_thread(
+                    project_memory.search, model_text, 5, mode="hybrid")
+                project_usage = await asyncio.to_thread(project_memory.usage)
+                project_index = await asyncio.to_thread(
+                    project_memory.index_text,
+                    getattr(self.config, 'memory_index_lines', 200))
+            except Exception:  # project memory trouble must never block a chat
+                project_memories, project_usage, project_index = [], 0, ""
+            project_memories = [note for note in project_memories if note.slug != "index"]
         try:
             skills = await asyncio.to_thread(self._skills_block) if mode != 'chat' else ""
         except Exception:  # a broken skill file must not block the prompt
@@ -471,15 +528,19 @@ class Agent:
         prompt = build_system_prompt(self.now(), list(tools), memories, mode, persona=persona,
                                      memory_usage=memory_usage,
                                      memory_budget=getattr(self.memory, 'budget', 0),
-                                     index=index or None)
+                                     index=index or None,
+                                     project_name=project["name"] if project_memory else None,
+                                     project_memories=project_memories,
+                                     project_memory_usage=project_usage,
+                                     project_memory_budget=(
+                                         project_memory.budget if project_memory else None),
+                                     project_index=project_index or None)
         if incognito:
             prompt += ("\nIncognito: this conversation lives only in server memory. "
                        "Do not save memories, use tools, or claim it will be remembered. "
                        "The configured model provider still receives messages.")
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {permission}"
-        project_id = (chat or {}).get('project_id')
-        project = self.store.get_project(project_id) if project_id is not None else None
         if mode != 'chat' or project:
             instructions = await asyncio.to_thread(
                 project_instructions, cwd if mode != 'chat' else None,
@@ -637,6 +698,7 @@ class Agent:
                         # stored; a failure there can never break the reply.
                         for notice in await self.memory_review.after_turn(
                                 chat_id=chat_id, mode=mode, memory=self.memory,
+                                review_memory=project_memory,
                                 client=client, now=self.now()):
                             yield notice
                     done = {'type': 'done', 'message_id': message_id, 'created': created, 'model': entry.name, 'usage': usage}

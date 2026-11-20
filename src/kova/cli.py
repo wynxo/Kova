@@ -1460,8 +1460,10 @@ def _origin_label(note: dict) -> str:
 
 
 @_memory.command("list")
-def memory_list(q: str | None = typer.Argument(None)):
-    notes = get_client().memory_list(q)
+def memory_list(q: str | None = typer.Argument(None),
+                project: str | None = typer.Option(None, "--project",
+                                                    help="List one project's own memory by ID.")):
+    notes = get_client().memory_list(q, project_id=project)
     if not notes:
         if q:
             _empty(f'No notes match "{q}".', "Try a different word, or run: kova memory list")
@@ -1474,8 +1476,9 @@ def memory_list(q: str | None = typer.Argument(None)):
 
 
 @_memory.command("search")
-def memory_search(q: str):
-    notes = get_client().memory_list(q)
+def memory_search(q: str, project: str | None = typer.Option(None, "--project",
+                                                             help="Search one project's own memory.")):
+    notes = get_client().memory_list(q, project_id=project)
     if not notes:
         _empty(f'No notes match "{q}".', "Try a different word, or run: kova memory list")
         return
@@ -1484,8 +1487,9 @@ def memory_search(q: str):
 
 
 @_memory.command("show")
-def memory_show(slug: str):
-    for note in get_client().memory_list():
+def memory_show(slug: str, project: str | None = typer.Option(None, "--project",
+                                                              help="Read from one project's memory.")):
+    for note in get_client().memory_list(None, project_id=project):
         if note["slug"] == slug:
             console.print(Text(note["title"], style=f"bold {colour('ACCENT')}"))
             console.print(Text(note["slug"], style=colour('MUTED')))
@@ -1503,8 +1507,10 @@ def memory_show(slug: str):
 
 
 @_memory.command("add")
-def memory_add(title: str, body: str, tags: list[str] = typer.Option([], "--tags")):
-    note = get_client().memory_add(title, body, tags)
+def memory_add(title: str, body: str, tags: list[str] = typer.Option([], "--tags"),
+               project: str | None = typer.Option(None, "--project",
+                                                   help="Save into one project's own memory.")):
+    note = get_client().memory_add(title, body, tags, project_id=project)
     _ok(f"Saved {note['title']}.")
 
 
@@ -1514,26 +1520,30 @@ def memory_edit(
     body: str | None = typer.Option(None, "--body", help="Replacement text for the note."),
     title: str | None = typer.Option(None, "--title", help="New title for the note."),
     tag: list[str] = typer.Option([], "--tag", help="Replace the note's tags; repeatable."),
+    project: str | None = typer.Option(None, "--project", help="Edit one project's memory."),
 ):
     """Rewrite one note in place; the slug and where it came from are kept."""
     if body is None and title is None and not tag:
         _fail("Nothing to change.", hint=f"Usage: kova memory edit {slug} --body \"new text\"")
-    note = get_client().memory_edit(slug, title=title, body=body, tags=tag or None)
+    note = get_client().memory_edit(slug, title=title, body=body, tags=tag or None,
+                                    project_id=project)
     _ok(f"Updated {note['title']}.")
 
 
 @_memory.command("rm")
-def memory_rm(slug: str):
-    if get_client().memory_delete(slug):
+def memory_rm(slug: str, project: str | None = typer.Option(None, "--project",
+                                                             help="Remove from one project's memory.")):
+    if get_client().memory_delete(slug, project_id=project):
         _ok(f"Removed {slug}.")
     else:
         _fail(f'No note named "{slug}".')
 
 
 @_memory.command("forget")
-def memory_forget(slug: str):
+def memory_forget(slug: str, project: str | None = typer.Option(None, "--project",
+                                                                 help="Forget from one project's memory.")):
     """Delete one note; the same as `memory rm`, named for the review notices."""
-    if get_client().memory_forget(slug):
+    if get_client().memory_forget(slug, project_id=project):
         _ok(f"Forgot {slug}.")
     else:
         _fail(f'No note named "{slug}".')
@@ -2470,12 +2480,14 @@ def projects_create(
     colour: str | None = typer.Option(None, "--colour", help=f"Sidebar colour: {', '.join(CHAT_COLOURS)}."),
     icon: str | None = typer.Option(None, "--icon", help=f"Sidebar icon: {', '.join(CHAT_ICONS)}."),
     model: str | None = typer.Option(None, "--model", help="Default model for new chats (see kova model list)."),
+    memory: bool = typer.Option(False, "--memory/--no-memory",
+                                help="Give this project its own memory, separate from global memory."),
 ):
     """Create a project."""
     try:
         project = get_client().create_project(
             name, instructions, str(folder) if folder is not None else None,
-            colour=colour, icon=icon, model=model)
+            colour=colour, icon=icon, model=model, memory_scope=memory)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f'Created project "{project["name"]}" ({project["id"]}).')
@@ -2491,8 +2503,10 @@ def projects_edit(
     colour: str | None = typer.Option(None, "--colour", help='Sidebar colour, or "none" to clear it.'),
     icon: str | None = typer.Option(None, "--icon", help='Sidebar icon, or "none" to clear it.'),
     model: str | None = typer.Option(None, "--model", help='Default model, or "none" to clear it.'),
+    memory: bool | None = typer.Option(None, "--memory/--no-memory",
+                                       help="Turn this project's own memory scope on or off."),
 ):
-    """Change a project's name, instructions, folder, colour, icon or default model."""
+    """Change a project's name, instructions, folder, colour, icon, model or memory."""
     changes: dict = {}
     if name is not None:
         changes["name"] = name
@@ -2500,6 +2514,8 @@ def projects_edit(
         changes["instructions"] = instructions
     if folder is not None:
         changes["cwd"] = str(folder)
+    if memory is not None:
+        changes["memory_scope"] = memory
     for key, value in (("colour", colour), ("icon", icon), ("model", model)):
         if value is not None:
             changes[key] = None if value.strip().lower() in ("none", "") else value
@@ -2529,6 +2545,8 @@ def projects_show(project_id: str):
     _muted(project["id"])
     console.print(Text(f'Working folder: {project["cwd"] or "(default)"}'))
     console.print(Text(f'Default model: {project.get("model") or "(the active model)"}'))
+    console.print(Text("Project memory: " + ("on (isolated)" if project.get("memory_scope")
+                                             else "off (global memory)")))
     look = " · ".join(part for part in (project.get("colour"), project.get("icon")) if part)
     if look:
         console.print(Text(f"Look: {look}"))

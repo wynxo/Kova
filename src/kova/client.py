@@ -168,10 +168,12 @@ class KovaClient:
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None) -> dict:
+                       model: str | None = None, memory_scope: bool = False) -> dict:
         body = {"name": name, "instructions": instructions, "cwd": cwd}
         body.update({key: value for key, value in
                      (("colour", colour), ("icon", icon), ("model", model)) if value is not None})
+        if memory_scope:
+            body["memory_scope"] = True
         return self._request("POST", "/projects", json=body).json()
 
     def update_project(self, project_id: str, **changes) -> dict:
@@ -367,27 +369,33 @@ class KovaClient:
         """Stream background events (currently reminders) from the server."""
         yield from self._stream("GET", "/events")
 
-    def memory_list(self, q: str | None = None) -> list[dict]:
-        url = "/memory" if q is None else f"/memory?q={q}"
-        return self._request("GET", url).json()
+    def memory_list(self, q: str | None = None, project_id: str | None = None) -> list[dict]:
+        params = {key: value for key, value in (("q", q), ("project_id", project_id)) if value}
+        return self._request("GET", "/memory", params=params or None).json()
 
-    def memory_add(self, title: str, body: str, tags: list[str] | None = None) -> dict:
+    def memory_add(self, title: str, body: str, tags: list[str] | None = None, *,
+                   project_id: str | None = None) -> dict:
         payload = {"title": title, "body": body, "tags": tags or []}
+        if project_id:
+            payload["project_id"] = project_id
         return self._request("POST", "/memory", json=payload).json()
 
     def memory_edit(self, slug: str, *, title: str | None = None, body: str | None = None,
-                    tags: list[str] | None = None) -> dict:
+                    tags: list[str] | None = None, project_id: str | None = None) -> dict:
         """Rewrite one note in place, keeping its slug and provenance."""
         payload = {"title": title, "body": body, "tags": tags}
         payload = {key: value for key, value in payload.items() if value is not None}
-        return self._request("PATCH", f"/memory/{slug}", json=payload).json()
+        params = {"project_id": project_id} if project_id else None
+        return self._request("PATCH", f"/memory/{slug}", json=payload, params=params).json()
 
-    def memory_delete(self, slug: str) -> bool:
-        return self._request("DELETE", f"/memory/{slug}", missing_ok=True).status_code == 200
+    def memory_delete(self, slug: str, *, project_id: str | None = None) -> bool:
+        params = {"project_id": project_id} if project_id else None
+        return self._request("DELETE", f"/memory/{slug}", params=params,
+                             missing_ok=True).status_code == 200
 
-    def memory_forget(self, slug: str) -> bool:
+    def memory_forget(self, slug: str, *, project_id: str | None = None) -> bool:
         """Delete one note; the user-facing name for :meth:`memory_delete`."""
-        return self.memory_delete(slug)
+        return self.memory_delete(slug, project_id=project_id)
 
     def memory_diary(self, limit: int = 50) -> list[dict]:
         return self._request("GET", "/memory/diary", params={"limit": limit}).json()
