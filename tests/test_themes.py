@@ -457,6 +457,140 @@ def test_theme_at_the_upload_limit_can_be_reimported(http, home, editable_theme)
     assert http.post("/themes?validate_only=true", content=installed).status_code == 200
 
 
+# -- gallery: search, update and remove (#177) --------------------------------------
+
+
+def _bundled(monkeypatch, **versions):
+    """Pretend the bundled gallery carries these versions of forest."""
+    from kova import theme_routes
+
+    example = themes.load_file(EXAMPLES / "forest.json")
+    monkeypatch.setattr(theme_routes, "_gallery_documents",
+                        lambda: {"forest": {**example, **versions}})
+    return example
+
+
+def test_gallery_entries_report_version_author_and_updates(http, home, monkeypatch):
+    example = _bundled(monkeypatch, version="1.2.0", author="Ada")
+    forest = http.get("/themes/gallery").json()[0]
+    assert forest["version"] == "1.2.0" and forest["author"] == "Ada"
+    assert forest["installed"] is False and forest["update"] is False
+    write_theme(home.home, **{**example, "version": "1.1.0"})
+    forest = http.get("/themes/gallery").json()[0]
+    assert forest["installed_version"] == "1.1.0" and forest["update"] is True
+    write_theme(home.home, **{**example, "version": "1.2.0"})
+    assert http.get("/themes/gallery").json()[0]["update"] is False
+    write_theme(home.home, **{**example, "version": "1.10.0"})  # numbers, not text order
+    assert http.get("/themes/gallery").json()[0]["update"] is False
+
+
+def test_update_replaces_an_older_install_with_the_bundled_copy(http, home, monkeypatch):
+    example = _bundled(monkeypatch, version="1.1.0", description="Better greens")
+    path = write_theme(home.home, **{**example, "version": "1.0.0", "description": "Old"})
+    response = http.post("/themes/gallery/forest/update")
+    assert response.status_code == 200, response.text
+    assert themes.load_file(path)["description"] == "Better greens"
+    assert themes.load_file(path)["version"] == "1.1.0"
+    assert list(path.parent.glob(".theme-*")) == [], "no staging file is left behind"
+    again = http.post("/themes/gallery/forest/update")
+    assert again.status_code == 409 and "up to date" in again.json()["detail"]
+
+
+def test_update_needs_an_installed_theme_and_a_gallery_id(http, home, monkeypatch):
+    _bundled(monkeypatch, version="1.1.0")
+    assert http.post("/themes/gallery/forest/update").status_code == 409
+    assert http.post("/themes/gallery/nope/update").status_code == 404
+    assert not themes.theme_dir(home.home).exists()
+
+
+def test_update_repairs_a_broken_file_and_will_not_follow_a_link(http, home, monkeypatch, tmp_path):
+    _bundled(monkeypatch)
+    directory = themes.theme_dir(home.home)
+    directory.mkdir()
+    (directory / "forest.json").write_text("{not json", encoding="utf-8")
+    assert http.post("/themes/gallery/forest/update").status_code == 200
+    assert themes.load_file(directory / "forest.json")["id"] == "forest"
+
+    target = tmp_path / "keep.json"
+    target.write_text("keep", encoding="utf-8")
+    (directory / "forest.json").unlink()
+    try:
+        (directory / "forest.json").symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert http.post("/themes/gallery/forest/update").status_code == 409
+    assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_remove_deletes_only_the_theme_file(http, home):
+    path = write_theme(home.home, id="midnight-teal")
+    assets = themes.assets_dir(home.home)
+    assets.mkdir(parents=True)
+    (assets / "sky.png").write_bytes(b"png")
+    assert http.delete("/themes/midnight-teal").json() == {"id": "midnight-teal", "removed": True}
+    assert not path.exists() and (assets / "sky.png").exists()
+    assert all(row["id"] != "midnight-teal" for row in http.get("/themes").json())
+    assert http.delete("/themes/midnight-teal").status_code == 404
+
+
+@pytest.mark.parametrize("ident", ["kova-dark", "kova-light", "system", "dark", "light"])
+def test_built_in_themes_cannot_be_removed(http, ident):
+    assert http.delete(f"/themes/{ident}").status_code == 409
+
+
+@pytest.mark.parametrize("ident", ["..%2Fx", "%2e%2e", "UPPER", "a", "x.json", "x%00"])
+def test_remove_refuses_names_that_are_not_theme_ids(http, home, ident):
+    assert http.delete(f"/themes/{ident}").status_code in (404, 405)
+
+
+def test_remove_deletes_a_link_not_its_target(http, home, tmp_path):
+    directory = themes.theme_dir(home.home)
+    directory.mkdir()
+    target = tmp_path / "keep.json"
+    target.write_text("keep", encoding="utf-8")
+    try:
+        (directory / "linked.json").symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert http.delete("/themes/linked").status_code == 200
+    assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_update_and_remove_need_authentication(http):
+    http.headers.pop("Authorization")
+    assert http.post("/themes/gallery/forest/update").status_code == 401
+    assert http.delete("/themes/forest").status_code == 401
+
+
+def test_the_cli_searches_the_gallery(runner):
+    everything = runner.invoke(cli.app, ["themes", "gallery"])
+    assert "Forest" in everything.output and "Paper" in everything.output
+    dark = runner.invoke(cli.app, ["themes", "gallery", "forest", "dark"])
+    assert "Forest" in dark.output and "Paper" not in dark.output
+    light_forest = runner.invoke(cli.app, ["themes", "gallery", "forest", "light"])
+    assert light_forest.exit_code == 0 and "No gallery theme matches" in light_forest.output
+    assert "Version" in everything.output and "Available" in everything.output
+
+
+def test_the_cli_updates_and_removes_installed_themes(runner, home, monkeypatch):
+    example = _bundled(monkeypatch, version="1.1.0")
+    nothing = runner.invoke(cli.app, ["themes", "update"])
+    assert nothing.exit_code == 0 and "up to date" in nothing.output
+    write_theme(home.home, **{**example, "version": "1.0.0"})
+    assert "Update to 1.1.0" in runner.invoke(cli.app, ["themes", "gallery"]).output
+    updated = runner.invoke(cli.app, ["themes", "update"])
+    assert updated.exit_code == 0 and "Updated forest" in updated.output
+    assert themes.load_file(themes.theme_dir(home.home) / "forest.json")["version"] == "1.1.0"
+    again = runner.invoke(cli.app, ["themes", "update", "forest"])
+    assert again.exit_code == 1 and "up to date" in again.output
+
+    removed = runner.invoke(cli.app, ["themes", "remove", "forest"])
+    assert removed.exit_code == 0 and "Removed forest" in removed.output
+    assert not (themes.theme_dir(home.home) / "forest.json").exists()
+    missing = runner.invoke(cli.app, ["themes", "remove", "forest"])
+    assert missing.exit_code == 1
+    builtin = runner.invoke(cli.app, ["themes", "remove", "kova-dark"])
+    assert builtin.exit_code == 1 and "Built-in" in builtin.output
 def test_chat_view_defaults_are_validated_semantic_theme_tokens(home):
     write_theme(home.home, tokens={"chat": {
         "width": "wide", "message-style": "bubbles", "avatars": "off",

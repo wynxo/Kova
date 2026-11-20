@@ -97,6 +97,8 @@ EXPECTED = {
     ("POST", "/persona"): "settings:write",
     ("PATCH", "/memory/settings"): "settings:write",
     ("POST", "/themes/gallery/{theme_id}/install"): "settings:write",
+    ("POST", "/themes/gallery/{theme_id}/update"): "settings:write",
+    ("DELETE", "/themes/{theme_id}"): "settings:write",
     ("POST", "/jobs"): "host:exec",
     ("DELETE", "/jobs/{jid}"): "host:exec",
     ("POST", "/projects"): "host:exec",

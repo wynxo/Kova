@@ -37,6 +37,29 @@ dialog.theme-gallery {
   overflow-wrap: anywhere;
 }
 
+.theme-gallery-search {
+  inline-size: 100%;
+  margin-block-end: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg-default);
+  font: inherit;
+  font-size: var(--type-size-body);
+}
+
+.theme-gallery-search:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
+}
+
+.theme-gallery-card[hidden],
+.theme-gallery .btn[hidden],
+.theme-gallery-meta[hidden] { display: none; }
+
+.theme-gallery-meta { margin: var(--space-0); }
+
 .theme-gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-12) * 6 + var(--space-4))), 1fr));
@@ -89,4 +112,38 @@ dialog.theme-gallery {
   .theme-gallery[open] { animation: none; }
   .theme-gallery .btn { transition: none; }
   .theme-gallery .btn:active:not(:disabled) { transform: none; }
+}
+
+/* "Try" (#177): a bar over the real app while a theme is shown for 30 seconds. */
+.theme-try {
+  position: fixed;
+  inset-inline: var(--space-3);
+  inset-block-end: var(--space-3);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-inline-size: calc(var(--space-12) * 10);
+  margin-inline: auto;
+  padding: var(--space-3);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  font-size: var(--type-size-body);
+}
+
+.theme-try-note { flex: 1 1 auto; min-inline-size: 0; overflow-wrap: anywhere; }
+
+.theme-try-left {
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-try .btn:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: var(--space-0-5);
 }

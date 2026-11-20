@@ -1060,22 +1060,43 @@ def themes_list():
             _error_line(entry["error"])
 
 
+def _gallery_matches(entry: dict, query: str) -> bool:
+    """Every word of ``query`` appears in the theme's id, name, description, author or look."""
+    haystack = " ".join(str(entry.get(key) or "") for key in
+                        ("id", "name", "description", "author", "appearance")).lower()
+    return all(word in haystack for word in query.lower().split())
+
+
+def _gallery_status(entry: dict) -> str:
+    if not entry.get("installed"):
+        return "Available"
+    return f"Update to {entry['version']}" if entry.get("update") else "Installed"
+
+
 @_themes.command("gallery")
-def themes_gallery():
+def themes_gallery(query: list[str] = typer.Argument(
+        None, help="Show only themes whose name, description or look contains every word.")):
     """Browse themes bundled with Kova's offline gallery."""
     try:
         entries = get_client().theme_gallery()
     except KovaError as exc:
         _fail(str(exc))
-    table = _table(caption="Install with: kova themes install <id>")
+    words = " ".join(query or []).strip()
+    shown = [entry for entry in entries if _gallery_matches(entry, words)] if words else entries
+    if not shown:
+        _muted(f'No gallery theme matches "{words}". Run `kova themes gallery` to see them all.')
+        return
+    table = _table(caption="Install with: kova themes install <id> · "
+                           "update with: kova themes update · remove with: kova themes remove <id>")
     table.add_column("ID", no_wrap=True)
     table.add_column("Name")
     table.add_column("Appearance", no_wrap=True)
+    table.add_column("Version", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Description", overflow="fold")
-    for entry in entries:
+    for entry in shown:
         table.add_row(Text(entry["id"], style="bold"), Text(entry["name"]), entry["appearance"],
-                      "Installed" if entry["installed"] else "Available", Text(entry["description"]))
+                      entry.get("version") or "—", _gallery_status(entry), Text(entry["description"]))
     console.print(table)
 
 
@@ -1087,6 +1108,37 @@ def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `ko
     except KovaError as exc:
         _fail(str(exc))
     _ok(f"Installed {installed['id']}")
+
+
+@_themes.command("update")
+def themes_update(theme_id: str | None = typer.Argument(
+        None, help="One installed gallery theme; leave out to update every one that has a newer copy.")):
+    """Replace installed gallery themes with their newer bundled copies."""
+    client = get_client()
+    try:
+        if theme_id is None:
+            pending = [entry["id"] for entry in client.theme_gallery() if entry.get("update")]
+            if not pending:
+                _muted("Every installed gallery theme is up to date.")
+                return
+        else:
+            pending = [theme_id]
+        for name in pending:
+            client.update_gallery_theme(name)
+            _ok(f"Updated {name}")
+    except KovaError as exc:
+        _fail(str(exc))
+
+
+@_themes.command("remove")
+def themes_remove(theme_id: str = typer.Argument(..., help="An installed theme ID from `kova themes list`.")):
+    """Delete an installed theme file. Built-in themes cannot be removed."""
+    try:
+        get_client().remove_theme(theme_id)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f"Removed {theme_id}")
+    _muted("If it was your chosen theme, Kova follows your device until you pick another.")
 
 
 @_themes.command("show")
