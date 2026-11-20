@@ -13,7 +13,7 @@ from rich.text import Text
 
 from kova import theme
 
-from .style import blend, colour
+from .style import blend, colour, gradient_stops
 from .widgets import LOGO
 
 TAGLINE = "your private AI"
@@ -29,15 +29,16 @@ HELP_PANELS = {
 }
 
 
-def gradient_text(text: str, *, bold: bool = True, stops=theme.GRADIENT) -> Text:
-    """``text`` shaded left to right along Kova's gradient."""
+def gradient_text(text: str, *, bold: bool = True, stops=None) -> Text:
+    """``text`` shaded left to right along the active theme's gradient."""
+    stops = gradient_stops(stops)
     out = Text()
     visible = [index for index, char in enumerate(text) if not char.isspace()]
     last = max(1, len(visible) - 1)
     order = {index: position for position, index in enumerate(visible)}
     for index, char in enumerate(text):
         if index in order:
-            shade = colour(blend(stops, order[index] / last))
+            shade = blend(stops, order[index] / last)
             out.append(char, style=f"{'bold ' if bold else ''}{shade}")
         else:
             out.append(char)

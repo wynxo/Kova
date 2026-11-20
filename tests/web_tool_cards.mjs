@@ -91,3 +91,28 @@ assert.match(saved.node.textContent, /timing unavailable/);
 assert.equal(saved.node.children[0].attrs['aria-expanded'], 'false', 'history stays folded');
 assert.doesNotMatch(saved.node.textContent, /OK/);
 console.log('tool cards: ok');
+
+// A long output can be opened in the side panel (#182), as text.
+{
+  const opened = [];
+  const panelContext = {performance: {now: () => 0}, document: {createElement: tag => new Element(tag)},
+                        KovaDiff: {file: () => new Element('div')}, KovaPanel: {open: options => opened.push(options)}};
+  vm.createContext(panelContext);
+  vm.runInContext(readFileSync(new URL('../src/kova/web_assets/tool-cards.js', import.meta.url), 'utf8') + '\nglobalThis.cards = KovaToolCards;', panelContext);
+  const cards = panelContext.cards.create({now: () => 0});
+  const step = cards.add({name: 'shell', args: {}});
+  cards.result({name: 'shell', ok: true, output: '<b>' + 'y'.repeat(7000)});
+  const [, side] = byClass(step.body, 'tool-card-all');
+  assert.equal(side.textContent, 'Open in panel');
+  assert.equal(side.attrs['aria-label'], 'Open the output of shell in the side panel');
+  side.onclick();
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].title, 'shell output');
+  assert.equal(opened[0].node.tagName, 'pre');
+  assert.equal(opened[0].node.textContent.length, 7003, 'the panel shows all of it, as text');
+  assert.equal(opened[0].returnFocus, side);
+  const short = cards.add({name: 'shell', args: {}});
+  cards.result({name: 'shell', ok: true, output: 'short'});
+  assert.equal(byClass(short.body, 'tool-card-all').length, 0, 'short output needs no panel');
+  console.log('Tool output opens in the side panel passed');
+}

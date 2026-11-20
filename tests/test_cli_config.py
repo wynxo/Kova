@@ -236,7 +236,7 @@ def test_config_set_tui_key_and_refuses_a_duplicate(home):
         ("memory.consolidate_hour", "24", "between 0 and 23"),
         ("memory.consolidate_min_confidence", "1.1", "between 0 and 1"),
         ("memory.consolidate_max_loss", "-0.1", "between 0 and 1"),
-        ("tui.theme", "neon", "one of: dark, light"),
+        ("tui.theme", "neon", "No theme 'neon'"),
         ("persona.tone", "snarky", "one of"),
         ("persona.name", "", "1-40"),
         ("active", "missing", "not a configured model"),

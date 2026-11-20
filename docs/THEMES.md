@@ -214,6 +214,24 @@ checked it. The browser's `theme-color`, the desktop window and the installed ap
 manifest (`theme_color`, `background_color`) all take the theme's `bg.base`; the
 manifest uses the dark base for `system`, since a manifest cannot follow the device.
 
+## In the terminal
+
+The terminal chat and every `kova` command paint with the same themes. Each terminal
+role follows a semantic token (`accent.default` is the accent, `fg.muted` the quiet
+text, `status.danger` errors, and so on; the shell and "you" colours follow the theme's
+ANSI magenta and cyan), so a theme file needs nothing extra to work there.
+
+```sh
+kova themes use midnight-teal         # the terminal's theme, saved as [tui] theme
+kova themes use light --app           # the terminal and the app, on every paired device
+KOVA_THEME=forest kova                # one run only
+```
+
+`kova themes list` marks the terminal's theme with ●. Colours follow the terminal's
+depth: exact in 24-bit colour, the nearest match in 256 colours, and at 16 colours each
+role keeps a fixed meaning (red errors, green success) while the accent takes the basic
+colour nearest to the theme's.
+
 ## Make your own
 
 In **Settings > General > Theme**, choose **Customize…** to start from the current

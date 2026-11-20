@@ -1,8 +1,10 @@
 """Colour for Kova's terminal chat, at whatever depth the terminal has.
 
-Every colour is written once, as a truecolor SGR fragment built from the hex
+Every colour is written once, as a truecolor SGR fragment built from the role
 values in ``kova.theme`` (``ACCENT``, ``USER`` ...). A ``Palette`` paints with
-those fragments and quietly converts them for the terminal it is talking to:
+those fragments, swaps each role for the active theme's colour (the same semantic
+tokens the web app uses, mapped by ``kova.theme.terminal_theme``) and quietly
+converts the result for the terminal it is talking to:
 
 * level 3: 24-bit colour, exactly the theme's hex values
 * level 2: the nearest of the 256 xterm colours
@@ -20,43 +22,99 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+from functools import lru_cache
+from pathlib import Path
 
 from kova import theme
 
+_THEME_ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
+
+
+def _configured_theme() -> str:
+    from kova.config import kova_home
+    path = kova_home() / "config.toml"
+    try:
+        info = path.stat()
+        return _config_theme(str(path), info.st_mtime_ns, info.st_size)
+    except OSError:
+        return "dark"
+
+
+@lru_cache(maxsize=4)
+def _config_theme(path: str, _mtime: int, _size: int) -> str:
+    try:
+        data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        value = data.get("tui", {}).get("theme", "dark")
+    except (OSError, ValueError, AttributeError):
+        return "dark"
+    return value if isinstance(value, str) else "dark"
+
 
 def active_theme(configured: str | None = None) -> str:
-    """Resolve the terminal theme: environment, config, then dark.
+    """Resolve the terminal theme: ``KOVA_THEME``, then ``[tui] theme``, then dark.
 
-    Styling must not create or migrate a config just to print ``--help``.
-    Read only the theme setting and fall back safely for unreadable configs.
+    The answer is a theme id from ``kova themes list``, or ``dark``/``light`` for the
+    two built-ins. Styling must not create or migrate a config just to print
+    ``--help``, so only the theme setting is read and an unreadable config is dark.
+    A name that is not a theme id is dark too; one whose file is missing falls back
+    when its colours are resolved (``kova.theme.terminal_theme``).
     """
     name = os.environ.get("KOVA_THEME", "").strip()
     if not name:
-        if configured is None:
-            from kova.config import kova_home
-            try:
-                data = tomllib.loads((kova_home() / "config.toml").read_text(encoding="utf-8"))
-                configured = data.get("tui", {}).get("theme", "dark")
-            except (OSError, ValueError, AttributeError):
-                configured = "dark"
-        name = configured
-    return "light" if str(name).strip().lower() == "light" else "dark"
+        name = configured if configured is not None else _configured_theme()
+    name = str(name).strip().lower()
+    return name if name in theme.ALIASES or _THEME_ID.fullmatch(name) else "dark"
 
 
-def _translated_rgb(values, *, background: bool):
-    # Swap the two solid accent roles; soften other colours against light surfaces.
-    accent = _LIGHT_ACCENTS.get(values)
-    if accent is not None:
-        return accent
+def terminal_theme(theme_name: str | None = None) -> theme.TerminalTheme:
+    """The active (or named) theme's terminal roles."""
+    return theme.terminal_theme(theme_name or active_theme())
+
+
+def _paler(values, *, background: bool):
+    # Colours outside the theme (Pygments, a chat's own colour) on a light theme:
+    # darken text and pale tinted backgrounds so both stay readable.
     return tuple(round(235 + v * .06) if background else round(v * .48) for v in values)
 
 
+def resolve(value: str, terminal: theme.TerminalTheme, *, background: bool = False) -> str:
+    """One hex colour in ``terminal``'s palette.
+
+    A role constant from ``kova.theme`` becomes that role's colour in the theme, a
+    gradient stop becomes the theme's stop, and on a light theme any other colour
+    is adjusted for a light background. Everything else passes through unchanged.
+    """
+    key = rgb(value)
+    role = _REFERENCE.get(key)
+    if role is not None:
+        return terminal.roles[role]
+    stop = _GRADIENT_STOPS.get(key)
+    if stop is not None:
+        return terminal.gradient[stop]
+    if terminal.light:
+        return "#" + "".join(f"{v:02x}" for v in _paler(key, background=background))
+    return value
+
+
 def colour(role: str, *, background: bool = False, theme_name: str | None = None) -> str:
-    """Effective hex for a palette role (or gradient hex), before downscaling."""
-    value = getattr(theme, role) if not role.startswith("#") else role
-    if (theme_name or active_theme()) != "light":
-        return value
-    return "#" + "".join(f"{v:02x}" for v in _translated_rgb(rgb(value), background=background))
+    """Effective hex for a palette role (``"ACCENT"``) or role hex, before downscaling."""
+    terminal = terminal_theme(theme_name)
+    if not role.startswith("#"):
+        return terminal.roles[role]
+    return resolve(role, terminal, background=background)
+
+
+def gradient_stops(stops=None, theme_name: str | None = None) -> tuple[str, ...]:
+    """The theme's logo gradient, or ``stops`` mapped into the active theme."""
+    terminal = terminal_theme(theme_name)
+    if stops is None:
+        return terminal.gradient
+    return tuple(_stop(stop, terminal) for stop in stops)
+
+
+def _stop(value: str, terminal: theme.TerminalTheme) -> str:
+    index = _ALL_STOPS.get(rgb(value))
+    return terminal.gradient[index] if index is not None else resolve(value, terminal)
 
 
 # ------------------------------------------------------------------ hex and RGB
@@ -76,10 +134,10 @@ def bg(hex_colour: str) -> str:
     return f"48;2;{r};{g};{b}"
 
 
-_LIGHT_ACCENTS = {
-    rgb(theme.ACCENT): rgb(theme.ON_ACCENT),
-    rgb(theme.ON_ACCENT): rgb(theme.ACCENT),
-}
+# Which role (or logo gradient stop) a colour written in ``kova.theme`` stands for.
+_REFERENCE = {rgb(getattr(theme, role)): role for role in reversed(theme.ROLES)}
+_ALL_STOPS = {rgb(stop): index for index, stop in enumerate(theme.GRADIENT)}
+_GRADIENT_STOPS = {key: index for key, index in _ALL_STOPS.items() if key not in _REFERENCE}
 
 
 # Kova's roles, as SGR fragments (see kova/theme.py for what each one is for).
@@ -131,11 +189,32 @@ def _nearest_16(r: int, g: int, b: int, background: bool) -> int:
     return (30 + index) if index < 8 else (90 + index - 8)
 
 
-# Where the nearest basic colour would lose a role's meaning, pin it by hand.
-_BASIC_ROLES = {rgb(theme.ACCENT): 97, rgb(theme.ON_ACCENT): 30, rgb(theme.USER): 36,
-                rgb(theme.MUTED): 90, rgb(theme.FAINT): 90, rgb(theme.BORDER): 90,
-                rgb(theme.CODE): 33, rgb(theme.MEMORY): 94, rgb(theme.BASH): 35,
-                rgb(theme.WARNING): 33, rgb(theme.ERROR): 91, rgb(theme.SUCCESS): 32}
+# Where the nearest basic colour would lose a role's meaning, pin it by hand. At 16
+# colours the terminal's own palette draws these, so they name a meaning, not a hue.
+_PINS = {"ACCENT": 97, "ON_ACCENT": 30, "USER": 36, "MUTED": 90, "FAINT": 90, "BORDER": 90,
+         "CODE": 33, "MEMORY": 94, "BASH": 35, "WARNING": 33, "ERROR": 91, "SUCCESS": 32}
+_BASIC_ROLES = {rgb(getattr(theme, role)): pin for role, pin in _PINS.items()}
+
+
+def _chromatic(hex_colour: str) -> bool:
+    channels = rgb(hex_colour)
+    return max(channels) - min(channels) >= 64
+
+
+def basic_pins(terminal: theme.TerminalTheme) -> dict[str, int]:
+    """Each role's 16-colour code in ``terminal``.
+
+    A light theme swaps the accent pair (black text, white chips), and a theme with
+    a coloured accent takes the basic colour nearest to it; every other role keeps
+    its meaning (green for success, red for errors) on any background.
+    """
+    pins = dict(_PINS)
+    if terminal.light:
+        pins["ACCENT"], pins["ON_ACCENT"] = _PINS["ON_ACCENT"], _PINS["ACCENT"]
+    accent = terminal.roles["ACCENT"]
+    if "ACCENT" in terminal.changed and _chromatic(accent):
+        pins["ACCENT"] = _nearest_16(*rgb(accent), False)
+    return pins
 
 
 def downgrade(codes: str, level: int) -> str:
@@ -192,9 +271,10 @@ class Palette:
 
     ``Palette(True)`` paints in 256 colours, ``Palette(False)`` not at all, and
     ``Palette(level)`` at an explicit depth (see ``colour_level``).
-    ``theme_name`` picks the background family: the default ``dark`` keeps the
-    theme's colours as written; ``light`` darkens foregrounds and pales tinted
-    backgrounds so they stay readable on a light terminal.
+    ``theme_name`` is the theme to paint with (a theme id, or ``dark``/``light``
+    for the built-ins); by default the active one (``active_theme``). Codes are
+    written with the role colours of ``kova.theme`` and swapped for the theme's
+    own colours here, just before downscaling.
     """
 
     def __init__(self, color: bool | int = True, *, theme_name: str | None = None):
@@ -202,24 +282,61 @@ class Palette:
             color = 2
         self.level = max(0, min(3, int(color or 0)))
         self.color = self.level > 0
-        self.theme_name = (theme_name or active_theme()).lower()
+        self.theme_name = theme_name or active_theme()
+
+    @property
+    def theme_name(self) -> str:
+        return self._theme_name
+
+    @theme_name.setter
+    def theme_name(self, value: str) -> None:
+        self._theme_name = str(value).lower()
+        self.terminal = theme.terminal_theme(self._theme_name)
+        self._pins = basic_pins(self.terminal)
+
+    def hex(self, value: str) -> str:
+        """A role colour (or any hex) as this palette's theme draws it."""
+        return resolve(value, self.terminal)
 
     def _codes(self, codes: str) -> str:
-        if self.theme_name == "light":
-            def translate(match):
-                kind = match.group(1)
-                values = tuple(int(match.group(i)) for i in (2, 3, 4))
-                if self.level == 1 and values not in _LIGHT_ACCENTS:
+        terminal = self.terminal
+
+        def translate(match):
+            kind = match.group(1)
+            values = tuple(int(match.group(i)) for i in (2, 3, 4))
+            role = _REFERENCE.get(values)
+            if self.level == 1:
+                pin = self._pins.get(role) if role else None
+                if pin is None:
                     return match.group(0)
-                values = _translated_rgb(values, background=kind == "48")
-                return f"{kind};2;{values[0]};{values[1]};{values[2]}"
-            codes = _TRUECOLOR.sub(translate, codes)
-        return downgrade(codes, self.level)
+                return str(pin + 10 if kind == "48" else pin)
+            if role is not None:
+                values = rgb(terminal.roles[role])
+            elif values in _GRADIENT_STOPS:
+                values = rgb(terminal.gradient[_GRADIENT_STOPS[values]])
+            elif terminal.light:
+                values = _paler(values, background=kind == "48")
+            else:
+                return match.group(0)
+            return f"{kind};2;{values[0]};{values[1]};{values[2]}"
+        return downgrade(_TRUECOLOR.sub(translate, codes), self.level)
 
     def paint(self, codes: str, text: str) -> str:
         if not (self.color and text):
             return text
         return f"\x1b[{self._codes(codes)}m{text}\x1b[0m"
+
+    def paint_resolved(self, codes: str, text: str) -> str:
+        """Paint with colours already in this theme: downscale them, nothing else."""
+        if not (self.color and text):
+            return text
+        return f"\x1b[{downgrade(codes, self.level)}m{text}\x1b[0m"
+
+    def paint_mixed(self, codes: str, resolved: str, text: str) -> str:
+        """``codes`` in role colours plus ``resolved`` ones already in this theme."""
+        if not (self.color and text):
+            return text
+        return f"\x1b[{self._codes(codes)};{downgrade(resolved, self.level)}m{text}\x1b[0m"
 
     def sgr(self, codes: list[str]) -> str:
         if not self.color:
@@ -252,11 +369,13 @@ class Palette:
             return self.paint(f"1;{fg(theme.ON_ACCENT)};{bg(colour)}", f" {text} ")
         if self.level == 1:
             return self.paint("7;1;" + fg(colour), f" {text} ")
+        fill = self.hex(colour)
+        surface = self.terminal.roles["SURFACE"]
         if solid:
-            # Non-accent fills stay pale in the light theme.
-            ink = theme.SURFACE if self.theme_name == "light" else theme.ON_ACCENT
-            return self.paint(f"1;{fg(ink)};{bg(colour)}", f" {text} ")
-        return self.paint(f"{fg(colour)};{bg(mix(colour, theme.SURFACE, 0.78))}", f" {text} ")
+            # A light theme writes pale text on its darker status colours.
+            ink = surface if self.terminal.light else self.terminal.roles["ON_ACCENT"]
+            return self.paint_resolved(f"1;{fg(ink)};{bg(fill)}", f" {text} ")
+        return self.paint_resolved(f"{fg(fill)};{bg(mix(fill, surface, 0.78))}", f" {text} ")
 
     def gradient(self, text: str, stops=None, *, bold: bool = False) -> str:
         return gradient(text, self, stops, bold=bold)
@@ -281,20 +400,24 @@ def blend(stops, position: float) -> str:
 
 
 def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
-    """``text`` coloured left to right along ``stops`` (Kova's gradient by default)."""
+    """``text`` coloured left to right along ``stops`` (the theme's gradient by default).
+
+    ``stops`` are written in ``kova.theme`` colours, like every other code, and are
+    mapped into the palette's theme before blending.
+    """
     if not p.color or not text:
         return text
     weight = "1;" if bold else ""
     if p.level == 1:
         return p.paint(weight + (fg(stops[0]) if stops else ACCENT), text)
-    stops = stops or theme.GRADIENT
+    stops = p.terminal.gradient if stops is None else [_stop(stop, p.terminal) for stop in stops]
     visible = [index for index, char in enumerate(text) if not char.isspace()]
     if len(visible) <= 1:
-        return p.paint(weight + fg(stops[0]), text)
+        return p.paint_resolved(weight + fg(stops[0]), text)
     out, last = [], None
     for order, index in enumerate(visible):
         colour = blend(stops, order / (len(visible) - 1))
-        codes = p._codes(weight + fg(colour))
+        codes = downgrade(weight + fg(colour), p.level)
         start = visible[order - 1] + 1 if order else 0
         out.append(text[start:index])
         out.append(text[index] if codes == last else f"\x1b[{codes}m{text[index]}")
@@ -305,4 +428,5 @@ def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
 
 __all__ = ["ACCENT", "ACCENT_END", "ACCENT_SOFT", "BASH", "BORDER", "CODE", "ERROR", "FAINT",
            "HEADING", "MEMORY", "MUTED", "SELECT", "SUCCESS", "USER", "WARNING", "Palette", "bg",
-           "active_theme", "blend", "colour", "colour_level", "downgrade", "fg", "gradient", "mix", "rgb"]
+           "active_theme", "basic_pins", "blend", "colour", "colour_level", "downgrade", "fg",
+           "gradient", "gradient_stops", "mix", "resolve", "rgb", "terminal_theme"]
