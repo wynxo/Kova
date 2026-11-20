@@ -4,6 +4,10 @@ rem Pulls the latest code (fast-forward only), refreshes the dependencies, and
 rem updates the installed kova command too if you have one.
 setlocal
 cd /d "%~dp0"
+set "UV_TOOL_BIN_DIR=%USERPROFILE%\.local\bin"
+set "UV_TOOL_DIR=%USERPROFILE%\.local\share\uv\tools"
+set "UV_PYTHON_INSTALL_DIR=%USERPROFILE%\.local\share\uv\python"
+set "UV_CACHE_DIR=%USERPROFILE%\.cache\uv"
 
 where uv >nul 2>nul
 if not errorlevel 1 goto have_uv
@@ -39,13 +43,15 @@ if errorlevel 1 (
 )
 echo + Dependencies are current.
 
-rem If Kova is also installed as a uv tool, update that copy too.
+rem If Kova is also installed as a uv tool, refresh that copy too. Run uv
+rem directly: the installed command may not import until this refresh, for
+rem example when the new revision added a dependency the tool environment lacks.
 where kova >nul 2>nul
 if not errorlevel 1 (
     echo - Updating the installed kova command ...
-    kova update
+    uv tool install --force --refresh --python 3.12 --editable "%CD%"
     if errorlevel 1 (
-        echo Could not update Kova: the installed kova command could not be updated. Try: kova update
+        echo Could not update Kova: the installed kova command could not be updated. Retry: install.bat --dev
         exit /b 1
     )
 )

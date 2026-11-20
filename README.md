@@ -105,7 +105,7 @@ Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --
 
 | Do this | Installed command | From a checkout |
 | --- | --- | --- |
-| Update | `kova update` | `./update` (`update.bat`) pulls, refreshes dependencies, and updates the installed command too |
+| Update | `kova update` | `./update` (`update.bat`) pulls, refreshes dependencies, and reinstalls the installed command from the checkout |
 | Reinstall | | `./reinstall` (`reinstall.bat`) removes the installed command and installs again from the checkout; chats, memory, and settings are kept |
 | Uninstall | `kova uninstall` | `./uninstall` (`uninstall.bat`); add `--keep-data` or `--purge` |
 

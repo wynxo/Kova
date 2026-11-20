@@ -1,4 +1,4 @@
-"""Run the installers with disposable homes and a recording uv executable.
+"""Run the installers and checkout updaters with disposable homes and recording uv executables.
 
 The POSIX half needs ``/bin/sh``; the Windows half needs PowerShell 7 and the
 Windows registry provider. Each half skips on the platform where it cannot run,
@@ -196,6 +196,132 @@ def test_standalone_uninstall_refuses_purging_home(installer):
     assert result.returncode == 1
     assert "Refusing" in result.stderr
     assert not (home / "uv-args").exists()
+
+
+@pytest.fixture
+def checkout_update(tmp_path):
+    """A disposable checkout with recording uv/git, so no real install or pull runs."""
+    home = tmp_path / "home"
+    home.mkdir()
+    checkout = tmp_path / "checkout"
+    (checkout / "desktop").mkdir(parents=True)
+    (checkout / "desktop/package.json").write_text("{}")
+    shutil.copy2(REPO / "update", checkout / "update")
+    (checkout / "update").chmod(0o755)
+
+    path = tmp_path / "path"
+    path.mkdir()
+    uv = path / "uv"
+    uv.write_text(
+        '#!/bin/sh\n'
+        'printf "CALL\\n" >> "$HOME/uv-log"\n'
+        'for arg in "$@"; do printf "%s\\n" "$arg" >> "$HOME/uv-log"; done\n'
+        'printf "ENV %s|%s|%s|%s\\n" "$UV_TOOL_BIN_DIR" "$UV_TOOL_DIR" '
+        '"$UV_PYTHON_INSTALL_DIR" "$UV_CACHE_DIR" >> "$HOME/uv-log"\n'
+        'if [ "$1" = "tool" ] && [ "${FAKE_UV_TOOL_EXIT:-0}" != "0" ]; then\n'
+        '    exit "$FAKE_UV_TOOL_EXIT"\n'
+        'fi\n'
+        'exit 0\n'
+    )
+    uv.chmod(0o755)
+    git = path / "git"
+    git.write_text(
+        '#!/bin/sh\n'
+        'case "$1" in\n'
+        '    rev-parse)\n'
+        '        case "$2" in\n'
+        '            --is-inside-work-tree) printf "true\\n" ;;\n'
+        '            --short) printf "aaaaaaa\\n" ;;\n'
+        '            *) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;\n'
+        '        esac ;;\n'
+        '    symbolic-ref) printf "refs/heads/main\\n" ;;\n'
+        '    status|pull) ;;\n'
+        '    *) exit 1 ;;\n'
+        'esac\n'
+    )
+    git.chmod(0o755)
+    for command in ("cp", "rm", "mkdir", "basename", "dirname"):
+        (path / command).symlink_to(shutil.which(command))
+
+    env = {**os.environ, "HOME": str(home), "PATH": str(path)}
+    for key in ("KOVA_HOME", "KOVA_SOURCE", "KOVA_REF", "SUDO_USER", "SUDO_UID"):
+        env.pop(key, None)
+    env["KOVA_HOME"] = str(home / ".kova")
+
+    def run(*, tool_exit=0):
+        env["FAKE_UV_TOOL_EXIT"] = str(tool_exit)
+        return subprocess.run(
+            ["/bin/bash", str(checkout / "update")],
+            capture_output=True, text=True, env=env, cwd=checkout,
+        )
+
+    return home, checkout, env, run
+
+
+def uv_calls(home):
+    """The recorded uv invocations, each as {"args": [...], "env": "…"}."""
+    calls = []
+    for line in (home / "uv-log").read_text().splitlines():
+        if line == "CALL":
+            calls.append({"args": [], "env": None})
+        elif line.startswith("ENV "):
+            calls[-1]["env"] = line[4:]
+        else:
+            calls[-1]["args"].append(line)
+    return calls
+
+
+def break_installed_kova(home):
+    kova = home / ".local/bin/kova"
+    kova.parent.mkdir(parents=True)
+    kova.write_text(
+        '#!/bin/sh\n'
+        ': > "$HOME/kova-ran"\n'
+        'echo "ModuleNotFoundError: No module named \'tomlkit\'" >&2\n'
+        'exit 1\n'
+    )
+    kova.chmod(0o755)
+
+
+@requires_posix
+def test_checkout_update_refreshes_a_broken_tool_without_running_it(checkout_update):
+    home, checkout, env, run = checkout_update
+    break_installed_kova(home)
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert not (home / "kova-ran").exists()
+    calls = uv_calls(home)
+    assert calls[0]["args"] == ["sync"]
+    assert calls[-1]["args"] == [
+        "tool", "install", "--force", "--refresh", "--python", "3.12",
+        "--editable", str(checkout),
+    ]
+    assert calls[-1]["env"] == "|".join([
+        str(home / ".local/bin"),
+        str(home / ".local/share/uv/tools"),
+        str(home / ".local/share/uv/python"),
+        str(home / ".cache/uv"),
+    ])
+
+
+@requires_posix
+def test_checkout_update_without_an_installed_command_stays_standalone(checkout_update):
+    home, checkout, env, run = checkout_update
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert [call["args"] for call in uv_calls(home)] == [["sync"]]
+
+
+@requires_posix
+def test_checkout_update_failure_suggests_recovery_that_needs_no_kova(checkout_update):
+    home, checkout, env, run = checkout_update
+    break_installed_kova(home)
+    result = run(tool_exit=1)
+    assert result.returncode == 1
+    assert "Retry: ./install" in result.stderr
+    assert "Try: kova update" not in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+    assert not (home / "kova-ran").exists()
 
 
 # --------------------------------------------------------------------------
@@ -517,6 +643,31 @@ def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_install
     )
     assert result.returncode != 0
     assert not (home / ".local" / "share" / "kova" / "uninstall.ps1").exists()
+
+
+@requires_windows
+def test_windows_update_refreshes_a_broken_tool_without_running_it(windows_installer, tmp_path):
+    home, stub, env, run = windows_installer
+    checkout = tmp_path / "checkout"
+    (checkout / "desktop").mkdir(parents=True)
+    (checkout / "desktop/package.json").write_text("{}", encoding="utf-8")
+    shutil.copy2(REPO / "update.bat", checkout / "update.bat")
+    # A kova that would leave a marker and fail if the updater called it.
+    (home / ".local/bin/kova.exe").unlink()
+    (home / ".local/bin/kova.cmd").write_text(
+        '@echo ran>"%USERPROFILE%\\kova-ran"\r\n@exit /b 1\r\n', encoding="utf-8",
+    )
+    env = {**env, "PATH": os.pathsep.join([str(home / ".local/bin"), env["PATH"]])}
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/c", "update.bat"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=checkout,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (home / "kova-ran").exists()
+    args = (home / "uv-args").read_text(encoding="utf-8").splitlines()
+    assert args[:7] == ["tool", "install", "--force", "--refresh", "--python", "3.12", "--editable"]
+    assert Path(args[7]) == checkout
 
 
 @requires_posix
