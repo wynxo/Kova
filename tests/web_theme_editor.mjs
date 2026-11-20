@@ -39,6 +39,8 @@ const downloaded = [];
 const selected = [];
 let closes = 0;
 let pauseRecheck;
+  let clipboardText = '';
+  const navigator = {clipboard: {writeText: async text => { clipboardText = text;}}};
 const theme = {
   choice: () => 'system', appearance: () => 'dark',
   detailUrl: id => `/themes/${encodeURIComponent(id)}`,
@@ -67,6 +69,7 @@ const window = {KovaTheme: theme};
 vm.runInNewContext(source, {
   window, document: {body, createElement: tag => new Node(tag)},
   CSS: {supports: () => true},
+  navigator,
   URL: {createObjectURL: blob => { downloaded.push(blob); return 'blob:theme'; }, revokeObjectURL() {}},
   Blob, setTimeout: fn => setTimeout(fn, 0), clearTimeout,
   fetch: async (url, options) => {
@@ -227,5 +230,51 @@ assert.deepEqual(calls.find(call => call.url === '/themes').payload, imported);
 assert.deepEqual(selected, ['portable-theme']);
 assert.equal(previews.at(-1), null);
 assert.equal(closes, 2);
+  // ---- Share string export and import (#176)
+  await open();
+  await change(byId('theme-editor-base'), 'my-light', 'change');
+  await settle();
+  const copyButton = button('Copy share string');
+  const importStringButton = button('Import string');
+  const share = byId('theme-editor-share');
+  const fgStr = body.find(node => node.attributes['aria-label'] === 'fg.default hex');
+  const good = fgStr.value; // the valid default for the loaded theme
 
-console.log('Theme editor: editable palette, live validation, preview, import, export and Save passed');
+  // A valid draft copies a share string that carries the Kova prefix.
+  assert.equal(copyButton.disabled, false);
+  copyButton.click();
+  const copied = clipboardText;
+  assert.ok(copied.startsWith('kova-theme:'), 'the share string carries the Kova prefix');
+  const tokensBefore = JSON.parse(JSON.stringify(previews.at(-1).tokens));
+  const idBefore = byId('theme-editor-id').value;
+
+   // Pasting that share string imports it identically to a file.
+   share.value = copied;
+   await importStringButton.click();
+   await settle();
+  assert.deepEqual(previews.at(-1).tokens, tokensBefore, 'a pasted share string imports identically');
+  assert.equal(byId('theme-editor-id').value, idBefore, 'the theme id round-trips through the share string');
+  assert.equal(calls.at(-1).url, '/themes?validate_only=true', 'import string reuses file validation');
+  const countBefore = previews.length;
+
+  // A string without the prefix is rejected without repainting.
+  share.value = 'not a share string';
+  await importStringButton.click();
+  await settle();
+  assert.equal(previews.length, countBefore, 'a malformed share string never paints');
+
+  // The copy button waits for a valid draft.
+  await change(fgStr, '#12', 'input');
+  await settle();
+  assert.equal(copyButton.disabled, true, 'Copy share string waits for a valid draft');
+  await change(fgStr, good, 'input');
+  await settle();
+  assert.equal(copyButton.disabled, false);
+
+  await button('Cancel').click();
+  await settle();
+  assert.equal(previews.at(-1), null);
+  assert.equal(closes, 3);
+
+  console.log('Theme editor: editable palette, live validation, preview, import, export, share string and Save passed');
+

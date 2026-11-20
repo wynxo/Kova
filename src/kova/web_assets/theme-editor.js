@@ -93,6 +93,50 @@
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  // A share string is a compact, paste-safe encoding of a theme so it can be
+  // copied and imported on another device. It round-trips the theme exactly:
+  // the minified JSON is made ASCII-safe, then base64url encoded.
+  const SHARE_PREFIX = 'kova-theme:';
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  function encodeBase64url(str) {
+    let out = '';
+    for (let i = 0; i < str.length; i += 3) {
+      const a = str.charCodeAt(i);
+      const b = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      const c = i + 2 < str.length ? str.charCodeAt(i + 2) : 0;
+      const n = (a << 16) | (b << 8) | c;
+      out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] +
+        (i + 1 < str.length ? B64[(n >> 6) & 63] : '=') + (i + 2 < str.length ? B64[n & 63] : '=');
+    }
+    return out;
+  }
+  function decodeBase64url(str) {
+    let out = '';
+    for (let i = 0; i < str.length; i += 4) {
+      const a = B64.indexOf(str[i]);
+      const b = B64.indexOf(str[i + 1]);
+      const c = str[i + 2] === '=' ? 0 : B64.indexOf(str[i + 2]);
+      const d = str[i + 3] === '=' ? 0 : B64.indexOf(str[i + 3]);
+      const n = (a << 18) | (b << 12) | (c << 6) | d;
+      out += String.fromCharCode((n >> 16) & 255);
+      if (str[i + 2] !== '=') out += String.fromCharCode((n >> 8) & 255);
+      if (str[i + 3] !== '=') out += String.fromCharCode(n & 255);
+    }
+    return out;
+  }
+  function asciiSafe(json) {
+    return json.replace(/[^\x21-\x7e]/g, char => '\\u' + ('0000' + char.charCodeAt(0).toString(16)).slice(-4));
+  }
+  function shareString(draft) {
+    return SHARE_PREFIX + encodeBase64url(asciiSafe(JSON.stringify(draft)));
+  }
+  function parseShareString(str) {
+    if (typeof str !== 'string' || !str.startsWith(SHARE_PREFIX)) throw new Error('Not a Kova theme share string.');
+    const payload = str.slice(SHARE_PREFIX.length);
+    // The ASCII codec can expand a character to a six-byte JSON escape.
+    if (payload.length > MAX_FILE_BYTES * 8) throw new Error('Theme share string is too large.');
+    return JSON.parse(decodeBase64url(payload));
+  }
 
   function dismiss() {
     if (!editor) return true;
@@ -128,15 +172,25 @@
     file.type = 'file';
     file.accept = '.json,application/json';
     file.hidden = true;
+    const share = el('input');
+    share.id = 'theme-editor-share';
+    share.type = 'text';
+    share.maxLength = 2000;
+    share.spellcheck = false;
+    share.autocapitalize = 'none';
+    share.setAttribute('aria-label', 'Share string to import');
+    share.placeholder = 'Paste a theme share string';
+    const importStringButton = button('Import string');
 
     const importButton = button('Import');
     const exportButton = button('Export');
+    const copyButton = button('Copy share string');
     const cancel = button('Cancel', 'quiet');
     const save = button('Save', 'primary');
     const reset = button('Reset to base', 'quiet');
     reset.addEventListener('click', () => resetToBase());
     const sources = el('div', 'theme-editor-sources');
-    sources.append(field('theme-editor-base', 'Start from', base), importButton, file);
+    sources.append(field('theme-editor-base', 'Start from', base), importButton, share, importStringButton, file);
     const identity = el('fieldset', 'theme-editor-identity');
     identity.append(field('theme-editor-name', 'Name', name), field('theme-editor-id', 'Theme ID', id));
     const groups = el('fieldset', 'theme-editor-groups');
@@ -148,7 +202,7 @@
     const notice = el('p', 'theme-editor-notice');
     notice.setAttribute('role', 'status');
     const actions = el('div', 'theme-editor-actions');
-    actions.append(reset, cancel, exportButton, save);
+    actions.append(reset, cancel, exportButton, copyButton, save);
     const footer = el('footer', 'theme-editor-footer');
     footer.append(checks, notice, actions);
     panel.append(title, body, footer);
@@ -174,6 +228,8 @@
       base.disabled = importButton.disabled = busy;
       identity.disabled = groups.disabled = busy || !draft;
       save.disabled = exportButton.disabled = busy || !valid;
+      copyButton.disabled = busy || !valid;
+      importStringButton.disabled = busy;
       cancel.disabled = saving;
       reset.disabled = busy || !draft;
     }
@@ -441,6 +497,16 @@
       loadDraft(makeDraft(palette, sourceId, options), palette, sourceId);
       await check(true);
     }
+    async function applyImport(incoming) {
+      const palette = await request(CHECK_URL, incoming);
+      if (editor !== session) return;
+      clearTimeout(reviewTimer);
+      revision += 1;
+      if (!imported.parentNode) base.append(imported);
+      loadDraft(incoming, palette, imported.value);
+      valid = true;
+      report(['Contrast checks passed.']);
+    }
 
     base.addEventListener('change', () => replace(() => choose(base.value), 'Could not load the starting theme.'));
     name.addEventListener('input', () => { draft.name = name.value; check(); });
@@ -463,15 +529,29 @@
         let incoming;
         try { incoming = JSON.parse(await chosen.text()); }
         catch (_) { throw new Error('Choose a valid theme JSON file.'); }
-        const palette = await request(CHECK_URL, incoming);
-        if (editor !== session) return;
-        clearTimeout(reviewTimer);
-        revision += 1;
-        if (!imported.parentNode) base.append(imported);
-        loadDraft(incoming, palette, imported.value);
-        valid = true;
-        report(['Contrast checks passed.']);
+        await applyImport(incoming);
       }, 'Could not import this theme.');
+    });
+    importStringButton.addEventListener('click', () => {
+      const text = share.value.trim();
+      share.value = '';
+      return replace(async () => {
+        let incoming;
+        try { incoming = parseShareString(text); }
+        catch (_) { throw new Error('Paste a valid theme share string.'); }
+        await applyImport(incoming);
+      }, 'Could not import this theme.');
+    });
+    copyButton.addEventListener('click', async () => {
+      const str = shareString(draft);
+      try {
+        await navigator.clipboard.writeText(str);
+        notice.textContent = 'Share string copied to clipboard.';
+      } catch (_) {
+        share.value = str;
+        share.select?.();
+        notice.textContent = 'Paste the share string to import it on another device.';
+      }
     });
     save.addEventListener('click', async () => {
       if (!valid || busy) return;
