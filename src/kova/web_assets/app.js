@@ -912,7 +912,7 @@
             el('span', '', `${group.provider || 'Kova'} · ${group.kind} · ${group.local ? 'loopback' : 'remote'} · ${group.requests} requests · ${group.bytes_out} out / ${group.bytes_in} in · tokens ${group.tokens_in ?? '?'} / ${group.tokens_out ?? '?'}`));
           list.append(row);
         }
-        const timeline = el('details'), heading = el('summary', '', report.truncated ? 'Latest 1000 requests (totals include all)' : 'Request timeline');
+        const timeline = el('details'), heading = el('summary', 'privacy-timeline-toggle', report.truncated ? 'Latest 1000 requests (totals include all)' : 'Request timeline');
         timeline.append(heading);
         for (const item of report.items) {
           const row = el('p', '', `${item.created} · ${item.host} · ${item.kind} · ${item.status} · ${item.bytes_out} out / ${item.bytes_in} in`);
@@ -2026,6 +2026,13 @@
       return result.paths || [];
     },
   }) || null;
+  // The message box is the target, not just its ~35px text line (#201): a
+  // click on the card's padding focuses the prompt. Controls inside the card
+  // keep their own click.
+  $('composer').addEventListener('click', event => {
+    if (event.target.closest('button, a, input, select, textarea, label, summary')) return;
+    $('prompt').focus();
+  });
   $('composer').addEventListener('submit', send);
   $('prompt').addEventListener('input', () => { promptChanged(); rememberDraft(); composerModules.mentions?.input(); });
   $('prompt').addEventListener('keydown', event => {

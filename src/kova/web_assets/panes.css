@@ -37,6 +37,19 @@
   cursor:col-resize;
   touch-action:none;
 }
+/* The divider stays a hairline, but below the top bar the pointer target
+   reaches the 24px minimum (#201) into the conversation, where only padding
+   sits. The top bar keeps its full width, so its sidebar toggle is never
+   covered by the drag target. */
+.pane-splitter::before {
+  content:"";
+  position:absolute;
+  top:calc(var(--space-12) + var(--space-1));
+  bottom:0;
+  width:var(--space-6);
+}
+#sidebar-splitter::before { left:0; }
+#side-panel-splitter::before { right:0; }
 .pane-splitter::after {
   content:"";
   position:absolute;
