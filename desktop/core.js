@@ -37,6 +37,12 @@ function serverCommand(source, home, find = executable) {
 function external(url) {
   try { return ['https:', 'http:', 'mailto:'].includes(new URL(url).protocol); } catch { return false; }
 }
+// The side panel can pop a tab out into its own window (#182). Only a blank,
+// same-origin window the panel names `kova-panel-<n>` may open; the page then
+// moves the tab into it. Everything else window.open asks for stays denied.
+function panelWindow(url, frameName) {
+  return url === 'about:blank' && /^kova-panel-\d{1,9}$/.test(String(frameName || ''));
+}
 // The only permission the local page may request is OS notifications.
 function permissionAllowed(permission) {
   return permission === 'notifications';
@@ -107,4 +113,4 @@ function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
   result.maximized = saved.maximized === true;
   return result;
 }
-module.exports = {settings, executable, external, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK};
+module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK};

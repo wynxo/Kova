@@ -77,6 +77,7 @@
   overflow-wrap: anywhere;
 }
 .tool-card-input { color: var(--fg-muted); }
+.tool-card-more { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-self: start; }
 .tool-card-all {
   justify-self: start;
   padding: var(--space-1) var(--space-2);

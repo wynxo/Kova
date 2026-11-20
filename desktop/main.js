@@ -3,7 +3,7 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, globalShortcut, c
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, permissionAllowed, windowState, isAction, trayStatus, quickAsk, quickChatId} = require('./core');
+const {settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, quickChatId} = require('./core');
 let win, tray, child, quick, quitting = false, starting = false, origin, home;
 let appName = 'Kova', trayState = 'idle';
 const icon = path.join(__dirname, 'assets/icon.png');
@@ -161,9 +161,24 @@ async function create() {
     if (/^#[0-9a-f]{6}$/i.test(color || '')) win.setBackgroundColor(color);
   });
   win.on('close', e => { saveBounds(); if (!quitting && tray) { e.preventDefault(); win.hide(); } });
-  win.webContents.setWindowOpenHandler(({url}) => {
+  win.webContents.setWindowOpenHandler(({url, frameName}) => {
+    // A side-panel tab popped out into its own window: a blank page the app fills.
+    if (panelWindow(url, frameName)) {
+      return {action: 'allow', overrideBrowserWindowOptions: {minWidth: 320, minHeight: 240, icon,
+        autoHideMenuBar: true, backgroundColor: win.getBackgroundColor?.() || '#0d0d10'}};
+    }
     if (external(url) && new URL(url).origin !== origin) shell.openExternal(url);
     return {action: 'deny'};
+  });
+  // A popped-out panel window may not open more windows or navigate anywhere.
+  win.webContents.on('did-create-window', child => {
+    child.setMenu?.(null);
+    child.webContents.setWindowOpenHandler(({url}) => {
+      if (external(url) && new URL(url).origin !== origin) shell.openExternal(url);
+      return {action: 'deny'};
+    });
+    child.webContents.on('will-navigate', event => event.preventDefault());
+    child.webContents.on('will-attach-webview', event => event.preventDefault());
   });
   win.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); if (external(url)) shell.openExternal(url); }
