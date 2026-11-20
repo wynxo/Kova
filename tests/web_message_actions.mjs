@@ -106,6 +106,10 @@ const walk = node => [node, ...node.children.flatMap(child => child.className ==
 }
 
 assert.equal(detailRows({usage: null, model: '', toolCount: null}).length, 0);
+const partialUsage = detailRows({usage: {completion_tokens: 17, cost_usd: 0}});
+assert.deepEqual(Array.from(partialUsage, row => Array.from(row)),
+  [['Tokens', '17 out'], ['Cost', '~$0.00']]);
+
 console.log('message actions: ok');
 
 {

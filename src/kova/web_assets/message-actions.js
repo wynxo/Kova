@@ -45,7 +45,9 @@
   }
 
   function money(value) {
-    return value < 0.01 ? `$${value.toFixed(4).replace(/0+$/, '')}` : `$${value.toFixed(2)}`;
+    return value > 0 && value < 0.01
+      ? `$${value.toFixed(6).replace(/0+$/, '')}`
+      : `$${value.toFixed(2)}`;
   }
 
   // Only fields that were actually sent become rows; nothing is inferred.
@@ -57,7 +59,10 @@
     if (u.provider) rows.push(['Provider', u.provider]);
     if (u.prompt_tokens != null || u.completion_tokens != null) {
       const mark = u.estimated ? '~' : '';
-      rows.push(['Tokens', `${mark}${shortTokens(u.prompt_tokens)} in · ${mark}${shortTokens(u.completion_tokens)} out`]);
+      const counts = [];
+      if (u.prompt_tokens != null) counts.push(`${mark}${shortTokens(u.prompt_tokens)} in`);
+      if (u.completion_tokens != null) counts.push(`${mark}${shortTokens(u.completion_tokens)} out`);
+      rows.push(['Tokens', counts.join(' · ')]);
     }
     if (u.tokens_per_second) rows.push(['Speed', `${u.tokens_per_second} tok/s`]);
     const times = [];
