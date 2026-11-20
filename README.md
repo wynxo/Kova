@@ -257,8 +257,8 @@ The CLI starts the server for you in the background, so normally you don't have 
 - `kova config path|show [--json]|set KEY VALUE` — read or change `config.toml`; secrets are always redacted. Every key is documented in [docs/CONFIG.md](docs/CONFIG.md).
 - `kova chats search <words>` — search inside your chats; results show the chat number, title, when, and a snippet with the match highlighted.
 - `kova chats export <#|id> [--md|--json]` — print one chat to stdout, as Markdown (default) or JSON.
-- `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
-- `kova import PATH [--merge|--replace]` — restore a backup. Merge is the default and skips chats/notes that already exist; `--replace` asks first, then replaces chats, Kova's memory notes, and reminders.
+- `kova export [PATH]` — write one zip backup (default `~/Kova-backup-YYYY-MM-DD.zip`) with chats as JSON and Markdown, projects, memory notes, reminders, and `config.toml` without API keys; the server token is never included.
+- `kova import PATH [--merge|--replace]` — restore a backup. Merge is the default and skips chats/projects/notes that already exist; `--replace` asks first, then replaces chats, projects, Kova's memory notes, and reminders.
 
 Inside a chat:
 

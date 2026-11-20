@@ -613,8 +613,9 @@ project** inside that group; **Move to project** in a chat's menu moves an
 existing chat. The CLI supports `kova projects list|create|show|edit|rm` and
 `kova chats move <chat> <project|none>`; project commands take the ID from list.
 
-Project-scoped memory files and pinned files are follow-ups. Backup restore currently imports the chats ungrouped;
-round-tripping project definitions and membership is also a follow-up.
+Project-scoped memory files and pinned files are follow-ups. Backups carry project
+definitions and chat membership, including archives written before projects
+existed (see the data-layout section above).
 
 ### Usage and cost
 
@@ -885,10 +886,24 @@ context = 32768                          # token budget for history trimming
 ```
 
 Backups (`src/kova/backup.py`, `kova export` / `kova import`) are ordinary
-zips: `manifest.json`, chat JSON plus Markdown, memory notes, reminders, and
-`config.toml` with API keys, provider headers and MCP `env`/`headers` stripped. The token is never included. Update and
+zips: `manifest.json`, `projects.json`, chat JSON plus Markdown, memory notes,
+reminders, and `config.toml` with API keys, provider headers and MCP
+`env`/`headers` stripped. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
+
+`projects.json` keeps each project's name, instructions, look, default model
+and folder, and every chat JSON keeps its `project_id`, so a restore returns
+chats to their project. A folder below the home folder is written as `~/...`,
+so an archive never spells out the account name. A restore expands it and keeps
+it only when it exists and is a directory; it never creates one, and a project
+whose folder is missing here has no default folder. Projects are restored
+before chats. Merge skips a project that is already here (same id; the creation
+time tells a locally renamed copy from an unrelated one) and imports one whose
+id belongs to a different local project under a fresh id, moving only the chats
+that came with the archive. An archive from before projects existed has no
+`projects.json`; its chats import ungrouped. `--replace` clears local projects
+along with chats, reminders and Kova's notes, so an older archive leaves none.
 
 ## Plugins
 

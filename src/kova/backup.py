@@ -1,8 +1,10 @@
-"""Portable backup and restore: one zip with config, chats, notes and reminders.
+"""Portable backup and restore: one zip with config, projects, chats, notes and reminders.
 
 Backups are deliberately boring: plain JSON, Markdown and TOML inside a zip,
 so they can be read without Kova. API keys and the server token are never
 written, and in Obsidian mode only Kova's own ``<vault>/Kova/`` notes travel.
+Project folders are written relative to the home folder, so an archive never
+spells out the account it came from.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import tomllib
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 import tomli_w
 
@@ -24,7 +27,7 @@ from kova.memory import Memory
 from kova.store import Store
 
 BACKUP_FORMAT = "kova-backup"
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 DEFAULT_PREFIX = "Kova-backup-"
 
 
@@ -53,6 +56,70 @@ def _target_path(path: Path | str | None) -> Path:
 def _safe_component(value: str) -> str:
     """A filename-safe version of a chat id (never a path)."""
     return re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_") or "chat"
+
+
+def _home_folder() -> Path:
+    """The home folder project folders are written relative to (a test seam)."""
+    return Path.home()
+
+
+def _portable_path(value: str | None, home: Path | None = None) -> str | None:
+    """A project folder as ``~/...`` when it sits below the home folder.
+
+    Archives are portable and meant to be shareable, so they never spell out
+    the account name. A folder elsewhere is kept as it is: it names no account.
+    """
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        return None
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError:
+        return None
+    if not path.is_absolute():
+        return None
+    try:
+        relative = path.resolve().relative_to((home or _home_folder()).resolve())
+    except (OSError, RuntimeError, ValueError):
+        return str(path)
+    return "~/" + relative.as_posix() if relative.parts else "~"
+
+
+def _local_folder(value: str | None, home: Path | None = None) -> str | None:
+    """An existing folder on this machine from a backup, or ``None``.
+
+    A restore never creates a folder and never adopts one that is not there:
+    that keeps a project's default from pointing at a path from another
+    machine, and new chats fall back to Kova Files instead of failing.
+    """
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        return None
+    text = value
+    base = home or _home_folder()
+    if text == "~" or text.startswith("~/"):
+        text = str(base) + text[1:]
+    path = Path(text)
+    if not path.is_absolute():
+        return None
+    try:
+        path = path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return str(path) if path.is_dir() else None
+
+
+def _project_entry(project: dict) -> dict:
+    """One project as the archive stores it."""
+    return {
+        "id": project.get("id"),
+        "name": project.get("name"),
+        "instructions": project.get("instructions") or "",
+        "cwd": _portable_path(project.get("cwd")),
+        "created": project.get("created"),
+        "updated": project.get("updated"),
+        "colour": project.get("colour"),
+        "icon": project.get("icon"),
+        "model": project.get("model"),
+    }
 
 
 def _note_files(root: Path) -> list[Path]:
@@ -143,14 +210,16 @@ def export_archive(
 ) -> dict:
     """Write one zip backup and return counts plus its path.
 
-    Chats are stored twice: ``chats/<id>.json`` for a faithful restore and
-    ``chats/<id>.md`` so the archive is pleasant to read. Memory notes are
+    Projects are ``projects.json``, with their folders relative to the home
+    folder. Chats are stored twice: ``chats/<id>.json`` for a faithful restore
+    and ``chats/<id>.md`` so the archive is pleasant to read. Memory notes are
     copied as-is. The server token is never read or written.
     """
     target = _target_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     store = store or Store(cfg.home / "kova.db")
     memory = Memory(cfg.memory_path, cfg.memory_write_subdir)
+    projects = store.list_projects()
     chats = store.list_chats()
     reminders = store.list_reminders(include_done=True)
     notes = [
@@ -164,6 +233,7 @@ def export_archive(
         "version": BACKUP_VERSION,
         "app_version": __version__,
         "created": created,
+        "projects": len(projects),
         "chats": len(chats),
         "notes": len(notes),
         "reminders": len(reminders),
@@ -172,9 +242,11 @@ def export_archive(
     }
     readme = (
         f"Kova backup — {created}\n\n"
-        f"{len(chats)} chats, {len(notes)} memory notes, {len(reminders)} reminders.\n\n"
+        f"{len(chats)} chats, {len(projects)} projects, {len(notes)} memory notes, "
+        f"{len(reminders)} reminders.\n\n"
         "config.toml is included without API keys. Re-add a key with:\n"
         "  kova model add NAME URL MODEL --key KEY\n\n"
+        "Project folders are written relative to your home folder (~/...).\n"
         "The server token file is never included.\n"
         "Restore with: kova import this-file.zip\n"
     )
@@ -188,6 +260,11 @@ def export_archive(
             archive.writestr("README.txt", readme)
             archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
             archive.writestr("config.toml", _config_bytes(cfg))
+            archive.writestr(
+                "projects.json",
+                json.dumps([_project_entry(project) for project in projects],
+                           indent=2, ensure_ascii=False) + "\n",
+            )
             for chat in chats:
                 full = store.get_chat(chat["id"], include_created=True)
                 if full is None:
@@ -207,6 +284,7 @@ def export_archive(
         raise
     return {
         "path": str(target),
+        "projects": len(projects),
         "chats": len(chats),
         "notes": len(notes),
         "reminders": len(reminders),
@@ -311,6 +389,75 @@ def _restore_models(cfg: Config, data: dict) -> bool:
     return True
 
 
+def _same_project(local: dict, project: dict) -> bool:
+    """Whether a project already in the store is the one the archive came from.
+
+    The id is the identity. The name and the creation time only tell an edited
+    local copy (same project) from an unrelated project that reuses the id.
+    """
+    if local.get("name") == project.get("name"):
+        return True
+    return bool(project.get("created")) and local.get("created") == project.get("created")
+
+
+def _restore_projects(store: Store, projects: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
+    """Restore project definitions before their chats and map archived ids.
+
+    A project already here keeps its local name, instructions and folder. An id
+    that belongs to a different project (a hand-edited or foreign archive) is
+    imported under a fresh id, so the archive neither overwrites nor fails.
+    """
+    mapping: dict[str, str] = {}
+    taken = {project["id"] for project in store.list_projects()}
+
+    def fresh_id() -> str:
+        while True:
+            candidate = uuid4().hex[:12]
+            if candidate not in taken:
+                taken.add(candidate)
+                return candidate
+
+    imported = skipped = remapped = 0
+    for project in projects:
+        name = project.get("name") if isinstance(project, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            # A hand-edited archive may carry junk entries; skip them rather
+            # than lose the chats and notes that are still readable.
+            skipped += 1
+            continue
+        source_id = project.get("id") if isinstance(project.get("id"), str) else ""
+        target_id = source_id
+        local = store.get_project(target_id) if target_id else None
+        if local is not None and _same_project(local, project):
+            skipped += 1
+            mapping[source_id] = local["id"]
+            continue
+        if local is not None:
+            target_id = fresh_id()
+            remapped += 1
+        elif not target_id:
+            target_id = fresh_id()
+        else:
+            taken.add(target_id)
+        try:
+            added = store.import_project({
+                **project,
+                "id": target_id,
+                # The folder is only kept when it is a real folder here.
+                "cwd": _local_folder(project.get("cwd")),
+            })
+        except (TypeError, ValueError) as exc:
+            raise BackupError(f"Could not restore a project: {exc}") from exc
+        if added:
+            imported += 1
+        else:
+            # A second entry with the same id in one archive keeps the first.
+            skipped += 1
+        if source_id:
+            mapping[source_id] = target_id
+    return mapping, {"imported": imported, "skipped": skipped, "remapped": remapped}
+
+
 def import_archive(
     cfg: Config,
     path: Path | str,
@@ -318,10 +465,12 @@ def import_archive(
     merge: bool = True,
     store: Store | None = None,
 ) -> dict:
-    """Restore a backup. Merge keeps existing chats/notes/reminders.
+    """Restore a backup. Merge keeps existing chats/projects/notes/reminders.
 
-    A replace clears chats, reminders and Kova's own memory notes first; it
-    never touches notes outside ``<vault>/Kova/`` in Obsidian mode.
+    Projects are restored before their chats, so membership survives; a chat
+    from an archive without projects imports ungrouped. A replace clears
+    chats, projects, reminders and Kova's own memory notes first; it never
+    touches notes outside ``<vault>/Kova/`` in Obsidian mode.
     """
     source = Path(path).expanduser()
     if not source.is_file():
@@ -341,8 +490,18 @@ def import_archive(
             name for name in names
             if _memory_relative(name) is not None and name.endswith(".md")
         ]
-        if not chat_names and not memory_names and "reminders.json" not in names:
+        if (not chat_names and not memory_names and "reminders.json" not in names
+                and "projects.json" not in names):
             raise BackupError("That zip does not look like a Kova backup.")
+
+        projects = []
+        if "projects.json" in names:
+            try:
+                projects = json.loads(archive.read("projects.json"))
+            except ValueError as exc:
+                raise BackupError("Invalid projects.json in the backup.") from exc
+            if not isinstance(projects, list):
+                raise BackupError("Invalid projects.json in the backup.")
 
         chats = []
         for name in chat_names:
@@ -379,7 +538,13 @@ def import_archive(
     store = store or Store(cfg.home / "kova.db")
     if not merge:
         store.clear_chats()
+        store.clear_projects()
         store.clear_reminders()
+
+    # Projects come first: a chat can only join one that exists. Archives from
+    # before projects carry a chat's project_id with no definition, and those
+    # chats import ungrouped.
+    project_ids, project_counts = _restore_projects(store, projects)
 
     chat_ids = {chat["id"] for chat in store.list_chats()} if merge else set()
     chats_imported = chats_skipped = 0
@@ -387,8 +552,10 @@ def import_archive(
         if merge and chat.get("id") in chat_ids:
             chats_skipped += 1
             continue
+        archived_project = chat.get("project_id")
+        restored_project = project_ids.get(archived_project) if isinstance(archived_project, str) else None
         try:
-            imported = store.import_chat(chat)
+            imported = store.import_chat({**chat, "project_id": restored_project})
         except (ValueError, TypeError) as exc:
             raise BackupError(f"Could not restore a chat: {exc}") from exc
         if imported:
@@ -448,6 +615,9 @@ def import_archive(
 
     return {
         "path": str(source),
+        "projects": project_counts["imported"],
+        "projects_skipped": project_counts["skipped"],
+        "projects_remapped": project_counts["remapped"],
         "chats": chats_imported,
         "chats_skipped": chats_skipped,
         "notes": notes_imported,

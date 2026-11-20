@@ -63,6 +63,41 @@ def test_store_moves_chats_without_touching_their_folder(tmp_path):
         store.move_chat(incognito["id"], project["id"])
 
 
+def test_store_imports_a_project_and_chat_membership(tmp_path):
+    """A restore reuses the same import path as chats, keeping ids and links."""
+    store = Store(tmp_path / "kova.db")
+    saved = {
+        "id": "project-1", "name": "Research", "instructions": "Cite sources.",
+        "cwd": str(tmp_path), "created": "2026-01-01T00:00:00+00:00",
+        "updated": "2026-01-02T00:00:00+00:00", "colour": "warning",
+        "icon": "sun", "model": "local",
+    }
+    assert store.import_project(saved) is True
+    assert store.import_project(saved) is False
+    assert store.get_project(saved["id"]) == saved
+
+    assert store.import_chat({"id": "chat-one", "title": "Grouped",
+                              "project_id": saved["id"], "messages": []})
+    assert store.get_chat("chat-one")["project_id"] == saved["id"]
+    # A link with no project here is dropped instead of failing the foreign key.
+    assert store.import_chat({"id": "chat-two", "project_id": "missing", "messages": []})
+    assert store.get_chat("chat-two")["project_id"] is None
+    assert store.import_chat({"id": "chat-three", "project_id": 7, "messages": []})
+    assert store.get_chat("chat-three")["project_id"] is None
+
+
+def test_store_import_keeps_a_hand_edited_project_readable(tmp_path):
+    """Unknown look and missing fields fall back instead of failing a restore."""
+    store = Store(tmp_path / "kova.db")
+    assert store.import_project({"id": "p", "name": "  Notes  ", "colour": "#ff0000"})
+    saved = store.get_project("p")
+    assert (saved["name"], saved["instructions"], saved["cwd"]) == ("Notes", "", None)
+    assert (saved["colour"], saved["icon"], saved["model"]) == (None, None, None)
+    assert saved["created"] and saved["updated"]
+    with pytest.raises(ValueError):
+        store.import_project({"id": "q", "name": "   "})
+
+
 # ------------------------------------------------------------------ server
 def test_project_colour_icon_and_model_are_validated(server):
     client, headers, _, _ = server
