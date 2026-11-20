@@ -117,8 +117,8 @@ cookie, so a route added to the router is authenticated by construction.
 | --- | --- | --- |
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
-| `GET/POST /projects` | token or session | list / create projects; writes need `host:exec` from a paired phone |
-| `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
+| `GET/POST /projects` | token or session | list / create projects, including pinned file references; writes need `host:exec` from a paired phone |
+| `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit (including its pinned references) or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
 | `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` when creating a persistent chat |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
@@ -139,8 +139,9 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
-| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again in place, replacing the reply it produced |
-| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run its turn again |
+| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again as a new alternative; the previous reply stays stored |
+| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run it again as a new alternative |
+| `POST /chats/{chat_id}/alternatives` | token or session | show one stored attempt of the newest turn by `turn_id` and 1-based `index`; nothing is deleted |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
 | `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
@@ -566,7 +567,8 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
 - `projects` — id, name, instructions, optional cwd, created, updated, and nullable
-  colour, icon and default model
+  colour, icon and default model, plus `files` (a JSON list of project-relative
+  pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
@@ -574,8 +576,8 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`)
-so older databases keep working. Search uses an FTS5 virtual table
+`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`,
+`files`) so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
@@ -605,16 +607,28 @@ A project may also carry a colour and an icon (the same keys and semantic tokens
 chat uses, #213) and a default model. New chats in the project use that model
 unless they pick one; a default whose model entry was removed later is skipped.
 
+A project can also pin files from its working folder. Pins are **references**:
+paths relative to the project folder (absolute paths, `~`, `..` and control
+characters are refused), at most 20 per project, stored as names only. Kova
+never reads pinned files for this feature or sends their names or contents to
+the model. Pinning grants no additional file access. Changing a project's folder
+requires sending its pinned list in the same `PATCH` (or clearing it first), so
+references never silently retarget. Saving pins needs `host:exec`, like the
+instructions they accompany.
+
 In the web sidebar, projects are collapsed by default above ungrouped chats. Each
 section shows its colour or icon, and opening it shows the project at a glance:
-its folder, default model and the start of its instructions. Use **New project**
-to set up shared instructions, a folder, a model and a look, then **New chat in
-project** inside that group; **Move to project** in a chat's menu moves an
-existing chat. The CLI supports `kova projects list|create|show|edit|rm` and
-`kova chats move <chat> <project|none>`; project commands take the ID from list.
+its folder, default model, pinned files and the start of its instructions. Use
+**New project** to set up shared instructions, a folder, pinned files, a model
+and a look, then **New chat in project** inside that group; **Move to project**
+in a chat's menu moves an existing chat. The CLI supports
+`kova projects list|create|show|edit|rm` (with repeatable `--pin`/`--unpin` and
+`--clear-pins` on `create`/`edit`) and `kova chats move <chat> <project|none>`;
+project commands take the ID from list.
 
-Project-scoped memory files and pinned files are follow-ups. Backup restore currently imports the chats ungrouped;
-round-tripping project definitions and membership is also a follow-up.
+Project-scoped memory files are a follow-up. Backups carry project definitions,
+pinned references and chat membership, including archives written before
+projects existed (see the data-layout section above).
 
 ### Usage and cost
 
@@ -885,10 +899,27 @@ context = 32768                          # token budget for history trimming
 ```
 
 Backups (`src/kova/backup.py`, `kova export` / `kova import`) are ordinary
-zips: `manifest.json`, chat JSON plus Markdown, memory notes, reminders, and
-`config.toml` with API keys, provider headers and MCP `env`/`headers` stripped. The token is never included. Update and
+zips: `manifest.json`, `projects.json`, chat JSON plus Markdown, memory notes,
+reminders, and `config.toml` with API keys, provider headers and MCP
+`env`/`headers` stripped. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
+
+`projects.json` keeps each project's name, instructions, look, default model,
+pinned file references and folder, and every chat JSON keeps its `project_id`,
+so a restore returns chats to their project. Pinned files travel as relative
+references only; the files themselves are never copied. A folder below the home
+folder is written as `~/...`,
+so an archive never spells out the account name. A restore expands it and keeps
+it only when it exists and is a directory; it never creates one, and a project
+whose folder is missing here has no default folder or pinned files, because a
+reference has no base without it. Projects are restored
+before chats. Merge skips a project that is already here (same id; the creation
+time tells a locally renamed copy from an unrelated one) and imports one whose
+id belongs to a different local project under a fresh id, moving only the chats
+that came with the archive. An archive from before projects existed has no
+`projects.json`; its chats import ungrouped. `--replace` clears local projects
+along with chats, reminders and Kova's notes, so an older archive leaves none.
 
 ## Plugins
 

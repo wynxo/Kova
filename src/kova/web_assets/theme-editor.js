@@ -132,7 +132,10 @@
   }
   function parseShareString(str) {
     if (typeof str !== 'string' || !str.startsWith(SHARE_PREFIX)) throw new Error('Not a Kova theme share string.');
-    return JSON.parse(decodeBase64url(str.slice(SHARE_PREFIX.length)));
+    const payload = str.slice(SHARE_PREFIX.length);
+    // The ASCII codec can expand a character to a six-byte JSON escape.
+    if (payload.length > MAX_FILE_BYTES * 8) throw new Error('Theme share string is too large.');
+    return JSON.parse(decodeBase64url(payload));
   }
 
   function dismiss() {
@@ -184,6 +187,8 @@
     const copyButton = button('Copy share string');
     const cancel = button('Cancel', 'quiet');
     const save = button('Save', 'primary');
+    const reset = button('Reset to base', 'quiet');
+    reset.addEventListener('click', () => resetToBase());
     const sources = el('div', 'theme-editor-sources');
     sources.append(field('theme-editor-base', 'Start from', base), importButton, share, importStringButton, file);
     const identity = el('fieldset', 'theme-editor-identity');
@@ -197,7 +202,7 @@
     const notice = el('p', 'theme-editor-notice');
     notice.setAttribute('role', 'status');
     const actions = el('div', 'theme-editor-actions');
-    actions.append(cancel, exportButton, copyButton, save);
+    actions.append(reset, cancel, exportButton, copyButton, save);
     const footer = el('footer', 'theme-editor-footer');
     footer.append(checks, notice, actions);
     panel.append(title, body, footer);
@@ -206,6 +211,7 @@
     let draft;
     let tokens;
     let source;
+    let parentPalette;
     let busy = true;
     let saving = false;
     let valid = false;
@@ -224,6 +230,8 @@
       save.disabled = exportButton.disabled = busy || !valid;
       copyButton.disabled = busy || !valid;
       importStringButton.disabled = busy;
+      cancel.disabled = saving;
+      reset.disabled = busy || !draft;
     }
 
     function report(messages) {
@@ -430,6 +438,7 @@
       draft = next;
       tokens = {...palette.tokens};
       source = nextSource;
+      parentPalette = palette;
       name.value = draft.name;
       id.value = draft.id;
       incomplete.clear();
@@ -442,6 +451,25 @@
       }
       groups.append(backgroundSection());
       paint();
+    }
+
+    // Revert every edited colour and any background back to the base theme the
+    // draft started from, leaving the base and the theme's name and ID alone.
+    function resetToBase() {
+      if (busy || !draft || !parentPalette) return;
+      const nested = {};
+      for (const [key, value] of Object.entries(parentPalette.tokens)) {
+        const [group, role] = key.split('.');
+        (nested[group] ??= {})[role] = value;
+      }
+      draft.tokens = nested;
+      if (parentPalette.background) {
+        draft.background = JSON.parse(JSON.stringify(parentPalette.background));
+      } else {
+        delete draft.background;
+      }
+      loadDraft(draft, parentPalette, source);
+      check();
     }
 
     async function replace(operation, errorLabel) {

@@ -842,7 +842,9 @@ def test_phone_cannot_edit_shared_project_guidance_or_inherit_unshared_folder(ko
     project_id = made.json()["id"]
     path = f"/projects/{project_id}"
     assert client.post("/projects", headers=phone, json={"name": "Phone project"}).status_code == 403
-    assert client.patch(path, headers=phone, json={"instructions": "Untrusted"}).status_code == 403
+    assert client.patch(path, headers=phone, json={
+        "instructions": "Untrusted", "files": ["notes/a.md"],
+    }).status_code == 403
     assert client.delete(path, headers=phone).status_code == 403
     assert client.post("/chats", headers=phone, json={"project_id": project_id}).status_code == 403
 

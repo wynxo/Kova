@@ -336,3 +336,58 @@ def test_saved_chat_style_overrides_theme_defaults_on_first_login(chromium, kova
     finally:
         context.close()
         kova.set_preferences({"theme": "system", "message_style": "theme"})
+
+
+def test_reduced_transparency_uses_solid_theme_panels(chromium, kova):
+    from playwright.sync_api import expect
+
+    previous = kova.preferences()
+    kova._request("POST", "/themes", json={
+        "id": "backdrop",
+        "name": "Backdrop",
+        "version": "1.0.0",
+        "appearance": "dark",
+        "extends": "kova-dark",
+        "background": {"kind": "gradient", "stops": ["#14121c", "#1c1a26"]},
+    })
+    context = chromium.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        kova.set_preferences({
+            "theme": "backdrop",
+            "backgrounds": "on",
+            "motion": "full",
+        })
+        page = context.new_page()
+        with page.expect_response(kova.base_url + "/events") as events:
+            assert page.goto(f"{kova.base_url}/app#ticket={kova.app_ticket()}").ok
+        assert events.value.ok
+        root = page.locator("html")
+        expect(root).to_have_attribute("data-background", "gradient")
+
+        expect(page.locator("main")).not_to_have_css("backdrop-filter", "none")
+        session = context.new_cdp_session(page)
+        session.send("Emulation.setEmulatedMedia", {
+            "features": [{"name": "prefers-reduced-transparency", "value": "reduce"}],
+        })
+        assert page.evaluate("matchMedia('(prefers-reduced-transparency: reduce)').matches")
+
+        for selector, token in [
+            ("#sidebar", "--bg-surface"),
+            ("main", "--bg-base"),
+            (".composer", "--bg-surface"),
+        ]:
+            panel = page.locator(selector)
+            opaque = panel.evaluate("""(node, token) => {
+                const probe = document.createElement('span');
+                probe.style.color = 'var(' + token + ')';
+                node.append(probe);
+                const color = getComputedStyle(probe).color;
+                probe.remove();
+                return color;
+            }""", token)
+            expect(panel).to_have_css("backdrop-filter", "none")
+            expect(panel).to_have_css("background-color", opaque)
+    finally:
+        context.close()
+        kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
+        kova.remove_theme("backdrop")

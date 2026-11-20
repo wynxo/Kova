@@ -185,4 +185,18 @@ assert.ok(byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split
 context.localStorage.getItem = () => { throw new Error('blocked'); };
 await context.panel.open({chatId: 'c1', checkpointId: 9, path: 'app.py', request: async () => structuredClone(edited)});
 assert.ok(!byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split'), 'blocked storage falls back to unified');
+// Keep file marks every pending hunk in the current panel without a write.
+let requests = 0;
+await context.panel.open({chatId: 'c1', checkpointId: 10, path: 'notes.txt', request: async (_url, options) => {
+  assert.equal(options, undefined);
+  requests += 1;
+  return {...structuredClone(view), segments: [...view.segments, ...edited.segments]};
+}});
+const keepFile = byClass(byClass(panel.node, 'diff-panel-meta')[0], 'btn')
+  .find(control => control.textContent === 'Keep file');
+assert.ok(keepFile);
+keepFile.click();
+assert.equal(requests, 1);
+assert.equal(byClass(panel.node, 'diff-hunk-kept').length, 2);
+assert.equal(keepFile.disabled, true);
 console.log('diff panel ok');
