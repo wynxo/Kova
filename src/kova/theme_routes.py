@@ -14,7 +14,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from kova import pairing, themes
+from kova import catalog, egress, pairing, themes
+from kova.config import Config
 from kova.theme_contrast import contrast_failures
 
 MAX_THEME_BYTES = 32 * 1024
@@ -82,7 +83,7 @@ def _replace(home: Path, theme_id: str, serialized: bytes) -> None:
 
 def _version(value: Any) -> tuple[int, int, int] | None:
     """A ``major.minor.patch`` string as a tuple, or None for anything else."""
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value) if isinstance(value, str) else None
+    match = re.fullmatch(r"([0-9]{1,32})\.([0-9]{1,32})\.([0-9]{1,32})", value) if isinstance(value, str) else None
     return tuple(int(part) for part in match.groups()) if match else None
 
 
@@ -134,7 +135,40 @@ def _prepare_gallery_theme(theme_id: str, document: Any) -> tuple[dict, bytes]:
     return result, serialized
 
 
-def install_theme_routes(api: APIRouter, home: Path) -> None:
+def install_theme_routes(api: APIRouter, config: Config) -> None:
+    home = config.home
+
+    def configured_catalog() -> catalog.Catalog | None:
+        url = config.catalog_url.strip()
+        if not url or url in ("bundled", catalog.BUNDLED_SCHEME):
+            return None
+        try:
+            return catalog.load(url, fallback=False, kinds=("theme",))
+        except (egress.LocalOnlyError, ValueError, RecursionError):
+            return None  # The bundled gallery is usable without the configured index.
+
+    def community_document(entry: catalog.Entry, index: catalog.Catalog) -> dict:
+        try:
+            data = catalog.read_theme(entry, index, limit=MAX_THEME_BYTES)
+            document = json.loads(data.decode("utf-8"))
+        except (OSError, ValueError, RecursionError, egress.LocalOnlyError) as exc:
+            raise HTTPException(422, "Could not verify the configured catalog theme.") from exc
+        if (not isinstance(document, dict) or document.get("version") != entry.version
+                or _version(entry.version) is None):
+            raise HTTPException(422, "The theme version does not match its catalog entry.")
+        return document
+
+    def gallery_document(theme_id: str) -> dict:
+        bundled = _gallery_documents()
+        if theme_id in bundled:
+            return bundled[theme_id]
+        index = configured_catalog()
+        if index:
+            for entry in index.entries:
+                if entry.name == theme_id and entry.available:
+                    return community_document(entry, index)
+        raise HTTPException(404, "No theme in the gallery with that ID. Run `kova themes gallery`.")
+
     @api.get("/themes/assets/{name}")
     async def theme_asset(name: str) -> FileResponse:
         """One background image from KOVA_HOME/themes/assets, authenticated.
@@ -162,13 +196,23 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
 
     @api.get("/themes/gallery")
     def list_gallery(installed: bool = False) -> list[dict] | dict:
-        """Show bundled themes, or resolve a custom theme literally named gallery."""
+        """Show gallery themes, or resolve a custom theme literally named gallery."""
         if installed:
             return show_theme("gallery")
         installed_versions = {entry["id"]: entry.get("version")
                               for entry in list_themes() if not entry["error"]}
         entries = []
-        for theme_id, document in _gallery_documents().items():
+        documents = _gallery_documents()
+        index = configured_catalog()
+        if index:
+            for entry in index.entries:
+                if not entry.available or entry.name in documents:
+                    continue
+                try:
+                    documents[entry.name] = community_document(entry, index)
+                except HTTPException:
+                    continue
+        for theme_id, document in documents.items():
             try:
                 result, _ = _prepare_gallery_theme(theme_id, document)
             except HTTPException as exc:
@@ -194,21 +238,17 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
     @api.post("/themes/gallery/{theme_id}/install", status_code=201,
               dependencies=[Depends(_require_settings_write)])
     def install_gallery_theme(theme_id: str) -> dict:
-        """Install a validated copy of a bundled theme without overwriting a file."""
-        documents = _gallery_documents()
-        if theme_id not in documents:
-            raise HTTPException(404, "No theme in the gallery with that ID. Run `kova themes gallery`.")
-        result, serialized = _prepare_gallery_theme(theme_id, documents[theme_id])
+        """Install a validated copy of a gallery theme without overwriting a file."""
+        document = gallery_document(theme_id)
+        result, serialized = _prepare_gallery_theme(theme_id, document)
         _install(home, result["id"], serialized)
         return result
 
     @api.post("/themes/gallery/{theme_id}/update", dependencies=[Depends(_require_settings_write)])
     def update_gallery_theme(theme_id: str) -> dict:
-        """Replace an installed gallery theme with the bundled, newer copy."""
-        documents = _gallery_documents()
-        if theme_id not in documents:
-            raise HTTPException(404, "No theme in the gallery with that ID. Run `kova themes gallery`.")
-        result, serialized = _prepare_gallery_theme(theme_id, documents[theme_id])
+        """Replace an installed gallery theme with a newer gallery copy."""
+        document = gallery_document(theme_id)
+        result, serialized = _prepare_gallery_theme(theme_id, document)
         path = themes.theme_dir(home) / f"{theme_id}.json"
         if not path.is_file():
             raise HTTPException(409, "That theme is not installed. Install it first.")
@@ -216,7 +256,7 @@ def install_theme_routes(api: APIRouter, home: Path) -> None:
             have = _version(themes.load_file(path).get("version"))
         except themes.ThemeError:
             have = None  # a broken file is exactly what an update should repair
-        offered = _version(documents[theme_id]["version"])
+        offered = _version(document["version"])
         if have is not None and offered is not None and offered <= have:
             raise HTTPException(409, "That theme is already up to date.")
         _replace(home, theme_id, serialized)

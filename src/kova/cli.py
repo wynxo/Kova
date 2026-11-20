@@ -1083,7 +1083,7 @@ def _gallery_status(entry: dict) -> str:
 @_themes.command("gallery")
 def themes_gallery(query: list[str] = typer.Argument(
         None, help="Show only themes whose name, description or look contains every word.")):
-    """Browse themes bundled with Kova's offline gallery."""
+    """Browse bundled themes and themes from an explicitly configured catalog."""
     try:
         entries = get_client().theme_gallery()
     except KovaError as exc:
@@ -1109,7 +1109,7 @@ def themes_gallery(query: list[str] = typer.Argument(
 
 @_themes.command("install")
 def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `kova themes gallery`.")):
-    """Install one bundled gallery theme without changing the active theme."""
+    """Install one gallery theme without changing the active theme."""
     try:
         installed = get_client().install_gallery_theme(theme_id)
     except KovaError as exc:
@@ -1120,7 +1120,7 @@ def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `ko
 @_themes.command("update")
 def themes_update(theme_id: str | None = typer.Argument(
         None, help="One installed gallery theme; leave out to update every one that has a newer copy.")):
-    """Replace installed gallery themes with their newer bundled copies."""
+    """Replace installed gallery themes with their newer gallery copies."""
     client = get_client()
     try:
         if theme_id is None:
@@ -1149,10 +1149,18 @@ def themes_remove(theme_id: str = typer.Argument(..., help="An installed theme I
 
 
 @_themes.command("show")
-def themes_show(theme_id: str = typer.Argument(..., help="A theme id from `kova themes list`.")):
+def themes_show(
+        theme_id: str = typer.Argument(..., help="A theme ID."),
+        gallery: bool = typer.Option(False, "--gallery", help="Preview a gallery theme without installing it.")):
     """Print one theme's tokens, resolved over the base it extends."""
     try:
-        data = get_client().theme(theme_id)
+        client = get_client()
+        if gallery:
+            data = next((entry for entry in client.theme_gallery() if entry["id"] == theme_id), None)
+            if data is None:
+                _fail("No theme in the gallery with that ID.")
+        else:
+            data = client.theme(theme_id)
     except KovaError as exc:
         _fail(str(exc))
     header = " ".join(str(part) for part in (data.get("name"), data.get("version")) if part)

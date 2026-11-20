@@ -3123,12 +3123,34 @@
     const list = el('div', 'panel-list ext-list'), footer = el('p', 'panel-meta ext-source');
     let tab = 'installed', data = {catalog: null, plugins: [], skills: []}, version = 0;
     const buttons = {};
-    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills']]) {
+    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['theme', 'Themes']]) {
       const button = el('button', '', label); button.type = 'button'; button.setAttribute('role', 'tab');
-      button.onclick = () => { tab = key; render(); };
+      button.onclick = () => {
+        if (tab === key) return;
+        window.KovaThemeGallery.dismissEmbedded();
+        tab = key;
+        render();
+      };
       buttons[key] = button; tabs.append(button);
     }
+    tabs.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      const items = Object.values(buttons);
+      const step = event.key === 'ArrowRight' ? 1 : -1;
+      const next = items[(items.indexOf(buttons[tab]) + step + items.length) % items.length];
+      next.click();
+      next.focus();
+    });
     dialog.append(head, intro, tabs, search, list, footer); document.body.append(dialog);
+    buttons.theme.id = 'extensions-themes-tab';
+    buttons.theme.setAttribute('aria-controls', 'extensions-themes-panel');
+    const themePanel = el('div', 'panel-list ext-list');
+    themePanel.id = 'extensions-themes-panel';
+    themePanel.setAttribute('role', 'tabpanel');
+    themePanel.setAttribute('aria-labelledby', buttons.theme.id);
+    dialog.append(themePanel);
+    dialog.addEventListener('close', () => window.KovaThemeGallery.dismissEmbedded());
     search.oninput = () => render();
     const ORIGINS = {learned: 'Learned by Kova', catalog: 'From the catalog', yours: 'Added by you', plugin: 'Plugin'};
     const matches = (...parts) => {
@@ -3256,6 +3278,15 @@
     }
     function render() {
       for (const [key, button] of Object.entries(buttons)) { button.setAttribute('aria-selected', String(key === tab)); button.tabIndex = key === tab ? 0 : -1; }
+      const showingThemes = tab === 'theme';
+      for (const item of [intro, search, list, footer]) item.hidden = showingThemes;
+      themePanel.hidden = !showingThemes;
+      if (showingThemes) {
+        if (dialog.open && !themePanel.firstChild) {
+          window.KovaThemeGallery.open(launch, {mount: themePanel, closeHost: () => dialog.close()});
+        }
+        return;
+      }
       list.replaceChildren();
       const filtered = search.value.trim() !== '';
       if (tab === 'installed') {
@@ -3279,7 +3310,7 @@
       if (current !== version) return;
       data = {plugins, skills, catalog}; render();
     }
-    launch.onclick = () => safe(async () => { sidebar(false); render(); dialog.showModal(); await refresh(); });
+    launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); render(); await refresh(); });
   }
   {
     let installPrompt = null;
