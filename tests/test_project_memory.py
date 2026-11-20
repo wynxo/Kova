@@ -67,6 +67,26 @@ def test_project_scope_ids_cannot_escape_the_memory_folder(tmp_path):
     assert not (tmp_path / "memory" / ".kova-projects").exists()
 
 
+@pytest.mark.parametrize("scope_root", [True, False])
+def test_project_memory_rejects_redirected_scope(tmp_path, scope_root):
+    memory = Memory(tmp_path / "memory")
+    outside = tmp_path / "outside"
+    target = outside / "alpha" if scope_root else outside
+    target.mkdir(parents=True)
+    sentinel = target / "notes.md"
+    sentinel.write_text("keep this", encoding="utf-8")
+    redirected = memory.scopes_dir if scope_root else memory.scopes_dir / "alpha"
+    redirected.parent.mkdir(parents=True)
+    try:
+        redirected.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(MemoryStoreError, match="links or junctions"):
+        memory.project_scope("alpha")
+    assert memory.remove_scope("alpha") is False
+    assert sentinel.read_text(encoding="utf-8") == "keep this"
+
+
 def test_project_revision_undo_returns_the_scoped_note(tmp_path):
     store = Store(tmp_path / "kova.db")
     global_memory = Memory(tmp_path / "memory")

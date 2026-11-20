@@ -188,8 +188,14 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+def _redirected_directory(path: Path) -> bool:
+    return path.is_symlink() or path.is_junction()
+
+
 def _remove_tree(path: Path) -> bool:
     """Remove a directory's contents without ever following a symlink."""
+    if _redirected_directory(path):
+        return False
     try:
         children = list(path.iterdir())
     except OSError:
@@ -198,8 +204,11 @@ def _remove_tree(path: Path) -> bool:
         try:
             if child.is_symlink():
                 child.unlink(missing_ok=True)
+            elif child.is_junction():
+                child.rmdir()
             elif child.is_dir():
-                _remove_tree(child)
+                if not _remove_tree(child):
+                    return False
             else:
                 child.unlink(missing_ok=True)
         except OSError:
@@ -287,22 +296,25 @@ class Memory:
         """
         if not _PROJECT_ID.match(project_id or ""):
             raise MemoryStoreError(f'Not a project id: "{project_id}".')
-        return Memory(self.scopes_dir / project_id, None, self.budget, scope_id=project_id)
+        path = self.scopes_dir / project_id
+        if _redirected_directory(self.scopes_dir) or _redirected_directory(path):
+            raise MemoryStoreError("Project memory directories must not be links or junctions.")
+        return Memory(path, None, self.budget, scope_id=project_id)
 
     def remove_scope(self, project_id: str) -> bool:
         """Delete one project's whole scope, used when the project is removed."""
         if not _PROJECT_ID.match(project_id or ""):
             return False
         path = self.scopes_dir / project_id
-        if path.is_symlink() or not path.is_dir():
-            return False
         with _WRITE_LOCK:
+            if _redirected_directory(self.scopes_dir) or not path.is_dir():
+                return False
             return _remove_tree(path)
 
     def clear_scopes(self) -> int:
         """Delete every project scope, for a replacing backup restore."""
         root = self.scopes_dir
-        if root.is_symlink() or not root.is_dir():
+        if _redirected_directory(root) or not root.is_dir():
             return 0
         removed = 0
         with _WRITE_LOCK:

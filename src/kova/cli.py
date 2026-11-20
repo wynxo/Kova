@@ -2617,7 +2617,7 @@ def projects_rm(project_id: str, yes: bool = typer.Option(False, "--yes", "-y", 
     client = get_client()
     project = _find_project(client, project_id)
     name = project["name"]
-    if not yes and not typer.confirm(f'Remove project "{name}"? Its chats will be kept.', default=False):
+    if not yes and not typer.confirm(f'Remove project "{name}"? Its chats will be kept, but its project memory will be deleted.', default=False):
         _muted("Cancelled.")
         return
     try:
