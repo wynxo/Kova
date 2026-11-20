@@ -184,7 +184,7 @@ def test_chats_move_in_and_out_of_projects(server, tmp_path):
     assert refused.status_code == 422
 
 
-def test_project_pins_are_gated_and_only_reach_work_prompts(server, tmp_path):
+def test_project_pins_are_gated_and_do_not_reach_prompts(server, tmp_path):
     client, headers, _, fake = server
     folder = tmp_path / "project"
     folder.mkdir()
@@ -230,13 +230,11 @@ def test_project_pins_are_gated_and_only_reach_work_prompts(server, tmp_path):
         assert result.status_code == 200 and '"type": "done"' in result.text
         return fake.requests[-1]["messages"][0]["content"]
 
-    work_prompt = prompt(work)
-    assert "Pinned project files" in work_prompt
-    assert "notes.md" in work_prompt and str(folder) in work_prompt
-    assert "PROJECT FILE CONTENTS" not in work_prompt, "contents are never included"
-    assert "Pinned project files" not in prompt(chat_mode), "Chat mode has no file tools"
-    assert "Pinned project files" not in prompt(loose)
-    assert "PROJECT FILE CONTENTS" not in fake.requests[-1]["messages"][0]["content"]
+    for chat in (work, chat_mode, loose):
+        captured = prompt(chat)
+        assert "Pinned project files" not in captured
+        assert "notes.md" not in captured
+        assert "PROJECT FILE CONTENTS" not in captured
 
 
 # --------------------------------------------------------------------- CLI

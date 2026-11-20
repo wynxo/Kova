@@ -18,7 +18,7 @@ def test_relative_paths_are_normalised_and_deduplicated():
 @pytest.mark.parametrize("value", [
     "/etc/passwd",
     "~/private.md",
-    "C:\\Users\\someone\\note.md",
+    "C:\\Projects\\someone\\note.md",
     "\\\\server\\share\\file.md",
     "../outside.md",
     "notes/../../outside.md",
@@ -49,21 +49,3 @@ def test_salvage_keeps_valid_references_from_a_hand_edited_list():
     ) == ["notes/a.md"]
     assert project_pins.salvage(["notes/a.md"], None) == []
     assert project_pins.salvage("notes/a.md", "/projects/demo") == []
-
-
-def test_render_lists_references_and_never_claims_their_contents():
-    block = project_pins.render(["notes/a.md", "src/b.py"], "/projects/demo")
-    assert "notes/a.md" in block and "src/b.py" in block
-    assert "Project folder: /projects/demo" in block
-    assert "contents are not included" in block
-    assert "read_file" in block
-    assert project_pins.render([], "/projects/demo") == ""
-    assert project_pins.render(["notes/a.md"], None) == ""
-
-
-def test_render_stays_within_the_prompt_budget():
-    files = [f"notes/{number:02d}-" + "x" * 80 + ".md" for number in range(project_pins.MAX_PINS)]
-    block = project_pins.render(files, "/projects/demo", budget=700)
-    assert len(block.encode("utf-8")) <= 700
-    assert "more pinned files not shown" in block
-    assert block.count("\n- ") < project_pins.MAX_PINS

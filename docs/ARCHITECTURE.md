@@ -610,12 +610,8 @@ unless they pick one; a default whose model entry was removed later is skipped.
 A project can also pin files from its working folder. Pins are **references**:
 paths relative to the project folder (absolute paths, `~`, `..` and control
 characters are refused), at most 20 per project, stored as names only. Kova
-never reads a pinned file for this feature, never copies its contents into the
-prompt, database or backup, and pinning grants no access a turn did not already
-have: in Work mode the prompt lists each reference under "Pinned project files"
-with the project folder as its base, and the model opens one with the ordinary
-`read_file` tool, which still stays inside that chat's working folder. Chat
-mode has no file tools, so it gets no pinned list. Changing a project's folder
+never reads pinned files for this feature or sends their names or contents to
+the model. Pinning grants no additional file access. Changing a project's folder
 requires sending its pinned list in the same `PATCH` (or clearing it first), so
 references never silently retarget. Saving pins needs `host:exec`, like the
 instructions they accompany.
