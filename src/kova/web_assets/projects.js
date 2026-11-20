@@ -81,10 +81,16 @@
     function edit(project) {
       const {dialog, title, form, error} = dialogShell(project ? 'Edit project' : 'New project');
       const name = el('input'), instructions = el('textarea'), cwd = el('input');
+      const pinned = el('textarea');
       name.name = 'name'; name.value = project?.name ?? ''; name.required = true; name.maxLength = 200;
       instructions.name = 'instructions'; instructions.value = project?.instructions ?? ''; instructions.maxLength = 16384;
       cwd.name = 'cwd'; cwd.value = project?.cwd ?? ''; cwd.autocomplete = 'off';
       cwd.placeholder = 'Absolute path on the computer running Kova';
+      // Pins are references only: the server stores these relative paths and
+      // never reads the files, so the dialog needs no file picker.
+      pinned.name = 'files'; pinned.value = (project?.files ?? []).join('\n');
+      pinned.placeholder = 'One path per line, relative to the working folder';
+      pinned.rows = 3;
       const configured = models().filter(entry => entry?.model).map(entry => entry.name);
       const current = project?.model ?? '';
       const modelKeys = current && !configured.includes(current) ? [...configured, current] : configured;
@@ -113,10 +119,13 @@
         if (submit.disabled) return;
         const values = {name: name.value.trim(), instructions: instructions.value, cwd: cwd.value.trim() || null};
         // Colour, icon and model are sent only when they change, so the server
-        // keeps a default model whose entry is missing on this device.
+        // keeps a default model whose entry is missing on this device. Pins
+        // work the same way, and one path per line keeps the field readable.
         for (const [key, select] of [['colour', colour], ['icon', icon], ['model', model]]) {
           if ((select.value || '') !== (project?.[key] || '')) values[key] = select.value || null;
         }
+        const files = pinned.value.split('\n').map(line => line.trim()).filter(Boolean);
+        if (JSON.stringify(files) !== JSON.stringify(project?.files ?? [])) values.files = files;
         if (memory.checked !== Boolean(project?.memory_scope)) values.memory_scope = memory.checked;
         error.hidden = true;
         cancel.disabled = submit.disabled = true;
@@ -142,8 +151,8 @@
       };
 
       form.append(title, field('Name', name), field('Instructions', instructions),
-        field('Working folder (optional)', cwd), field('Default model', model), look,
-        memoryField, error, actions);
+        field('Pinned files (optional)', pinned), field('Working folder (optional)', cwd),
+        field('Default model', model), look, memoryField, error, actions);
       dialog.append(form);
       show(dialog, () => submit.disabled, name);
     }
@@ -208,12 +217,13 @@
       summary.append(node);
     }
 
-    // The project at a glance: folder, default model and the start of its
-    // instructions. Only what is set is shown.
+    // The project at a glance: folder, default model, pinned references and
+    // the start of its instructions. Only what is set is shown.
     function overview(project) {
       const facts = [
         ['Folder', project.cwd],
         ['Model', project.model],
+        ['Files', (project.files || []).join(', ')],
         ['Memory', project.memory_scope ? 'Project-scoped' : ''],
         ['Instructions', (project.instructions || '').trim()],
       ].filter(([, value]) => value);

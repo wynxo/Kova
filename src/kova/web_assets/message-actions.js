@@ -91,6 +91,34 @@
     return card;
   }
 
+  // Earlier retries and edits are kept, not deleted (#188). The newest turn
+  // alone can be flipped: choosing an older one would leave later turns
+  // describing a history that no longer happened.
+  function alternativesControl(data, onChoose) {
+    const {index, count} = data || {};
+    if (!onChoose || !(count > 1) || !(index >= 1)) return null;
+    const group = node('div', 'message-alternatives');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Message alternatives');
+    const step = (label, glyph, target, disabled) => {
+      const button = node('button', 'message-alternative-step');
+      button.type = 'button';
+      button.title = label;
+      button.setAttribute('aria-label', label);
+      button.disabled = disabled;
+      button.append(node('span', 'message-alternative-glyph', glyph));
+      button.onclick = () => onChoose(target);
+      return button;
+    };
+    const previous = step('Show previous alternative', '‹', index - 1, index <= 1);
+    const next = step('Show next alternative', '›', index + 1, index >= count);
+    const label = node('span', 'message-alternative-count', `${index} / ${count}`);
+    label.setAttribute('aria-live', 'polite');
+    label.setAttribute('aria-label', `Alternative ${index} of ${count}`);
+    group.append(previous, label, next);
+    return group;
+  }
+
   function copyAction(text, note, label, onError, format = '') {
     const glyph = icon('copy');
     const button = node('button', `message-action-copy message-action${format}`);
@@ -140,7 +168,7 @@
   // message with no usage, or a turn that cannot be retried simply shows less.
   function bar(options = {}) {
     const {role, text, plainText, usage = null, model = '', toolCount = null, onRetry, onRetryModel, onEdit, onBranch, onOutline,
-           editLabel = 'Edit and resend', onError} = options;
+           alternatives = null, onAlternative, editLabel = 'Edit and resend', onError} = options;
     const bar = node('div', 'message-actions');
     const note = node('span', 'message-action-note');
     note.setAttribute('role', 'status');
@@ -151,6 +179,8 @@
     if (onRetryModel) bar.append(action('sliders-horizontal', 'Retry with another model', 'message-action-retry', onRetryModel));
     if (onBranch) bar.append(action('external-link', 'Branch from here', 'message-action-branch', onBranch));
     if (onOutline) bar.append(action('menu', 'Open reply outline', 'message-action-outline', onOutline));
+    const alternativesNode = alternativesControl(alternatives, onAlternative);
+    if (alternativesNode) bar.append(alternativesNode);
     if (role === 'assistant') {
       const details = detailsAction({usage, model, toolCount});
       if (details) bar.append(details);
@@ -182,7 +212,8 @@
       }
       sheet.addEventListener('close', restore);
       sheet.addEventListener('click', event => {
-        if (!event.target.closest('.message-action-edit, .message-action-retry, .message-action-branch, .message-action-outline')) return;
+        if (!event.target.closest('.message-action-edit, .message-action-retry, .message-action-branch, '
+          + '.message-action-outline, .message-alternative-step')) return;
         sheet.close();
         restore();
       }, true);

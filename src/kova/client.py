@@ -125,6 +125,12 @@ class KovaClient:
         """Themes bundled in the offline gallery, including their install status."""
         return self._request('GET', '/themes/gallery').json()
 
+    def preview_gallery_theme(self, theme_id: str) -> dict:
+        return self._request('GET', f'/themes/gallery/{quote(theme_id, safe="")}/preview').json()
+
+    def save_theme(self, document: dict) -> dict:
+        return self._request('POST', '/themes', json=document).json()
+
     def install_gallery_theme(self, theme_id: str) -> dict:
         """Install one theme from the bundled gallery."""
         return self._request('POST', f'/themes/gallery/{quote(theme_id, safe="")}/install').json()
@@ -168,10 +174,12 @@ class KovaClient:
 
     def create_project(self, name: str, instructions: str = "", cwd: str | None = None, *,
                        colour: str | None = None, icon: str | None = None,
-                       model: str | None = None, memory_scope: bool = False) -> dict:
+                       model: str | None = None, files: list[str] | None = None,
+                       memory_scope: bool = False) -> dict:
         body = {"name": name, "instructions": instructions, "cwd": cwd}
         body.update({key: value for key, value in
-                     (("colour", colour), ("icon", icon), ("model", model)) if value is not None})
+                     (("colour", colour), ("icon", icon), ("model", model), ("files", files))
+                     if value is not None})
         if memory_scope:
             body["memory_scope"] = True
         return self._request("POST", "/projects", json=body).json()

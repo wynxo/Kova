@@ -103,7 +103,8 @@ def test_export_and_import_commands(tmp_path, monkeypatch):
     save_config(cfg)
     ensure_token(cfg.home)
     store = Store(cfg.home / "kova.db")
-    chat = store.create_chat("Command chat")
+    project = store.create_project("Command project", "Be terse.", str(cfg.home))
+    chat = store.create_chat("Command chat", project_id=project["id"])
     store.add_message(chat["id"], "user", "backup me")
     Memory(cfg.memory_path).save("Dog", "Rex")
     store.add_reminder(datetime.now(timezone.utc) + timedelta(days=1), "Buy milk")
@@ -113,20 +114,25 @@ def test_export_and_import_commands(tmp_path, monkeypatch):
     assert exported.exit_code == 0, exported.output
     assert str(target) in exported.output.replace("\n", "")
     assert "API keys were left out" in exported.output
+    assert "1 projects" in exported.output
     with zipfile.ZipFile(target) as archive:
         names = set(archive.namelist())
         assert "token" not in names
         assert "api_key" not in archive.read("config.toml").decode()
         assert f"chats/{chat['id']}.json" in names
+        assert "projects.json" in names
 
     monkeypatch.setenv("KOVA_HOME", str(tmp_path / "restored"))
     imported = CliRunner().invoke(cli.app, ["import", str(target)])
     assert imported.exit_code == 0, imported.output
     assert "Imported 1 chats" in imported.output
+    assert "1 projects" in imported.output
 
     restored = load_config()
     restored_store = Store(restored.home / "kova.db")
     assert [c["title"] for c in restored_store.list_chats()] == ["Command chat"]
+    assert restored_store.get_chat(chat["id"])["project_id"] == project["id"]
+    assert [p["name"] for p in restored_store.list_projects()] == ["Command project"]
     assert [note.title for note in Memory(restored.memory_path).list()] == ["Dog"]
     assert [r["text"] for r in restored_store.list_reminders()] == ["Buy milk"]
     assert not (restored.home / "token").exists()

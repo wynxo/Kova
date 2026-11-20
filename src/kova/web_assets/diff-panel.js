@@ -225,6 +225,7 @@ const KovaDiffPanel = (() => {
     const meta = node('div', 'diff-panel-meta');
     const status = node('p', 'diff-panel-status');
     status.setAttribute('role', 'status');
+    status.tabIndex = -1;
     const content = node('div', 'diff-panel-content');
     wrap.append(meta, status, content);
     const kept = new Set();
@@ -253,13 +254,39 @@ const KovaDiffPanel = (() => {
     paintLayout();
 
     const say = (text, error = false) => { status.textContent = text; status.classList.toggle('is-error', error); };
+    const keepFile = button('Keep file', 'quiet', `Keep all changes in ${path}`);
+    const undoFileButton = button('Undo file', '', `Undo all changes in ${path}`);
+    function appliedHunks() {
+      return (view?.segments || []).filter(hunk => hunk.type === 'hunk' && hunk.state === 'applied');
+    }
+    function pendingHunks() {
+      return appliedHunks().filter(hunk => !kept.has(hunk.id));
+    }
+    // Undo file is one write for the whole file: it is offered only while
+    // every remaining hunk is untouched, so no later edit is overwritten.
+    function canUndoFile() {
+      if (!view?.supported) return false;
+      const hunks = (view?.segments || []).filter(hunk => hunk.type === 'hunk');
+      return appliedHunks().length > 0 && !hunks.some(hunk => hunk.state === 'changed' || hunk.state === 'missing');
+    }
+    keepFile.addEventListener('click', () => {
+      const pending = pendingHunks();
+      if (!pending.length || keepFile.disabled) return;
+      for (const hunk of pending) kept.add(hunk.id);
+      draw();
+      say(`Kept ${plural(pending.length, 'change')} in this file.`);
+      status.focus();
+    });
+    undoFileButton.addEventListener('click', () => undoFile());
     function summary() {
       const counts = (view?.segments || []).filter(segment => segment.type === 'hunk');
-      const open = counts.filter(hunk => hunk.state === 'applied' && !kept.has(hunk.id)).length;
+      const open = pendingHunks().length;
+      keepFile.disabled = !view?.supported || !open;
+      undoFileButton.disabled = !canUndoFile();
       meta.replaceChildren(node('span', 'diff-panel-path', path),
                            node('span', 'change-stats', `+${view?.additions || 0} −${view?.deletions || 0}`),
                            node('span', 'diff-panel-count', `${plural(counts.length, 'change')}${open ? `, ${open} to review` : ''}`),
-                           layout);
+                           layout, keepFile, undoFileButton);
     }
     function retry(text) {
       const again = button('Reload diff', '', `Reload the diff of ${path}`);
@@ -277,6 +304,8 @@ const KovaDiffPanel = (() => {
     }
     async function load(focusHunk) {
       say('');
+      keepFile.disabled = true;
+      undoFileButton.disabled = true;
       content.replaceChildren(node('p', 'diff-panel-note', 'Loading the diff…'));
       try {
         view = await request(`${base}/hunks?path=${encodeURIComponent(path)}`);
@@ -291,6 +320,8 @@ const KovaDiffPanel = (() => {
       say(`Kept change ${index + 1}.`);
     }
     async function undo(hunk, index, buttons) {
+      keepFile.disabled = true;
+      undoFileButton.disabled = true;
       for (const control of buttons) control.disabled = true;
       say(`Undoing change ${index + 1}…`);
       try {
@@ -300,8 +331,33 @@ const KovaDiffPanel = (() => {
         say(`Undid change ${index + 1}. Saved as change set ${result.checkpoint_id}, so Restore files can bring it back.`);
         options.onChange?.(result);
       } catch (error) {
+        keepFile.disabled = !pendingHunks().length;
+        undoFileButton.disabled = !canUndoFile();
         for (const control of buttons) control.disabled = false;
         say(`${error.message || 'The change could not be undone.'}`, true);
+        const again = button('Reload diff', '', `Reload the diff of ${path}`);
+        again.addEventListener('click', () => load());
+        status.append(' ', again);
+      }
+    }
+    async function undoFile() {
+      if (undoFileButton.disabled) return;
+      keepFile.disabled = true;
+      undoFileButton.disabled = true;
+      say(`Undoing all changes in ${path}…`);
+      try {
+        const result = await request(`${base}/file/undo`, {method: 'POST', body: JSON.stringify({
+          path, expected_hash: view.current_hash})});
+        kept.clear();
+        if (result.view) { view = result.view; draw(); } else await load();
+        const removed = result.deleted ? ' The file it created was removed.' : '';
+        say(`Undid all changes in ${path}.${removed} Saved as change set ${result.checkpoint_id}, so Restore files can bring it back.`);
+        status.focus();
+        options.onChange?.(result);
+      } catch (error) {
+        keepFile.disabled = !pendingHunks().length;
+        undoFileButton.disabled = !canUndoFile();
+        say(`${error.message || 'The changes could not be undone.'}`, true);
         const again = button('Reload diff', '', `Reload the diff of ${path}`);
         again.addEventListener('click', () => load());
         status.append(' ', again);

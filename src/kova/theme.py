@@ -151,26 +151,34 @@ def from_tokens(theme_id_: str, appearance: str, tokens: dict, terminal: list[st
     return TerminalTheme(theme_id_, appearance, roles, gradient, frozenset(changed | base.changed))
 
 
+def terminal_from_resolved(data: dict) -> TerminalTheme:
+    """Build terminal roles from resolved theme data, including unsaved previews."""
+    from kova import themes
+
+    ident = data["id"]
+    if ident == "kova-dark":
+        return DARK
+    base_id = data.get("extends") or themes.default_base(data["appearance"])
+    reference = themes.base_tokens(base_id)
+    reference_terminal = reference.pop("terminal")
+    if base_id == "kova-light":
+        base = from_tokens("kova-light", "light", reference, reference_terminal, DARK, {}, [])
+        if ident == "kova-light":
+            return base
+    else:
+        base = DARK
+    return from_tokens(ident, data["appearance"], data["tokens"], data["terminal"],
+                       base, reference, reference_terminal)
+
+
 @lru_cache(maxsize=16)
 def _cached(theme_id_: str, home: str, stamp: tuple) -> TerminalTheme:
     from kova import themes
 
     try:
-        light_tokens = themes.base_tokens("kova-light")
-        light_terminal = light_tokens.pop("terminal")
-        # kova-light maps every token: no dark terminal value is right on paper.
-        light = from_tokens("kova-light", "light", light_tokens, light_terminal, DARK, {}, [])
-        if theme_id_ == "kova-light":
-            return light
-        data = themes.get(theme_id_, home)
+        return terminal_from_resolved(themes.get(theme_id_, home))
     except (themes.ThemeError, OSError, ValueError, KeyError):
         return DARK
-    base_id = data.get("extends") or themes.default_base(data["appearance"])
-    base, reference = (light, light_tokens) if base_id == "kova-light" else (
-        DARK, themes.base_tokens("kova-dark"))
-    reference_terminal = light_terminal if base is light else reference.pop("terminal")
-    return from_tokens(data["id"], data["appearance"], data["tokens"], data["terminal"],
-                       base, reference, reference_terminal)
 
 
 def terminal_theme(name: str | None, home: Path | str | None = None) -> TerminalTheme:

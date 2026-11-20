@@ -259,6 +259,8 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
               name: str | None = None, api_key: str | None = None, yes: bool = False,
               provider_kind: str | None = None, transport=None, timeout: float = 10, **kwargs) -> None:
     try:
+        if yes and not url:
+            raise SetupError("Scripted setup requires --url. Run kova setup --yes --url URL, or omit --yes to choose a provider interactively.")
         if url:
             found = server_finder.connect(url, api_key=api_key, transport=transport, timeout=timeout)
             if not found.answered:
@@ -275,7 +277,7 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
             if not chosen:
                 raise SetupError("The provider didn't list any models. Load a model first.")
             _save_provider(cfg, provider, [chosen], legacy_name=identifier)
-            if sys.stdin.isatty():
+            if not yes and sys.stdin.isatty():
                 try:
                     _setup_persona(cfg)
                 except SetupError:  # the provider is saved; only the name is skipped

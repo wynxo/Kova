@@ -357,6 +357,7 @@
           ? () => safe(() => forkChat(state.chat?.id, options.messageId)) : null,
         plainText: blocks.length && md?.plainText ? () => blocks.map(md.plainText).join('\n\n') : null,
         onOutline: headings.length && window.KovaPanel?.open ? () => openReplyOutline(headings) : null,
+        alternatives: options.alternatives, onAlternative: options.onAlternative,
         editLabel: options.editLabel, onError: toastError,
       });
       const stamp = module.timestamp(options.created);
@@ -421,6 +422,14 @@
   }
   function retrySameModel(model, messageId) {
     return retryLastTurn(state.models.some(entry => entry.model && entry.name === model) ? model : null, messageId);
+  }
+  // Flip the newest turn between attempts. The server keeps every variant, so
+  // this only changes which one is active; a full reload draws the same result.
+  async function switchAlternative(turnId, index) {
+    if (state.busy) return toast('Wait for the current reply to finish.');
+    if (!state.chat || !turnId) return;
+    const chat = await json(`/chats/${state.chat.id}/alternatives`, write('POST', {turn_id: turnId, index}));
+    if (state.chat?.id === chat.id) { setChat(chat); follow(); }
   }
   function chooseRetryModel(previous, messageId) {
     if (state.busy) return toast('Wait for the current reply to finish.');
@@ -1062,6 +1071,7 @@
     window.KovaPlanCard?.reset();
     // A saved turn reads like a live one: every round of it sits under one heading.
     const turns = []; let turn = null, savedTools = null, retryable = false;
+    const alternatives = chat?.alternatives;
     const lastUser = chat?.messages?.findLast(msg => msg.role === 'user');
     for (const msg of chat?.messages || []) {
       if (msg.role === 'user') {
@@ -1089,6 +1099,9 @@
     for (const saved of turns) if (saved.parts.length) messageActions(saved.body.parentNode, () => saved.parts.join('\n\n'), 'assistant',
       saved.usage, {model: saved.usage?.model || chat?.model, toolCount: saved.tools,
                     created: saved.reply?.created, messageId: saved.reply?.id,
+                    alternatives: saved.retry ? alternatives : null,
+                    onAlternative: saved.retry && alternatives?.turn_id
+                      ? index => safe(() => switchAlternative(alternatives.turn_id, index)) : null,
                     onRetry: saved.retry ? () => safe(() => retrySameModel(saved.usage?.model, saved.reply?.id)) : null});
     if (chat?.plan?.length) $('messages').append(planView(chat.plan));
     $('prompt').value = draftOf(chat); resize();
@@ -1503,9 +1516,9 @@
     let toolGroup = null;
     let plan = null;
     // Parallel tool calls draw as a live tree (agent-tree.js, #192).
-    const stopChatId = state.chat?.id;
+    const chatId = state.chat?.id;
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint,
-      stopTask: id => json(`/chats/${stopChatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
+      stopTask: id => json(`/chats/${chatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with one small movement (#171): still "working", never a
     // loud spinner. thinking.js picks this reply's animation onto the mark.
@@ -1622,6 +1635,13 @@
           window.KovaPlanCard?.update(event.items, next);
         } else if (kind === 'review') {
           current = null; activity.hidden = true;
+          const checkpointId = event.checkpoint_id;
+          if (checkpointId && typeof KovaDiffPanel !== 'undefined' && window.KovaPanel) {
+            const paths = new Set(changeFiles(event.files).map(file => file.path));
+            for (const group of toolGroups) {
+              group.enableFileReview(paths, (path, opener) => reviewChanges(chatId, checkpointId, [{path}], opener));
+            }
+          }
           if (event.files?.length || event.skipped?.length) {
             body.insertBefore(reviewCard({id: event.checkpoint_id, label: event.label, live: true,
                                           files: event.files || [], skipped: event.skipped || []}), activity);
@@ -1661,7 +1681,10 @@
         const reply = blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n\n');
         if (reply.trim() && body.parentNode) messageActions(body.parentNode, () => reply, 'assistant', usage,
           {model: usage?.model || model, toolCount, created: completed?.created,
-            messageId: completed?.message_id, onRetry: () => safe(() => retrySameModel(usage?.model, completed?.message_id))});
+            messageId: completed?.message_id, alternatives: completed?.alternatives,
+            onAlternative: completed?.alternatives?.turn_id
+              ? index => safe(() => switchAlternative(completed.alternatives.turn_id, index)) : null,
+            onRetry: () => safe(() => retrySameModel(usage?.model, completed?.message_id))});
       }
     };
   }
@@ -3100,12 +3123,34 @@
     const list = el('div', 'panel-list ext-list'), footer = el('p', 'panel-meta ext-source');
     let tab = 'installed', data = {catalog: null, plugins: [], skills: []}, version = 0;
     const buttons = {};
-    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills']]) {
+    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['theme', 'Themes']]) {
       const button = el('button', '', label); button.type = 'button'; button.setAttribute('role', 'tab');
-      button.onclick = () => { tab = key; render(); };
+      button.onclick = () => {
+        if (tab === key) return;
+        window.KovaThemeGallery.dismissEmbedded();
+        tab = key;
+        render();
+      };
       buttons[key] = button; tabs.append(button);
     }
+    tabs.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      const items = Object.values(buttons);
+      const step = event.key === 'ArrowRight' ? 1 : -1;
+      const next = items[(items.indexOf(buttons[tab]) + step + items.length) % items.length];
+      next.click();
+      next.focus();
+    });
     dialog.append(head, intro, tabs, search, list, footer); document.body.append(dialog);
+    buttons.theme.id = 'extensions-themes-tab';
+    buttons.theme.setAttribute('aria-controls', 'extensions-themes-panel');
+    const themePanel = el('div', 'panel-list ext-list');
+    themePanel.id = 'extensions-themes-panel';
+    themePanel.setAttribute('role', 'tabpanel');
+    themePanel.setAttribute('aria-labelledby', buttons.theme.id);
+    dialog.append(themePanel);
+    dialog.addEventListener('close', () => window.KovaThemeGallery.dismissEmbedded());
     search.oninput = () => render();
     const ORIGINS = {learned: 'Learned by Kova', catalog: 'From the catalog', yours: 'Added by you', plugin: 'Plugin'};
     const matches = (...parts) => {
@@ -3233,6 +3278,15 @@
     }
     function render() {
       for (const [key, button] of Object.entries(buttons)) { button.setAttribute('aria-selected', String(key === tab)); button.tabIndex = key === tab ? 0 : -1; }
+      const showingThemes = tab === 'theme';
+      for (const item of [intro, search, list, footer]) item.hidden = showingThemes;
+      themePanel.hidden = !showingThemes;
+      if (showingThemes) {
+        if (dialog.open && !themePanel.firstChild) {
+          window.KovaThemeGallery.open(launch, {mount: themePanel, closeHost: () => dialog.close()});
+        }
+        return;
+      }
       list.replaceChildren();
       const filtered = search.value.trim() !== '';
       if (tab === 'installed') {
@@ -3256,7 +3310,7 @@
       if (current !== version) return;
       data = {plugins, skills, catalog}; render();
     }
-    launch.onclick = () => safe(async () => { sidebar(false); render(); dialog.showModal(); await refresh(); });
+    launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); render(); await refresh(); });
   }
   {
     let installPrompt = null;
@@ -3698,14 +3752,24 @@
     $('quick-open').hidden = !state.chat;
     $('quick-copy').hidden = ![...document.querySelectorAll('#messages .assistant')].length;
   }
-  function quickCopyAnswer() {
+  let quickCopyTimer = null;
+  // The reply's own body: the label, timestamp and action bar around it are
+  // chrome, not answer text.
+  function quickAnswerText() {
     const answers = [...document.querySelectorAll('#messages .assistant')];
-    const text = answers.at(-1)?.textContent?.trim() || '';
-    if (!text) return;
-    const copy = navigator.clipboard ? navigator.clipboard.writeText(text) : null;
-    if (copy && typeof copy.catch === 'function') copy.catch(() => {});
-    $('quick-copy').textContent = 'Copied';
-    setTimeout(() => { if (!isQuick) return; $('quick-copy').textContent = 'Copy'; }, 1600);
+    return answers.at(-1)?.querySelector('.message-body')?.textContent?.trim() || '';
+  }
+  function quickCopyAnswer() {
+    const text = quickAnswerText();
+    if (!text) return null;
+    const button = $('quick-copy');
+    clearTimeout(quickCopyTimer);
+    button.textContent = 'Copy';
+    return copyText(text, () => {
+      if (!isQuick) return;
+      button.textContent = 'Copied';
+      quickCopyTimer = setTimeout(() => { if (isQuick) button.textContent = 'Copy'; }, 1600);
+    });
   }
   window.kovaQuick?.onSelection?.(text => {
     quickSelection = typeof text === 'string' && text.trim() ? text : '';

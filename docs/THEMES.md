@@ -166,7 +166,7 @@ next to `tokens.css`.
 
 ## Install a theme
 
-Open **Settings > General > Theme > Browse themes…** to browse the examples
+Open **Extensions > Themes** or **Settings > General > Theme > Browse themes…** to browse the examples
 bundled with Kova, even offline. Hover over a card or focus its button with
 the keyboard to preview the palette without changing your selection. On a
 touchscreen, tap **Preview**. Type in **Search themes** to narrow the cards by name,
@@ -178,24 +178,49 @@ offers **Keep** (installs it if needed, then selects it) and **Revert**; if you 
 nothing it reverts by itself, and Esc on the bar reverts at once. Nothing is saved
 until you keep it.
 
-A card shows the bundled version, and **Update** appears when Kova ships a newer copy
+A card shows the offered version, and **Update** appears when the gallery has a newer copy
 than the installed file: it replaces that one file in a single step (a file that is a
 link is left alone). **Remove** deletes an installed theme file after a second
 confirming click; if it was your chosen theme, Kova goes back to following your
 device. Built-in themes cannot be removed, and background images stay in `themes/assets`.
 
 ```bash
-kova themes gallery                  # every bundled theme, with version and status
+kova themes gallery                  # bundled and configured catalog themes
+kova themes try forest               # 30-second terminal preview; K keeps, R or Esc reverts
 kova themes gallery green dark       # only themes whose text contains every word
+kova themes show forest --gallery    # preview resolved tokens without installing
 kova themes install forest           # install, without changing the active theme
-kova themes update                   # update every installed theme with a newer bundled copy
+kova themes update                   # update every installed theme with a newer gallery copy
 kova themes update forest            # or just one
 kova themes remove forest            # delete the installed file
 ```
 
-The gallery uses `design/themes/` as its source. After editing an example, run
+Terminal Try opens a temporary preview, not a chat. It uses the installed copy
+when available. Revert, Ctrl+C or the 30-second timeout closes the preview without
+installing or changing the selected theme. Keep installs the previewed copy if
+needed and saves the terminal preference only; it does not change the web app.
+`KOVA_THEME` still takes precedence if set. Previewing one gallery theme fetches
+at most that theme from the explicitly configured catalog, never its unrelated
+downloads.
+
+The bundled gallery uses `design/themes/` as its source. After editing an example, run
 `python scripts/build_tokens.py` to regenerate the bundled gallery data; the
-`--check` flag verifies that it is up to date. Remote galleries are not yet supported.
+`--check` flag verifies that it is up to date.
+
+To offer additional themes, explicitly set `[catalog] url` to a trusted extension
+index (a local index file or HTTPS URL). Theme browsing does not contact the
+default extension catalog. The same index can list plugins and skills; add a
+`kind: "theme"` entry to its `extensions` array, with:
+
+- `name`: the theme JSON's `id` (use an ID distinct from bundled themes).
+- `version`: the same numeric `major.minor.patch` as in the theme JSON.
+- `source`: an object with `url` pointing to the JSON and its `sha256` checksum.
+  Relative sources are resolved against the index.
+
+Only validated JSON up to 32 KiB is accepted. No archive is unpacked, no CSS or
+JavaScript runs, and no fonts or images are fetched by the theme. The checksum
+verifies the bytes against the index; trust the index operator. Unavailable or
+invalid catalog items are skipped and the bundled gallery still works.
 
 ### Install a theme file by hand
 

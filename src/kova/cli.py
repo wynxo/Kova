@@ -590,10 +590,10 @@ def setup(
     model: str | None = typer.Option(None, "--model", help="Model name to use."),
     name: str | None = typer.Option(None, "--name", help="Name to save this model under."),
     key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Use defaults for scripted setup (never bypasses credential validation)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Run without prompts. Requires --url; credentials are still validated."),
 ):
     """Connect a provider and choose models. No scan or test chat."""
-    if not url and sys.stdin.isatty() and console.is_terminal:
+    if not yes and not url and sys.stdin.isatty() and console.is_terminal:
         brand.setup_banner(console, __version__)
     try:
         onboarding.run_setup(load_config(), url=url, model=model, name=name, api_key=key, yes=yes)
@@ -904,13 +904,14 @@ def _restart_server(cfg) -> bool:
 
 @app.command("export")
 def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Kova-backup-YYYY-MM-DD.zip).")):
-    """Write one zip with chats, memory notes, reminders and a safe config."""
+    """Write one zip with chats, projects, memory notes, reminders and a safe config."""
     try:
         stats = backup.export_archive(load_config(), path)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
     _ok(f"Backup written to {stats['path']}")
-    _muted(f"  {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
+    _muted(f"  {stats['chats']} chats · {stats['projects']} projects · "
+           f"{stats['notes']} notes · {stats['reminders']} reminders")
     _muted("API keys were left out of config.toml; the server token is not included.")
 
 
@@ -918,12 +919,12 @@ def export(path: str | None = typer.Argument(None, help="Zip path (default: ~/Ko
 def import_archive(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="A Kova backup zip."),
     merge: bool = typer.Option(True, "--merge/--replace",
-                               help="Merge by default; --replace clears existing chats and Kova notes."),
+                               help="Merge by default; --replace clears existing chats, projects and Kova notes."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the replace confirmation."),
 ):
     """Restore a backup; merge is the default."""
     if not merge and not yes:
-        if not typer.confirm("Replace all chats, Kova memory notes and reminders?", default=False):
+        if not typer.confirm("Replace all chats, projects, Kova memory notes and reminders?", default=False):
             _muted("Cancelled.")
             return
     cfg = load_config()
@@ -931,11 +932,17 @@ def import_archive(
         stats = backup.import_archive(cfg, path, merge=merge)
     except (backup.BackupError, OSError) as exc:
         _fail(str(exc))
-    _ok(f"Imported {stats['chats']} chats · {stats['notes']} notes · {stats['reminders']} reminders")
-    skipped = stats["chats_skipped"] + stats["notes_skipped"] + stats["reminders_skipped"]
-    if skipped:
+    _ok(f"Imported {stats['chats']} chats · {stats['projects']} projects · "
+        f"{stats['notes']} notes · {stats['reminders']} reminders")
+    if stats["projects_remapped"]:
+        _muted(f"Restored {stats['projects_remapped']} projects under a new id because "
+               "their id was already used by a different project.")
+    if stats["chats_skipped"] or stats["notes_skipped"] or stats["reminders_skipped"]:
         _muted(f"Skipped {stats['chats_skipped']} chats, {stats['notes_skipped']} notes "
                f"and {stats['reminders_skipped']} reminders that already existed.")
+    if stats["projects_skipped"]:
+        _muted(f"Left {stats['projects_skipped']} projects alone: they were already here "
+               "or could not be read.")
     if _restart_server(cfg):
         _muted("Server restarted to pick up the import.")
     else:
@@ -1076,7 +1083,7 @@ def _gallery_status(entry: dict) -> str:
 @_themes.command("gallery")
 def themes_gallery(query: list[str] = typer.Argument(
         None, help="Show only themes whose name, description or look contains every word.")):
-    """Browse themes bundled with Kova's offline gallery."""
+    """Browse bundled themes and themes from an explicitly configured catalog."""
     try:
         entries = get_client().theme_gallery()
     except KovaError as exc:
@@ -1102,7 +1109,7 @@ def themes_gallery(query: list[str] = typer.Argument(
 
 @_themes.command("install")
 def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `kova themes gallery`.")):
-    """Install one bundled gallery theme without changing the active theme."""
+    """Install one gallery theme without changing the active theme."""
     try:
         installed = get_client().install_gallery_theme(theme_id)
     except KovaError as exc:
@@ -1113,7 +1120,7 @@ def themes_install(theme_id: str = typer.Argument(..., help="A theme ID from `ko
 @_themes.command("update")
 def themes_update(theme_id: str | None = typer.Argument(
         None, help="One installed gallery theme; leave out to update every one that has a newer copy.")):
-    """Replace installed gallery themes with their newer bundled copies."""
+    """Replace installed gallery themes with their newer gallery copies."""
     client = get_client()
     try:
         if theme_id is None:
@@ -1142,10 +1149,13 @@ def themes_remove(theme_id: str = typer.Argument(..., help="An installed theme I
 
 
 @_themes.command("show")
-def themes_show(theme_id: str = typer.Argument(..., help="A theme id from `kova themes list`.")):
+def themes_show(
+        theme_id: str = typer.Argument(..., help="A theme ID."),
+        gallery: bool = typer.Option(False, "--gallery", help="Preview a gallery theme without installing it.")):
     """Print one theme's tokens, resolved over the base it extends."""
     try:
-        data = get_client().theme(theme_id)
+        client = get_client()
+        data = client.preview_gallery_theme(theme_id) if gallery else client.theme(theme_id)
     except KovaError as exc:
         _fail(str(exc))
     header = " ".join(str(part) for part in (data.get("name"), data.get("version")) if part)
@@ -1160,6 +1170,35 @@ def themes_show(theme_id: str = typer.Argument(..., help="A theme id from `kova 
     console.print(table)
     if terminal:
         _muted("Terminal palette: " + " ".join(terminal))
+
+
+@_themes.command("try")
+def themes_try(theme_id: str = typer.Argument(..., help="An installed or gallery theme ID.")):
+    """Try a terminal theme for 30 seconds without changing it unless kept."""
+    from kova.tui.theme_trial import keep_preview
+
+    if not sys.stdin.isatty() or not console.is_terminal:
+        _fail("Trying a theme needs an interactive terminal.",
+              hint="Run: kova themes show ID --gallery")
+    client = None
+    try:
+        data = themes.get(kova_theme.theme_id(theme_id), kova_home())
+    except themes.ThemeError:
+        try:
+            client = get_client()
+            data = client.preview_gallery_theme(theme_id)
+        except KovaError as exc:
+            _fail(str(exc))
+
+    if not keep_preview(data):
+        _muted("Preview reverted. Your terminal theme did not change.")
+        return
+    if client is not None:
+        try:
+            client.save_theme(data["document"])
+        except KovaError as exc:
+            _fail(str(exc))
+    themes_use(data["id"], app_too=False)
 
 
 def _terminal_theme_setting(name: str, home: Path) -> str:
@@ -2480,14 +2519,18 @@ def projects_create(
     colour: str | None = typer.Option(None, "--colour", help=f"Sidebar colour: {', '.join(CHAT_COLOURS)}."),
     icon: str | None = typer.Option(None, "--icon", help=f"Sidebar icon: {', '.join(CHAT_ICONS)}."),
     model: str | None = typer.Option(None, "--model", help="Default model for new chats (see kova model list)."),
+    pin: list[str] = typer.Option([], "--pin", help="A file to pin, relative to the working folder. Repeatable."),
     memory: bool = typer.Option(False, "--memory/--no-memory",
                                 help="Give this project its own memory, separate from global memory."),
 ):
     """Create a project."""
+    if pin and folder is None:
+        _fail("A project needs --folder before it can pin files.")
     try:
         project = get_client().create_project(
             name, instructions, str(folder) if folder is not None else None,
-            colour=colour, icon=icon, model=model, memory_scope=memory)
+            colour=colour, icon=icon, model=model, files=pin or None,
+            memory_scope=memory)
     except KovaError as exc:
         _fail(str(exc))
     _ok(f'Created project "{project["name"]}" ({project["id"]}).')
@@ -2503,10 +2546,13 @@ def projects_edit(
     colour: str | None = typer.Option(None, "--colour", help='Sidebar colour, or "none" to clear it.'),
     icon: str | None = typer.Option(None, "--icon", help='Sidebar icon, or "none" to clear it.'),
     model: str | None = typer.Option(None, "--model", help='Default model, or "none" to clear it.'),
+    pin: list[str] = typer.Option([], "--pin", help="A file to pin, relative to the working folder. Repeatable."),
+    unpin: list[str] = typer.Option([], "--unpin", help="A pinned file to remove. Repeatable."),
+    clear_pins: bool = typer.Option(False, "--clear-pins", help="Remove every pinned file."),
     memory: bool | None = typer.Option(None, "--memory/--no-memory",
                                        help="Turn this project's own memory scope on or off."),
 ):
-    """Change a project's name, instructions, folder, colour, icon, model or memory."""
+    """Change a project's name, instructions, folder, look, model, pins or memory."""
     changes: dict = {}
     if name is not None:
         changes["name"] = name
@@ -2519,10 +2565,16 @@ def projects_edit(
     for key, value in (("colour", colour), ("icon", icon), ("model", model)):
         if value is not None:
             changes[key] = None if value.strip().lower() in ("none", "") else value
-    if not changes:
+    if not changes and not pin and not unpin and not clear_pins:
         _fail("Nothing to change.", hint="Pass at least one option, for example: --name NAME")
     client = get_client()
-    _find_project(client, project_id)
+    project = _find_project(client, project_id)
+    if pin or unpin or clear_pins:
+        pinned = [] if clear_pins else list(project.get("files") or [])
+        gone = {item.strip().replace("\\", "/") for item in unpin}
+        pinned = [path for path in pinned if path not in gone]
+        pinned.extend(path for path in pin if path not in pinned)
+        changes["files"] = pinned
     try:
         project = client.update_project(project_id, **changes)
     except KovaError as exc:
@@ -2539,7 +2591,7 @@ def _find_project(client: KovaClient, project_id: str) -> dict:
 
 @_projects.command("show")
 def projects_show(project_id: str):
-    """Show a project by ID, including its folder and instructions."""
+    """Show a project by ID, including its folder, instructions and pinned files."""
     project = _find_project(get_client(), project_id)
     console.print(Text(project["name"], style=f"bold {colour('ACCENT')}"))
     _muted(project["id"])
@@ -2550,6 +2602,10 @@ def projects_show(project_id: str):
     look = " · ".join(part for part in (project.get("colour"), project.get("icon")) if part)
     if look:
         console.print(Text(f"Look: {look}"))
+    if project.get("files"):
+        console.print(Text("Pinned files (references only):"))
+        for path in project["files"]:
+            console.print(Text(f"  {path}"))
     if project["instructions"]:
         console.print()
         console.print(Text(project["instructions"]))

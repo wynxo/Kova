@@ -8,6 +8,7 @@ const source = readFileSync(new URL('../src/kova/web_assets/theme-gallery.js', i
 class Node {
   constructor(tag) {
     this.tag = tag;
+    this.tagName = tag.toUpperCase();
     this.children = [];
     this.attributes = {};
     this.events = {};
@@ -18,6 +19,7 @@ class Node {
     for (const child of children) child.parent = this;
     this.children.push(...children);
   }
+  get isConnected() { return document.body.contains(this); }
   contains(node) { return this === node || this.children.some(child => child.contains(node)); }
   remove() { this.parent.children = this.parent.children.filter(node => node !== this); }
   setAttribute(name, value) { this.attributes[name] = value; }
@@ -317,3 +319,24 @@ banner = document.body.children.at(-1);
 banner.fire('keydown', {key: 'Escape'});
 assert.equal(document.body.children.includes(banner), false);
 assert.equal(live().length, 0);
+
+
+// Extensions mounts the same gallery inside its Themes tab. Switching away
+// clears the preview; trying closes the host before showing Keep and Revert.
+const panel = new Node('div');
+document.body.append(panel);
+let hostClosed = false;
+const closeHost = () => { hostClosed = true; };
+await window.KovaThemeGallery.open(opener, {mount: panel, closeHost});
+const embeddedCard = find(panel, node => node.className === 'theme-gallery-grid').children[0];
+action(embeddedCard, 'Preview').fire('click');
+assert.deepEqual(events.at(-1), ['palette preview', sky.tokens]);
+window.KovaThemeGallery.dismissEmbedded();
+assert.equal(panel.children.length, 0);
+assert.deepEqual(events.at(-1), ['end palette preview']);
+assert.equal(hostClosed, false);
+await window.KovaThemeGallery.open(opener, {mount: panel, closeHost});
+action(find(panel, node => node.className === 'theme-gallery-grid').children[0], 'Try').fire('click');
+assert.equal(hostClosed, true);
+assert.equal(panel.children.length, 0);
+action(document.body.children.at(-1), 'Revert').fire('click');

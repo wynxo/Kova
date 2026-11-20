@@ -9,6 +9,7 @@ import unicodedata
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 
@@ -359,25 +360,28 @@ class Agent:
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
-                       record_user: bool = True) -> AsyncIterator[dict]:
+                       record_user: bool = True, turn_id: str | None = None,
+                       variant: int | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy.
 
         A chat a paired phone wrote in keeps that phone's limits here, for every
         caller (the server, scheduled prompt jobs), not only for HTTP requests.
-        ``record_user`` is false when the turn re-runs a message already stored
-        (a retry), so the transcript keeps one copy of what the user wrote.
+        ``turn_id`` and ``variant`` name the attempt a retry or edit is writing;
+        every other turn starts a new one.
         """
         capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities,
-                                              record_user=record_user):
+                                              record_user=record_user, turn_id=turn_id,
+                                              variant=variant):
                 yield event
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
-                       record_user: bool = True) -> AsyncIterator[dict]:
+                       record_user: bool = True, turn_id: str | None = None,
+                       variant: int | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` overrides the saved chat model for one turn; unset chats use the default.
@@ -406,14 +410,18 @@ class Agent:
         entry = self.config.model_entry(model if model is not None else chat_model)
         previous_model = self.store.last_turn_model(chat_id)
         turn_model = entry.name if entry is not None and entry.model else None
-        user_message_id = self.store.add_message(chat_id, 'user', text, turn_model=turn_model) if record_user else None
+        turn_id = turn_id or uuid4().hex
+        variant = variant or 1
+        user_message_id = self.store.add_message(
+            chat_id, 'user', text, turn_model=turn_model, turn_id=turn_id, variant=variant,
+        ) if record_user else None
         if attached:
             # A saved message takes responsibility for its uploads: retain the
             # files even when the clean transcript no longer spells out an id.
             self.store.mark_attachments_used(chat_id, [row['id'] for row in attached])
             # Keep the file names attached to this message for reloaded chats.
             # The link carries no extracted text and is not part of model history.
-            # A retry keeps its original message and link: nothing to add.
+            # A retry writes a new variant of the turn, with its own message row.
             if user_message_id is not None:
                 self.store.link_message_attachments(user_message_id, attached)
         set_current_chat(chat_id, capabilities)
@@ -613,7 +621,8 @@ class Agent:
                     for message in steering.take():
                         # A steer joins the history at a round boundary, never
                         # between an assistant tool call and its tool reply.
-                        self.store.add_message(chat_id, 'user', message)
+                        self.store.add_message(chat_id, 'user', message,
+                                               turn_id=turn_id, variant=variant)
                         yield {'type': 'steer', 'text': message}
                 history = self._turn_context(chat_id, user_message_id, model_text, attached)
                 threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))

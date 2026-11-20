@@ -49,7 +49,7 @@ $ kova devices allow 3f9a1c2e models:write
 | `extensions:write` | no | turn off, remove or test MCP servers and plugins; edit or delete skills | POST /mcp/reload, PATCH /mcp/…, DELETE /mcp/…, POST /mcp/…/test, DELETE /extensions/catalog/preview/…, PATCH /extensions/plugins/…, DELETE /extensions/plugins/…, PUT /extensions/skills/…, DELETE /extensions/skills/… |
 | `settings:write` | no | change approval rules, privacy, memory and persona settings, the memory folder, start at login, and install, update and remove gallery themes | PUT /permission-rules, PATCH /privacy, POST /persona, PATCH /memory/settings, POST /memory/location, POST /autostart/…, POST /themes/gallery/{theme_id}/install, POST /themes/gallery/{theme_id}/update, DELETE /themes/{theme_id} |
 | `memory:write` | no | save, change, delete or consolidate memory notes, which every chat reads | POST /memory, PATCH /memory/…, DELETE /memory/…, POST /memory/undo, POST /memory/consolidate, plus the memory tools and the background memory review |
-| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access, manage shared project instructions | POST /jobs, DELETE /jobs/…, POST /projects, PATCH /projects/…, DELETE /projects/…, plus the agent rules below |
+| `host:exec` | no | run commands, schedule or remove jobs, use MCP tools, work with files outside Kova Files, choose Full access, manage shared project instructions and pinned file references | POST /jobs, DELETE /jobs/…, POST /projects, PATCH /projects/…, DELETE /projects/…, plus the agent rules below |
 
 A phone without the capability gets `403` with the exact `kova devices allow`
 command to run. Some things no capability unlocks, because they choose programs
@@ -116,7 +116,8 @@ same thing for the phone, so the limits follow the phone into the agent:
 - **Older queued messages:** messages queued before capabilities existed have
   no record of who wrote them, so after upgrading they are treated as a phone's
   with only `chat`.
-- **Restoring a checkpoint** outside Kova Files needs `host:exec`.
+- **Restoring a checkpoint or undoing a file's changes** outside Kova Files needs
+  `host:exec`; the same gate also covers `KOVA.md`, `AGENTS.md` and git data.
 - **Compare** (`POST /compare`) runs one prompt on several configured models. It
   is a chat-level route: it needs only `chat`, runs no tools, reads no history
   and writes nothing, so it gives a phone no power that chatting with the

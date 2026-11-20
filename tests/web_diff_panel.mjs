@@ -185,4 +185,48 @@ assert.ok(byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split
 context.localStorage.getItem = () => { throw new Error('blocked'); };
 await context.panel.open({chatId: 'c1', checkpointId: 9, path: 'app.py', request: async () => structuredClone(edited)});
 assert.ok(!byClass(panel.node, 'diff-panel-diff')[0].className.includes('is-split'), 'blocked storage falls back to unified');
+// Keep file marks every pending hunk in the current panel without a write.
+let requests = 0;
+await context.panel.open({chatId: 'c1', checkpointId: 10, path: 'notes.txt', request: async (_url, options) => {
+  assert.equal(options, undefined);
+  requests += 1;
+  return {...structuredClone(view), segments: [...view.segments, ...edited.segments]};
+}});
+const keepFile = byClass(byClass(panel.node, 'diff-panel-meta')[0], 'btn')
+  .find(control => control.textContent === 'Keep file');
+assert.ok(keepFile);
+keepFile.click();
+assert.equal(requests, 1);
+assert.equal(byClass(panel.node, 'diff-hunk-kept').length, 2);
+assert.equal(keepFile.disabled, true);
+
+// Undo file is one guarded request for every hunk still in the file.
+const clean = structuredClone(view);
+clean.segments[3].state = 'applied';
+const undoneFile = structuredClone(clean);
+undoneFile.segments[1].state = 'undone';
+undoneFile.segments[3].state = 'undone';
+let fileCalls = [], fileChanged = 0;
+await context.panel.open({chatId: 'c1', checkpointId: 11, path: 'notes.txt', onChange: () => fileChanged++,
+  request: async (url, options) => {
+    fileCalls.push({url, options});
+    return options ? {checkpoint_id: 12, deleted: false, view: undoneFile} : structuredClone(clean);
+  }});
+const metaButtons = () => byClass(byClass(panel.node, 'diff-panel-meta')[0], 'btn');
+const undoFile = () => metaButtons().find(control => control.textContent === 'Undo file');
+assert.ok(undoFile());
+assert.equal(undoFile().disabled, false, 'both hunks are still in the file');
+assert.equal(undoFile().attrs['aria-label'], 'Undo all changes in notes.txt');
+undoFile().click();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(fileCalls[1].url, '/chats/c1/checkpoints/11/file/undo');
+assert.deepEqual(JSON.parse(fileCalls[1].options.body), {path: 'notes.txt', expected_hash: 'a'.repeat(64)});
+assert.equal(fileChanged, 1);
+assert.match(byClass(panel.node, 'diff-panel-status')[0].textContent, /Undid all changes in notes\.txt\. Saved as change set 12/);
+assert.equal(byClass(panel.node, 'diff-hunk-undone').length, 2);
+assert.equal(undoFile().disabled, true, 'there is nothing left to undo');
+
+// A hunk edited since blocks the whole-file undo instead of overwriting it.
+await context.panel.open({chatId: 'c1', checkpointId: 13, path: 'notes.txt', request: async () => structuredClone(view)});
+assert.equal(undoFile().disabled, true, 'one edited hunk disables Undo file');
 console.log('diff panel ok');

@@ -117,8 +117,8 @@ cookie, so a route added to the router is authenticated by construction.
 | --- | --- | --- |
 | `GET/PATCH /privacy` | token or session | metadata-only outbound report and immediate Local only policy |
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
-| `GET/POST /projects` | token or session | list / create projects; writes need `host:exec` from a paired phone |
-| `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
+| `GET/POST /projects` | token or session | list / create projects, including pinned file references; writes need `host:exec` from a paired phone |
+| `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit (including its pinned references) or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
 | `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` when creating a persistent chat |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
@@ -136,11 +136,13 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/compare/keep` | token or session | save the message and one compared answer as a normal turn |
 | `GET /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks` | token or session | one changed file as hunks, each still applied, undone or edited since; contained to the chat's working folder |
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/hunks/undo` | token or session | revert one hunk in the working file, refused if the file's hash changed or the path leaves the folder or crosses a symlink; recorded as a new change set |
+| `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/file/undo` | token or session | revert every remaining hunk in one file, keeping later edits elsewhere and refusing the whole undo if any hunk was edited since; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
 | `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
-| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again in place, replacing the reply it produced |
-| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run its turn again |
+| `POST /chats/{chat_id}/retry` | token or session | run the last user turn again as a new alternative; the previous reply stays stored |
+| `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run it again as a new alternative |
+| `POST /chats/{chat_id}/alternatives` | token or session | show one stored attempt of the newest turn by `turn_id` and 1-based `index`; nothing is deleted |
 | `GET/POST /chats/{chat_id}/queue` | token or session | list / queue a message to run after the current turn |
 | `POST /chats/{chat_id}/queue/next` | token or session | take the oldest queued message as the next turn; a paired phone's comes back `remote` and stays queued until sent with `queued: <id>` |
 | `DELETE /chats/{chat_id}/queue/{message_id}` | token or session | drop one queued message |
@@ -177,6 +179,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /themes` | token or session | list the built-in themes and the user's theme files, with any file's error |
 | `POST /themes` | token or session | validate and save a new theme (paired phones need `settings:write`); `?validate_only=true` checks a draft without saving |
 | `GET /themes/gallery` | token or session | list bundled examples with their version, author (when given), install state, whether a newer copy is bundled, swatches and resolved preview tokens; `?installed=true` resolves a user theme named `gallery` |
+| `GET /themes/gallery/{theme_id}/preview` | token or session | validate and preview one gallery theme without reading unrelated downloads |
 | `POST /themes/gallery/{theme_id}/install` | token or session | validate and install a bundled example as a theme file (paired phones need `settings:write`) |
 | `POST /themes/gallery/{theme_id}/update` | token or session | replace an installed bundled theme with its newer bundled copy (409 when not installed or already current; paired phones need `settings:write`) |
 | `DELETE /themes/{theme_id}` | token or session | delete one installed theme file (built-ins are refused; paired phones need `settings:write`) |
@@ -566,7 +569,8 @@ Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 
 - `projects` — id, name, instructions, optional cwd, created, updated, and nullable
-  colour, icon and default model
+  colour, icon and default model, plus `files` (a JSON list of project-relative
+  pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
@@ -574,8 +578,8 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`)
-so older databases keep working. Search uses an FTS5 virtual table
+`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`,
+`files`) so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
 FTS5, `search_chats` falls back to a case-insensitive `LIKE` scan. Queries are
@@ -605,13 +609,24 @@ A project may also carry a colour and an icon (the same keys and semantic tokens
 chat uses, #213) and a default model. New chats in the project use that model
 unless they pick one; a default whose model entry was removed later is skipped.
 
+A project can also pin files from its working folder. Pins are **references**:
+paths relative to the project folder (absolute paths, `~`, `..` and control
+characters are refused), at most 20 per project, stored as names only. Kova
+never reads pinned files for this feature or sends their names or contents to
+the model. Pinning grants no additional file access. Changing a project's folder
+requires sending its pinned list in the same `PATCH` (or clearing it first), so
+references never silently retarget. Saving pins needs `host:exec`, like the
+instructions they accompany.
+
 In the web sidebar, projects are collapsed by default above ungrouped chats. Each
 section shows its colour or icon, and opening it shows the project at a glance:
-its folder, default model and the start of its instructions. Use **New project**
-to set up shared instructions, a folder, a model and a look, then **New chat in
-project** inside that group; **Move to project** in a chat's menu moves an
-existing chat. The CLI supports `kova projects list|create|show|edit|rm` and
-`kova chats move <chat> <project|none>`; project commands take the ID from list.
+its folder, default model, pinned files and the start of its instructions. Use
+**New project** to set up shared instructions, a folder, pinned files, a model
+and a look, then **New chat in project** inside that group; **Move to project**
+in a chat's menu moves an existing chat. The CLI supports
+`kova projects list|create|show|edit|rm` (with repeatable `--pin`/`--unpin` and
+`--clear-pins` on `create`/`edit`) and `kova chats move <chat> <project|none>`;
+project commands take the ID from list.
 
 A project may keep its own memory when **Give this project its own memory** is
 turned on (off by default; `memory_scope` on the project, `--memory` in the
@@ -620,9 +635,10 @@ tools and the opt-in post-turn review write into the project scope. The notes
 live in a hidden `.kova-projects/<project-id>/` folder under the memory write
 directory, so the global store, the memory browser and every other project
 never list or search them. Deleting a project deletes that scope. The two
-stores have separate budgets, and nightly consolidation remains global. Pinned
-files are still a follow-up. Backups now carry project definitions, membership
-and project memory; older backups that predate them still restore ungrouped.
+stores have separate budgets, and nightly consolidation remains global.
+Backups carry project definitions, pinned references, chat membership and
+project memory, including archives written before projects existed (see the
+data-layout section above).
 
 ### Usage and cost
 
@@ -903,14 +919,32 @@ context = 32768                          # token budget for history trimming
 ```
 
 Backups (`src/kova/backup.py`, `kova export` / `kova import`) are ordinary
-zips: `manifest.json`, chat JSON plus Markdown, `projects.json`, global memory
+zips: `manifest.json`, `projects.json`, chat JSON plus Markdown, global memory
 notes, each project's notes under `project-memory/<project-id>/`, reminders,
 and `config.toml` with API keys, provider headers and MCP `env`/`headers`
-stripped. A merge keeps existing projects, notes and chats; a replacing import
-clears project scopes too. Project notes whose project did not arrive are
-skipped rather than attached to a stranger. The token is never included. Update and
+stripped. A merge keeps existing projects, notes and chats, and follows a
+remapped project id to its restored notes; a replacing import clears project
+scopes too. Project notes whose project did not arrive are skipped rather than
+attached to a stranger. The token is never included. Update and
 uninstall logic lives in `src/kova/lifecycle.py` and only manages the `uv`
 tool install; it never touches chats or notes unless you ask it to purge.
+
+`projects.json` keeps each project's name, instructions, look, default model,
+pinned file references, memory flag and folder, and every chat JSON keeps its
+`project_id`, so a restore returns chats to their project. Project memory notes
+travel separately and follow a remapped project id. Pinned files travel as relative
+references only; the files themselves are never copied. A folder below the home
+folder is written as `~/...`,
+so an archive never spells out the account name. A restore expands it and keeps
+it only when it exists and is a directory; it never creates one, and a project
+whose folder is missing here has no default folder or pinned files, because a
+reference has no base without it. Projects are restored
+before chats. Merge skips a project that is already here (same id; the creation
+time tells a locally renamed copy from an unrelated one) and imports one whose
+id belongs to a different local project under a fresh id, moving only the chats
+that came with the archive. An archive from before projects existed has no
+`projects.json`; its chats import ungrouped. `--replace` clears local projects
+along with chats, reminders and Kova's notes, so an older archive leaves none.
 
 ## Plugins
 
@@ -1292,5 +1326,9 @@ paths are inserted only as text. Each file of a change set also opens in the sid
 panel (`diff-panel.js`, #190): the full diff, unified or split (kept per device in
 `localStorage`), with word-level marks on a removed line and the added line that
 replaced it, folded unchanged runs, and Undo or Keep per hunk through `kova/hunks.py`.
+**Undo file** reverts every remaining hunk of one file in a single write, keeps edits
+made elsewhere in the file, refuses when any hunk was edited since, and removes a
+file the change set created when nothing is left. Both undos are recorded as new
+change sets, so Restore files brings them back.
 The end-of-turn summary says *Changed N files (+A −D)*, and **Review changes** opens
 every file as a panel tab, the first one in front. Whole-checkpoint restore is unchanged.

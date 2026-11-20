@@ -114,3 +114,20 @@ def test_cli_setup_flags_and_error(home, monkeypatch):
     monkeypatch.setattr(onboarding, 'run_setup', fail)
     result = CliRunner().invoke(cli.app, ['setup'])
     assert result.exit_code == 1 and 'Provider unavailable.' in result.output
+
+
+def test_setup_yes_requires_explicit_url_without_prompt_or_probe(home, monkeypatch):
+    monkeypatch.setattr(onboarding, '_select', lambda *a, **kw: pytest.fail('unexpected prompt'))
+    monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: pytest.fail('network scan'))
+    monkeypatch.setattr(onboarding.server_finder, 'connect', lambda *a, **kw: pytest.fail('unexpected connection'))
+    result = CliRunner().invoke(cli.app, ['setup', '--yes'])
+    assert result.exit_code == 1
+    assert 'Scripted setup requires --url' in result.output
+
+
+def test_setup_yes_skips_persona_even_in_a_terminal(home, monkeypatch):
+    monkeypatch.setattr(onboarding.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(onboarding, '_setup_persona', lambda cfg: pytest.fail('unexpected persona prompt'))
+    onboarding.run_setup(load_config(), url='http://homelab:8080', yes=True,
+                         transport=httpx.MockTransport(catalog))
+    assert load_config().active_model().model == 'alpha'
