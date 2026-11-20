@@ -44,6 +44,7 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
     for name in ("app.js", "app.css", "settings.js", "settings.css",
                  "reasoning.js", "reasoning.css",
                  "theme-preview.js", "theme-preview.css",
+                 "focus-trap.js",
                  "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
                  "fonts/InterVariable.woff2", "fonts/InterVariable-Italic.woff2",
                  "fonts/JetBrainsMonoVariable.woff2"):
@@ -201,3 +202,11 @@ def test_theme_preview_assets():
         assert (assets / name).is_file()
         assert name in (assets / "index.html").read_text()
         assert name in (assets / "sw.js").read_text()
+
+
+def test_focus_trap_assets():
+    from pathlib import Path
+    assets = Path(__file__).resolve().parents[1] / "src/kova/web_assets"
+    assert (assets / "focus-trap.js").is_file()
+    assert "focus-trap.js" in (assets / "index.html").read_text()
+    assert "focus-trap.js" in (assets / "sw.js").read_text()
