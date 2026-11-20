@@ -113,7 +113,7 @@ def contrast_failures(tokens: dict[str, str], terminal: list[str] | None = None)
     failures = [
         f"{name}: use a valid hex or rgb()/rgba() colour."
         for name, colour in tokens.items()
-        if parse_colour(colour) is None
+        if not name.startswith("chat.") and parse_colour(colour) is None
     ]
     if failures:
         return failures

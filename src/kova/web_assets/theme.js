@@ -26,6 +26,13 @@
   const TOKEN = /^(bg|fg|border|accent|status|syntax)\.[a-z0-9-]+$/;
   const COLOUR = /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$/;
   const BACKGROUND_FILE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$/;
+  const CHAT_TOKENS = {
+    'chat.width': ['narrow', 'normal', 'wide'],
+    'chat.message-style': ['document', 'bubbles', 'compact'],
+    'chat.avatars': ['on', 'off'],
+    'chat.zen': ['on', 'off'],
+    'chat.bubble-shape': ['round', 'sharp'],
+  };
 
   const root = document.documentElement;
   const media = typeof window.matchMedia === 'function'
@@ -79,7 +86,7 @@
     return systemAppearance();
   }
 
-  // Only semantic tokens with plain colour values reach the style sheet. The
+  // Only semantic tokens with plain colours or known chat values reach CSS. The
   // server already validated the file; this keeps the browser honest anyway.
   function cleanTokens(tokens) {
     const clean = {};
@@ -87,6 +94,8 @@
     for (const [name, value] of Object.entries(tokens)) {
       if (TOKEN.test(name) && typeof value === 'string' && COLOUR.test(value.trim())) {
         clean[name] = value.trim();
+      } else if (Object.hasOwn(CHAT_TOKENS, name) && CHAT_TOKENS[name].includes(value)) {
+        clean[name] = value;
       }
     }
     return clean;
@@ -191,7 +200,7 @@
     try {
       if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
         document.dispatchEvent(new CustomEvent('kova:theme', {
-          detail: {choice, appearance: appearance(), name: label(choice)},
+          detail: {choice, appearance: appearance(), name: label(choice), preview: !!draft || previewing !== null},
         }));
       }
     } catch (_) {}

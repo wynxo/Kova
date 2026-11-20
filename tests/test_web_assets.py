@@ -62,6 +62,15 @@ def test_markdown_module_ships_with_the_shell() -> None:
     assert "window.KovaMarkdown?.render" in app, "app.js does not delegate Markdown rendering"
 
 
+def test_rich_markdown_assets_are_available_offline_but_not_eager_scripts() -> None:
+    html = INDEX.read_text(encoding="utf-8")
+    worker = (ASSETS / "sw.js").read_text(encoding="utf-8")
+    for asset in ("vendor/katex.js", "vendor/mermaid.js", "diagram-frame.js"):
+        assert (ASSETS / asset).is_file()
+        assert f"/app/assets/{asset}" in worker
+        assert f"/app/assets/{asset}" not in html
+
+
 def test_popover_search_has_a_visible_keyboard_focus_ring() -> None:
     css = (ASSETS / "app.css").read_text(encoding="utf-8")
     focus = re.search(r"\.popover-search:focus-visible\s*\{([^}]+)\}", css)

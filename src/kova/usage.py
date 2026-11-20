@@ -247,6 +247,7 @@ class TurnMeter:
         ms = lambda seconds: max(0, round(seconds * 1000))  # noqa: E731
         price = price_for(entry, overrides)
         generation = ms(self.generation)
+        provider = getattr(entry._provider, "name", None)
         return {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
@@ -258,6 +259,7 @@ class TurnMeter:
             "cost_usd": round(price.cost(self.prompt_tokens, self.completion_tokens), 6) if price else None,
             "local": bool(price and price.local),
             "model": entry.name,
+            **({"provider": provider} if provider else {}),
         }
 
 

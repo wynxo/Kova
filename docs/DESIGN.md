@@ -98,6 +98,9 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
   `data-text-size`, `data-density`, `data-font`, `data-chat-width` and `data-avatars` on
   `<html>` swap these tokens, or the shared `--column`, one step up or down.
   `default` (and `inter`, `normal`, `on`) writes no override, so it is the scale above.
+- Message style and timestamps are set separately via `data-message-style` and
+  `data-message-timestamps`. Chat width, message style and avatars may follow the active
+  theme's `tokens.chat` defaults instead of a saved choice.
 - Motion is a setting too: Full, Reduced or Off overrides the duration tokens under
   `data-motion` on `<html>`.
 - A theme background is drawn by one fixed layer under the shell. Panels may use an 88%

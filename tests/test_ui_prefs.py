@@ -160,9 +160,9 @@ def test_thinking_animation_preference_is_shared(http):
 
 def test_chat_width_preference_is_shared(http):
     """Content width (#205): "normal" is the shipped 768px column."""
-    assert http.get("/preferences").json()["chat_width"] == "normal"
+    assert http.get("/preferences").json()["chat_width"] == "theme"
 
-    for value in ("narrow", "wide", "normal"):
+    for value in ("narrow", "wide", "normal", "theme"):
         saved = http.put("/preferences", json={"chat_width": value})
 
         assert saved.status_code == 200
@@ -172,7 +172,7 @@ def test_chat_width_preference_is_shared(http):
 
 def test_avatars_preference_is_shared(http):
     """Avatars (#205): on is the shipped look, off keeps the names."""
-    assert http.get("/preferences").json()["avatars"] == "on"
+    assert http.get("/preferences").json()["avatars"] == "theme"
 
     saved = http.put("/preferences", json={"avatars": "off"})
 
@@ -405,3 +405,15 @@ def test_prefs_set_refuses_a_value_outside_the_schema(runner, http):
     assert result.exit_code == 1
     assert "custom_css" in _output(result)
     assert http.get("/preferences").json()["custom_css"] == "off"
+
+
+@pytest.mark.parametrize(("key", "default", "choices"), [
+    ("message_style", "theme", ("bubbles", "compact", "document", "theme")),
+    ("message_timestamps", "never", ("always", "hover", "never")),
+])
+def test_conversation_view_preferences_are_shared(http, key, default, choices):
+    assert http.get("/preferences").json()[key] == default
+    for value in choices:
+        assert http.put("/preferences", json={key: value}).status_code == 200
+        assert http.get("/preferences").json()[key] == value
+    assert http.put("/preferences", json={key: "unknown"}).status_code == 422

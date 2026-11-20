@@ -25,7 +25,14 @@ BUILTIN: tuple[str, ...] = ("kova-dark", "kova-light")
 TOKENS_PATH = Path(__file__).with_name("tokens.json")
 
 APPEARANCES = ("dark", "light")
-GROUPS = ("bg", "fg", "border", "accent", "status", "syntax")
+GROUPS = ("bg", "fg", "border", "accent", "status", "syntax", "chat")
+CHAT_TOKENS = {
+    "width": ("narrow", "normal", "wide"),
+    "message-style": ("document", "bubbles", "compact"),
+    "avatars": ("on", "off"),
+    "zen": ("on", "off"),
+    "bubble-shape": ("round", "sharp"),
+}
 _TOP_LEVEL = {
     "$schema", "id", "name", "version", "author", "description",
     "appearance", "extends", "tokens", "terminal", "background",
@@ -239,12 +246,16 @@ def validate(payload: Any) -> dict[str, Any]:
                 f"tokens.{group} is not a semantic group; use one of {', '.join(GROUPS)}."
             )
         if not isinstance(values, dict):
-            raise ThemeError(f"tokens.{group} must be an object of token names to colours.")
+            raise ThemeError(f"tokens.{group} must be an object of token names to values.")
         for key, value in values.items():
             token = f"{group}.{key}"
             if token not in base:
                 raise ThemeError(f"tokens.{token} is not a token of {base_id}.")
-            if not _is_colour(value):
+            if group == "chat":
+                choices = CHAT_TOKENS[key]
+                if value not in choices:
+                    raise ThemeError(f"tokens.{token} must be one of {', '.join(choices)}.")
+            elif not _is_colour(value):
                 raise ThemeError(
                     f"tokens.{token} must be a hex or rgb()/rgba() colour; got {value!r}."
                 )
