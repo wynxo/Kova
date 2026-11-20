@@ -172,11 +172,16 @@ def test_long_reply_reflows_at_200_percent(chromium, kova) -> None:
         page.locator("#prompt").fill("Show the example")
         page.locator("#prompt").press("Enter")
         reply = page.locator("#messages .assistant")
-        expect(reply).to_be_visible(timeout=10_000)
+        code = reply.locator("pre code")
+        expect(code).to_be_visible(timeout=10_000)
         page.evaluate("() => document.fonts.ready")
         assert_no_page_overflow(page, width)
+        # A long code line can extend beyond its own box, but the code box
+        # itself must fit and expose the rest of the line by scrolling.
+        assert code.evaluate("(el) => { el.scrollLeft = el.scrollWidth; return el.scrollLeft > 0; }")
         protruding = page.evaluate(
             "() => [...document.querySelectorAll('#messages *')]"
+            ".filter(e => !e.parentElement.closest('pre code'))"
             ".filter(e => e.getBoundingClientRect().right > window.innerWidth + 1)"
             ".slice(0, 5).map(e => e.className || e.tagName)")
         assert protruding == [], f"reply content escapes the viewport at 640px: {protruding}"
