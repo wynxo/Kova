@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, onboarding, providers, theme, themes, egress, ui_prefs
+from kova import __version__, autostart, backup, lifecycle, onboarding, providers, themes, egress, ui_prefs
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -44,7 +44,8 @@ from kova.privacy import status_text as privacy_status_text
 from kova.tools.reminders import format_relative, format_when
 from kova.tui import brand
 from kova.tui.keymap import DEFAULT_KEYS, Keymap
-from kova.tui.style import colour
+from kova import theme as kova_theme
+from kova.tui.style import active_theme, colour
 from kova.ui import _run_chat
 
 
@@ -100,7 +101,7 @@ def _hint_for(message: str) -> str | None:
 def _error_line(message: str) -> None:
     """One styled error line, without exiting (for commands that keep going)."""
     text = " ".join(message.splitlines())
-    console.print(Text.assemble((f"{SYMBOL_ERROR} ", f"bold {theme.ERROR}"), (text, theme.ERROR)))
+    console.print(Text.assemble((f"{SYMBOL_ERROR} ", f"bold {colour('ERROR')}"), (text, colour('ERROR'))))
 
 
 def _fail(message: str, hint: str | None = None) -> None:
@@ -109,12 +110,12 @@ def _fail(message: str, hint: str | None = None) -> None:
     _error_line(text)
     hint = hint if hint is not None else _hint_for(text)
     if hint:
-        console.print(Text(f"  {hint}", style=theme.MUTED))
+        console.print(Text(f"  {hint}", style=colour('MUTED')))
     raise typer.Exit(1)
 
 
 def _ok(message: str) -> None:
-    console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (message, "")))
+    console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {colour('SUCCESS')}"), (message, "")))
 
 
 def _muted(message: str) -> None:
@@ -125,11 +126,11 @@ def _table(*, title: str | None = None, caption: str | None = None) -> Table:
     """A Kova table: muted header rule, accent title, no outer box."""
     return Table(
         box=box.SIMPLE_HEAD,
-        border_style=theme.BORDER,
-        header_style=f"bold {theme.MUTED}",
-        title=Text(title, style=f"bold {theme.ACCENT}") if title else None,
+        border_style=colour('BORDER'),
+        header_style=f"bold {colour('MUTED')}",
+        title=Text(title, style=f"bold {colour('ACCENT')}") if title else None,
         title_justify="left",
-        caption=Text(caption, style=theme.MUTED) if caption else None,
+        caption=Text(caption, style=colour('MUTED')) if caption else None,
         caption_justify="left",
         pad_edge=False,
         show_edge=False,
@@ -139,8 +140,8 @@ def _table(*, title: str | None = None, caption: str | None = None) -> Table:
 
 def _empty(message: str, hint: str) -> None:
     """A friendly empty state: one line, then a dim hint on how to fill it."""
-    console.print(Text.assemble((f"{SYMBOL_BULLET} ", f"bold {theme.ACCENT_SOFT}"), (message, "")))
-    console.print(Text(f"  {hint}", style=theme.MUTED))
+    console.print(Text.assemble((f"{SYMBOL_BULLET} ", f"bold {colour('ACCENT_SOFT')}"), (message, "")))
+    console.print(Text(f"  {hint}", style=colour('MUTED')))
 
 
 def _clip(value: str, limit: int = 60) -> str:
@@ -201,10 +202,10 @@ def _version(value: bool) -> None:
     if value:
         console.print(Text.assemble(
             brand.gradient_text("Kova"),
-            ("  ·  ", theme.BORDER),
-            (f"v{__version__}", theme.MUTED),
+            ("  ·  ", colour('BORDER')),
+            (f"v{__version__}", colour('MUTED')),
         ))
-        console.print(Text("Your own private AI that lives on your computer.", style=f"italic {theme.MUTED}"))
+        console.print(Text("Your own private AI that lives on your computer.", style=f"italic {colour('MUTED')}"))
         raise typer.Exit()
 
 
@@ -231,10 +232,10 @@ def _lifecycle_line(message: str) -> Text:
     """Style one lifecycle (update/uninstall) line: ✓ success, → step, else muted."""
     text = message.strip()
     if text.startswith(f"{SYMBOL_OK} "):
-        return Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (text[2:], ""))
+        return Text.assemble((f"{SYMBOL_OK} ", f"bold {colour('SUCCESS')}"), (text[2:], ""))
     if text.startswith(f"{SYMBOL_ARROW} "):
-        return Text.assemble((f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT), (text[2:], theme.MUTED))
-    return Text(text, style=theme.MUTED)
+        return Text.assemble((f"{SYMBOL_ARROW} ", colour('ACCENT_SOFT')), (text[2:], colour('MUTED')))
+    return Text(text, style=colour('MUTED'))
 
 
 def _lifecycle_emit(message: str) -> None:
@@ -245,11 +246,11 @@ def _print_update_check(message: str) -> None:
     """Give the update check a ✓ / ↑ / • line that matches the rest of the CLI."""
     lowered = message.casefold()
     if lowered.startswith("up to date"):
-        console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {theme.SUCCESS}"), (message, theme.SUCCESS)))
+        console.print(Text.assemble((f"{SYMBOL_OK} ", f"bold {colour('SUCCESS')}"), (message, colour('SUCCESS'))))
     elif lowered.startswith("update available"):
-        console.print(Text.assemble(("↑ ", f"bold {theme.WARNING}"), (message, "")))
+        console.print(Text.assemble(("↑ ", f"bold {colour('WARNING')}"), (message, "")))
     else:
-        console.print(Text.assemble((f"{SYMBOL_BULLET} ", theme.ACCENT_SOFT), (message, theme.MUTED)))
+        console.print(Text.assemble((f"{SYMBOL_BULLET} ", colour('ACCENT_SOFT')), (message, colour('MUTED'))))
 
 
 @app.command()
@@ -365,7 +366,7 @@ def _read_capped(stream, label: str) -> str:
     if len(data) > ASK_INPUT_LIMIT:
         data = data[:ASK_INPUT_LIMIT]
         _stderr.print(f"Warning: {label} is over {ASK_INPUT_LIMIT // 1000} KB; only the first "
-                      f"{ASK_INPUT_LIMIT // 1000} KB was sent.", style=theme.WARNING, markup=False)
+                      f"{ASK_INPUT_LIMIT // 1000} KB was sent.", style=colour('WARNING'), markup=False)
     return data.decode("utf-8", errors="replace")
 
 
@@ -467,7 +468,7 @@ def ask(
             kind = event["type"]
             if kind == "reasoning" and think:
                 reasoning = True
-                _stderr.print(event["text"], style=theme.MUTED, end="", markup=False)
+                _stderr.print(event["text"], style=colour('MUTED'), end="", markup=False)
             elif kind == "text":
                 if reasoning:
                     reasoning = False
@@ -478,7 +479,7 @@ def ask(
                     sys.stdout.flush()
             elif kind == "privacy":
                 if not as_json:
-                    _stderr.print(privacy_status_text(event), style=theme.MUTED, markup=False)
+                    _stderr.print(privacy_status_text(event), style=colour('MUTED'), markup=False)
             elif kind == "tool_call":
                 tools.append(event["name"])
             elif kind in {"approval", "question"}:
@@ -486,7 +487,7 @@ def ask(
                 # leave it waiting ten minutes for an approval it cannot show.
                 guidance = "This action needs approval. Continue in interactive Kova chat to approve it."
                 client.answer_approval(chat_id, event["id"], "deny", guidance)
-                _stderr.print(guidance, style=theme.WARNING, markup=False)
+                _stderr.print(guidance, style=colour('WARNING'), markup=False)
             elif kind == "error":
                 if pieces and not as_json:
                     print()
@@ -538,9 +539,9 @@ def compare(
         ms = entry.get("ms", 0)
         error = entry.get("error")
         if error:
-            console.print(f"## {name} (failed in {ms} ms: {error})", style=theme.ERROR)
+            console.print(f"## {name} (failed in {ms} ms: {error})", style=colour('ERROR'))
         else:
-            console.print(f"## {name} ({ms} ms)", style=theme.ACCENT)
+            console.print(f"## {name} ({ms} ms)", style=colour('ACCENT'))
             console.print(entry.get("text", ""), markup=False)
         console.print()
 
@@ -740,7 +741,7 @@ def status():
         if exc.status is not None:
             raise
         console.print(brand.card(_status_rows(cfg, None, notes=None, reminders=None),
-                                 "Kova status", tone=theme.ERROR))
+                                 "Kova status", tone=colour('ERROR')))
         _muted("It starts by itself when you run kova.")
         return
 
@@ -764,7 +765,7 @@ def status():
 
     console.print(brand.card(_status_rows(cfg, info, notes=notes, reminders=reminders, spend=spend),
                              "Kova status",
-                             tone=theme.ACCENT if info.get("model_ok") else theme.WARNING))
+                             tone=colour('ACCENT') if info.get("model_ok") else colour('WARNING')))
     if not info.get("model_ok"):
         _muted("The model server isn't answering; run: kova setup")
 
@@ -799,12 +800,12 @@ def usage_command(
         table.add_row(Text(row["model"], style="bold"), str(row["answers"]),
                       short_tokens(row["prompt_tokens"]), short_tokens(row["completion_tokens"]), cost, speed)
     console.print(table)
-    console.print(Text.assemble(("Today       ", theme.MUTED), _spend_line(data["today"])))
-    console.print(Text.assemble(("This month  ", theme.MUTED), _spend_line(data["month"])))
+    console.print(Text.assemble(("Today       ", colour('MUTED')), _spend_line(data["today"])))
+    console.print(Text.assemble(("This month  ", colour('MUTED')), _spend_line(data["month"])))
     budget = data.get("budget") or {}
     if budget.get("monthly_usd"):
         line = f"Budget      ~{money(budget['spent_usd'])} of {money(budget['monthly_usd'])} this month"
-        console.print(Text(line, style=theme.WARNING if budget.get("warning") else theme.MUTED))
+        console.print(Text(line, style=colour('WARNING') if budget.get("warning") else colour('MUTED')))
     if total["estimated"]:
         _muted("Some servers sent no token counts; those answers are estimated (about 4 characters a token).")
 
@@ -855,7 +856,7 @@ def autostart_status():
         _fail(str(exc))
     line = autostart.describe(state)
     if state.stale:
-        console.print(Text.assemble(("! ", f"bold {theme.WARNING}"), (line, theme.WARNING)))
+        console.print(Text.assemble(("! ", f"bold {colour('WARNING')}"), (line, colour('WARNING'))))
     elif state.installed:
         _ok(line)
     else:
@@ -896,7 +897,7 @@ def _restart_server(cfg) -> bool:
     try:
         ensure_server(cfg)
     except KovaError as exc:
-        console.print(Text(f"Imported, but the server did not restart: {exc}", style=theme.WARNING))
+        console.print(Text(f"Imported, but the server did not restart: {exc}", style=colour('WARNING')))
         return False
     return True
 
@@ -1037,18 +1038,21 @@ def themes_list():
         entries = get_client().themes()
     except KovaError as exc:
         _fail(str(exc))
-    table = _table(caption=f"{len(entries)} theme(s) · built-in and user files")
+    active = kova_theme.theme_id(active_theme())
+    table = _table(caption=f"{len(entries)} theme(s) · built-in and user files · ● the terminal's theme")
+    table.add_column("", no_wrap=True, width=1)
     table.add_column("Theme", no_wrap=True)
     table.add_column("Name")
     table.add_column("Appearance", no_wrap=True)
-    table.add_column("Source", style=theme.MUTED, no_wrap=True)
+    table.add_column("Source", style=colour('MUTED'), no_wrap=True)
     for entry in entries:
         source = "built-in" if entry.get("source") == "built-in" else "file"
+        mark = Text("●", style=colour('ACCENT')) if entry["id"] == active else ""
         if entry.get("error"):
-            table.add_row(Text(entry["id"], style=theme.ERROR), Text("broken", style=theme.ERROR),
-                          "—", source)
+            table.add_row(mark, Text(entry["id"], style=colour('ERROR')),
+                          Text("broken", style=colour('ERROR')), "—", source)
         else:
-            table.add_row(Text(entry["id"], style="bold"), entry.get("name") or "—",
+            table.add_row(mark, Text(entry["id"], style="bold"), entry.get("name") or "—",
                           entry.get("appearance") or "—", source)
     console.print(table)
     for entry in entries:
@@ -1097,13 +1101,48 @@ def themes_show(theme_id: str = typer.Argument(..., help="A theme id from `kova 
     merged = data.get("tokens") or {}
     terminal = data.get("terminal") or []
     table = _table(caption=f"{len(merged)} semantic tokens · resolved over {data.get('extends') or 'its base'}")
-    table.add_column("Token", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Token", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Value", overflow="fold")
     for name in sorted(merged):
         table.add_row(name, str(merged[name]))
     console.print(table)
     if terminal:
         _muted("Terminal palette: " + " ".join(terminal))
+
+
+def _terminal_theme_setting(name: str, home: Path) -> str:
+    """Validate a ``[tui] theme`` value: ``dark``, ``light`` or an installed theme id."""
+    text = name.strip().lower()
+    themes.get(kova_theme.theme_id(text), home)  # raises ThemeError naming the problem
+    return text
+
+
+#: The shared UI preference that paints the same built-in as a terminal theme id.
+_APP_THEME = {"kova-dark": "dark", "kova-light": "light"}
+
+
+@_themes.command("use")
+def themes_use(
+        theme_id: str = typer.Argument(..., help="A theme id from `kova themes list`, or dark/light."),
+        app_too: bool = typer.Option(False, "--app",
+                                     help="Also make it the app's theme on every paired device.")):
+    """Paint the terminal with a theme; saved as [tui] theme."""
+    cfg = load_config()
+    try:
+        value = _terminal_theme_setting(theme_id, cfg.home)
+    except themes.ThemeError as exc:
+        _fail(str(exc), hint="Run: kova themes list")
+    data = themes.get(kova_theme.theme_id(value), cfg.home)
+    cfg.tui_theme = value
+    save_config(cfg)
+    if app_too:
+        try:
+            get_client().set_preferences({"theme": _APP_THEME.get(data["id"], data["id"])})
+        except KovaError as exc:
+            _fail(f"The terminal now uses {data['name']}, but the app's theme did not change: {exc}")
+    _ok(f"{data['name']} is now the terminal's theme" + (" and the app's" if app_too else "") + ".")
+    if os.environ.get("KOVA_THEME", "").strip():
+        _muted("KOVA_THEME is set in this shell and still wins; unset it to see the change.")
 
 
 @_themes.command("check")
@@ -1119,7 +1158,7 @@ def themes_check(path: Path = typer.Argument(
     base = data.get("extends") or themes.default_base(data["appearance"])
     merged = {name: value for name, value in themes.resolve(data).items() if name != "terminal"}
     table = _table(caption=f"{len(merged)} tokens resolved over {base}")
-    table.add_column("Token", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Token", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Value", overflow="fold")
     for name in sorted(merged):
         table.add_row(name, str(merged[name]))
@@ -1140,16 +1179,16 @@ def _list_models(client: KovaClient) -> None:
         _empty("No models configured.", "Run: kova setup to find a model server.")
         return
     table = _table(caption=f"{len(models)} configured · active: {active}")
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Name", no_wrap=True)
     table.add_column("Model", no_wrap=True)
-    table.add_column("Provider", style=theme.MUTED, overflow="fold")
-    table.add_column("Server", style=theme.MUTED, overflow="fold")
+    table.add_column("Provider", style=colour('MUTED'), overflow="fold")
+    table.add_column("Server", style=colour('MUTED'), overflow="fold")
     for number, entry in enumerate(sorted(models, key=lambda m: (m.get("provider_name", ""), m["name"])), start=1):
         selected = entry["name"] == active
         badge = Text.assemble(
-            ("● " if selected else "  ", theme.SUCCESS if selected else ""),
-            (entry["name"], f"bold {theme.ACCENT}" if selected else ""),
+            ("● " if selected else "  ", colour('SUCCESS') if selected else ""),
+            (entry["name"], f"bold {colour('ACCENT')}" if selected else ""),
         )
         table.add_row(str(number), badge, entry["model"], entry.get("provider_name", "Custom"), entry["base_url"])
     console.print(table)
@@ -1218,7 +1257,7 @@ def model_remove_local(provider: str):
 _mcp = typer.Typer(no_args_is_help=True, help="Use the tools of MCP (Model Context Protocol) servers.")
 app.add_typer(_mcp, name="mcp")
 
-_MCP_STATE = {"connected": theme.SUCCESS, "connecting": theme.WARNING, "error": theme.ERROR, "off": theme.MUTED}
+_MCP_STATE = {"connected": "SUCCESS", "connecting": "WARNING", "error": "ERROR", "off": "MUTED"}
 
 
 def _pairs(values: list[str], label: str) -> dict[str, str]:
@@ -1241,9 +1280,9 @@ def _mcp_tools(row: dict) -> None:
         return
     table = _table(caption=f"{len(row['tools'])} tools · Kova asks before each call unless always allowed")
     table.add_column("Tool", no_wrap=True)
-    table.add_column("Kova name", style=theme.MUTED, no_wrap=True)
+    table.add_column("Kova name", style=colour('MUTED'), no_wrap=True)
     table.add_column("On", no_wrap=True)
-    table.add_column("Description", style=theme.MUTED, overflow="fold", max_width=60)
+    table.add_column("Description", style=colour('MUTED'), overflow="fold", max_width=60)
     for tool in row["tools"]:
         table.add_row(tool["name"], tool["kova_name"], "yes" if tool["enabled"] else "no",
                       _clip(tool["description"].split("\n")[0], 60))
@@ -1262,12 +1301,12 @@ def mcp_list():
     table.add_column("Server", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Tools", justify="right", no_wrap=True)
-    table.add_column("Runs", style=theme.MUTED, overflow="fold")
-    table.add_column("Source", style=theme.MUTED, no_wrap=True)
+    table.add_column("Runs", style=colour('MUTED'), overflow="fold")
+    table.add_column("Source", style=colour('MUTED'), no_wrap=True)
     for row in rows:
         enabled = sum(1 for tool in row["tools"] if tool["enabled"])
         tools = f"{enabled}/{len(row['tools'])}" if row["tools"] else "-"
-        table.add_row(row["name"], Text(row["state"], style=_MCP_STATE.get(row["state"], "")), tools,
+        table.add_row(row["name"], Text(row["state"], style=colour(_MCP_STATE[row["state"]]) if row["state"] in _MCP_STATE else ""), tools,
                       f"{row['transport']} · {_clip(row['target'], 70)}",
                       f"plugin: {row['plugin']}" if row.get("plugin") else "")
     console.print(table)
@@ -1344,11 +1383,11 @@ def mcp_test(name: str):
 
 def _memory_table(notes: list[dict], *, caption: str | None = None) -> Table:
     table = _table(caption=caption)
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Note", no_wrap=True, max_width=32, overflow="ellipsis")
-    table.add_column("Tags", style=theme.MUTED, no_wrap=True, max_width=24, overflow="ellipsis")
-    table.add_column("From", style=theme.MUTED, no_wrap=True)
-    table.add_column("Updated", style=theme.MUTED, no_wrap=True)
+    table.add_column("Tags", style=colour('MUTED'), no_wrap=True, max_width=24, overflow="ellipsis")
+    table.add_column("From", style=colour('MUTED'), no_wrap=True)
+    table.add_column("Updated", style=colour('MUTED'), no_wrap=True)
     table.add_column("About", max_width=52, overflow="fold")
     for number, note in enumerate(notes, start=1):
         table.add_row(
@@ -1396,15 +1435,15 @@ def memory_search(q: str):
 def memory_show(slug: str):
     for note in get_client().memory_list():
         if note["slug"] == slug:
-            console.print(Text(note["title"], style=f"bold {theme.ACCENT}"))
-            console.print(Text(note["slug"], style=theme.MUTED))
+            console.print(Text(note["title"], style=f"bold {colour('ACCENT')}"))
+            console.print(Text(note["slug"], style=colour('MUTED')))
             console.print(Text(
                 f"{_origin_label(note)}"
                 + (f" · from chat {note['source']}" if note.get("source") else "")
                 + (f" · first recorded {_relative_when(note.get('created'))}"
                    if note.get("created") else "")
                 + f" · updated {_relative_when(note.get('updated'))}",
-                style=theme.MUTED))
+                style=colour('MUTED')))
             console.print()
             console.print(note["body"], markup=False, soft_wrap=True)
             return
@@ -1546,7 +1585,7 @@ def memory_diary(limit: int = typer.Option(20, "--limit", min=1, max=500)):
                "Nightly consolidation and reviews write them; both are off by default.")
         return
     table = _table(caption=f"{len(entries)} entries")
-    table.add_column("When", style=theme.MUTED, no_wrap=True)
+    table.add_column("When", style=colour('MUTED'), no_wrap=True)
     table.add_column("Kind", no_wrap=True)
     table.add_column("What", overflow="fold")
     for entry in entries:
@@ -1566,8 +1605,8 @@ def memory_undo(revision_id: int | None = typer.Argument(None),
             _empty("No memory changes to undo.", "Kova has not rewritten memory behind your back.")
             return
         table = _table(caption=f"{len(entries)} recent change(s)")
-        table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
-        table.add_column("When", style=theme.MUTED, no_wrap=True)
+        table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
+        table.add_column("When", style=colour('MUTED'), no_wrap=True)
         table.add_column("Kind", no_wrap=True)
         table.add_column("Note", no_wrap=True)
         table.add_column("Undone", no_wrap=True)
@@ -1620,15 +1659,15 @@ def reminders_list():
         _empty("Nothing scheduled.", 'Add one with: kova reminders add "in 10 min" "Stretch"')
         return
     table = _table(caption=f"{len(reminders)} upcoming")
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("When", no_wrap=True)
-    table.add_column("In", style=theme.MUTED, no_wrap=True)
+    table.add_column("In", style=colour('MUTED'), no_wrap=True)
     table.add_column("Reminder", overflow="ellipsis")
     for reminder in reminders:
         try:
             when = _reminder_time(reminder["when"], now)
         except (TypeError, ValueError):
-            table.add_row(str(reminder["id"]), Text(reminder["when"], style=theme.WARNING), "—",
+            table.add_row(str(reminder["id"]), Text(reminder["when"], style=colour('WARNING')), "—",
                           _clip(reminder["text"]))
             continue
         table.add_row(str(reminder["id"]), when.strftime("%Y-%m-%d %H:%M"),
@@ -1647,7 +1686,7 @@ def reminders_add(when: str, text: str):
         return
     console.print(Text.assemble(
         ("⏰ ", ""),
-        (f"Reminder #{result['id']}", f"bold {theme.ACCENT}"),
+        (f"Reminder #{result['id']}", f"bold {colour('ACCENT')}"),
         (f" · {format_when(parsed, now)} ({format_relative(parsed, now, spaces=True)})", ""),
     ))
 
@@ -1670,12 +1709,12 @@ def jobs_list():
                'Add one with: kova jobs add "every 2h" "Check the backups" --command "ls ~/backups"')
         return
     table = _table(caption=f"{len(jobs)} job" + ("" if len(jobs) == 1 else "s"))
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Job", overflow="ellipsis")
-    table.add_column("Kind", style=theme.MUTED, no_wrap=True)
+    table.add_column("Kind", style=colour('MUTED'), no_wrap=True)
     table.add_column("Schedule", no_wrap=True)
     table.add_column("Next", no_wrap=True)
-    table.add_column("Runs", justify="right", style=theme.MUTED, no_wrap=True)
+    table.add_column("Runs", justify="right", style=colour('MUTED'), no_wrap=True)
     for job in jobs:
         kind = "heartbeat" if job["idle_only"] else job["kind"]
         try:
@@ -1719,12 +1758,12 @@ def jobs_rm(jid: int):
 # ---------------------------------------------------------------------------
 
 def _plugin_section(title: str, lines: list[str]) -> None:
-    console.print(Text(f"{title}:", style=f"bold {theme.MUTED}"))
+    console.print(Text(f"{title}:", style=f"bold {colour('MUTED')}"))
     if not lines:
-        console.print(Text("  (none)", style=theme.FAINT))
+        console.print(Text("  (none)", style=colour('FAINT')))
         return
     for line in lines:
-        console.print(Text("  " + line, style=theme.MUTED))
+        console.print(Text("  " + line, style=colour('MUTED')))
 
 
 def _plugin_summary(plugin) -> None:
@@ -1733,15 +1772,15 @@ def _plugin_summary(plugin) -> None:
 
     info = plugins.describe(plugin)
     console.print()
-    console.print(Text(f"{info['name']} {info['version']}", style=f"bold {theme.ACCENT}"))
+    console.print(Text(f"{info['name']} {info['version']}", style=f"bold {colour('ACCENT')}"))
     if info["description"]:
-        console.print(Text(info["description"], style=theme.MUTED))
+        console.print(Text(info["description"], style=colour('MUTED')))
     meta = [part for part in (f"by {info['author']}" if info["author"] else "",
                               info["homepage"]) if part]
     if meta:
-        console.print(Text("  ".join(meta), style=theme.FAINT))
+        console.print(Text("  ".join(meta), style=colour('FAINT')))
     if info["min_kova"]:
-        console.print(Text(f"  requires Kova >= {info['min_kova']}", style=theme.FAINT))
+        console.print(Text(f"  requires Kova >= {info['min_kova']}", style=colour('FAINT')))
 
     mcp_lines = []
     for server in info["mcp"]:
@@ -1817,7 +1856,7 @@ def plugin_list():
     table.add_column("State", no_wrap=True)
     table.add_column("About", overflow="fold")
     for plugin in items:
-        state = Text("enabled", style=theme.SUCCESS) if plugin.enabled else Text("disabled", style=theme.MUTED)
+        state = Text("enabled", style=colour('SUCCESS')) if plugin.enabled else Text("disabled", style=colour('MUTED'))
         table.add_row(Text(plugin.name, style="bold"), plugin.version, state,
                       _clip(plugin.description))
     console.print(table)
@@ -1909,13 +1948,13 @@ def _load_catalog():
 def _catalog_state(entry, home) -> Text:
     from kova import catalog
     if not entry.available:
-        return Text("coming soon", style=theme.FAINT)
+        return Text("coming soon", style=colour('FAINT'))
     installed = catalog.installed_version(entry, home)
     if installed is None:
-        return Text("available", style=theme.MUTED)
+        return Text("available", style=colour('MUTED'))
     if installed != entry.version:
-        return Text(f"{installed} → {entry.version}", style=theme.ACCENT)
-    return Text("installed", style=theme.SUCCESS)
+        return Text(f"{installed} → {entry.version}", style=colour('ACCENT'))
+    return Text("installed", style=colour('SUCCESS'))
 
 
 def _catalog_summary(staged) -> None:
@@ -1926,15 +1965,15 @@ def _catalog_summary(staged) -> None:
     else:
         skill = info["skill"]
         console.print()
-        console.print(Text(f"{skill['name']} (skill) {info['version']}", style=f"bold {theme.ACCENT}"))
-        console.print(Text(skill["description"], style=theme.MUTED))
+        console.print(Text(f"{skill['name']} (skill) {info['version']}", style=f"bold {colour('ACCENT')}"))
+        console.print(Text(skill["description"], style=colour('MUTED')))
         console.print()
         _plugin_section("Instructions added to the prompt when the skill is loaded",
                         skill["body"].splitlines())
         console.print()
     _plugin_section("Catalog says", info["permissions"])
-    console.print(Text(f"Source: {info['source']}", style=theme.FAINT))
-    console.print(Text(f"SHA-256: {info['sha256']} (verified)", style=theme.FAINT))
+    console.print(Text(f"Source: {info['source']}", style=colour('FAINT')))
+    console.print(Text(f"SHA-256: {info['sha256']} (verified)", style=colour('FAINT')))
     console.print()
 
 
@@ -2028,20 +2067,20 @@ def catalog_show(
         print(json.dumps({**entry.as_dict(), "installed_version": catalog.installed_version(entry, home)},
                          ensure_ascii=False))
         return
-    console.print(Text.assemble((entry.name, f"bold {theme.ACCENT}"), (f"  {entry.kind} {entry.version}  ", theme.MUTED),
+    console.print(Text.assemble((entry.name, f"bold {colour('ACCENT')}"), (f"  {entry.kind} {entry.version}  ", colour('MUTED')),
                                 _catalog_state(entry, home)))
     if entry.description:
         console.print(Text(entry.description))
     meta = [part for part in (f"by {entry.author}" if entry.author else "", entry.homepage) if part]
     if meta:
-        console.print(Text("  ".join(meta), style=theme.FAINT))
+        console.print(Text("  ".join(meta), style=colour('FAINT')))
     if entry.tags:
-        console.print(Text("Tags: " + ", ".join(entry.tags), style=theme.FAINT))
+        console.print(Text("Tags: " + ", ".join(entry.tags), style=colour('FAINT')))
     console.print()
     _plugin_section("What it may do", entry.permissions)
     if entry.available:
-        console.print(Text(f"Source: {entry.url}", style=theme.FAINT))
-        console.print(Text(f"SHA-256: {entry.sha256}", style=theme.FAINT))
+        console.print(Text(f"Source: {entry.url}", style=colour('FAINT')))
+        console.print(Text(f"SHA-256: {entry.sha256}", style=colour('FAINT')))
         _muted(f"Install: kova catalog install {entry.name}")
     else:
         _muted("Coming soon" + (f" (issue #{entry.issue})" if entry.issue else "") + ".")
@@ -2112,9 +2151,9 @@ def skills_list(
 def skills_show(name: str = typer.Argument(..., help="A skill's name or id.")):
     """Print a skill's full instructions."""
     row = _find_skill(name)
-    console.print(Text.assemble((row["name"], f"bold {theme.ACCENT}"), (f"  {_skill_origin(row)}", theme.MUTED)))
-    console.print(Text(row["description"], style=theme.MUTED))
-    console.print(Text(row["id"], style=theme.FAINT))
+    console.print(Text.assemble((row["name"], f"bold {colour('ACCENT')}"), (f"  {_skill_origin(row)}", colour('MUTED'))))
+    console.print(Text(row["description"], style=colour('MUTED')))
+    console.print(Text(row["id"], style=colour('FAINT')))
     console.print()
     console.print(Text(row["body"]))
 
@@ -2202,17 +2241,17 @@ def chats_list():
         return
     word = "conversation" if len(chats) == 1 else "conversations"
     table = _table(caption=f"{len(chats)} {word} · newest first")
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Title", no_wrap=True, max_width=40, overflow="ellipsis")
     table.add_column("Mode", no_wrap=True)
-    table.add_column("When", style=theme.MUTED, no_wrap=True)
-    table.add_column("Messages", justify="right", style=theme.MUTED, no_wrap=True)
+    table.add_column("When", style=colour('MUTED'), no_wrap=True)
+    table.add_column("Messages", justify="right", style=colour('MUTED'), no_wrap=True)
     for number, chat in enumerate(chats, start=1):
         title = Text(chat.get("title") or "(untitled)")
         if not chat.get("title"):
-            title.stylize(theme.MUTED)
+            title.stylize(colour('MUTED'))
         mode = Text(chat.get("mode") or "work",
-                    style=theme.USER if (chat.get("mode") or "work") == "chat" else theme.ACCENT_SOFT)
+                    style=colour('USER') if (chat.get("mode") or "work") == "chat" else colour('ACCENT_SOFT'))
         table.add_row(
             str(number),
             title,
@@ -2239,23 +2278,23 @@ def chats_search(words: list[str] = typer.Argument(..., help="Words to find in y
     numbers = {chat["id"]: number for number, chat in enumerate(client.list_chats(), start=1)}
     word = "match" if len(results) == 1 else "matches"
     table = _table(caption=f'{len(results)} {word} for "{_clip(query, 40)}"')
-    table.add_column("#", justify="right", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Title", no_wrap=True, max_width=32, overflow="ellipsis")
-    table.add_column("When", style=theme.MUTED, no_wrap=True)
+    table.add_column("When", style=colour('MUTED'), no_wrap=True)
     table.add_column("Snippet", overflow="fold")
     for result in results:
         number = numbers.get(result["id"])
         label = str(number) if number is not None else result["id"]
         title = Text(result.get("title") or "(untitled)")
         if not result.get("title"):
-            title.stylize(theme.MUTED)
+            title.stylize(colour('MUTED'))
         snippet = Text(result.get("snippet") or "")
         lowered = snippet.plain.casefold()
         for word in query.split():
             needle = word.casefold()
             start = 0
             while needle and (position := lowered.find(needle, start)) != -1:
-                snippet.stylize(f"bold {theme.WARNING}", position, position + len(needle))
+                snippet.stylize(f"bold {colour('WARNING')}", position, position + len(needle))
                 start = position + len(needle)
         table.add_row(
             label,
@@ -2294,19 +2333,19 @@ def chats_show(ref: str):
     client = get_client()
     summary = _resolve_chat(client, ref)
     chat = summary if "messages" in summary else client.get_chat(summary["id"])
-    console.print(Text(chat.get("title") or "Untitled chat", style=f"bold {theme.ACCENT}"))
-    console.print(Text(chat["id"], style=theme.MUTED))
+    console.print(Text(chat.get("title") or "Untitled chat", style=f"bold {colour('ACCENT')}"))
+    console.print(Text(chat["id"], style=colour('MUTED')))
     for message in chat.get("messages", []):
         role, content = message.get("role"), message.get("content")
         if not content:
             continue
         if role == "user":
             console.print()
-            console.print(Text("You", style=f"bold {theme.USER}"))
+            console.print(Text("You", style=f"bold {colour('USER')}"))
             console.print(content, markup=False, soft_wrap=True)
         elif role == "assistant":
             console.print()
-            console.print(Text("Kova", style=f"bold {theme.ACCENT}"))
+            console.print(Text("Kova", style=f"bold {colour('ACCENT')}"))
             console.print(Markdown(content))
 
 
@@ -2364,7 +2403,7 @@ def projects_list():
         return
     table = _table()
     table.add_column("Name")
-    table.add_column("ID", style=theme.MUTED, no_wrap=True)
+    table.add_column("ID", style=colour('MUTED'), no_wrap=True)
     for project in projects:
         table.add_row(Text(project["name"]), project["id"])
     console.print(table)
@@ -2434,7 +2473,7 @@ def _find_project(client: KovaClient, project_id: str) -> dict:
 def projects_show(project_id: str):
     """Show a project by ID, including its folder and instructions."""
     project = _find_project(get_client(), project_id)
-    console.print(Text(project["name"], style=f"bold {theme.ACCENT}"))
+    console.print(Text(project["name"], style=f"bold {colour('ACCENT')}"))
     _muted(project["id"])
     console.print(Text(f'Working folder: {project["cwd"] or "(default)"}'))
     console.print(Text(f'Default model: {project.get("model") or "(the active model)"}'))
@@ -2543,7 +2582,7 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("voice.language", "voice_language", "str"),
         _ConfigField("voice.max_seconds", "voice_max_seconds", "int", minimum=1),
         _ConfigField("privacy.secrets", "privacy_secrets", "choice", ("off", "redact", "block")),
-        _ConfigField("tui.theme", "tui_theme", "choice", ("dark", "light")),
+        _ConfigField("tui.theme", "tui_theme", "theme"),
         _ConfigField("usage.monthly_budget_usd", "usage_monthly_budget_usd", "float", minimum=0),
     )
 }
@@ -2609,6 +2648,11 @@ def _parse_config_value(field: _ConfigField, raw: str, cfg) -> object:
             raise _ConfigValueError(
                 f'Invalid value for {key}: "{raw}" must be one of: {", ".join(field.choices)}.')
         return text
+    if field.kind == "theme":
+        try:
+            return _terminal_theme_setting(text, cfg.home)
+        except themes.ThemeError as exc:
+            raise _ConfigValueError(f'Invalid value for {key}: {exc}')
     if field.kind == "path":
         return _config_path_value(key, raw)
     if field.kind == "component":
@@ -2912,7 +2956,7 @@ def config_show(
         sys.stdout.write(json.dumps(snapshot, indent=2, ensure_ascii=False, default=str) + "\n")
         return
     table = _table(caption=f'{snapshot["path"]} · secrets redacted')
-    table.add_column("Key", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("Key", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Value", overflow="fold")
     for key, value in _config_rows(snapshot):
         table.add_row(key, Text(value))
@@ -3034,7 +3078,7 @@ def pair(
         return
     status = client.phone_status()
     if not status["enabled"]:
-        console.print(Text(PHONE_EXPLAINER, style=theme.MUTED))
+        console.print(Text(PHONE_EXPLAINER, style=colour('MUTED')))
         if not yes and onboarding._ask("Turn on phone access? [Y/n]:").lower() not in ("", "y", "yes"):
             _muted("Nothing changed.")
             return
@@ -3047,9 +3091,9 @@ def pair(
     console.print(Text(qr_terminal(code["url"])), no_wrap=True, crop=False, overflow="ignore")
     console.print(Text.assemble(("Scan this with your phone's camera", "bold"),
                                 (" (same Wi-Fi as this computer).", "")))
-    console.print(Text(f"  Or open {code['url']}", style=theme.MUTED), no_wrap=True, crop=False, overflow="ignore")
+    console.print(Text(f"  Or open {code['url']}", style=colour('MUTED')), no_wrap=True, crop=False, overflow="ignore")
     console.print(Text(f"  The code works once and expires in {code['expires_in'] // 60} minutes. Ctrl+C cancels.",
-                       style=theme.MUTED))
+                       style=colour('MUTED')))
     try:
         while True:
             result = client.pair_status(code["id"])
@@ -3089,10 +3133,10 @@ def devices_list():
         return
     table = _table(caption=f"{len(devices)} paired · phone access {state}"
                    + (f" at {status['address']}" if status.get("address") else ""))
-    table.add_column("ID", style=theme.ACCENT_SOFT, no_wrap=True)
+    table.add_column("ID", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Device")
-    table.add_column("Paired", style=theme.MUTED, no_wrap=True)
-    table.add_column("Last seen", style=theme.MUTED, no_wrap=True)
+    table.add_column("Paired", style=colour('MUTED'), no_wrap=True)
+    table.add_column("Last seen", style=colour('MUTED'), no_wrap=True)
     table.add_column("May")
     for device in devices:
         table.add_row(device["id"], device["name"], device["created"][:16].replace("T", " "),
@@ -3180,16 +3224,16 @@ def doctor(
             next_step = next((check.next_step for check in failed if check.next_step),
                              "Run kova doctor again.")
             console.print(Text.assemble(
-                (f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT),
-                (f"Next: {next_step}", theme.MUTED),
+                (f"{SYMBOL_ARROW} ", colour('ACCENT_SOFT')),
+                (f"Next: {next_step}", colour('MUTED')),
                 (f"    ({len(checks) - len(failed)} ok, {len(failed)} "
-                 f"need{'s' if len(failed) == 1 else ''} attention)", theme.MUTED),
+                 f"need{'s' if len(failed) == 1 else ''} attention)", colour('MUTED')),
             ))
         else:
             console.print(Text.assemble(
-                (f"{SYMBOL_ARROW} ", theme.ACCENT_SOFT),
-                ("All checks passed.", theme.SUCCESS),
-                (f"    ({len(checks)} ok)", theme.MUTED),
+                (f"{SYMBOL_ARROW} ", colour('ACCENT_SOFT')),
+                ("All checks passed.", colour('SUCCESS')),
+                (f"    ({len(checks)} ok)", colour('MUTED')),
             ))
     if any(not check.ok for check in checks):
         raise typer.Exit(1)

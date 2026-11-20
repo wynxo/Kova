@@ -492,6 +492,24 @@ class KovaClient:
             payload["models"] = models
         return self._request("POST", "/compare", json=payload, timeout=330).json()
 
+    def stream_compare(self, chat_id: str, text: str, models: list[str]) -> Iterator[dict]:
+        """Ask several models the same message; yields events tagged with ``model``.
+
+        Nothing is written to the chat until :meth:`keep_compare` picks an answer.
+        """
+        finished = False
+        for event in self._stream("POST", f"/chats/{chat_id}/compare",
+                                  json={"text": text, "models": models}, timeout=330):
+            finished = finished or event.get("type") in ("done", "error", "stopped")
+            yield event
+        if not finished:
+            raise KovaError(None, "Compare stream ended before completion. Run kova doctor, then retry.")
+
+    def keep_compare(self, chat_id: str, compare_id: str, model: str) -> dict:
+        """Save the message and one compared answer as the chat's next turn."""
+        return self._request("POST", f"/chats/{chat_id}/compare/keep",
+                             json={"compare_id": compare_id, "model": model}).json()
+
     # MCP servers connect while these requests wait; give them time to start.
     def mcp_list(self) -> list[dict]:
         return self._request("GET", "/mcp").json()
