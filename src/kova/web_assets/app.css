@@ -714,6 +714,7 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .diff-line.meta { color:var(--fg-faint); }
 .changes-skipped { color:var(--status-warning); font-size:var(--type-size-label); }
 .changes-card > .btn { justify-self:start; }
+.changes-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); justify-self:start; }
 .restore-list { max-height:220px; margin:0; padding-left:18px; overflow:auto; color:var(--fg-muted); font:var(--type-size-label)/1.6 var(--mono); }
 
 .approval-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid color-mix(in srgb, var(--accent-default) 42%, transparent); border-radius:var(--radius-md); background:var(--bg-surface); }

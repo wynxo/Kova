@@ -252,6 +252,10 @@ text, without tools or memory. Finished answers are held in memory for an hour
 (at most 16 compares) until `POST /chats/{chat_id}/compare/keep` saves one; the
 stop route, Local only and a closed stream cancel the rest. Local only refuses
 the whole compare with 409 when any chosen model is not on this computer.
+The terminal's `/compare` (`src/kova/compare_cli.py`, used by `tui/app.py` and the
+plain loop in `ui.py`) reads the arguments, folds these events per model with
+`Collector`, prints every answer once the stream ends and asks which to keep, via
+`KovaClient.stream_compare` and `keep_compare`.
 
 Parallel tasks (`src/kova/parallel.py`, #192): when one model step asks for a
 consecutive run of two or more read-only tools (`PARALLEL_TOOLS`: file reads and
@@ -447,6 +451,17 @@ finished reply only chimes while the window is unfocused. The same toast stack
 (`web_assets/toast.js`) forwards each message to one OS notification while the
 window is hidden, with the toast's own title and text; the *Notify me* switch
 and the service worker decide whether it appears.
+
+The three panes (`web_assets/panes.js` and `panes.css`, #182) are the sidebar, the
+conversation and an optional side panel. Both outer panes resize with a keyboard-operable
+splitter whose width each device remembers. The panel holds one tab per thing opened in
+it (`window.KovaPanel.open({title, node, key})`: long code blocks, long tool output,
+diffs), and a tab can pop out into its own same-origin window, which the Electron shell
+allows only for blank `kova-panel-<n>` windows (`desktop/core.js` `panelWindow`). On wide
+screens a collapsed sidebar leaves an icon rail (show sidebar, new chat, search,
+settings); on phones the panel is a full-screen sheet. Ctrl/Cmd+Alt+B shows or hides the
+panel and F6 / Shift+F6 move focus between the panes, through the same shortcut
+registry as every other key.
 
 The shell is deliberately minimal. The sidebar is the logo, **New chat**, one
 search field that filters chats, the chat list and a single **Settings** row.
@@ -778,22 +793,32 @@ which is what the clients read (see *The capability contract* below).
 
 ## Theme
 
-`src/kova/theme.py` is the single palette: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SUCCESS`, `WARNING`, `ERROR`, `BASH`, `MEMORY`,
-`CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code blocks. The
-plain chat, branding, help and status resolve their hex colours through
-`tui.style.colour` (the wordmark, `--help` styling and the status card live in
-`src/kova/tui/brand.py`). `KOVA_THEME` overrides `[tui] theme`, with dark as
-the default. The shared light translation darkens text and pales backgrounds;
-reading the theme for styling never creates or migrates configuration. The
-full-screen chat paints with raw escapes through `src/kova/tui/style.py`, which
-builds each role from the theme's hex value and converts it for the terminal:
-24-bit, the nearest of 256 colours, a hand-picked one of the 16 basic colours,
+`src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
+blocks. The constants are `kova-dark`'s values; every other theme maps onto them
+from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->
+`MUTED`, `status.danger` -> `ERROR` …; `USER` and `BASH` follow the theme's ANSI
+cyan and magenta). `theme.terminal_theme(id)` resolves a built-in or a theme file
+through `kova.themes`, the same resolver the web app's `GET /themes/<id>` uses, so
+the terminal and the browser paint one palette. `kova-light` takes every role from
+its tokens; any other theme moves a role away from its base only when it changes
+the token behind it. A missing or broken theme file falls back to `kova-dark`.
+
+`KOVA_THEME` overrides `[tui] theme` (a theme id, or `dark`/`light` for the
+built-ins), with dark as the default, and `kova themes use <id>` writes the
+setting; reading it for styling never creates or migrates configuration. The
+plain chat, branding, help, status and every CLI table resolve their colours
+through `tui.style.colour` (the wordmark, `--help` styling and the status card
+live in `src/kova/tui/brand.py`). The full-screen chat paints with raw escapes
+through `src/kova/tui/style.py`: codes are written in the role colours, swapped
+for the theme's at paint time and converted for the terminal: 24-bit, the
+nearest of 256 colours, a pinned one of the 16 basic colours (the accent pair
+swaps on light themes, and a coloured accent takes its nearest basic colour),
 or none at all (`NO_COLOR`, `TERM=dumb`). `KOVA_COLORS=truecolor|256|16|none`
-overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit, and the
-web app mirrors them again as CSS variables in `web_assets/app.css` (`:root`
-for dark, `:root[data-theme=light]` for light). Change a colour in both places
-to keep the terminal and the app in step.
+overrides the detection. `ui._chat_style()` resolves them for prompt_toolkit.
+Colours from outside the theme (Pygments) are darkened on a light theme so
+they stay readable.
 
 ## Config and data on disk
 
@@ -1222,5 +1247,9 @@ route or restore permission is introduced.
 The web client renders this in a collapsed per-file tool card with old/new line
 numbers; saved change sets reuse the same `diff.js` renderer through the existing
 checkpoint diff route above. `diff.css` uses semantic status colours. Source and
-paths are inserted only as text. Per-hunk accept/undo, word highlights and a
-side-panel review are deferred; existing whole-checkpoint restore is unchanged.
+paths are inserted only as text. Each file of a change set also opens in the side
+panel (`diff-panel.js`, #190): the full diff, unified or split (kept per device in
+`localStorage`), with word-level marks on a removed line and the added line that
+replaced it, folded unchanged runs, and Undo or Keep per hunk through `kova/hunks.py`.
+The end-of-turn summary says *Changed N files (+A −D)*, and **Review changes** opens
+every file as a panel tab, the first one in front. Whole-checkpoint restore is unchanged.

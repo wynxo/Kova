@@ -26,7 +26,7 @@ from .markdown import (
     display_width,
     strip_ansi,
 )
-from .style import ACCENT_SOFT, BORDER, FAINT, SUCCESS, blend, fg, rgb
+from .style import ACCENT_SOFT, BORDER, FAINT, SUCCESS, blend, downgrade, fg, rgb
 
 SPINNER = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"   # braille dots
 GLYPHS = SPINNER
@@ -111,23 +111,21 @@ def wrap(text: str, width: int) -> list[str]:
 
 
 # ------------------------------------------------------------------- effects
-def shimmer(text: str, phase: float, p: Palette, base=None, light=(240, 236, 255)) -> str:
+def shimmer(text: str, phase: float, p: Palette, base=None, light=None) -> str:
     """Text with a soft highlight sweeping across it; ``phase`` is the highlight's
-    position in characters (it may run past either end)."""
+    position in characters (it may run past either end). The sweep runs from the
+    theme's soft accent up to its accent."""
     if not p.color:
         return text
     if _REDUCED or p.level == 1:
         return p.paint(ACCENT_SOFT, text)
-    base = base or rgb(theme.ACCENT_SOFT)
+    base = base or rgb(p.terminal.roles["ACCENT_SOFT"])
+    light = light or rgb(p.terminal.roles["ACCENT"])
     out = []
     for index, char in enumerate(text):
         strength = max(0.0, 1.0 - abs(index - phase) / 2.5)
-        if p.level >= 3:
-            colour = [round(b + (h - b) * strength) for b, h in zip(base, light, strict=False)]
-            out.append(f"\x1b[38;2;{colour[0]};{colour[1]};{colour[2]}m{char}")
-        else:
-            code = 231 if strength > 0.7 else 189 if strength > 0.35 else 147
-            out.append(f"\x1b[38;5;{code}m{char}")
+        colour = [round(b + (h - b) * strength) for b, h in zip(base, light, strict=False)]
+        out.append(f"\x1b[{downgrade(f'38;2;{colour[0]};{colour[1]};{colour[2]}', p.level)}m{char}")
     return "".join(out) + "\x1b[0m"
 
 
@@ -141,7 +139,7 @@ def spinner_glyph(p: Palette, frame: int) -> str:
         return p.paint(ACCENT, glyph(frame))
     cycle = (frame % 40) / 20
     position = cycle if cycle <= 1 else 2 - cycle
-    return p.paint("1;" + fg(blend(theme.GRADIENT, position)), glyph(frame))
+    return p.paint_resolved("1;" + fg(blend(p.terminal.gradient, position)), glyph(frame))
 
 
 def spinner_line(p: Palette, *, verb: str, frame: int, elapsed: float, tokens: int,

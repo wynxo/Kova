@@ -134,10 +134,11 @@ const KovaToolCards = (() => {
       refresh();
       return tool;
     }
-    function addOutput(body, text) {
+    function addOutput(body, text, name) {
       const pre = node('pre', 'tool-card-output', text.slice(0, LIMIT));
       body.append(pre);
       if (text.length <= LIMIT) return;
+      const more = node('div', 'tool-card-more');
       const all = node('button', 'tool-card-all');
       all.type = 'button';
       all.setAttribute('aria-expanded', 'false');
@@ -153,7 +154,17 @@ const KovaToolCards = (() => {
         pre.textContent = open ? text : text.slice(0, LIMIT);
         paintAll(open);
       };
-      body.append(all);
+      more.append(all);
+      // The whole output can also be read beside the conversation (panes.js, #182).
+      const panel = globalThis.KovaPanel;
+      if (panel?.open) {
+        const side = node('button', 'tool-card-all', 'Open in panel');
+        side.type = 'button';
+        side.setAttribute('aria-label', `Open the output of ${name || 'this tool'} in the side panel`);
+        side.onclick = () => panel.open({title: `${name || 'Tool'} output`, node: node('pre', 'side-panel-output', text), returnFocus: side});
+        more.append(side);
+      }
+      body.append(more);
     }
     function result(event) {
       const tool = tools.find(item => item.end === null && (event.id && item.id ? event.id === item.id : (!event.name || item.name === event.name)));
@@ -164,7 +175,7 @@ const KovaToolCards = (() => {
       tool.statusNode.textContent = STATUS[tool.status];
       tool.time.textContent = duration(saved ? null : tool.end - tool.start);
       const output = String(event.output ?? event.summary ?? '');
-      if (output) addOutput(tool.body, output);
+      if (output) addOutput(tool.body, output, tool.name);
       if (event.file_change) tool.body.append(KovaDiff.file(event.file_change));
       if (tool.status === 'failed') {
         failures.append(node('p', 'tool-card-error', `${tool.name}: ${output.slice(0, 300) || 'Tool failed.'}`));
