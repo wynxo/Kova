@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, onboarding, providers, themes, egress, ui_prefs
+from kova import __version__, autostart, backup, lifecycle, model_picker, onboarding, providers, themes, egress, ui_prefs
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -308,7 +308,7 @@ def uninstall(
         _fail(str(exc))
 
 
-_model = typer.Typer(no_args_is_help=True, help="Manage model servers.")
+_model = typer.Typer(no_args_is_help=True, help="Choose the provider and model Kova uses.")
 app.add_typer(_model, name="model")
 
 _memory = typer.Typer(no_args_is_help=True, help="Manage Markdown memory notes.")
@@ -1294,7 +1294,7 @@ def _list_models(client: KovaClient) -> None:
     if not models:
         _empty("No models configured.", "Run: kova setup to find a model server.")
         return
-    table = _table(caption=f"{len(models)} configured · active: {active}")
+    table = _table(caption=f"{len(models)} configured · active: {active} · switch: kova model use")
     table.add_column("#", justify="right", style=colour('ACCENT_SOFT'), no_wrap=True)
     table.add_column("Name", no_wrap=True)
     table.add_column("Model", no_wrap=True)
@@ -1312,17 +1312,22 @@ def _list_models(client: KovaClient) -> None:
 
 @_model.command("list")
 def model_list():
+    """List every configured model and mark the active one."""
     _list_models(get_client())
 
 
 @_model.command("add")
 def model_add(
-    name: str,
+    name: str = typer.Argument(..., help="Name to save this server under, for example lab."),
     address: str = typer.Argument(..., help="Server address: 192.168.1.50, homelab:8080, a URL, or openrouter."),
     model: str | None = typer.Argument(None, help="Model id; optional when the server has only one."),
-    key: str | None = typer.Option(None, "--key"),
+    key: str | None = typer.Option(None, "--key", help="API key, if the server needs one."),
 ):
-    """Add a model server. Loose addresses work; Kova finds the right URL."""
+    """Add a model server by hand. Loose addresses work; Kova finds the right URL.
+
+    For a hosted provider, `kova providers add` is the easier path: it asks for
+    the key, lists the provider's models and makes the chosen one active.
+    """
     from kova import server_finder
 
     try:
@@ -1352,19 +1357,65 @@ def model_add(
     _ok(f"Added model {name}: {model} at {found.base_url}.")
 
 
-@_model.command("use")
-def model_use(name: str):
+def _model_rows(client: KovaClient) -> tuple[list[model_picker.Choice], str]:
+    """Every configured model as picker rows, plus the saved active name."""
+    return (model_picker.choices(client.models_list()),
+            str(client.health(probe=False).get("model") or ""))
+
+
+def _pick_model(rows: list[model_picker.Choice], active: str) -> model_picker.Choice | None:
+    """The arrow-key picker; a pipe gets the numbered list and a one-line hint."""
+    from kova.tui import prompts
+
     try:
-        get_client().model_use(name)
+        return model_picker.pick(rows, active=active)
+    except prompts.Unavailable:
+        for line in model_picker.numbered(rows, active=active):
+            console.print(Text(line, style=colour("MUTED")))
+        _fail("This terminal cannot draw the picker.",
+              hint="Name one instead, for example: kova model use openai/gpt-4o")
+
+
+@_model.command("use")
+def model_use(
+    name: str | None = typer.Argument(
+        None, help="A saved name, <provider>/<model>, or a model id. Omit to pick from a list."),
+):
+    """Switch the active provider and model. Saved for this and every future chat.
+
+    With no name, opens a picker of every connected provider and its models:
+    arrow keys move, a number picks, Enter saves. The current choice is marked.
+    """
+    client = get_client()
+    rows, active = _model_rows(client)
+    if not rows:
+        _empty("No models configured.", "Run: kova providers add to connect one.")
+        raise typer.Exit(1)
+    if name is None:
+        chosen = _pick_model(rows, active)
+        if chosen is None:
+            _muted("Nothing changed.")
+            return
+    else:
+        chosen = model_picker.resolve(rows, name)
+        if chosen is None:
+            options = model_picker.similar(rows, name)
+            _fail(f'No model named "{name}".',
+                  hint=f"Try one of: {', '.join(options)}" if options else "Run: kova model list")
+    try:
+        client.model_use(chosen.name)
     except KovaError as exc:
         if exc.status == 404:
-            _fail(f'No model named "{name}".')
+            _fail(f'No model named "{name}".', hint="Run: kova model list")
         raise
-    _ok(f"{name} is now active.")
+    _ok(f"Now using {chosen.shown} on {chosen.provider}.")
+    _muted("Saved for this and every future chat. Change it any time with: kova model use")
 
 
 @_model.command("remove-local")
-def model_remove_local(provider: str):
+def model_remove_local(
+    provider: str = typer.Argument(..., help="The local provider's saved name, from kova model list."),
+):
     """Remove a managed local model's weights and connection (not an engine install)."""
     result = get_client().local_model_remove(provider)
     _ok(result['message'])
@@ -3136,7 +3187,7 @@ def config_set(key: str, value: str):
     _muted("A running server picks this up on its next start: kova stop")
 
 
-_providers = typer.Typer(help="Manage provider connections.", invoke_without_command=True)
+_providers = typer.Typer(help="Connect providers and manage their sign-ins.", invoke_without_command=True)
 app.add_typer(_providers, name="providers")
 
 
@@ -3148,35 +3199,67 @@ def providers_root(ctx: typer.Context):
 
 @_providers.command('list')
 def providers_list():
+    """List connected providers with their address, access and capabilities.
+
+    One short block per provider, so a long address stays readable in a
+    narrow terminal instead of being cut off.
+    """
     rows = get_client().providers_list()
     if not rows:
-        _empty('No providers connected.', 'Run: kova providers add')
+        _empty('No providers connected.', 'Run: kova providers add to connect one.')
         return
-    table = _table()
-    for heading in ('Connection', 'Provider', 'Access', 'Address', 'Capabilities'):
-        table.add_column(heading)
-    for p in rows:
-        table.add_row(p['id'], p['name'], 'Connected' if p['authenticated'] else 'No credentials',
-                      p['base_url'], ', '.join(p.get('capabilities') or []) or '-')
-    console.print(table)
+    for index, p in enumerate(rows):
+        if index:
+            console.print()
+        connected = bool(p['authenticated'])
+        account = str(p.get('account') or '')
+        console.print(Text.assemble(
+            ("● " if connected else "◇ ", colour('SUCCESS') if connected else colour('WARNING')),
+            (p['name'], f"bold {colour('ACCENT')}"),
+            (f"  {p['id']}" if p['id'] != p['name'] else "", colour('MUTED'))))
+        console.print(Text(f"  {p['base_url']}", style=colour('MUTED')))
+        access = f"Connected as {account}" if connected and account else \
+            'Connected' if connected else 'No credentials'
+        capabilities = ', '.join(p.get('capabilities') or []) or '-'
+        console.print(Text(f"  {access} · {capabilities}", style=colour('FAINT')))
+    console.print()
+    _muted("Switch models with: kova model use  ·  connect another with: kova providers add")
 
 
 @_providers.command('add')
-def provider_add(kind: str | None = typer.Argument(None, help='Optional provider type: openai, chatgpt, local, custom, or this-pc to download a fitting model.')):
+def provider_add(
+    kind: str | None = typer.Argument(
+        None, help='Provider type to skip the menu: openai, anthropic, opencode, local, custom, this-pc, and so on.'),
+):
+    """Connect a provider: pick one, paste its key, choose models.
+
+    With no argument this walks through the catalog (OpenAI, Anthropic,
+    OpenRouter, OpenCode, a local Ollama/LM Studio/llama.cpp server, or any
+    OpenAI-compatible address), asks for the key only when the provider needs
+    one, and makes the chosen model active. Keys are read with a hidden prompt
+    and never printed.
+    """
     try:
-        onboarding.run_setup(load_config(), provider_kind=kind)
+        onboarding.run_setup(load_config(), provider_kind=kind, persona=False)
     except onboarding.SetupError as exc:
         _fail(str(exc))
+    _muted('Switch provider and model any time with: kova model use')
 
 
 @_providers.command('remove')
-def provider_remove(name: str):
+def provider_remove(
+    name: str = typer.Argument(..., help='The provider id from kova providers list.'),
+):
+    """Remove a provider connection and the models selected from it."""
     get_client().provider_remove(name)
     _ok(f'Removed provider {name} and its selected models.')
 
 
 @_providers.command('logout')
-def provider_logout(name: str):
+def provider_logout(
+    name: str = typer.Argument(..., help='The provider id from kova providers list.'),
+):
+    """Sign out of a provider and forget its stored credential."""
     result = get_client().provider_logout(name)
     _ok(f'Signed out of {name}.')
     if not result.get('remote_revocation_confirmed', True):
@@ -3184,13 +3267,16 @@ def provider_logout(name: str):
 
 
 @_providers.command('login')
-def provider_login(name: str):
+def provider_login(
+    name: str = typer.Argument(..., help='The provider id from kova providers list.'),
+):
+    """Sign in to or re-authenticate a connected provider."""
     from kova import provider_auth
     from kova.providers import ProviderError
     cfg = load_config()
     p = next((p for p in cfg.providers if p.id == name), None)
     if p is None:
-        _fail(f'No provider named "{name}".')
+        _fail(f'No provider named "{name}".', hint='Run: kova providers list')
     try:
         if providers.supports(p, 'harness_login'):
             consent = onboarding._ask('Read the installed Codex login without changing it? [y/N]:').lower() == 'y'

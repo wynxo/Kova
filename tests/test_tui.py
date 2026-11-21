@@ -764,7 +764,24 @@ def test_pickers_open_without_an_argument():
     app.submit("/model")
     app.on_key(SimpleNamespace(name="text", text="oth"))
     app.on_key(SimpleNamespace(name="enter", text=""))
-    assert app.model == "other" and "Now using other" in transcript(app)
+    assert app.model == "other" and "Now using m2 on Custom" in transcript(app)
+
+
+def test_provider_is_an_alias_for_the_model_command():
+    client = StubClient()
+    state = {"model": "local/qwen3:8b"}
+    client.models_list = lambda: [
+        {"name": "openai/gpt-4o", "model": "gpt-4o", "provider": "openai", "provider_name": "OpenAI"},
+        {"name": "local/qwen3:8b", "model": "qwen3:8b", "provider": "local", "provider_name": "Local server"},
+    ]
+    client.model_use = lambda name: state.update(model=name) or {"ok": True}
+    client.health = lambda: {"model": state["model"], "model_ok": True}
+    app = chat_app(client)
+    app.submit("/provider")
+    assert isinstance(app.overlay, Picker) and app.overlay.title == "Select model"
+    app.submit("/provider openai/gpt-4o")
+    assert state["model"] == "openai/gpt-4o" and app.model == "openai/gpt-4o"
+    assert "Now using gpt-4o on OpenAI" in transcript(app)
 
 
 def test_ctrl_p_palette_runs_commands_and_switches_models_and_chats():
