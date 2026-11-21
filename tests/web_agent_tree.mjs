@@ -20,6 +20,11 @@ class Element {
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
   append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+  insertBefore(node, before) {
+    node.parent = this;
+    const index = this.children.indexOf(before);
+    this.children.splice(index < 0 ? this.children.length : index, 0, node);
+  }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key]; }
   removeAttribute(key) { delete this.attrs[key]; }
@@ -226,6 +231,88 @@ assert.match(secondRoot.textContent, /Ran 2 tools in parallel/);
 // A reader's own choice survives the fold: the first tree was toggled by hand.
 turn.finish();
 assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stays open');
+
+// ---------------------------------------------------------------- Done · N
+// A finished turn folds the calls that succeeded into one Done · N row quoting
+// each one-line result. A failed call keeps its own row and reason, and the
+// parent header still counts it (#192).
+{
+  const made = [];
+  const closing = context.tree.turn({insert: node => made.push(node), label: name => `L:${name}`});
+  closing.accept({type: 'task_start', id: 'dg', parent: null, kind: 'delegated', model: 'm', total: 3});
+  for (const [id, name] of [['d1', 'delegate_analysis'], ['d2', 'delegate_analysis'], ['d3', 'delegate_analysis']]) {
+    closing.accept({type: 'task_start', id, parent: 'dg', name, args: {task: id}});
+  }
+  closing.accept({type: 'task_done', id: 'd1', parent: 'dg', ok: true, summary: 'First answer', elapsed_ms: 10});
+  closing.accept({type: 'task_done', id: 'd2', parent: 'dg', ok: true, summary: 'Second answer', elapsed_ms: 20});
+  closing.accept({type: 'task_error', id: 'd3', parent: 'dg', message: 'Error: child model timed out', elapsed_ms: 30});
+  // The child's returned analysis is a real tool result on its own row, the same
+  // card every tool call expands to; nesting a full child transcript is not part
+  // of this slice.
+  for (const [id, ok, output] of [['d1', true, 'First answer'], ['d3', false, 'Error: child model timed out']]) {
+    closing.accept({type: 'tool_call', id, name: 'delegate_analysis', args: {task: id}});
+    closing.accept({type: 'tool_result', id, name: 'delegate_analysis', ok, output});
+  }
+  closing.accept({type: 'task_progress', id: 'dg', parent: null, done: 3, total: 3, failed: 1});
+  closing.finish();
+
+  const treeNode = made[0];
+  const rows = byRole(treeNode, 'treeitem');
+  const [doneRoot] = rows;
+  assert.match(doneRoot.textContent, /Delegated 3 analysis tasks · 1 failed/,
+    'the parent header keeps the failed child count');
+  const doneRow = rows.find(row => byClass(row, 'agent-tree-label')[0]?.text === 'Done · 2');
+  assert.ok(doneRow, 'successful calls fold into one Done · 2 row');
+  const failedRow = rows.find(row => byClass(row, 'agent-tree-label')[0]?.text === 'L:delegate_analysis'
+    && row.textContent.includes('Failed'));
+  assert.ok(failedRow, 'the failed call keeps its own row');
+  assert.equal(byClass(failedRow, 'agent-tree-result')[0].textContent, 'Error: child model timed out',
+    'the failed row keeps the reason the header counts');
+  assert.deepEqual(byClass(doneRow, 'agent-tree-result').map(node => node.textContent),
+    ['L:delegate_analysis — First answer', 'L:delegate_analysis — Second answer'],
+    'each folded summary is quoted once');
+  const foldedRows = rows.filter(row => row.hidden);
+  assert.equal(foldedRows.length, 2, 'the quoted calls leave the tree');
+  assert.match(byClass(foldedRows[0], 'tool-card')[0].textContent, /First answer/,
+    'a folded child keeps its own expanded result card');
+  assert.match(byClass(failedRow, 'tool-card')[0].textContent, /child model timed out/,
+    'the failed child expands to the result the server returned');
+  assert.equal(doneRow.attrs['aria-expanded'], 'false', 'the Done group starts folded');
+  assert.equal(doneRow.attrs['aria-level'], '2');
+
+  // Keyboard: the Done row is part of the roving focus, not a dead row.
+  assert.equal(doneRoot.attrs['aria-expanded'], 'false', 'the finished turn folds the tree');
+  assert.equal(key(treeNode, doneRoot, 'Enter'), true);
+  assert.equal(doneRoot.attrs['aria-expanded'], 'true');
+  assert.equal(key(treeNode, doneRoot, 'ArrowDown'), true);
+  assert.equal(focused, doneRow, 'Down reaches the Done row');
+  assert.equal(doneRow.attrs.tabindex, '0');
+  assert.equal(doneRoot.attrs.tabindex, '-1', 'one tab stop remains');
+  assert.equal(key(treeNode, doneRow, 'ArrowRight'), true);
+  assert.equal(doneRow.attrs['aria-expanded'], 'true', 'Right opens the summaries');
+  assert.equal(doneRow.children[1].hidden, false);
+  assert.equal(key(treeNode, doneRow, 'ArrowLeft'), true);
+  assert.equal(doneRow.attrs['aria-expanded'], 'false', 'Left closes them');
+  assert.equal(key(treeNode, doneRow, 'ArrowLeft'), true);
+  assert.equal(focused, doneRoot, 'Left again steps out to the parent');
+  assert.equal(key(treeNode, doneRoot, 'End'), true);
+  assert.equal(focused, failedRow, 'End skips the folded calls and reaches the failure');
+  assert.equal(key(treeNode, failedRow, 'Home'), true);
+  assert.equal(focused, doneRoot);
+
+  // One success is not worth a group: its row stays where it is.
+  const single = [];
+  const lonely = context.tree.turn({insert: node => single.push(node)});
+  lonely.accept({type: 'task_start', id: 'lg', parent: null, model: 'm'});
+  lonely.accept({type: 'task_start', id: 'l1', parent: 'lg', name: 'recall'});
+  lonely.accept({type: 'task_start', id: 'l2', parent: 'lg', name: 'memory_list'});
+  lonely.accept({type: 'task_done', id: 'l1', parent: 'lg', ok: true, summary: 'only one', elapsed_ms: 5});
+  lonely.accept({type: 'task_error', id: 'l2', parent: 'lg', message: 'Error: nope', elapsed_ms: 5});
+  lonely.finish();
+  assert.ok(!byRole(single[0], 'treeitem').some(row => byClass(row, 'agent-tree-label')[0]?.text.startsWith('Done ·')),
+    'a single success does not fold into a group');
+}
+
 // Multiple delegated children share one live root and keep distinct task rows.
 {
   const inserted = [];

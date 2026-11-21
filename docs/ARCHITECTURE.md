@@ -293,7 +293,10 @@ client draws the group with `web_assets/agent-tree.js`, with a Stop button (and
 Delete on the row) for each call still waiting or running; the terminal shows the
 calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
 action, and a quoted excerpt of each finished tool's output or error when its row
-is expanded. Reloaded transcripts still show ordinary tool cards.
+is expanded. When the turn ends, the calls that succeeded fold into one `Done · N`
+row that quotes each call's one-line result; a failed, stopped or interrupted call
+keeps its own row and reason under the header's failed count. Reloaded transcripts
+still show ordinary tool cards.
 
 Parallel reads are calls in the parent model step, not child model tasks.
 In work mode, consecutive independent `delegate_analysis` calls can run
