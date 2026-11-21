@@ -56,7 +56,7 @@ function Uninstall-Kova {
         $Uv = if ($Found) { $Found.Source } else { $null }
     }
     if ($Uv) {
-        Write-Host 'Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai'
+        Write-Host 'Removing Kova: uv tool uninstall kova-ai'
         & $Uv tool uninstall kova-ai
         if ($LASTEXITCODE -ne 0) { throw 'uv uninstall failed; your data was kept.' }
     } else {

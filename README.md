@@ -42,7 +42,7 @@ benchmark. See the [capture notes](docs/screenshots/README.md).
 
 Install as a normal user. Node.js 22+ with npm enables the desktop app and app-menu shortcut; use `--no-desktop` for a CLI-only install.
 
-**Launch:** Open **Kova** from your app menu, run `kova-app`, or use `kova-web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
+**Launch:** Open **Kova** from your app menu, run `kova app`, or use `kova web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
 
 **Update:** `kova update` (preview with `kova update --check`). **Uninstall:** `kova uninstall` (use `--keep-data` to keep chats and settings).
 
@@ -69,8 +69,8 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 
 Open **Kova** from the app menu to use the Electron window over the same local
 server as the CLI. The installer prepares Electron before adding the launcher,
-so the first click does not run npm. `kova-app` remains a terminal shortcut;
-`kova-web` opens the same chats in your browser. No chats, settings, provider
+so the first click does not run npm. `kova app` remains a terminal shortcut;
+`kova web` opens the same chats in your browser. No chats, settings, provider
 credentials or models are duplicated between clients.
 
 The one-line installers stage the shell in `~/.kova/desktop` (or `KOVA_HOME`).
@@ -301,7 +301,7 @@ $ kova doctor
 ✓ Memory directory is writable (or can be created).
 ✓ Port is owned by this KOVA_HOME.
 ✓ landlock abi 6
-✓ Node.js 22.11.0 and npm found for kova-app.
+✓ Node.js 22.11.0 and npm found for kova app.
 ✓ Token file permissions are 0600.
 ✓ 32.0 GB free in KOVA_HOME.
 ✓ Config schema version 2; no unknown keys.
@@ -322,8 +322,8 @@ What each line means:
   different Kova on the same port would reject this home's requests.
 - **Sandbox** — Linux Landlock is available, shown as its ABI version. Without
   it, every `run_command` asks for approval, even in Auto mode.
-- **Node** — Node.js 22+ and npm are present for `kova-app`. If they are
-  missing, `kova-app` opens the web UI instead, which is not a failure.
+- **Node** — Node.js 22+ and npm are present for `kova app`. If they are
+  missing, `kova app` opens the web UI instead, which is not a failure.
 - **Token** — the local API token is readable only by you (mode 0600).
 - **Disk** — `KOVA_HOME` has at least 100 MB free for chats, notes and logs.
 - **Schema** — the config schema is current and has no keys this version
@@ -502,9 +502,9 @@ Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in
 
 ### Electron desktop app
 
-Developer-only: `uv run kova-app` runs the checkout
+Developer-only: `uv run kova app` runs the checkout
 through uv. It needs Node.js 22+/npm and can run `npm ci` on first use; this is
-not the normal user's launcher. `uv run kova-app --browser` opens the web UI.
+not the normal user's launcher. `uv run kova app --browser` opens the web UI.
 For build commands and the version-tagged release workflow, see
 [desktop/README.md](src/kova/desktop/README.md). Packaged shells still use the same
 separately installed Python backend.

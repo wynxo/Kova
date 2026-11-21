@@ -315,7 +315,7 @@ Payload shapes, and the HTTP round-trip that answers an approval, are in the
 
 ### Browser login
 
-The web launcher never puts the bearer token in a URL. `kova-web`
+The web launcher never puts the bearer token in a URL. `kova web`
 (`src/kova/app.py`) asks the server for a ticket with the token, then opens:
 
 ```
@@ -360,7 +360,7 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
@@ -394,7 +394,7 @@ prints reminder pop-ups while you chat.
 ### Desktop and web app
 
 `src/kova/app.py` holds both launchers. The Python package includes the Electron
-source. Installers, `kova update` and `kova-app` refresh the staged copy under
+source. Installers, `kova update` and `kova app` refresh the staged copy under
 `KOVA_HOME/desktop` and run `npm ci` when dependencies are missing or the
 lockfile changes. OS shortcuts launch the prepared Electron binary directly.
 Installers can skip desktop setup with `--no-desktop`. Electron stores its
@@ -402,7 +402,7 @@ profile separately in `KOVA_HOME/desktop-data`.
 
 The Electron shell starts (or reuses) the server, reads `~/.kova/token`, and
 mints a one-use ticket. The bearer token never reaches a command line or URL.
-`kova-web` (also `kova-app --browser`) opens the same UI in the default browser.
+`kova web` (also `kova app --browser`) opens the same UI in the default browser.
 
 The Electron shell also owns the Quick ask overlay (#71): a second, frameless
 `BrowserWindow` (`720×220`, always-on-top, `skipTaskbar`) that loads

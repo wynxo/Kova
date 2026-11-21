@@ -134,7 +134,7 @@ def update(ref: str, emit=print) -> None:
         try:
             subprocess.run([str(launcher), "--prepare"], check=True, env=env)
         except (OSError, subprocess.CalledProcessError):
-            emit("Kova CLI was updated, but desktop preparation failed. Run kova-app to retry, or use kova-web.")
+            emit("Kova CLI was updated, but desktop preparation failed. Run kova app to retry, or use kova web.")
             return
     emit("✓ Updated Kova. Run: kova")
 
@@ -256,7 +256,7 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
     except (autostart.AutostartError, OSError) as exc:
         emit(f"! Could not remove the start-at-login entry: {exc}")
     uv = find_uv()
-    emit("→ Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai")
+    emit("→ Removing Kova: uv tool uninstall kova-ai")
     try:
         if sys.platform == "win32":
             _windows_uninstall(uv, home, purge and home.exists())

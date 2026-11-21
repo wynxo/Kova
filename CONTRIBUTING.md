@@ -20,7 +20,7 @@ cd Kova
 uv run kova            # terminal chat (starts the background server)
 uv run kova status     # is the server up, which model is active
 uv run kova doctor     # check a first run: config, sandbox, port, token, Node, disk
-uv run kova-app    # the desktop app (Electron); --browser opens the web UI
+uv run kova app    # the desktop app (Electron); --browser opens the web UI
 ```
 
 These commands work on Windows too. The first run creates `.venv` and installs dependencies.
@@ -29,11 +29,11 @@ The server only listens on `127.0.0.1:7700`, and the clients start it for you.
 `uv run kova serve` runs it in the foreground when you want to see logs; `uv run kova stop`
 stops a background one.
 
-The desktop app needs Node.js 22+ and npm; `uv run kova-app` installs its
+The desktop app needs Node.js 22+ and npm; `uv run kova app` installs its
 Electron dependencies on first run (developer convenience only; normal installers
 prepare them and register an OS launcher at install time). Without Node/npm it says so and opens the
-web UI instead, which `uv run kova-app --browser` selects directly (the installed
-equivalent is `kova-web`).
+web UI instead, which `uv run kova app --browser` selects directly (the installed
+equivalent is `kova web`).
 
 If you have never picked a model, run `uv run kova setup`, or point Kova at a server
 with the recipe below.

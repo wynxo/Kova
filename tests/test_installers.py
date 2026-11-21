@@ -107,8 +107,8 @@ def test_installer_stages_the_desktop_app_and_names_both_clients(installer):
     assert (staged / "main.js").is_file()
     assert (staged / "node_modules/electron/dist/electron").is_file()
     assert (home / "npm-args").read_text().splitlines() == ["ci", "--include=dev"]
-    assert "Desktop app: kova-app" in result.stdout
-    assert "Web UI in your browser: kova-web" in result.stdout
+    assert "Desktop app: kova app" in result.stdout
+    assert "Web UI in your browser: kova web" in result.stdout
 
 
 @requires_posix
@@ -119,7 +119,7 @@ def test_cli_only_piped_install_needs_no_download_tools(installer, tmp_path):
     assert result.returncode == 0, result.stderr
     assert not (home / ".kova/desktop").exists()
     assert "without the desktop app" in result.stdout
-    assert "Web UI in your browser: kova-web" in result.stdout
+    assert "Web UI in your browser: kova web" in result.stdout
 
 
 @requires_posix
@@ -406,7 +406,7 @@ def test_windows_installer_stages_the_desktop_app_path_and_uninstall_entry(windo
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Done. Open Kova" in result.stdout
     assert "Downloading" not in result.stdout  # KOVA_SOURCE and a stub git: no network
-    assert "Desktop app: kova-app    Web UI in your browser: kova-web" in result.stdout
+    assert "Desktop app: kova app    Web UI in your browser: kova web" in result.stdout
 
     staged = home / ".kova" / "desktop"
     assert (staged / "package.json").is_file()
@@ -535,7 +535,7 @@ def test_desktop_failure_still_finishes_the_cli_install(installer, missing):
     assert "Done (without the desktop app)" in result.stdout
     expected = "npm ci" if missing == "npm-failure" else "nodejs.org"
     assert expected in result.stdout
-    assert "kova-web" in result.stdout
+    assert "kova web" in result.stdout
     assert not (home / ".local/share/applications/kova.desktop").exists()
 
 

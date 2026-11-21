@@ -251,7 +251,7 @@
     renderActivity();
     $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
-      : 'Open kova-web on this computer to connect. No token or account needed.'));
+      : 'Open kova web on this computer to connect. No token or account needed.'));
     controls();
   }
   const OFFLINE = 'Cannot reach Kova. Check that it is running, then retry.';
@@ -264,7 +264,7 @@
       let message = `Request failed (${response.status})`;
       try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; else if (Array.isArray(body.detail)) message = body.detail.map(item => `${item.loc?.slice(1).join('.') || 'Field'}: ${item.msg}`).join('; '); } catch (_) {}
       if (response.status === 401) disconnected(onPhone() ? 'This phone is no longer paired. On your computer, run kova pair (or choose Connect your phone) and scan the new code.'
-        : 'Your connection expired. Open kova-web again to reconnect.');
+        : 'Your connection expired. Open kova web again to reconnect.');
       throw new Error(message);
     }
     return response;
@@ -588,7 +588,7 @@
       .map(([id, item]) => ({id, ...item}));
   }
   // The desktop tray shows one aggregate: waiting (needs you) beats working beats idle. Only
-  // the Electron shell exposes a bridge; kova-web and the plain browser skip it.
+  // the Electron shell exposes a bridge; kova web and the plain browser skip it.
   function reportTrayState(rows) {
     const next = rows.some(row => row.state === 'blocked-on-approval') ? 'waiting'
       : rows.some(row => row.state === 'working') ? 'working' : 'idle';
@@ -2319,7 +2319,7 @@
   // Native menu and tray quick actions (#203). The desktop shell sends an
   // allowlisted action id over its app-action channel; each maps to the same
   // handler the palette and keyboard shortcuts use, so behaviour stays in one
-  // place. kova-web and the plain browser have no bridge, so this is a no-op.
+  // place. kova web and the plain browser have no bridge, so this is a no-op.
   const desktopActions = {
     palette: shortcutActions.palette,
     'new-conversation': shortcutActions['new-conversation'],
@@ -2558,7 +2558,7 @@
     themeButton();
   };
   document.addEventListener('kova:theme', themeButton); themeButton();
-  $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
+  $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova web to reconnect.'); });
   async function setupIdentity() {
     state.persona = await json('/persona');
     if (!state.persona.configured) {
@@ -2642,7 +2642,7 @@
     try { response = await fetch('/chats', {credentials: 'same-origin'}); } catch (_) {}
     if (!state.connected) return;
     // Browser sessions live in server memory, so a restarted server forgot this window.
-    if (response?.status === 401) return disconnected('Kova restarted, so this window was signed out. Open kova-web on this computer to reconnect.');
+    if (response?.status === 401) return disconnected('Kova restarted, so this window was signed out. Open kova web on this computer to reconnect.');
     if (!response?.ok) return streamLost(true);
     connectEvents();
   }

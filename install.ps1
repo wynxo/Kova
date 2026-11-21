@@ -90,7 +90,7 @@ function Install-Kova {
         }
         if ($PackagedDesktop) {
             & $App --prepare
-            if ($LASTEXITCODE -ne 0) { throw 'Preparing the desktop app failed. Run kova-app to retry.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Preparing the desktop app failed. Run kova app to retry.' }
             $DesktopSource = $DesktopDest
         } else {
             # Compatibility with refs that predate packaged desktop assets.
@@ -158,7 +158,7 @@ function Install-Kova {
             throw 'Desktop files could not be installed. Check your connection and rerun this installer to add it.'
         }
     } catch {
-        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova-web."
+        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova web."
         $RegisterDesktop = $false
     } }
 
@@ -204,6 +204,6 @@ function Install-Kova {
     if ($RegisterDesktop) { Write-Host 'Done. Open Kova from the Start menu and choose Add provider.' }
     else { Write-Host 'Done (without the desktop app). Run: kova setup' }
     Write-Host 'Terminal chat: kova setup, then kova'
-    Write-Host 'Desktop app: kova-app    Web UI in your browser: kova-web'
+    Write-Host 'Desktop app: kova app    Web UI in your browser: kova web'
 }
 Install-Kova -InstallArgs $args
