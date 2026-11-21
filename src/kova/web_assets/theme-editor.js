@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const GROUPS = {bg: 'Backgrounds', fg: 'Text', border: 'Borders', accent: 'Accent', status: 'Status'};
+  const GROUPS = {bg: 'Backgrounds', fg: 'Text', border: 'Borders', accent: 'Accent', status: 'Status', syntax: 'Code'};
   const HEX = /^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i;
   const BACKGROUNDS = {none: 'None', gradient: 'Gradient', noise: 'Noise', image: 'Image'};
   const CHECK_URL = '/themes?validate_only=true';
@@ -44,6 +44,102 @@
       return Math.min(255, Math.round(parseFloat(part) * scale)).toString(16).padStart(2, '0');
     });
     return '#' + bytes.join('');
+  }
+
+  /* Small colour maths for Simple mode. These functions only derive values for
+     existing semantic roles; a theme still stores plain colours, and the server
+     measures every pair after the draft is merged over its base. */
+  function channels(colour) {
+    const hex = toHex(colour || '');
+    if (!hex) return null;
+    return {
+      r: parseInt(hex.slice(1, 3), 16),
+      g: parseInt(hex.slice(3, 5), 16),
+      b: parseInt(hex.slice(5, 7), 16),
+    };
+  }
+
+  function mix(from, to, amount) {
+    const a = channels(from);
+    const b = channels(to);
+    if (!a || !b) return from;
+    const channel = (x, y) => Math.round(x + (y - x) * amount).toString(16).padStart(2, '0');
+    return `#${channel(a.r, b.r)}${channel(a.g, b.g)}${channel(a.b, b.b)}`;
+  }
+
+  function luminance(colour) {
+    const rgb = channels(colour);
+    if (!rgb) return 0;
+    const linear = value => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b);
+  }
+
+  function contrast(first, second) {
+    const a = luminance(first);
+    const b = luminance(second);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  function alphaOf(colour) {
+    const match = /^rgba?\([^,]+,[^,]+,[^,]+,([0-9.]+)\)$/i.exec(String(colour || '').trim());
+    return match && Number(match[1]) >= 0 && Number(match[1]) <= 1 ? Number(match[1]) : 0.12;
+  }
+
+  function translucent(colour, alpha) {
+    const rgb = channels(colour);
+    return rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})` : colour;
+  }
+
+  // Change hue without changing a surface's lightness much. A plain mix with
+  // the status colours would lift a dark surface enough to push muted text
+  // below 4.5:1, so the tone control shifts hue and saturation in HSL instead;
+  // the small lightness drop keeps the shipped dark raised surface readable.
+  function hueOf(colour) {
+    const rgb = channels(colour);
+    if (!rgb) return 30;
+    const r = rgb.r / 255;
+    const g = rgb.g / 255;
+    const b = rgb.b / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const range = max - min;
+    if (!range) return 30;
+    let hue;
+    if (max === r) hue = ((g - b) / range) % 6;
+    else if (max === g) hue = (b - r) / range + 2;
+    else hue = (r - g) / range + 4;
+    return (hue * 60 + 360) % 360;
+  }
+
+  function tinted(colour, hue, saturation, drop) {
+    const rgb = channels(colour);
+    if (!rgb) return colour;
+    const r = rgb.r / 255;
+    const g = rgb.g / 255;
+    const b = rgb.b / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lightness = Math.max(0, Math.min(1, (max + min) / 2 - drop));
+    const currentSaturation = max === min ? 0 : (max + min) / 2 > 0.5
+      ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+    const strength = Math.max(currentSaturation, saturation);
+    const q = lightness < 0.5 ? lightness * (1 + strength) : lightness + strength - lightness * strength;
+    const p = 2 * lightness - q;
+    const channel = offset => {
+      let value = offset + hue / 360;
+      if (value < 0) value += 1;
+      if (value > 1) value -= 1;
+      if (value < 1 / 6) return p + (q - p) * 6 * value;
+      if (value < 1 / 2) return q;
+      if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+      return p;
+    };
+    const byte = value => Math.round(Math.max(0, Math.min(1, value)) * 255)
+      .toString(16).padStart(2, '0');
+    return `#${byte(channel(1 / 3))}${byte(channel(0))}${byte(channel(-1 / 3))}`;
   }
 
   function makeDraft(palette, source, choices) {
@@ -193,10 +289,32 @@
     sources.append(field('theme-editor-base', 'Start from', base), importButton, share, importStringButton, file);
     const identity = el('fieldset', 'theme-editor-identity');
     identity.append(field('theme-editor-name', 'Name', name), field('theme-editor-id', 'Theme ID', id));
+    const modes = el('div', 'theme-editor-modes');
+    modes.setAttribute('role', 'tablist');
+    modes.setAttribute('aria-label', 'Editor mode');
+    const simpleTab = el('button', 'theme-editor-mode', 'Simple');
+    simpleTab.type = 'button';
+    simpleTab.id = 'theme-editor-tab-simple';
+    simpleTab.setAttribute('role', 'tab');
+    simpleTab.setAttribute('aria-controls', 'theme-editor-simple');
+    const advancedTab = el('button', 'theme-editor-mode', 'Advanced');
+    advancedTab.type = 'button';
+    advancedTab.id = 'theme-editor-tab-advanced';
+    advancedTab.setAttribute('role', 'tab');
+    advancedTab.setAttribute('aria-controls', 'theme-editor-advanced');
+    modes.append(simpleTab, advancedTab);
+
+    const simplePanel = el('fieldset', 'theme-editor-simple');
+    simplePanel.id = 'theme-editor-simple';
+    simplePanel.setAttribute('role', 'tabpanel');
+    simplePanel.setAttribute('aria-labelledby', simpleTab.id);
     const groups = el('fieldset', 'theme-editor-groups');
-    groups.setAttribute('aria-label', 'Theme colours');
+    groups.id = 'theme-editor-advanced';
+    groups.setAttribute('role', 'tabpanel');
+    groups.setAttribute('aria-labelledby', advancedTab.id);
+    groups.hidden = true;
     const body = el('div', 'theme-editor-body');
-    body.append(sources, identity, groups);
+    body.append(modes, sources, identity, simplePanel, groups);
     const checks = el('div', 'theme-editor-checks');
     checks.setAttribute('aria-live', 'polite');
     const notice = el('p', 'theme-editor-notice');
@@ -212,6 +330,16 @@
     let tokens;
     let source;
     let parentPalette;
+    // The resolved values of the theme the draft started from, and the draft's
+    // own overrides before Simple mode touched them. Simple controls derive
+    // from the first and restore the second, so switching a control back to its
+    // default leaves a duplicated or imported theme exactly as it arrived.
+    let sourceTokens = {};
+    let baseline = {};
+    const simpleState = {accent: '', tone: 'neutral', contrast: 50};
+    let colourRows = [];
+    let colourInputs = new Map();
+    let simpleControls;
     let busy = true;
     let saving = false;
     let valid = false;
@@ -226,7 +354,7 @@
 
     function buttons() {
       base.disabled = importButton.disabled = busy;
-      identity.disabled = groups.disabled = busy || !draft;
+      identity.disabled = simplePanel.disabled = groups.disabled = busy || !draft;
       save.disabled = exportButton.disabled = busy || !valid;
       copyButton.disabled = busy || !valid;
       importStringButton.disabled = busy;
@@ -236,6 +364,27 @@
 
     function report(messages) {
       checks.replaceChildren(...messages.map(message => el('p', '', message)));
+      // Mark each colour row named by a failed pair (or an incomplete hex), so
+      // the warning sits beside the values it is about as well as in the footer.
+      const failing = new Set(incomplete);
+      for (const message of messages) {
+        for (const match of message.matchAll(/(?:bg|fg|border|accent|status|syntax)\.[a-z0-9-]+/g)) {
+          failing.add(match[0]);
+        }
+      }
+      for (const row of colourRows) {
+        const key = row.dataset.token;
+        const bad = failing.has(key);
+        row.className = `theme-editor-colour${bad ? ' is-invalid' : ''}`;
+        row.title = bad ? messages.filter(message => message.includes(key)).join('\n') : '';
+      }
+      if (simpleControls) {
+        const accentBad = [...failing].some(key => key.startsWith('accent.'));
+        simpleControls.accentRow.className =
+          `theme-editor-colour theme-editor-simple-accent${accentBad ? ' is-invalid' : ''}`;
+        simpleControls.accentRow.title = accentBad
+          ? messages.filter(message => message.includes('accent.')).join('\n') : '';
+      }
     }
 
     function close(returnToSettings = false) {
@@ -321,7 +470,9 @@
       });
       hex.addEventListener('input', () => edit(hex.value.trim()));
       const row = el('div', 'theme-editor-colour');
+      row.dataset.token = key;
       row.append(el('span', '', key), swatch, hex);
+      colourInputs.set(key, {swatch, hex});
       return row;
     }
 
@@ -434,22 +585,347 @@
       return section;
     }
 
+    /* ---------------- Simple mode (#176) ----------------
+       Accent, background tone and text contrast write existing semantic roles
+       only; the theme schema is unchanged. Corner radius, density and font are
+       app preferences with the same plumbing as the Settings rows, so they are
+       shared with paired devices but never become part of a theme file. */
+    const RADIUS_VALUES = ['sharp', 'default', 'round'];
+    const RADIUS_LABELS = ['Sharp', 'Default', 'Round'];
+    const ACCENT_ROLES = ['accent.default', 'accent.hover', 'accent.pressed',
+      'accent.on', 'accent.soft', 'fg.inverse'];
+    const TONE_ROLES = ['bg.base', 'bg.surface', 'bg.raised'];
+    // Hue and saturation for the neutral-to-warm/cool shift. The hue itself
+    // comes from the theme's own status.warning / status.info, so a themed
+    // palette still decides which direction reads as warm or cool.
+    const TONE_SHAPE = {
+      dark: {saturation: 0.22, drop: {'bg.base': 0, 'bg.surface': 0.005, 'bg.raised': 0.02}},
+      light: {saturation: 0.35, drop: {'bg.base': 0.01, 'bg.surface': 0, 'bg.raised': -0.01}},
+    };
+    const CONTRAST_ROLES = ['fg.default', 'fg.muted', 'fg.faint'];
+
+    function hexOf(colour) {
+      const hex = toHex(colour || '');
+      return hex ? hex.slice(0, 7).toLowerCase() : '';
+    }
+
+    function sameColour(first, second) {
+      const a = hexOf(first);
+      return Boolean(a) && a === hexOf(second);
+    }
+
+    function assign(key, value) {
+      const [group, role] = key.split('.');
+      draft.tokens ??= {};
+      (draft.tokens[group] ??= {})[role] = value;
+      tokens[key] = value;
+    }
+
+    // Put back one role exactly as the draft arrived: an override the source
+    // theme already had, or no override at all when it inherited the role.
+    function restoreRole(key) {
+      const [group, role] = key.split('.');
+      const loaded = baseline?.[group]?.[role];
+      if (loaded !== undefined) {
+        assign(key, loaded);
+        return;
+      }
+      if (draft.tokens?.[group]) {
+        delete draft.tokens[group][role];
+        if (!Object.keys(draft.tokens[group]).length) delete draft.tokens[group];
+      }
+      tokens[key] = sourceTokens[key];
+    }
+
+    function place(key, value) {
+      if (sameColour(value, sourceTokens[key])) restoreRole(key);
+      else assign(key, value);
+    }
+
+    // Simple controls and the Advanced rows edit the same draft, so the rows
+    // follow a Simple change as well; only the roles that changed are touched.
+    function syncColourRows(keys) {
+      for (const key of keys) {
+        const row = colourInputs.get(key);
+        if (!row) continue;
+        const colour = toHex(tokens[key]);
+        if (!colour) continue;
+        row.swatch.value = colour.slice(0, 7);
+        row.hex.value = colour;
+      }
+    }
+
+    function applySimpleAccent() {
+      if (!draft) return;
+      const accent = hexOf(simpleState.accent);
+      if (!accent) return;
+      if (sameColour(accent, sourceTokens['accent.default'])) {
+        ACCENT_ROLES.forEach(restoreRole);
+      } else {
+        // Hover lightens and pressed darkens, in both appearances, which is
+        // how the shipped palettes already treat the accent.
+        const hover = mix(accent, '#ffffff', 0.16);
+        const pressed = mix(accent, '#000000', 0.18);
+        // Text on a solid accent chip: whichever of the theme's own text
+        // extremes is more readable. The accent-on and inverse pairs both use
+        // it, so they pass or fail together.
+        const on = contrast(accent, sourceTokens['fg.default'])
+          >= contrast(accent, sourceTokens['fg.inverse'])
+          ? sourceTokens['fg.default'] : sourceTokens['fg.inverse'];
+        assign('accent.default', accent);
+        assign('accent.hover', hover);
+        assign('accent.pressed', pressed);
+        assign('accent.on', on);
+        assign('accent.soft', translucent(accent, alphaOf(sourceTokens['accent.soft'])));
+        assign('fg.inverse', on);
+      }
+      syncColourRows(ACCENT_ROLES);
+      paint();
+      check();
+    }
+
+    function applySimpleTone() {
+      if (!draft) return;
+      const source = simpleState.tone === 'warm' ? sourceTokens['status.warning']
+        : simpleState.tone === 'cool' ? sourceTokens['status.info'] : '';
+      const shape = TONE_SHAPE[draft.appearance] || TONE_SHAPE.dark;
+      for (const key of TONE_ROLES) {
+        place(key, source
+          ? tinted(sourceTokens[key], hueOf(source), shape.saturation, shape.drop[key])
+          : sourceTokens[key]);
+      }
+      syncColourRows(TONE_ROLES);
+      paint();
+      check();
+    }
+
+    function applySimpleContrast() {
+      if (!draft) return;
+      const value = Number(simpleState.contrast);
+      const delta = (value - 50) / 50;
+      // Softer moves toward the background's extreme; stronger moves toward
+      // the opposite one. At 50 the role keeps the theme's own value exactly.
+      const target = delta >= 0
+        ? (draft.appearance === 'dark' ? '#ffffff' : '#000000')
+        : (draft.appearance === 'dark' ? '#000000' : '#ffffff');
+      const amount = Math.abs(delta) * 0.55;
+      for (const key of CONTRAST_ROLES) {
+        place(key, value === 50 ? sourceTokens[key] : mix(sourceTokens[key], target, amount));
+      }
+      syncColourRows(CONTRAST_ROLES);
+      paint();
+      check();
+    }
+
+    function segmented(prefix, label, options, onPick) {
+      const group = el('div', 'theme-editor-segmented');
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', label);
+      const items = [];
+      for (const [value, text] of options) {
+        const item = el('button', 'theme-editor-segment', text);
+        item.type = 'button';
+        item.id = `${prefix}-${value}`;
+        item.dataset.value = value;
+        item.setAttribute('role', 'radio');
+        item.addEventListener('click', () => onPick(value));
+        item.addEventListener('keydown', event => {
+          if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+          event.preventDefault();
+          const at = options.findIndex(([candidate]) => candidate === value);
+          const step = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+          const next = options[(at + step + options.length) % options.length][0];
+          onPick(next);
+          items.find(candidate => candidate.dataset.value === next)?.focus();
+        });
+        items.push(item);
+        group.append(item);
+      }
+      return {group, items};
+    }
+
+    function syncSegmented(items, value) {
+      for (const item of items) {
+        const checked = item.dataset.value === value;
+        item.setAttribute('aria-checked', String(checked));
+        item.tabIndex = checked ? 0 : -1;
+      }
+    }
+
+    function contrastLabel(value) {
+      const delta = Math.round(Number(value) - 50);
+      if (!delta) return 'Default';
+      return delta > 0 ? `Stronger ${delta}%` : `Softer ${-delta}%`;
+    }
+
+    function typography(method, value) {
+      const target = window.KovaTypography;
+      if (target && typeof target[method] === 'function') target[method](value);
+      syncSimple();
+    }
+
+    function buildSimple() {
+      const accentSection = el('section', 'theme-editor-group');
+      const accentSwatch = el('input');
+      accentSwatch.id = 'theme-editor-simple-accent';
+      accentSwatch.type = 'color';
+      accentSwatch.setAttribute('aria-label', 'Accent colour');
+      const accentHex = el('input');
+      accentHex.id = 'theme-editor-simple-accent-hex';
+      accentHex.type = 'text';
+      accentHex.spellcheck = false;
+      accentHex.autocapitalize = 'none';
+      accentHex.setAttribute('aria-label', 'Accent hex');
+      const accentRow = el('div', 'theme-editor-colour theme-editor-simple-accent');
+      accentRow.append(el('span', '', 'Accent colour'), accentSwatch, accentHex);
+      accentSection.append(el('h3', '', 'Accent'), accentRow,
+        el('p', 'theme-editor-hint', 'Used for buttons, links, selections and the focus ring.'));
+
+      function editAccent(value) {
+        const colour = HEX.test(value) ? hexOf(value) : '';
+        accentHex.setAttribute('aria-invalid', String(!colour));
+        if (!colour) return;
+        simpleState.accent = colour;
+        accentSwatch.value = colour;
+        accentHex.value = colour;
+        applySimpleAccent();
+      }
+
+      accentSwatch.addEventListener('input', () => editAccent(accentSwatch.value));
+      accentHex.addEventListener('input', () => editAccent(accentHex.value.trim()));
+
+      const toneSection = el('section', 'theme-editor-group');
+      const tone = segmented('theme-editor-tone', 'Background tone', [
+        ['neutral', 'Neutral'], ['warm', 'Warm'], ['cool', 'Cool'],
+      ], value => {
+        simpleState.tone = value;
+        applySimpleTone();
+        syncSimple();
+      });
+      toneSection.append(el('h3', '', 'Background tone'), tone.group,
+        el('p', 'theme-editor-hint', "Tints the app background. Neutral keeps the theme's own values."));
+
+      const contrastSection = el('section', 'theme-editor-group');
+      const contrast = el('input');
+      contrast.type = 'range';
+      contrast.min = '0';
+      contrast.max = '100';
+      contrast.step = '5';
+      const contrastShown = el('output', '', 'Default');
+      contrast.addEventListener('input', () => {
+        simpleState.contrast = Number(contrast.value);
+        contrastShown.textContent = contrastLabel(simpleState.contrast);
+        applySimpleContrast();
+      });
+      const contrastRow = el('div', 'theme-editor-range');
+      contrastRow.append(field('theme-editor-contrast', 'Level', contrast), contrastShown);
+      contrastSection.append(el('h3', '', 'Text contrast'), contrastRow,
+        el('p', 'theme-editor-hint', 'Softer can drop a pair below WCAG AA; the check below names it.'));
+
+      const shapeSection = el('section', 'theme-editor-group');
+      const radius = el('input');
+      radius.type = 'range';
+      radius.min = '0';
+      radius.max = '2';
+      radius.step = '1';
+      const radiusShown = el('output', '', 'Default');
+      radius.addEventListener('input', () => {
+        const index = Math.max(0, Math.min(2, Number(radius.value)));
+        radiusShown.textContent = RADIUS_LABELS[index];
+        typography('setRadius', RADIUS_VALUES[index]);
+      });
+      const radiusRow = el('div', 'theme-editor-range');
+      radiusRow.append(field('theme-editor-radius', 'Corners', radius), radiusShown);
+      const density = segmented('theme-editor-density', 'Density', [
+        ['compact', 'Compact'], ['default', 'Default'], ['comfortable', 'Comfortable'],
+      ], value => typography('setDensity', value));
+      const font = segmented('theme-editor-font', 'Font', [
+        ['inter', 'Inter'], ['system', 'System'], ['mono', 'Monospace'],
+      ], value => typography('setFont', value));
+      const densityChoice = el('div', 'theme-editor-choice');
+      densityChoice.append(el('span', 'theme-editor-choice-label', 'Density'), density.group);
+      const fontChoice = el('div', 'theme-editor-choice');
+      fontChoice.append(el('span', 'theme-editor-choice-label', 'Font'), font.group);
+      shapeSection.append(el('h3', '', 'Shape and type'), radiusRow, densityChoice, fontChoice,
+        el('p', 'theme-editor-hint', 'Corners, density and font are app settings shared with every paired device. They stay outside the theme file.'));
+
+      simpleControls = {
+        accentRow, accentSwatch, accentHex, tone: tone.items, contrast, contrastShown,
+        radius, radiusShown, density: density.items, font: font.items,
+      };
+      simplePanel.replaceChildren(accentSection, toneSection, contrastSection, shapeSection);
+      syncSimple();
+      buttons();
+    }
+
+    function syncSimple() {
+      if (!simpleControls) return;
+      const accent = hexOf(simpleState.accent);
+      if (accent) {
+        simpleControls.accentSwatch.value = accent;
+        simpleControls.accentHex.value = simpleState.accent || accent;
+      }
+      syncSegmented(simpleControls.tone, simpleState.tone);
+      simpleControls.contrast.value = String(simpleState.contrast);
+      simpleControls.contrastShown.textContent = contrastLabel(simpleState.contrast);
+      const engine = window.KovaTypography;
+      const radiusValue = engine && typeof engine.radius === 'function' ? engine.radius() : 'default';
+      const radiusIndex = Math.max(0, RADIUS_VALUES.indexOf(radiusValue));
+      simpleControls.radius.value = String(radiusIndex);
+      simpleControls.radiusShown.textContent = RADIUS_LABELS[radiusIndex];
+      const densityValue = engine && typeof engine.density === 'function' ? engine.density() : 'default';
+      syncSegmented(simpleControls.density, densityValue);
+      const fontValue = engine && typeof engine.font === 'function' ? engine.font() : 'inter';
+      syncSegmented(simpleControls.font, fontValue);
+    }
+
+    function setMode(next) {
+      const simple = next !== 'advanced';
+      simpleTab.setAttribute('aria-selected', String(simple));
+      advancedTab.setAttribute('aria-selected', String(!simple));
+      simpleTab.tabIndex = simple ? 0 : -1;
+      advancedTab.tabIndex = simple ? -1 : 0;
+      simplePanel.hidden = !simple;
+      groups.hidden = simple;
+    }
+
+    simpleTab.addEventListener('click', () => setMode('simple'));
+    advancedTab.addEventListener('click', () => setMode('advanced'));
+    modes.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' || event.key === 'ArrowLeft' ? 'simple' : 'advanced';
+      setMode(next);
+      (next === 'simple' ? simpleTab : advancedTab).focus();
+    });
+    setMode('simple');
+
     function loadDraft(next, palette, nextSource) {
       draft = next;
       tokens = {...palette.tokens};
+      sourceTokens = {...palette.tokens};
+      baseline = JSON.parse(JSON.stringify(next.tokens || {}));
       source = nextSource;
       parentPalette = palette;
       name.value = draft.name;
       id.value = draft.id;
       incomplete.clear();
+      colourRows = [];
+      colourInputs = new Map();
       groups.replaceChildren();
       for (const [group, label] of Object.entries(GROUPS)) {
         const section = el('section', 'theme-editor-group');
         const keys = Object.keys(tokens).filter(key => key.startsWith(group + '.'));
-        section.append(el('h3', '', label), ...keys.map(colourRow));
+        const rows = keys.map(colourRow);
+        colourRows.push(...rows);
+        section.append(el('h3', '', label), ...rows);
         groups.append(section);
       }
       groups.append(backgroundSection());
+      simpleState.accent = hexOf(palette.tokens['accent.default']);
+      simpleState.tone = 'neutral';
+      simpleState.contrast = 50;
+      syncSimple();
       paint();
     }
 
@@ -572,6 +1048,7 @@
       close(true);
     });
 
+    buildSimple();
     replace(async () => {
       options = (await theme.refresh()).filter(option => option.id !== 'system');
       if (editor !== session) return;

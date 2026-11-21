@@ -72,6 +72,7 @@ def test_default_writes_no_override() -> None:
     assert '[data-text-size="default"]' not in text, \
         "default is the shipped scale, so it needs no rule"
     assert '[data-density="default"]' not in text
+    assert '[data-radius="default"]' not in text
     assert '[data-font="inter"]' not in text
     assert '[data-chat-width="normal"]' not in text, \
         "normal is the shipped column, so it needs no rule"
@@ -109,6 +110,23 @@ def test_density_swaps_the_space_tokens_the_conversation_uses() -> None:
             f"{token} should be tighter under compact than comfortable"
 
 
+def test_radius_swaps_both_radius_scales() -> None:
+    """Corner shape (#176): sharp and round move the shell aliases and tokens."""
+    sharp = block('[data-radius="sharp"]')
+    rounder = block('[data-radius="round"]')
+    for prefix in ("--radius", "--r"):
+        for role in ("sm", "md", "lg"):
+            token = f"{prefix}-{role}"
+            assert f"{token}:" in sharp and f"{token}:" in rounder, \
+                f"{token} should follow the corner setting"
+    assert "--radius-pill" not in sharp and "--radius-pill" not in rounder, \
+        "a pill stays a pill in every corner setting"
+    for role in ("sm", "md", "lg"):
+        small = int(re.search(rf"--radius-{role}:(\d+)px", sharp).group(1))
+        large = int(re.search(rf"--radius-{role}:(\d+)px", rounder).group(1))
+        assert small < large, f"--radius-{role} should sharpen then round"
+
+
 def test_font_switches_the_stacks_and_leaves_chat_configurable() -> None:
     system = block('[data-font="system"]')
     assert "--font:" in system
@@ -140,10 +158,10 @@ def test_the_typography_block_is_token_only() -> None:
 
 def test_the_script_reads_the_shared_preferences_and_paints_every_attribute() -> None:
     text = without_comments(SCRIPT.read_text(encoding="utf-8"))
-    for needed in ("'data-text-size'", "'data-density'", "'data-font'", "'data-chat-width'",
+    for needed in ("'data-text-size'", "'data-density'", "'data-radius'", "'data-font'", "'data-chat-width'",
                    "'data-avatars'", "'small'", "'large'", "'compact'", "'comfortable'",
-                   "'inter'", "'system'", "'mono'", "'narrow'", "'wide'", "'on'", "'off'",
-                   'chatWidth', 'setChatWidth', 'avatars', 'setAvatars',
+                   "'sharp'", "'round'", "'inter'", "'system'", "'mono'", "'narrow'", "'wide'", "'on'", "'off'",
+                   'radius', 'setRadius', 'chatWidth', 'setChatWidth', 'avatars', 'setAvatars',
                    "'/preferences'", "window.KovaTypography"):
         assert needed in text, f"typography.js lost {needed}"
     assert "localStorage" in text, "the choices must paint before the server answers"

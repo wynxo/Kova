@@ -1,11 +1,11 @@
-/* Typography, density and content width (#179, #205): one attribute each on
-   <html>.
+/* Typography, density, corner radius and content width (#179, #205, #176): one
+   attribute each on <html>.
 
    The stylesheet does the work in one block: `data-text-size` swaps the
-   --type-size-* tokens, `data-density` the --space-* tokens, `data-font` the
-   font stack and `data-chat-width` the --column the conversation, composer and
-   start screen share, so no component needs a rule of its own. This module only
-   decides the four values.
+   --type-size-* tokens, `data-density` the --space-* tokens, `data-radius` the
+   radius scale, `data-font` the font stack and `data-chat-width` the --column
+   the conversation, composer and start screen share, so no component needs a
+   rule of its own. This module only decides the values.
 
    The choices live in the shared server UI preferences document, so every
    paired device and `kova prefs export` see them, and in localStorage for an
@@ -25,6 +25,10 @@
      values: ['small', 'default', 'large'], fallback: 'default'},
     {key: 'kova-density', name: 'density', attr: 'data-density',
      values: ['compact', 'default', 'comfortable'], fallback: 'default'},
+    // Corner shape (#176): the theme editor's Simple controls and Settings
+    // share one value, and "default" leaves the shipped radius scale alone.
+    {key: 'kova-radius', name: 'radius', attr: 'data-radius',
+     values: ['sharp', 'default', 'round'], fallback: 'default'},
     {key: 'kova-font', name: 'font', attr: 'data-font',
      values: ['inter', 'system', 'mono'], fallback: 'inter'},
     // Room around the conversation, then the two reading details (#205).
@@ -80,7 +84,7 @@
     try {
       if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
         document.dispatchEvent(new CustomEvent('kova:typography', {
-          detail: {textSize: state.text_size, density: state.density, font: state.font},
+          detail: {textSize: state.text_size, density: state.density, radius: state.radius, font: state.font},
         }));
       }
     } catch (_) {}
@@ -151,6 +155,7 @@
     sync,
     textSize: () => state.text_size,
     density: () => state.density,
+    radius: () => state.radius,
     font: () => state.font,
     chatWidth: () => state.chat_width,
     avatars: () => state.avatars,
@@ -159,6 +164,7 @@
     backgrounds: () => state.backgrounds,
     setTextSize: next => store('text_size', next),
     setDensity: next => store('density', next),
+    setRadius: next => store('radius', next),
     setFont: next => store('font', next),
     setChatWidth: next => store('chat_width', next),
     setAvatars: next => store('avatars', next),

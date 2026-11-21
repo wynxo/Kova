@@ -176,7 +176,7 @@ assert.equal(document.activeElement, customize, 'focus returns to Customize');
 search.value = 'theme';
 search.dispatch('input', {});
 
-assert.match($('settings-search-status').textContent, /16 settings match/);
+assert.match($('settings-search-status').textContent, /17 settings match/);
 assert.equal($('settings-no-results').hidden, true);
 
 // A keyword that belongs to one row narrows to that row.

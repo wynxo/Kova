@@ -57,6 +57,13 @@ const installed = {id: 'my-light', name: 'My Light', appearance: 'light', extend
   tokens: {...palettes['kova-light'].tokens, 'bg.base': '#fafafa', 'syntax.keyword': '#113355'},
   terminal: palettes['kova-light'].terminal};
 const contrastMessage = 'fg.default on bg.base = 1.00:1, below 4.5:1';
+const appearance = {radiusValue: 'default', densityValue: 'default', fontValue: 'inter',
+  radius() { return this.radiusValue; },
+  density() { return this.densityValue; },
+  font() { return this.fontValue; },
+  setRadius(value) { this.radiusValue = value; },
+  setDensity(value) { this.densityValue = value; },
+  setFont(value) { this.fontValue = value; }};
 function resolve(payload) {
   const base = palettes[payload.extends || `kova-${payload.appearance}`];
   const tokens = {...base.tokens};
@@ -65,7 +72,7 @@ function resolve(payload) {
   }
   return {id: payload.id, appearance: payload.appearance, tokens};
 }
-const window = {KovaTheme: theme};
+const window = {KovaTheme: theme, KovaTypography: appearance};
 vm.runInNewContext(source, {
   window, document: {body, createElement: tag => new Node(tag)},
   CSS: {supports: () => true},
@@ -81,9 +88,12 @@ vm.runInNewContext(source, {
       return {ok: true, json: async () => palette};
     }
     const resolved = resolve(payload);
+    const accentBad = payload.tokens?.accent?.default === '#000000';
     const bad = resolved.tokens['fg.default'] === resolved.tokens['bg.base'];
     if (pauseRecheck && bad && payload.id !== 'bad-import') await pauseRecheck;
-    return {ok: !bad, json: async () => bad ? {detail: [contrastMessage]} : resolved};
+    const detail = bad ? [contrastMessage]
+      : accentBad ? ['accent.default on bg.surface = 1.00:1, below 3.0:1'] : null;
+    return {ok: !detail, json: async () => detail ? {detail} : resolved};
   },
 });
 
@@ -121,6 +131,8 @@ assert.equal(button('Save').disabled, true, 'save waits for the check');
 await settle();
 assert.equal(button('Save').disabled, true, 'contrast failure blocks Save');
 assert.ok(body.find(node => node.textContent === contrastMessage), 'the failed pair is visible');
+const failingRow = body.find(node => node.dataset.token === 'fg.default');
+assert.ok(failingRow.className.includes('is-invalid'), 'the failing row is marked beside its values');
 
 let release;
 pauseRecheck = new Promise(resolve => { release = resolve; });
@@ -276,5 +288,110 @@ assert.equal(closes, 2);
   assert.equal(previews.at(-1), null);
   assert.equal(closes, 3);
 
-  console.log('Theme editor: editable palette, live validation, preview, import, export, share string and Save passed');
+  // ---- Simple and Advanced modes (#176)
+  await open();
+  assert.equal(byId('theme-editor-tab-simple').attributes['aria-selected'], 'true',
+    'Simple is the first editor mode');
+  assert.equal(byId('theme-editor-tab-advanced').attributes['aria-selected'], 'false');
+  assert.equal(byId('theme-editor-simple').hidden, false);
+  assert.equal(byId('theme-editor-advanced').hidden, true,
+    'Advanced starts folded away behind the tab');
+  const baseTokens = JSON.parse(JSON.stringify(previews.at(-1).tokens));
+
+  // Accent derives every accent role, and an invalid hex never repaints.
+  const accentHex = byId('theme-editor-simple-accent-hex');
+  change(accentHex, '#2dd4bf');
+  assert.equal(previews.at(-1).tokens['accent.default'], '#2dd4bf');
+  assert.notEqual(previews.at(-1).tokens['accent.hover'], '#2dd4bf',
+    'hover is derived from the chosen accent');
+  assert.notEqual(previews.at(-1).tokens['accent.pressed'], '#2dd4bf');
+  assert.ok([baseTokens['fg.default'], baseTokens['fg.inverse']]
+    .includes(previews.at(-1).tokens['accent.on']), 'on-text is one of the theme text extremes');
+  assert.equal(body.find(node => node.attributes['aria-label'] === 'accent.default hex').value,
+    '#2dd4bf', 'the Advanced row follows the Simple accent');
+  await settle();
+  assert.equal(calls.at(-1).payload.tokens.accent.default, '#2dd4bf',
+    'the derived accent is sent to the contrast check');
+  button('Export').click();
+  assert.equal(JSON.parse(await downloaded.at(-1).text()).tokens.accent.default, '#2dd4bf',
+    'a Simple edit exports as a normal theme token');
+  const beforeBadAccent = previews.at(-1);
+  change(accentHex, '#12');
+  assert.equal(accentHex.attributes['aria-invalid'], 'true');
+  assert.equal(previews.at(-1), beforeBadAccent, 'an incomplete accent does not paint');
+  change(accentHex, '#2dd4bf');
+
+  // A failed accent pair also marks the Simple row, not only the footer list.
+  change(accentHex, '#000000');
+  await settle();
+  const simpleAccentRow = body.find(node => (node.className || '').includes('theme-editor-simple-accent'));
+  assert.ok(simpleAccentRow.className.includes('is-invalid'),
+    'the Simple accent is marked when its pair fails');
+  change(accentHex, '#2dd4bf');
+  await settle();
+
+  // Tone retints only the background roles; Neutral restores the source values.
+  button('Warm').click();
+  assert.notEqual(previews.at(-1).tokens['bg.base'], baseTokens['bg.base']);
+  assert.notEqual(previews.at(-1).tokens['bg.surface'], baseTokens['bg.surface']);
+  const warmBase = previews.at(-1).tokens['bg.base'];
+  assert.equal(body.find(node => node.attributes['aria-label'] === 'bg.base hex').value, warmBase,
+    'the Advanced rows follow a tone change too');
+  button('Cool').click();
+  assert.notEqual(previews.at(-1).tokens['bg.base'], warmBase);
+  button('Neutral').click();
+  assert.equal(previews.at(-1).tokens['bg.base'], baseTokens['bg.base'],
+    'Neutral restores the theme rather than tinting it');
+
+  // Contrast moves the text roles away from and back to the theme's own values.
+  const contrast = byId('theme-editor-contrast');
+  change(contrast, '0');
+  assert.notEqual(previews.at(-1).tokens['fg.default'], baseTokens['fg.default']);
+  assert.equal(byId('theme-editor-contrast').parentNode.parentNode.children[1].textContent, 'Softer 50%');
+  const softer = previews.at(-1).tokens['fg.default'];
+  change(contrast, '100');
+  assert.notEqual(previews.at(-1).tokens['fg.default'], softer);
+  change(contrast, '50');
+  assert.equal(previews.at(-1).tokens['fg.default'], baseTokens['fg.default'],
+    'Default contrast keeps the source palette exactly');
+
+  // Corners, density and font are appearance settings, not theme tokens.
+  const tokensBeforePrefs = JSON.stringify(previews.at(-1).tokens);
+  change(byId('theme-editor-radius'), '2');
+  assert.equal(appearance.radiusValue, 'round');
+  assert.equal(byId('theme-editor-radius').parentNode.parentNode.children[1].textContent, 'Round');
+  byId('theme-editor-density-compact').click();
+  assert.equal(appearance.densityValue, 'compact');
+  byId('theme-editor-font-mono').click();
+  assert.equal(appearance.fontValue, 'mono');
+  assert.equal(JSON.stringify(previews.at(-1).tokens), tokensBeforePrefs,
+    'appearance settings never enter the theme token map');
+  assert.equal(byId('theme-editor-density-compact').attributes['aria-checked'], 'true');
+  assert.equal(byId('theme-editor-font-mono').attributes['aria-checked'], 'true');
+
+  // Advanced exposes every semantic group, including code.
+  byId('theme-editor-tab-advanced').click();
+  assert.equal(byId('theme-editor-simple').hidden, true);
+  assert.equal(byId('theme-editor-advanced').hidden, false);
+  assert.ok(body.find(node => node.tagName === 'h3' && node.textContent === 'Code'),
+    'Advanced groups the syntax roles under Code');
+  assert.ok(body.find(node => node.attributes['aria-label'] === 'syntax.keyword hex'),
+    'Advanced can edit every semantic syntax role');
+  const modes = byId('theme-editor-tab-simple').parentNode;
+  modes.fire('keydown', {key: 'ArrowLeft', preventDefault() {}});
+  assert.equal(byId('theme-editor-tab-simple').attributes['aria-selected'], 'true',
+    'the mode tabs are operable with the arrow keys');
+
+  // Reset to base clears every Simple edit too.
+  button('Reset to base').click();
+  assert.equal(previews.at(-1).tokens['accent.default'], baseTokens['accent.default']);
+  assert.equal(byId('theme-editor-simple-accent-hex').value, baseTokens['accent.default']);
+  assert.equal(byId('theme-editor-contrast').value, '50');
+
+  await button('Cancel').click();
+  await settle();
+  assert.equal(previews.at(-1), null);
+  assert.equal(closes, 4);
+
+  console.log('Theme editor: editable palette, live validation, preview, import, export, share string, Simple/Advanced modes and Save passed');
 
