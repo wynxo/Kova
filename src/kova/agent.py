@@ -16,10 +16,11 @@ from uuid import uuid4
 import httpx
 
 from kova import delegation, egress, parallel, plugins, providers, sandbox
+from kova.actors import Actor
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
-from kova.persona import Persona
+from kova.persona import DEFAULT_NAME, Persona
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE, capabilities as mode_capabilities
@@ -79,18 +80,30 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
                         project_memories: list[Note] | None = None,
                         project_memory_usage: int | None = None,
                         project_memory_budget: int | None = None,
-                        project_index: str | None = None) -> str:
+                        project_index: str | None = None,
+                        actor: Actor | None = None) -> str:
     """Build the identity, current context, and relevant memory prompt.
 
     ``memories`` are the topic notes recall picked for this message; ``index``
     is the small index note that is always loaded, so the model knows what
     exists even when nothing matched. A project chat also gets its own scope,
     labelled with the project's name so the two stores never look like one.
+
+    ``actor`` names the speaker. The default assistant (or ``None``) is today's
+    prompt; a bot swaps in its own name and adds its role section, in the order
+    the design fixes: identity, role, context, memory.
     """
     persona = persona or Persona()
+    if actor is not None and not actor.is_default:
+        try:  # a bot name is validated when it is saved; keep a hand-built one safe too
+            persona = Persona(actor.name, persona.tone)
+        except ValueError:
+            persona = Persona(DEFAULT_NAME, persona.tone)
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
     identity = identity.replace("Kova", persona.name).replace(
         "Be warm, direct and genuinely helpful.", persona.instruction)
+    if actor is not None and not actor.is_default and actor.role.strip():
+        identity += f"\n\nYour role:\n{actor.role.strip()}"
     tools = ", ".join(tool_names) if tool_names else "none"
     prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
               f"Available tools: {tools}")
@@ -363,27 +376,31 @@ class Agent:
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy.
 
         A chat a paired phone wrote in keeps that phone's limits here, for every
         caller (the server, scheduled prompt jobs), not only for HTTP requests.
         ``turn_id`` and ``variant`` name the attempt a retry or edit is writing;
         every other turn starts a new one.
+
+        ``actor`` is who answers: ``None`` is today's behaviour, byte for byte.
+        A bot brings its own persona, model, tool allowlist, permission ceiling,
+        folder and turn limits, resolved by :meth:`kova.actors.Actor.for_chat`.
         """
         capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities,
                                               record_user=record_user, turn_id=turn_id,
-                                              variant=variant):
+                                              variant=variant, actor=actor):
                 yield event
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` overrides the saved chat model for one turn; unset chats use the default.
@@ -391,6 +408,8 @@ class Agent:
         ``capabilities`` limits a turn a paired phone started (kova.pairing): tools
         that need more are not offered at all, so no approval or rule can bring
         them back. None means the computer itself, with no limit.
+        ``actor`` narrows the same turn to a bot: its model, tool allowlist,
+        permission ceiling, folder, memory scopes and round/output limits.
         """
         from kova import attachments
         from kova.tools import Tool
@@ -409,7 +428,15 @@ class Agent:
             model_text = f'{text}\n\n{block}' if text else block
         chat = self.store.get_chat(chat_id)
         chat_model = (chat or {}).get('model')
-        entry = self.config.model_entry(model if model is not None else chat_model)
+        # A bot's own model wins over the saved chat model, unless this single
+        # turn names one. A removed model entry falls back the same way it
+        # always has: the chat's model, then the active one.
+        selected = model
+        if selected is None and actor is not None and actor.model:
+            chosen = self.config.model_entry(actor.model)
+            if chosen is not None and chosen.model:
+                selected = actor.model
+        entry = self.config.model_entry(selected if selected is not None else chat_model)
         previous_model = self.store.last_turn_model(chat_id)
         turn_model = entry.name if entry is not None and entry.model else None
         turn_id = turn_id or uuid4().hex
@@ -432,8 +459,24 @@ class Agent:
         incognito = self.store.is_ephemeral(chat_id)
         mode = 'chat' if incognito else (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
-        cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
-        permission = (chat or {}).get('permission', 'manual')
+        cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser()
+        if actor is not None and actor.folder is not None:
+            # A bot answers in its own folder; like the Kova Files default, it
+            # is created on first use instead of failing the turn.
+            cwd = Path(actor.folder).expanduser()
+            if not cwd.is_dir():
+                try:
+                    cwd.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    yield {'type': 'error',
+                           'message': 'The bot working folder could not be created. Choose another folder.'}
+                    return
+        cwd = cwd.resolve()
+        # A bot never gets more than the stricter of its ceiling and the chat's
+        # permission; Actor.for_chat already resolved the two. The default
+        # assistant's actor keeps the chat's own permission.
+        permission = (actor.permission if actor is not None and not actor.is_default
+                      else (chat or {}).get('permission', 'manual'))
         # A chat in a project with its own memory mounts exactly that scope.
         # Incognito never reads or writes memory, and a project without the
         # opt-in keeps today's global store. No other project is ever reachable.
@@ -505,6 +548,11 @@ class Agent:
                 "No tools or chat history are passed. Consecutive independent calls can run together. "
                 f"At most {delegation.ATTEMPT_LIMIT} attempts per turn, including denials.",
                 delegation.PARAMETERS, delegate)
+        if actor is not None and not actor.is_default:
+            # Last, after the mode, the device limits and every bound per-chat
+            # tool are in: a tool the bot is not offered cannot be brought back
+            # by a rule, an approval or an approval setting.
+            tools = {name: tool for name, tool in tools.items() if actor.allows(name)}
         delegate_attempts = 0
         tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
@@ -563,7 +611,8 @@ class Agent:
                                      project_memory_usage=project_usage,
                                      project_memory_budget=(
                                          project_memory.budget if project_memory else None),
-                                     project_index=project_index or None)
+                                     project_index=project_index or None,
+                                     actor=actor)
         if incognito:
             prompt += ("\nIncognito: this conversation lives only in server memory. "
                        "Do not save memories, use tools, or claim it will be remembered. "
@@ -590,9 +639,14 @@ class Agent:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         effort = (chat or {}).get('reasoning_effort') if entry.name == chat_model else entry.reasoning_effort
+        if actor is not None and not actor.is_default and actor.reasoning_effort:
+            effort = actor.reasoning_effort
         client = ModelClient(entry, transport=self.transport,
                              privacy=getattr(self.config, "privacy_secrets", "off"), config=self.config,
-                             reasoning_effort=effort)
+                             reasoning_effort=effort,
+                             max_output_tokens=(actor.max_output_tokens
+                                                if actor is not None and not actor.is_default
+                                                else None))
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
@@ -631,13 +685,16 @@ class Agent:
 
         meter = TurnMeter()
         pricing = getattr(self.config, 'pricing', None) or {}
+        # A bot may use fewer model calls than the agent's own hard outer limit.
+        rounds = 11 if actor is None else max(1, min(11, actor.max_rounds))
+        last_round = rounds - 1
         try:
             repeat_count = 0
             repeat_fp = None
             repeat_error = None
             awaiting_replacement = False
             attempted_compaction = False
-            for step in range(11):
+            for step in range(rounds):
                 if steering is not None:
                     for message in steering.take():
                         # A steer joins the history at a round boundary, never
@@ -671,7 +728,7 @@ class Agent:
 
                 content: list[str] = []
                 calls: list[dict] = []
-                round_schemas = schemas if step < 10 else None
+                round_schemas = schemas if step < last_round else None
                 meter.start_round()
                 async for event in client.stream(messages, round_schemas):
                     if event.type in ('text', 'reasoning'):
@@ -684,10 +741,10 @@ class Agent:
                     elif event.type == 'privacy' and event.privacy is not None:
                         # A safe summary only: counts and kinds, never a value.
                         yield {'type': 'privacy', **event.privacy}
-                    elif event.type == 'tool_call_delta' and event.tool_call is not None and step < 10:
+                    elif event.type == 'tool_call_delta' and event.tool_call is not None and step < last_round:
                         meter.output()
                         yield {'type': 'tool_call_delta', **event.tool_call}
-                    elif event.type == 'tool_call' and event.tool_call is not None and step < 10:
+                    elif event.type == 'tool_call' and event.tool_call is not None and step < last_round:
                         meter.count(event.tool_call.get('arguments') or '')
                         calls.append(event.tool_call)
                 meter.end_round([messages, round_schemas] if round_schemas else messages)
@@ -713,6 +770,12 @@ class Agent:
                     message_id = self.store.add_message(chat_id, 'assistant', answer, created=created)
                     usage = meter.summary(entry, pricing)
                     self.store.record_usage(chat_id, message_id, usage)
+                    if (actor is not None and not actor.is_default and actor.max_output_tokens
+                            and (usage.get('completion_tokens') or 0) >= actor.max_output_tokens):
+                        # The bot's per-turn budget is spent: end here, and say so.
+                        yield {'type': 'notice', 'kind': 'bot_limit',
+                               'notice': f"{actor.name} reached its "
+                                         f"{actor.max_output_tokens:,}-token output limit for this turn."}
                     if needs_title:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
