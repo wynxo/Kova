@@ -396,7 +396,8 @@ class Agent:
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None, actor: Actor | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None,
+                       hop: int = 0) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy.
 
         A chat a paired phone wrote in keeps that phone's limits here, for every
@@ -405,22 +406,30 @@ class Agent:
         every other turn starts a new one.
 
         ``actor`` is who answers: ``None`` is today's behaviour, byte for byte.
-        A bot brings its own persona, model, tool allowlist, permission ceiling,
-        folder and turn limits, resolved by :meth:`kova.actors.Actor.for_chat`.
+        A bot's turn tags every event with its ``author`` and a fresh
+        ``bot_turn_id``, so a client can put a reply and its tool calls in the
+        right lane without changing anything for the default assistant.
+        ``hop`` is 0 for a reply to the user and 1+ for a hand-off between bots.
         """
         capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
+        bot_turn_id = (uuid4().hex if actor is not None and not actor.is_default else None)
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities,
                                               record_user=record_user, turn_id=turn_id,
-                                              variant=variant, actor=actor):
-                yield event
+                                              variant=variant, actor=actor,
+                                              bot_turn_id=bot_turn_id, hop=hop):
+                if bot_turn_id is None:
+                    yield event
+                else:
+                    yield {**event, 'author': actor.id, 'bot_turn_id': bot_turn_id}
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None, actor: Actor | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None,
+                       bot_turn_id: str | None = None, hop: int = 0) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` overrides the saved chat model for one turn; unset chats use the default.
@@ -461,6 +470,20 @@ class Agent:
         turn_model = entry.name if entry is not None and entry.model else None
         turn_id = turn_id or uuid4().hex
         variant = variant or 1
+        # A bot's rows carry who wrote them; the default assistant's stay NULL,
+        # which is exactly what every row written before bots existed has.
+        author = actor.id if actor is not None and not actor.is_default else None
+        author_name = actor.name if author is not None else None
+
+        def stored(*args, **kwargs):
+            """Store one row of this turn under its author, unless it is the default's."""
+            if author is not None:
+                kwargs.setdefault('author', author)
+                kwargs.setdefault('author_name', author_name)
+                kwargs.setdefault('bot_turn_id', bot_turn_id)
+                kwargs.setdefault('hop', hop)
+            return self.store.add_message(*args, **kwargs)
+
         user_message_id = self.store.add_message(
             chat_id, 'user', text, turn_model=turn_model, turn_id=turn_id, variant=variant,
         ) if record_user else None
@@ -820,10 +843,10 @@ class Agent:
                     if steering is not None and steering.pending:
                         # The user steered while this answer streamed: keep the
                         # answer, then let the model respond to the steer.
-                        self.store.add_message(chat_id, 'assistant', answer or None)
+                        stored(chat_id, 'assistant', answer or None)
                         continue
                     created = datetime.now(timezone.utc).isoformat()
-                    message_id = self.store.add_message(chat_id, 'assistant', answer, created=created)
+                    message_id = stored(chat_id, 'assistant', answer, created=created)
                     usage = meter.summary(entry, pricing)
                     self.store.record_usage(chat_id, message_id, usage)
                     if (actor is not None and not actor.is_default and actor.max_output_tokens
@@ -862,7 +885,7 @@ class Agent:
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]
-                self.store.add_message(chat_id, 'assistant', answer or None, tool_calls=formatted)
+                stored(chat_id, 'assistant', answer or None, tool_calls=formatted)
                 # Consecutive read-only calls that need no answer run at once (#192).
                 ready = [parallel_args(call) for call in calls]
                 groups = parallel.runs([args is not None for args in ready])
@@ -937,7 +960,7 @@ class Agent:
                         except asyncio.CancelledError:
                             end = delegate_groups[index] if is_delegate else groups[index]
                             for batched in calls[index:end]:
-                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
+                                stored(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
                             raise
                         finally:
                             if not self.task_controls.get(chat_id):
@@ -978,7 +1001,7 @@ class Agent:
                                             pending.future.cancel()
                                     yield {'type': 'question_resolved', 'id': question['id']}
                                     result = decision.get('message') or 'No answer provided.'
-                                    self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                                    stored(chat_id, 'tool', result, tool_call_id=call['id'])
                                     yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': decision['decision'] == 'allow', 'summary': result[:200], 'output': result}
                                     continue
                                 prepared = None
@@ -1028,7 +1051,7 @@ class Agent:
                                 if name == 'run_command':
                                     ok = json.loads(result)['ok']
                             except asyncio.CancelledError:
-                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=call['id'])
+                                stored(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=call['id'])
                                 raise
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
@@ -1056,11 +1079,11 @@ class Agent:
                         warning = ("Error: tool "
                                    f"'{name}' failed repeatedly and kept returning the same error. "
                                    "This call keeps failing — try a different approach or answer the user.")
-                        self.store.add_message(chat_id, 'tool', warning, tool_call_id=call['id'])
+                        stored(chat_id, 'tool', warning, tool_call_id=call['id'])
                         yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': False,
                                'summary': warning[:200], 'output': warning}
                     else:
-                        self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                        stored(chat_id, 'tool', result, tool_call_id=call['id'])
                         event = {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
                         if ok and tracker is not None and name in {'write_file', 'edit_file'}:
                             # A presentation failure must never fail a successful write.

@@ -249,6 +249,12 @@ turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
 cancels it server-side.
 
+A turn answered by a bot (a chat created with `bot_id`) carries two additive fields on
+every event it emits: `author` (the bot id) and `bot_turn_id` (one reply's rows inside
+the user turn). The stored rows carry the same `author`, the display name at the time
+and the `hop`; a turn with the default assistant has none of them, so old clients and
+old transcripts are unchanged.
+
 Compare stream (`POST /chats/{chat_id}/compare`, `src/kova/compare.py`): `start`
 with the `compare_id` and model names, then `text`, `reasoning` and `privacy`
 events that each carry their `model`, one `model_done` (text and `usage`) or
@@ -591,13 +597,17 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
   colour, icon and default model, plus `files` (a JSON list of project-relative
   pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
-  optional project_id
-- `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
-  nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
+  optional project_id, kind (`chat`, `bot` or `group`) and, for a direct bot chat,
+  `bot_id`
+- `messages` — role, content, tool_calls (JSON), tool_call_id, created, who wrote it
+  (`author` and `author_name`; NULL for the user and the default assistant),
+  `bot_turn_id` and `hop`, and nullable usage columns (`USAGE_COLUMNS`) set only on
+  a turn's final answer
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`,
+`colour`, `icon`, `project_id`, the chat `kind` and `bot_id`, message `author`,
+`author_name`, `bot_turn_id` and `hop`, and the projects' `colour`, `icon`, `model`,
 `files`) so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
