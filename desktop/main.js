@@ -3,9 +3,9 @@ const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, globalShortcut, c
 const {spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, quickChatId} = require('./core');
+const {settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId} = require('./core');
 let win, tray, child, quick, quitting = false, starting = false, origin, home;
-let appName = 'Kova', trayState = 'idle';
+let appName = 'Kova', trayState = 'idle', chrome = 'native';
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
 // Tray state -> asset. The tray icon is OS chrome, so the status dot is baked
@@ -100,6 +100,7 @@ function refreshTray() {
     {label: 'Show Kova', click: show},
     {label: 'New chat', click: () => sendAction('new-conversation')},
     {label: 'Quick ask', click: toggleQuick},
+    {label: 'Command palette', click: () => sendAction('palette')},
     {type: 'separator'},
     {label: 'Quit', click: () => app.quit()},
   ]));
@@ -120,13 +121,16 @@ function buildAppMenu() {
     {label: 'File', submenu: [
       action('New chat', 'new-conversation'),
       action('New incognito chat', 'new-incognito'),
+      {label: 'Quick ask', click: toggleQuick},
       ...(mac ? [] : [{type: 'separator'}, action('Settings…', 'open-settings'),
         {type: 'separator'}, {role: 'quit', label: 'Quit Kova'}]),
     ]},
     {role: 'editMenu', label: 'Edit'},
     {label: 'View', submenu: [
+      action('Command palette…', 'palette'),
       action('Search conversations', 'search-conversations'),
       action('Toggle sidebar', 'toggle-sidebar'),
+      action('Focus message box', 'focus-composer'),
       action('Toggle theme', 'toggle-theme'),
     ]},
     {role: 'windowMenu', label: 'Window'},
@@ -155,11 +159,18 @@ async function create() {
   const desktopSettings = settings();
   const {config} = desktopSettings;
   ({home, origin} = desktopSettings);
+  chrome = titleBar(config);
   fs.mkdirSync(home, {recursive: true, mode: 0o700});
   // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
   app.setPath('userData', path.join(home, 'desktop'));
   const restored = windowState(savedWindow(), screen.getAllDisplays());
-  win = new BrowserWindow({...restored.bounds, minWidth: 760, minHeight: 540,
+  // Native is the default. The themed bar keeps the OS window controls: macOS
+  // keeps its traffic lights with `hiddenInset`, Windows/Linux get Electron's
+  // native overlay. The page only paints the strip behind them.
+  const bar = chrome !== 'themed' ? {} : process.platform === 'darwin'
+    ? {titleBarStyle: 'hiddenInset'}
+    : {titleBarStyle: 'hidden', titleBarOverlay: true};
+  win = new BrowserWindow({...restored.bounds, ...bar, minWidth: 760, minHeight: 540,
     backgroundColor: '#0d0d10', icon, title: 'Kova', autoHideMenuBar: true, show: false,
     webPreferences: {contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, 'preload.js')}});
@@ -219,6 +230,16 @@ async function create() {
     if (event.sender !== win.webContents) return;
     trayState = ['idle', 'working', 'waiting'].includes(state) ? state : 'idle';
     refreshTray();
+  });
+  // The themed title bar reports the active theme's own background, text and
+  // height, so the native window controls match it without hard-coded colours.
+  ipcMain.on('chrome-colours', (event, colours) => {
+    if (event.sender !== win.webContents || chrome !== 'themed') return;
+    const overlay = titleBarColours(colours);
+    if (!overlay) return;
+    try {
+      if (process.platform !== 'darwin') win.setTitleBarOverlay(overlay);
+    } catch (e) { console.error('Could not theme the title bar:', e.message); }
   });
   // Quick ask (#71): the overlay hides itself, or asks the main window to open
   // the chat it just created. Sender and chat id are both checked first.
@@ -292,7 +313,7 @@ async function start() {
         }
       } catch (e) { console.error('Could not load assistant identity:', e.message); }
     }
-    if (!quitting) await win.loadURL(origin + '/app#ticket=' + encodeURIComponent(value));
+    if (!quitting) await win.loadURL(origin + '/app' + (chrome === 'themed' ? '?titlebar=themed' : '') + '#ticket=' + encodeURIComponent(value));
   } catch (e) {
     console.error(e.message);
     if (!quitting) await status(true);

@@ -11,6 +11,12 @@ if (location.protocol === 'file:') {
       ipcRenderer.on('app-action', (_event, id) => callback(typeof id === 'string' ? id : ''));
     },
     reportState: state => ipcRenderer.send('app-state', typeof state === 'string' ? state : ''),
+    reportChrome: colours => ipcRenderer.send('chrome-colours',
+      colours && typeof colours === 'object' ? {
+        background: typeof colours.background === 'string' ? colours.background : '',
+        symbolColor: typeof colours.symbolColor === 'string' ? colours.symbolColor : '',
+        height: Number.isInteger(colours.height) ? colours.height : 0,
+      } : {}),
   });
   // Quick ask (#71). Strings are re-checked in the main process before anything
   // is trusted, so a compromised page can at most hide the overlay or open a

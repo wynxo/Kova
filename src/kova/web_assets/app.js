@@ -1000,6 +1000,9 @@
     $('chat-menu').hidden = !state.chat;
     $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New chat';
     document.title = state.chat?.ephemeral ? `Incognito · ${state.persona.name}` : state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
+    // The optional themed desktop title bar shows the same window title as the
+    // native one; it is decorative for assistive tech, which reads the window.
+    $('titlebar-title').textContent = document.title;
   }
   function renderQueue() {
     const strip = $('queue-strip');
@@ -2317,6 +2320,7 @@
   // handler the palette and keyboard shortcuts use, so behaviour stays in one
   // place. kova-web and the plain browser have no bridge, so this is a no-op.
   const desktopActions = {
+    palette: shortcutActions.palette,
     'new-conversation': shortcutActions['new-conversation'],
     'new-incognito': shortcutActions['new-incognito'],
     'search-conversations': shortcutActions['search-conversations'],
@@ -2327,6 +2331,21 @@
     'open-settings': () => { if (window.KovaSettings?.open) window.KovaSettings.open(); else $('open-settings')?.click(); },
   };
   window.kovaDesktop?.onAction?.(id => { const run = desktopActions[typeof id === 'string' ? id : '']; if (run) run(); });
+  // The optional themed title bar keeps the OS window controls, so the shell
+  // needs the active theme's own background, text colour and bar height. All
+  // three come from the same tokens the page just painted with.
+  function reportWindowChrome() {
+    const report = window.kovaDesktop?.reportChrome;
+    if (typeof report !== 'function') return;
+    const styles = getComputedStyle(document.documentElement);
+    report({
+      background: styles.getPropertyValue('--bg-base').trim(),
+      symbolColor: styles.getPropertyValue('--fg-default').trim(),
+      height: Math.round($('titlebar').getBoundingClientRect().height || 0),
+    });
+  }
+  reportWindowChrome();
+  document.addEventListener('kova:theme', reportWindowChrome);
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
     if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard

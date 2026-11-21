@@ -24,6 +24,12 @@ exchanges the local token for a one-use /app/session ticket. Only the ticket
 fragment reaches the renderer; /app/login sets the existing HttpOnly cookie.
 Electron storage and remembered window bounds (place, size and whether the
 window was maximized) also live under KOVA_HOME.
+The window chrome is native by default. Set `[desktop] title_bar = "themed"` in
+`config.toml` for a title strip painted from the active theme; the OS still owns
+the window controls (macOS traffic lights, Windows/Linux minimize, maximize and
+close). The native application menu and the tray's status menu send the same
+allowlisted actions as the command palette; the tray icon also reflects idle,
+working and waiting-for-approval.
 No remote pages or subresources are loaded inside Electron. HTTP(S)/mailto
 external links go to your system browser. No renderer Node access.
 

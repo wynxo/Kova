@@ -53,7 +53,7 @@ function permissionAllowed(permission) {
 const APP_ACTION_IDS = new Set([
   'new-conversation', 'new-incognito', 'search-conversations',
   'toggle-sidebar', 'open-settings', 'toggle-theme', 'focus-composer',
-  'shortcuts',
+  'shortcuts', 'palette',
 ]);
 function isAction(id) {
   return typeof id === 'string' && APP_ACTION_IDS.has(id);
@@ -85,6 +85,28 @@ function quickAsk(configText) {
   const value = sectionString(configText, 'desktop', 'quick_ask');
   return typeof value === 'string' && value.trim() ? value : DEFAULT_QUICK_ASK;
 }
+// The window chrome is native by default. `[desktop] title_bar = "themed"` keeps
+// the OS window controls but lets the page paint its themed title bar underneath
+// them. Anything else, including a typo, stays native rather than guessing.
+const TITLE_BAR_MODES = new Set(['native', 'themed']);
+function titleBar(configText) {
+  const value = sectionString(configText, 'desktop', 'title_bar');
+  const mode = typeof value === 'string' ? value.trim() : '';
+  return TITLE_BAR_MODES.has(mode) ? mode : 'native';
+}
+// The page reports the active theme's own colours, so the native window controls
+// sit on the same surface as the title bar. Only plain CSS colours the theme
+// engine already accepts, plus a small title-bar height, pass through.
+const CSS_COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,%\s/]+\))$/i;
+function titleBarColours(value) {
+  if (!value || typeof value !== 'object') return null;
+  const {background, symbolColor, height} = value;
+  if (typeof background !== 'string' || !CSS_COLOUR.test(background.trim())) return null;
+  if (typeof symbolColor !== 'string' || !CSS_COLOUR.test(symbolColor.trim())) return null;
+  const clean = {color: background.trim(), symbolColor: symbolColor.trim()};
+  if (Number.isInteger(height) && height >= 24 && height <= 80) clean.height = height;
+  return clean;
+}
 // A chat id the page may ask the shell to open in the main window. The store
 // itself only deletes ids matching this shape, so an arbitrary string never
 // reaches the renderer's navigation.
@@ -113,4 +135,4 @@ function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
   result.maximized = saved.maximized === true;
   return result;
 }
-module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK};
+module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK};

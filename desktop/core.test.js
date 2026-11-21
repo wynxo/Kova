@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, quickChatId, DEFAULT_QUICK_ASK} = require('./core');
+const {settings, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -28,7 +28,7 @@ test('the renderer may request notifications and nothing else', () => {
 
 test('the app-action allowlist admits only the palette actions', () => {
   for (const id of ['new-conversation', 'new-incognito', 'search-conversations',
-    'toggle-sidebar', 'open-settings', 'toggle-theme', 'focus-composer', 'shortcuts'])
+    'toggle-sidebar', 'open-settings', 'toggle-theme', 'focus-composer', 'shortcuts', 'palette'])
     assert.equal(isAction(id), true);
   for (const id of ['', 'new-chat', 'quit', 'settings', 'open-settings ', '../open-settings',
     'open-settings\n', null, 42, undefined])
@@ -55,6 +55,34 @@ test('the Quick ask accelerator is read from [desktop] and never throws', () => 
   assert.equal(quickAsk('[memory]\npath = "/x"\n[desktop]\nquick_ask = "Alt+Q"'), 'Alt+Q',
     'the section is found wherever it sits');
   assert.equal(quickAsk('[desktop]\n'), DEFAULT_QUICK_ASK, 'an empty value means the default');
+});
+
+test('the title bar is native unless [desktop] asks for the themed one', () => {
+  assert.equal(titleBar(''), 'native');
+  assert.equal(titleBar('port = 7700\n[memory]\npath = "/x"'), 'native');
+  assert.equal(titleBar('[desktop]\nquick_ask = "Alt+Q"'), 'native');
+  assert.equal(titleBar('[desktop]\ntitle_bar = "native"'), 'native');
+  assert.equal(titleBar('[desktop]\ntitle_bar = "themed"'), 'themed');
+  assert.equal(titleBar('[memory]\npath = "/x"\n[desktop]\ntitle_bar = "themed" # mine'), 'themed');
+  // A typo or an empty value must never make the shell guess.
+  for (const value of ['', 'Themed', 'custom', 'theme'])
+    assert.equal(titleBar(`[desktop]\ntitle_bar = "${value}"`), 'native');
+  assert.equal(titleBar('[desktop]\ntitle_bar = "themed "'), 'themed', 'surrounding space is trimmed');
+});
+
+test('the themed title bar accepts only theme-shaped colours and a sane height', () => {
+  assert.deepEqual(titleBarColours({background: '#14121c', symbolColor: '#e8e6f0', height: 40}),
+    {color: '#14121c', symbolColor: '#e8e6f0', height: 40});
+  assert.deepEqual(titleBarColours({background: 'rgba(20, 18, 28, 0.9)', symbolColor: '#fff'}),
+    {color: 'rgba(20, 18, 28, 0.9)', symbolColor: '#fff'}, 'rgba themes are allowed');
+  for (const value of [null, {}, {background: 'red', symbolColor: '#fff'},
+    {background: '#14121c'}, {background: 'url(x)', symbolColor: '#fff'},
+    {background: '#14121c', symbolColor: 'var(--fg-default)'}, 'nonsense'])
+    assert.equal(titleBarColours(value), null, JSON.stringify(value));
+  assert.equal(titleBarColours({background: '#14121c', symbolColor: '#fff', height: 4}).height,
+    undefined, 'an impossible height is dropped, not trusted');
+  assert.equal(titleBarColours({background: '#14121c', symbolColor: '#fff', height: 999}).height,
+    undefined);
 });
 
 test('only store-shaped chat ids may be asked to open in the main window', () => {

@@ -13,6 +13,7 @@
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
   <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
+  <script src="/app/assets/desktop.js"></script>
   <!-- Not deferred: the theme, text size, density and font are on <html> before
        the body paints (#174, #179). -->
   <script src="/app/assets/theme.js"></script>
@@ -85,6 +86,10 @@
   <script defer src="/app/assets/custom_css.js"></script>
 </head>
 <body class="is-empty">
+  <div id="titlebar" class="titlebar" aria-hidden="true">
+    <span class="kova-mark titlebar-mark"></span>
+    <span id="titlebar-title" class="titlebar-title">Kova</span>
+  </div>
   <button id="backdrop" aria-label="Close sidebar" hidden></button>
   <aside id="sidebar" aria-label="Conversations">
     <div class="sidebar-head">

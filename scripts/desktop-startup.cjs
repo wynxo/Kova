@@ -11,11 +11,13 @@ const path = require('node:path');
 
 // The production entry point calls app.quit() if initialization fails.
 let loaded = false;
+const themed = process.env.KOVA_DESKTOP_TITLEBAR === 'themed';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-startup-'));
 const server = http.createServer((request, response) => {
-  if (request.method === 'POST' && request.url === '/app/session') {
+  const path = new URL(request.url, 'http://127.0.0.1').pathname;
+  if (request.method === 'POST' && path === '/app/session') {
     response.end(JSON.stringify({ticket: 'smoke-test'}));
-  } else if (request.url === '/app') {
+  } else if (path === '/app') {
     response.setHeader('Content-Type', 'text/html');
     response.end('<title>Kova startup smoke</title>');
   } else {
@@ -40,17 +42,19 @@ async function start() {
   await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
   process.env.KOVA_HOME = home;
-  fs.writeFileSync(path.join(home, 'config.toml'), `port = ${server.address().port}\n`);
+  fs.writeFileSync(path.join(home, 'config.toml'),
+    `port = ${server.address().port}\n[desktop]\ntitle_bar = "${themed ? 'themed' : 'native'}"\n`);
   fs.writeFileSync(path.join(home, 'token'), 'smoke-test');
   app.setPath('userData', path.join(home, 'desktop'));
+  const expected = origin + '/app' + (themed ? '?titlebar=themed' : '') + '#ticket=smoke-test';
 
   app.on('web-contents-created', (_event, contents) => {
     contents.on('did-finish-load', () => {
-      if (contents.getURL() !== origin + '/app#ticket=smoke-test') return;
+      if (contents.getURL() !== expected) return;
       if (contents.getTitle() !== 'Kova startup smoke') return;
       clearTimeout(timeout);
       loaded = true;
-      console.log('Desktop loaded the chat page');
+      console.log(`Desktop loaded the ${themed ? 'themed' : 'native'} chat page`);
       app.quit();
     });
   });
