@@ -106,9 +106,9 @@ Desktop (1440):
 |                 |  Clear the cache and run them again                          |
 |                 |  [K] Kova                                                    |
 |                 |   o  Run command  rm -rf .pytest_cache   (running)           |
-|                 |   !  Allow this command?                 <- amber, waits     |
+|                 |   !  Run this command?                   <- amber, waits     |
 |                 |      rm -rf .pytest_cache build && ...                       |
-|                 |      [Allow once] [Allow for this chat] [Deny]               |
+|                 |      [Allow once] [Allow for session] [Deny]                 |
 | [=] Settings    |  +--------------------------------------------------------+  |
 |                 |  | +  Message Kova                       local-model v [^]|  |
 +-----------------+--------------------------------------------------------------+
@@ -119,14 +119,14 @@ four channels as a short legend you can read once and recognise forever, then th
 
 ```
    [K]
-   Kova works on this computer.                         <- display, 36px
-   You see every step it takes. Anything that changes
-   your files waits for you.
+   Kova runs on this computer.                          <- display, 36px
+   You see every step it takes, and you can stop it
+   at any point.
 
-    |  <> Thinks out loud      Open any thought to read it.
-    |  o  Uses tools           Files, commands and the web, each one listed.
-    |  !  Asks first           Deletes and installs wait for your OK.
-    |  *  Splits up big jobs   Sub-agents run side by side; stop any of them.
+    |  <> Thinks out loud      Open any thought to read what it weighed up.
+    |  o  Uses tools           Every file, command and search, with its output.
+    |  !  Asks first           You decide which actions wait for your OK.
+    |  #  Splits up big jobs   Parallel tasks show as a tree; stop any one.
 
    Plan a small project with me    Summarise a file I send   (your suggestions)
    +-----------------------------------------------------------+

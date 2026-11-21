@@ -18,4 +18,10 @@ Captured from the real app: the Kova server on an isolated `KOVA_HOME`
   and 32px at real size; 16px enlarged 8x as the static icon, in the dark UI and in the
   light UI; 128px static and in the dark UI.
 
+- `redesign-before-*` / `redesign-after-*`: the web UI before and after the live step
+  trace redesign (docs/DESIGN.md): the start screen, a finished turn with thinking, a
+  parallel tool group, a plan and an answer, and a second turn waiting on an approval.
+  Captured with a throwaway `KOVA_HOME` under `/tmp/kova-demo` and a scripted stub model,
+  at 1440x900 and 390x844 (2x), metadata stripped.
+
 The `cli-*` and `tui-*` files are the terminal screenshots from earlier work.

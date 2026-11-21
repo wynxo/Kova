@@ -1034,7 +1034,7 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .messages { padding:var(--space-5) var(--space-4) var(--space-6); gap:var(--space-6); }
   .message.user { max-width:88%; }
   .messages .message.user .message-body { font-size:var(--type-size-title); }
-  .messages .message.user + .message.assistant { margin-top:calc(var(--space-6) * -1 + var(--space-4)); }
+  .messages .message.user + .message.assistant { margin-top:calc(var(--space-6) * -1 + var(--space-2)); }
   .compose-wrap { padding-left:var(--space-3); padding-right:var(--space-3); }
   .welcome { padding:var(--space-3) var(--space-4) var(--space-5); }
   .welcome-mark { margin-bottom:var(--space-4); }
@@ -1438,7 +1438,8 @@ html[data-motion="off"][data-background] main {
   font-size:var(--type-size-lead); line-height:var(--type-leading-tight); font-weight:500; letter-spacing:-.012em;
   text-wrap:pretty;
 }
-.messages .message.user + .message.assistant { margin-top:calc(var(--space-8) * -1 + var(--space-5)); }
+.messages .message.user .message-actions { position:static; margin-left:calc(var(--space-2) * -1); }
+.messages .message.user + .message.assistant { margin-top:calc(var(--space-8) * -1 + var(--space-2)); }
 [data-message-style="bubbles"] .messages .message.user .message-body,
 [data-message-style="compact"] .messages .message.user .message-body { font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); font-weight:400; letter-spacing:0; }
 [data-message-style="bubbles"] .messages .message.user + .message.assistant,
