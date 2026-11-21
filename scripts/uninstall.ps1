@@ -1,4 +1,4 @@
-# powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.ps1 | iex"
+# powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/scripts/uninstall.ps1 | iex"
 function Uninstall-Kova {
     param([string[]]$UninstallArgs)
     $ErrorActionPreference = 'Stop'

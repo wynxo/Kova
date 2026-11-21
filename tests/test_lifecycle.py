@@ -237,3 +237,17 @@ def test_windows_cli_uninstall_helper_removes_start_menu_shortcut(lifecycle, mon
     script = base64.b64decode(encoded).decode("utf-16le")
     assert "Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Kova.lnk'" in script
     assert "Remove-Item -LiteralPath" in script
+
+
+def test_update_refreshes_existing_desktop_with_new_launcher(lifecycle, monkeypatch):
+    desktop = lifecycle.kova_home() / "desktop"
+    desktop.mkdir(parents=True)
+    (desktop / "package.json").write_text("{}")
+    run = Mock()
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    install, prepare = run.call_args_list
+    assert install.args[0][:3] == ["/test/uv", "tool", "install"]
+    launcher = "kova-app.exe" if lifecycle.os.name == "nt" else "kova-app"
+    assert prepare.args[0] == [str(lifecycle.Path(prepare.kwargs["env"]["UV_TOOL_BIN_DIR"]) / launcher), "--prepare"]

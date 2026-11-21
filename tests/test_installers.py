@@ -137,7 +137,7 @@ def test_installer_registers_the_installed_desktop_command(installer):
 
 
 @requires_posix
-@pytest.mark.parametrize("script", ["install.sh", "uninstall.sh"])
+@pytest.mark.parametrize("script", ["install.sh", "scripts/uninstall.sh"])
 @pytest.mark.parametrize("context", ["root", "sudo", "truncated"])
 def test_installer_does_not_run_in_unsafe_context(installer, script, context):
     home, path, env, run = installer
@@ -167,7 +167,7 @@ def test_standalone_uninstall_without_launcher(installer, purge):
     data = home / ".kova"
     data.mkdir()
     (data / "chat.db").write_text("keep unless purge")
-    result = run("uninstall.sh", "--purge" if purge else "--keep-data")
+    result = run("scripts/uninstall.sh", "--purge" if purge else "--keep-data")
     assert result.returncode == 0, result.stderr
     assert (home / "uv-args").read_text().splitlines() == ["tool", "uninstall", "kova-ai"]
     assert data.exists() is not purge
@@ -181,7 +181,7 @@ def test_standalone_uninstall_removes_the_staged_desktop_app(installer):
     (staged / "node_modules").mkdir(parents=True)
     (staged / "package.json").write_text("{}")
     (data / "chat.db").write_text("chats")
-    result = run("uninstall.sh", "--keep-data")
+    result = run("scripts/uninstall.sh", "--keep-data")
     assert result.returncode == 0, result.stderr
     assert (data / "chat.db").is_file()
     assert not staged.exists()
@@ -192,139 +192,12 @@ def test_standalone_uninstall_removes_the_staged_desktop_app(installer):
 def test_standalone_uninstall_refuses_purging_home(installer):
     home, path, env, run = installer
     env["KOVA_HOME"] = str(home)
-    result = run("uninstall.sh", "--purge")
+    result = run("scripts/uninstall.sh", "--purge")
     assert result.returncode == 1
     assert "Refusing" in result.stderr
     assert not (home / "uv-args").exists()
 
 
-@pytest.fixture
-def checkout_update(tmp_path):
-    """A disposable checkout with recording uv/git, so no real install or pull runs."""
-    home = tmp_path / "home"
-    home.mkdir()
-    checkout = tmp_path / "checkout"
-    (checkout / "desktop").mkdir(parents=True)
-    (checkout / "desktop/package.json").write_text("{}")
-    shutil.copy2(REPO / "update", checkout / "update")
-    (checkout / "update").chmod(0o755)
-
-    path = tmp_path / "path"
-    path.mkdir()
-    uv = path / "uv"
-    uv.write_text(
-        '#!/bin/sh\n'
-        'printf "CALL\\n" >> "$HOME/uv-log"\n'
-        'for arg in "$@"; do printf "%s\\n" "$arg" >> "$HOME/uv-log"; done\n'
-        'printf "ENV %s|%s|%s|%s\\n" "$UV_TOOL_BIN_DIR" "$UV_TOOL_DIR" '
-        '"$UV_PYTHON_INSTALL_DIR" "$UV_CACHE_DIR" >> "$HOME/uv-log"\n'
-        'if [ "$1" = "tool" ] && [ "${FAKE_UV_TOOL_EXIT:-0}" != "0" ]; then\n'
-        '    exit "$FAKE_UV_TOOL_EXIT"\n'
-        'fi\n'
-        'exit 0\n'
-    )
-    uv.chmod(0o755)
-    git = path / "git"
-    git.write_text(
-        '#!/bin/sh\n'
-        'case "$1" in\n'
-        '    rev-parse)\n'
-        '        case "$2" in\n'
-        '            --is-inside-work-tree) printf "true\\n" ;;\n'
-        '            --short) printf "aaaaaaa\\n" ;;\n'
-        '            *) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;\n'
-        '        esac ;;\n'
-        '    symbolic-ref) printf "refs/heads/main\\n" ;;\n'
-        '    status|pull) ;;\n'
-        '    *) exit 1 ;;\n'
-        'esac\n'
-    )
-    git.chmod(0o755)
-    for command in ("cp", "rm", "mkdir", "basename", "dirname"):
-        (path / command).symlink_to(shutil.which(command))
-
-    env = {**os.environ, "HOME": str(home), "PATH": str(path)}
-    for key in ("KOVA_HOME", "KOVA_SOURCE", "KOVA_REF", "SUDO_USER", "SUDO_UID"):
-        env.pop(key, None)
-    env["KOVA_HOME"] = str(home / ".kova")
-
-    def run(*, tool_exit=0):
-        env["FAKE_UV_TOOL_EXIT"] = str(tool_exit)
-        return subprocess.run(
-            ["/bin/bash", str(checkout / "update")],
-            capture_output=True, text=True, env=env, cwd=checkout,
-        )
-
-    return home, checkout, env, run
-
-
-def uv_calls(home):
-    """The recorded uv invocations, each as {"args": [...], "env": "…"}."""
-    calls = []
-    for line in (home / "uv-log").read_text().splitlines():
-        if line == "CALL":
-            calls.append({"args": [], "env": None})
-        elif line.startswith("ENV "):
-            calls[-1]["env"] = line[4:]
-        else:
-            calls[-1]["args"].append(line)
-    return calls
-
-
-def break_installed_kova(home):
-    kova = home / ".local/bin/kova"
-    kova.parent.mkdir(parents=True)
-    kova.write_text(
-        '#!/bin/sh\n'
-        ': > "$HOME/kova-ran"\n'
-        'echo "ModuleNotFoundError: No module named \'tomlkit\'" >&2\n'
-        'exit 1\n'
-    )
-    kova.chmod(0o755)
-
-
-@requires_posix
-def test_checkout_update_refreshes_a_broken_tool_without_running_it(checkout_update):
-    home, checkout, env, run = checkout_update
-    break_installed_kova(home)
-    result = run()
-    assert result.returncode == 0, result.stderr
-    assert not (home / "kova-ran").exists()
-    calls = uv_calls(home)
-    assert calls[0]["args"] == ["sync"]
-    assert calls[-1]["args"] == [
-        "tool", "install", "--force", "--refresh", "--python", "3.12",
-        "--editable", str(checkout),
-    ]
-    assert calls[-1]["env"] == "|".join([
-        str(home / ".local/bin"),
-        str(home / ".local/share/uv/tools"),
-        str(home / ".local/share/uv/python"),
-        str(home / ".cache/uv"),
-    ])
-
-
-@requires_posix
-def test_checkout_update_without_an_installed_command_stays_standalone(checkout_update):
-    home, checkout, env, run = checkout_update
-    result = run()
-    assert result.returncode == 0, result.stderr
-    assert [call["args"] for call in uv_calls(home)] == [["sync"]]
-
-
-@requires_posix
-def test_checkout_update_failure_suggests_recovery_that_needs_no_kova(checkout_update):
-    home, checkout, env, run = checkout_update
-    break_installed_kova(home)
-    result = run(tool_exit=1)
-    assert result.returncode == 1
-    assert "Retry: ./install" in result.stderr
-    assert "Try: kova update" not in result.stderr
-    assert "ModuleNotFoundError" not in result.stderr
-    assert not (home / "kova-ran").exists()
-
-
-# --------------------------------------------------------------------------
 # Windows: install.ps1, uninstall.ps1 and the .bat wrappers.
 #
 # GitHub's windows-latest image runs elevated with UAC disabled, and both
@@ -354,6 +227,7 @@ def _runnable_script(script, workdir, raw=False):
     if text.count(ADMIN_GUARD) != 1:
         raise AssertionError(f"{script} no longer contains the administrator guard this test relaxes")
     copy = workdir / script
+    copy.parent.mkdir(parents=True, exist_ok=True)
     copy.write_text(
         text.replace(ADMIN_GUARD, "Write-Host 'test: administrator guard relaxed.'"),
         encoding="utf-8",
@@ -589,7 +463,7 @@ def test_windows_uninstall_keeps_or_purges_user_data(windows_installer, purge):
     saved.parent.mkdir(parents=True)
     saved.write_text("# saved uninstaller\n", encoding="utf-8")
 
-    result = run("uninstall.ps1", "--purge" if purge else "--keep-data")
+    result = run("scripts/uninstall.ps1", "--purge" if purge else "--keep-data")
     assert result.returncode == 0, result.stdout + result.stderr
     assert (home / "uv-args").read_text(encoding="utf-8").splitlines()[:3] == [
         "tool", "uninstall", "kova-ai",
@@ -606,7 +480,7 @@ def test_windows_uninstall_keeps_or_purges_user_data(windows_installer, purge):
 def test_windows_uninstaller_refuses_purging_the_home_folder(windows_installer):
     home, stub, env, run = windows_installer
     env["KOVA_HOME"] = str(home)
-    result = run("uninstall.ps1", "--purge")
+    result = run("scripts/uninstall.ps1", "--purge")
     assert result.returncode != 0
     assert "Refusing" in result.stdout + result.stderr
     assert not (home / "uv-args").exists()
@@ -617,7 +491,7 @@ def test_windows_installers_refuse_an_administrator_shell(windows_installer):
     home, stub, env, run = windows_installer
     if not _elevated():
         pytest.skip("this shell is already a normal user; there is nothing to refuse")
-    for script in ("install.ps1", "uninstall.ps1"):
+    for script in ("install.ps1", "scripts/uninstall.ps1"):
         result = run(script, raw=True)
         assert result.returncode != 0, result.stdout
         assert "Run as your normal user" in result.stdout + result.stderr
@@ -625,7 +499,7 @@ def test_windows_installers_refuse_an_administrator_shell(windows_installer):
 
 
 @requires_windows
-@pytest.mark.parametrize("script", ["install.bat", "uninstall.bat"])
+@pytest.mark.parametrize("script", ["scripts/install.bat", "scripts/uninstall.bat"])
 def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_installer, script):
     home, stub, env, run = windows_installer
     # --help leaves the scripts early, so the wrappers run as the real install would.
@@ -643,31 +517,6 @@ def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_install
     )
     assert result.returncode != 0
     assert not (home / ".local" / "share" / "kova" / "uninstall.ps1").exists()
-
-
-@requires_windows
-def test_windows_update_refreshes_a_broken_tool_without_running_it(windows_installer, tmp_path):
-    home, stub, env, run = windows_installer
-    checkout = tmp_path / "checkout"
-    (checkout / "desktop").mkdir(parents=True)
-    (checkout / "desktop/package.json").write_text("{}", encoding="utf-8")
-    shutil.copy2(REPO / "update.bat", checkout / "update.bat")
-    # A kova that would leave a marker and fail if the updater called it.
-    (home / ".local/bin/kova.exe").unlink()
-    (home / ".local/bin/kova.cmd").write_text(
-        '@echo ran>"%USERPROFILE%\\kova-ran"\r\n@exit /b 1\r\n', encoding="utf-8",
-    )
-    env = {**env, "PATH": os.pathsep.join([str(home / ".local/bin"), env["PATH"]])}
-    result = subprocess.run(
-        [os.environ.get("COMSPEC", "cmd.exe"), "/c", "update.bat"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env=env, cwd=checkout,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not (home / "kova-ran").exists()
-    args = (home / "uv-args").read_text(encoding="utf-8-sig").splitlines()
-    assert args[:7] == ["tool", "install", "--force", "--refresh", "--python", "3.12", "--editable"]
-    assert Path(args[7]) == checkout
 
 
 @requires_posix
@@ -712,7 +561,7 @@ def test_installer_refreshes_caches_and_uninstaller_removes_registration(install
     assert run("install.sh").returncode == 0
     assert (home / "update-desktop-database").exists()
     assert (home / "gtk-update-icon-cache").exists()
-    assert run("uninstall.sh", "--keep-data").returncode == 0
+    assert run("scripts/uninstall.sh", "--keep-data").returncode == 0
     assert not (home / ".local/share/applications/kova.desktop").exists()
     assert not (home / ".local/share/icons/hicolor/512x512/apps/kova.png").exists()
 
@@ -732,7 +581,7 @@ def test_windows_uninstall_removes_start_menu_shortcut(windows_installer):
     shortcut = home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk"
     shortcut.parent.mkdir(parents=True)
     shortcut.write_text("shortcut")
-    result = run("uninstall.ps1", "--keep-data")
+    result = run("scripts/uninstall.ps1", "--keep-data")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not shortcut.exists()
 
@@ -754,7 +603,7 @@ def test_macos_installer_registers_and_removes_spotlight_app(installer):
     launched = subprocess.run([str(bundle / "MacOS/Kova")], env=env)
     assert launched.returncode == 0
     assert (home / "launched").read_text().strip() == str(home / ".kova")
-    result = run("uninstall.sh", "--keep-data")
+    result = run("scripts/uninstall.sh", "--keep-data")
     assert result.returncode == 0, result.stderr
     assert not bundle.exists()
 
@@ -767,7 +616,7 @@ def test_piped_install_keeps_downloaded_source_until_staging_finishes(installer,
     archive = tmp_path / "source.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         for name in ("package.json", "package-lock.json", "main.js", "assets/icon.png"):
-            tar.add(REPO / "desktop" / name, arcname="Kova-main/desktop/" + name)
+            tar.add(REPO / "src/kova/desktop" / name, arcname="Kova-main/desktop/" + name)
     env["KOVA_TEST_ARCHIVE"] = str(archive)
     for command in ("tar", "gzip", "mktemp"):
         (path / command).symlink_to(shutil.which(command))

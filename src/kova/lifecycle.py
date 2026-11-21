@@ -119,10 +119,19 @@ def update(ref: str, emit=print) -> None:
     command = [find_uv(), "tool", "install", "--force", "--refresh", "--python", "3.12", source]
     where = source if os.environ.get("KOVA_SOURCE") else ref
     emit(f"→ Installing or updating Kova from {where}")
+    env = tool_env()
     try:
-        subprocess.run(command, check=True, env=tool_env())
+        subprocess.run(command, check=True, env=env)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
+    if (kova_home() / "desktop" / "package.json").is_file():
+        # Use the newly installed executable, not modules from the old process.
+        launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova-app.exe" if os.name == "nt" else "kova-app")
+        try:
+            subprocess.run([str(launcher), "--prepare"], check=True, env=env)
+        except (OSError, subprocess.CalledProcessError):
+            emit("Kova CLI was updated, but desktop preparation failed. Run kova-app to retry, or use kova-web.")
+            return
     emit("✓ Updated Kova. Run: kova")
 
 
