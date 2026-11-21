@@ -46,7 +46,7 @@ CONFIG_SECTION_KEYS = {
     'usage': frozenset({'monthly_budget_usd'}),
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
     #: Desktop shell options read by the Electron app, not the server.
-    'desktop': frozenset({'quick_ask'}),
+    'desktop': frozenset({'quick_ask', 'title_bar'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
