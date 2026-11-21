@@ -391,3 +391,60 @@ def test_reduced_transparency_uses_solid_theme_panels(chromium, kova):
         context.close()
         kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
         kova.remove_theme("backdrop")
+
+def test_slow_blur_fallback_uses_solid_theme_panels(chromium, kova):
+    """A slow-compositor decision swaps the live backdrop blur for solid panels
+    (#206). Set the decision directly to check the CSS independently of
+    the runner's frame timing."""
+    from playwright.sync_api import expect
+
+    previous = kova.preferences()
+    kova._request("POST", "/themes", json={
+        "id": "backdrop",
+        "name": "Backdrop",
+        "version": "1.0.0",
+        "appearance": "dark",
+        "extends": "kova-dark",
+        "background": {"kind": "gradient", "stops": ["#14121c", "#1c1a26"]},
+    })
+    context = chromium.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        kova.set_preferences({
+            "theme": "backdrop",
+            "backgrounds": "on",
+            "motion": "full",
+        })
+        page = context.new_page()
+        page.route("**/app/assets/blur.js", lambda route: route.fulfill(body=""))
+        with page.expect_response(kova.base_url + "/events") as events:
+            assert page.goto(f"{kova.base_url}/app#ticket={kova.app_ticket()}").ok
+        assert events.value.ok
+        root = page.locator("html")
+        expect(root).to_have_attribute("data-background", "gradient")
+
+        # The live panels blur what's behind them.
+        expect(page.locator("main")).not_to_have_css("backdrop-filter", "none")
+
+        # A slow-compositor decision forces the solid fallback.
+        root.evaluate("el => el.setAttribute('data-blur', 'slow')")
+
+        for selector, token in [
+            ("#sidebar", "--bg-surface"),
+            ("main", "--bg-base"),
+            (".composer", "--bg-surface"),
+        ]:
+            panel = page.locator(selector)
+            opaque = panel.evaluate("""(node, token) => {
+                const probe = document.createElement('span');
+                probe.style.color = 'var(' + token + ')';
+                node.append(probe);
+                const color = getComputedStyle(probe).color;
+                probe.remove();
+                return color;
+            }""", token)
+            expect(panel).to_have_css("backdrop-filter", "none")
+            expect(panel).to_have_css("background-color", opaque)
+    finally:
+        context.close()
+        kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
+        kova.remove_theme("backdrop")
