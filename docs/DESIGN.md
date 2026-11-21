@@ -22,7 +22,8 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 7. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is not
    shipped — including themes from the gallery.
 
-Shell decisions live in [redesign-backlog.md](redesign-backlog.md). Each section there is
+Shell decisions live in
+[archive/redesign-backlog.md](archive/redesign-backlog.md). Each section there is
 one issue: the layout question, why it is a question, what done looks like, and whether it
 is still open.
 

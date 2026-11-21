@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, uv, FastAPI, uvicorn, httpx, Typer, Rich, pydantic, PyYAML, tomli-w, ddgs, pytest, pytest-asyncio.
 
-**Spec:** `docs/superpowers/specs/2026-11-12-kova-core-cli-design.md`
+**Spec:** `docs/archive/superpowers/specs/2026-11-12-kova-core-cli-design.md`
 
 ## Global Constraints
 
