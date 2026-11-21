@@ -300,6 +300,7 @@ def walk_surfaces(page, minimum):
     expect(page.locator(".side-panel")).to_be_visible()
     page.wait_for_timeout(200)
     problems += scan(page, minimum, "side panel")
+    page.locator(".side-panel").get_by_role("tab", selected=True).focus()
     page.keyboard.press("Escape")
     expect(page.locator(".side-panel")).to_be_hidden()
 
