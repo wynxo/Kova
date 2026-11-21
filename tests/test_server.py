@@ -145,7 +145,6 @@ def test_auth_required(server):
 def test_health_ok_when_model_down(tmp_path, monkeypatch):
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
-    cfg.active_model().model = "test-model"
 
     def down(request):
         raise httpx.ConnectError("down", request=request)
@@ -165,7 +164,6 @@ def test_health_cached_path_does_not_await_ping(tmp_path, monkeypatch):
 
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
-    cfg.active_model().model = "test-model"
     app = create_app(cfg, transport=httpx.MockTransport(lambda request: httpx.Response(200)))
     with TestClient(app) as client:
         assert client.get("/health").json()["model_ok"] is True
@@ -182,7 +180,6 @@ def test_health_probe_forces_a_live_check(tmp_path, monkeypatch):
     """``?probe=1`` refreshes the cached value instead of returning it (#98)."""
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
-    cfg.active_model().model = "test-model"
     provider = {"up": True, "probes": 0}
 
     def respond(request):
@@ -205,7 +202,6 @@ def test_health_probes_once_per_ttl_across_windows(tmp_path, monkeypatch):
     """Many windows asking in the same TTL share one provider request (#98)."""
     monkeypatch.setenv("KOVA_HOME", str(tmp_path))
     cfg = load_config()
-    cfg.active_model().model = "test-model"
     probes = {"count": 0}
 
     def respond(request):

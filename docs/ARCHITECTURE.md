@@ -88,6 +88,7 @@ same commit as the route.
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | public | version, active model name, whether the model answers |
+| `GET /` | public | Redirect to the web UI at `/app`. |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |

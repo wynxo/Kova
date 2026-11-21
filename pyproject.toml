@@ -47,6 +47,7 @@ testpaths = ["tests"]
 markers = [
     "live: needs a real model server (set KOVA_LIVE=1)",
     "visual: compares screenshots using optional Playwright Chromium",
+    "e2e: installs and exercises the real clients with a loopback model stub",
 ]
 
 [dependency-groups]
