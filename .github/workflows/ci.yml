@@ -94,34 +94,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: src/kova/desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: desktop
+        working-directory: src/kova/desktop
 
       - name: Run tests
         run: node --test
-        working-directory: desktop
+        working-directory: src/kova/desktop
 
       - name: Configure Electron sandbox for the CI runner
         run: |
           # Resolving the executable also downloads it if npm left it lazy-installed.
           # Keep install output out of the executable path on a cold runner.
-          node -e "require('./desktop/node_modules/electron')"
-          electron_bin="$(node -p "require('./desktop/node_modules/electron')")"
+          node -e "require('./src/kova/desktop/node_modules/electron')"
+          electron_bin="$(node -p "require('./src/kova/desktop/node_modules/electron')")"
           sandbox_helper="$(dirname "$electron_bin")/chrome-sandbox"
           test -f "$sandbox_helper"
           sudo chown root:root "$sandbox_helper"
           sudo chmod 4755 "$sandbox_helper"
 
       - name: Smoke-test Electron startup
-        run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
+        run: xvfb-run -a src/kova/desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
 
       - name: Smoke-test the themed title bar startup
         env:
           KOVA_DESKTOP_TITLEBAR: themed
-        run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
+        run: xvfb-run -a src/kova/desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
 
   privacy:
     name: Privacy

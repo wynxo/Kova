@@ -82,7 +82,7 @@ import zlib
 
 def _tray_png(name: str) -> tuple[int, int, list[int]]:
     """Decode a tray PNG to (width, height, flat RGBA bytes)."""
-    data = (ROOT / "desktop" / "assets" / name).read_bytes()
+    data = (ROOT / "src/kova/desktop" / "assets" / name).read_bytes()
     width, height = struct.unpack(">II", data[16:24])
     idx, idat = 8, b""
     while idx < len(data):

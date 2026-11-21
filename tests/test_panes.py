@@ -63,9 +63,9 @@ def test_panel_tabs_are_an_aria_tablist() -> None:
 
 def test_pop_out_windows_match_what_the_desktop_app_allows() -> None:
     assert "window.open('', `kova-panel-${tab.id}`" in PANES_JS
-    core = (Path(__file__).resolve().parents[1] / "desktop" / "core.js").read_text(encoding="utf-8")
+    core = (Path(__file__).resolve().parents[1] / "src/kova/desktop" / "core.js").read_text(encoding="utf-8")
     assert "url === 'about:blank'" in core and "kova-panel-" in core
-    main = (Path(__file__).resolve().parents[1] / "desktop" / "main.js").read_text(encoding="utf-8")
+    main = (Path(__file__).resolve().parents[1] / "src/kova/desktop" / "main.js").read_text(encoding="utf-8")
     assert "panelWindow(url, frameName)" in main
     assert "'did-create-window'" in main
     # Theme tokens reach the window through the CSSOM, never a style attribute.

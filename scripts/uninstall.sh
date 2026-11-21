@@ -1,5 +1,5 @@
 #!/bin/sh
-# curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.sh | sh
+# curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/scripts/uninstall.sh | sh
 main() {
     set -eu
     say() { printf '%s\n' "$*"; }

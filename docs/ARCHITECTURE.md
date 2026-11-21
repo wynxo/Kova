@@ -363,8 +363,7 @@ writes need `memory:write`. The matrix is in
 A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
-`uv run kova "$@"` from the checkout. Commands talk to the server through
+`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
 the exception: it reads and writes `config.toml` directly, validates every value
@@ -394,18 +393,16 @@ prints reminder pop-ups while you chat.
 
 ### Desktop and web app
 
-`src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
-`desktop/` — the checkout it runs from, or the copy the installers stage under
-`KOVA_HOME/desktop`. Installers prepare Electron and register a normal OS launcher
-by default (opt out with `--no-desktop`); those launch the binary directly.
-The developer/terminal launcher can still run `npm ci` while
-`node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
-the browser; for any other failure it exits non-zero. The Electron shell starts
-(or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use
-ticket; the bearer token never reaches a command line or a URL. `kova-web` (and
-the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
-and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
-over `uv run kova-app`.
+`src/kova/app.py` holds both launchers. The Python package includes the Electron
+source. Installers, `kova update` and `kova-app` refresh the staged copy under
+`KOVA_HOME/desktop` and run `npm ci` when dependencies are missing or the
+lockfile changes. OS shortcuts launch the prepared Electron binary directly.
+Installers can skip desktop setup with `--no-desktop`. Electron stores its
+profile separately in `KOVA_HOME/desktop-data`.
+
+The Electron shell starts (or reuses) the server, reads `~/.kova/token`, and
+mints a one-use ticket. The bearer token never reaches a command line or URL.
+`kova-web` (also `kova-app --browser`) opens the same UI in the default browser.
 
 The Electron shell also owns the Quick ask overlay (#71): a second, frameless
 `BrowserWindow` (`720×220`, always-on-top, `skipTaskbar`) that loads
@@ -498,7 +495,7 @@ conversation and an optional side panel. Both outer panes resize with a keyboard
 splitter whose width each device remembers. The panel holds one tab per thing opened in
 it (`window.KovaPanel.open({title, node, key})`: long code blocks, long tool output,
 diffs), and a tab can pop out into its own same-origin window, which the Electron shell
-allows only for blank `kova-panel-<n>` windows (`desktop/core.js` `panelWindow`). On wide
+allows only for blank `kova-panel-<n>` windows (`src/kova/desktop/core.js` `panelWindow`). On wide
 screens a collapsed sidebar leaves an icon rail (show sidebar, new chat, search,
 settings); on phones the panel is a full-screen sheet. Ctrl/Cmd+Alt+B shows or hides the
 panel and F6 / Shift+F6 move focus between the panes, through the same shortcut
@@ -1165,7 +1162,7 @@ accounts and are covered by mocked HTTP/JWT tests, not automatic paid calls.
 
 ### Packaged Electron shell
 
-`desktop/main.js` owns a single-instance Electron window and tray around the
+`src/kova/desktop/main.js` owns a single-instance Electron window and tray around the
 unchanged /app client. It reads the configured KOVA_HOME and port, reuses an
 authenticated server or spawns the installed CLI (uv from source as fallback),
 then mints /app/session tickets for the existing fragment/login flow.
@@ -1176,7 +1173,7 @@ permissions keep the shell local. Startup/error pages are bundled files.
 Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.
 electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
-remains a separately installed prerequisite. See desktop/README.md.
+remains a separately installed prerequisite. See src/kova/desktop/README.md.
 
 ### Local chat attachments
 

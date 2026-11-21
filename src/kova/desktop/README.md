@@ -4,7 +4,7 @@ Electron is a thin, sandboxed window over Kova's existing local web app.
 Install Node.js 22+ and uv (or the Kova CLI), then run:
 
 ```sh
-cd desktop
+cd src/kova/desktop
 npm ci
 npm start
 npm test
@@ -12,7 +12,7 @@ npm run dist
 ```
 
 Build on the target OS: Linux produces AppImage/deb, Windows NSIS,
-macOS DMG. Artifacts appear in desktop/dist. Signing/notarization requires
+macOS DMG. Artifacts appear in src/kova/desktop/dist. Signing/notarization requires
 your own platform credentials; these development builds are unsigned.
 The Python server is a prerequisite, not bundled: packaged apps need an
 installed `kova` executable on PATH or ~/.local/bin. Source launches can
@@ -22,8 +22,8 @@ The shell reads KOVA_HOME/config.toml (default ~/.kova), including its port.
 It reuses an authenticated server or starts one, logs to server.log, and
 exchanges the local token for a one-use /app/session ticket. Only the ticket
 fragment reaches the renderer; /app/login sets the existing HttpOnly cookie.
-Electron storage and remembered window bounds (place, size and whether the
-window was maximized) also live under KOVA_HOME.
+Electron storage lives in `KOVA_HOME/desktop-data`, separate from the staged
+app. Remembered window bounds also live under KOVA_HOME.
 The window chrome is native by default. Set `[desktop] title_bar = "themed"` in
 `config.toml` for a title strip painted from the active theme; the OS still owns
 the window controls (macOS traffic lights, Windows/Linux minimize, maximize and
@@ -44,7 +44,7 @@ the exact server log path.
 The one-line installers register Kova by default: a Linux menu entry and icon
 (with cache refresh), a Windows Start-menu shortcut, or a per-user macOS
 `~/Applications/Kova.app` launcher registered with Launch Services for Spotlight.
-They run `npm ci --include=dev` during installation and launch the prepared
+They install dependencies and download Electron during installation, then launch the prepared
 Electron binary directly, without a terminal or npm on first click. Node.js 22+
 with npm must be installed first; errors point to https://nodejs.org and explain
 how to rerun. `--no-desktop` installs only the backend, without Node/npm.

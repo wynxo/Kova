@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: desktop
+        working-directory: src/kova/desktop
         shell: bash
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: src/kova/desktop/package-lock.json
       - name: Set artifact version from tag
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -68,10 +68,10 @@ jobs:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
           path: |
-            desktop/dist/*.AppImage
-            desktop/dist/*.deb
-            desktop/dist/*.exe
-            desktop/dist/*.dmg
+            src/kova/desktop/dist/*.AppImage
+            src/kova/desktop/dist/*.deb
+            src/kova/desktop/dist/*.exe
+            src/kova/desktop/dist/*.dmg
 
   release:
     name: Attach installers to GitHub Release

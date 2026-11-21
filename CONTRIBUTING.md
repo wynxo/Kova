@@ -17,27 +17,25 @@ Python for you). No global install is required.
 git clone https://github.com/wynxo/Kova.git
 cd Kova
 
-./cli            # terminal chat (starts the background server)
-./cli status     # is the server up, which model is active
-./cli doctor     # check a first run: config, sandbox, port, token, Node, disk
-./desktop-app    # the desktop app (Electron); --browser opens the web UI
+uv run kova            # terminal chat (starts the background server)
+uv run kova status     # is the server up, which model is active
+uv run kova doctor     # check a first run: config, sandbox, port, token, Node, disk
+uv run kova-app    # the desktop app (Electron); --browser opens the web UI
 ```
 
-`./cli` is a small wrapper around `uv run kova`, so the first run creates
-`.venv` and installs dependencies. `cli.bat` and `desktop-app.bat` are the
-Windows equivalents.
+These commands work on Windows too. The first run creates `.venv` and installs dependencies.
 
 The server only listens on `127.0.0.1:7700`, and the clients start it for you.
-`./cli serve` runs it in the foreground when you want to see logs; `./cli stop`
+`uv run kova serve` runs it in the foreground when you want to see logs; `uv run kova stop`
 stops a background one.
 
-The desktop app needs Node.js 22+ and npm; `./desktop-app` installs its
+The desktop app needs Node.js 22+ and npm; `uv run kova-app` installs its
 Electron dependencies on first run (developer convenience only; normal installers
 prepare them and register an OS launcher at install time). Without Node/npm it says so and opens the
-web UI instead, which `./desktop-app --browser` selects directly (the installed
+web UI instead, which `uv run kova-app --browser` selects directly (the installed
 equivalent is `kova-web`).
 
-If you have never picked a model, run `./cli setup`, or point Kova at a server
+If you have never picked a model, run `uv run kova setup`, or point Kova at a server
 with the recipe below.
 
 ## Run the tests
@@ -226,11 +224,11 @@ The server builds the prompt, so both the terminal and desktop clients pick up
 your change. Restart the background server after editing Python:
 
 ```sh
-./cli stop
-./cli            # starts a fresh server
+uv run kova stop
+uv run kova            # starts a fresh server
 ```
 
-or keep `./cli serve` running in another terminal while you work.
+or keep `uv run kova serve` running in another terminal while you work.
 
 ### Change the colours
 
@@ -254,11 +252,11 @@ CODE_THEME = "monokai"
 wizard and chat all use these names, including the input line and completion
 menu. Every other theme maps onto them from its semantic tokens
 (`theme.ROLE_TOKENS`), so the terminal and the web app share one palette:
-`kova themes use light` or `KOVA_THEME=forest ./cli` repaints the terminal with
+`kova themes use light` or `KOVA_THEME=forest uv run kova` repaints the terminal with
 that theme. To change the terminal's colours for every theme, change the token
 in `design/tokens.json`; to change only the dark terminal, change the constant.
 The full-screen chat converts them for 256- and 16-colour terminals by itself
-(`kova.tui.style`); run `KOVA_COLORS=16 ./cli` or `NO_COLOR=1 ./cli` to check a
+(`kova.tui.style`); run `KOVA_COLORS=16 uv run kova` or `NO_COLOR=1 uv run kova` to check a
 change on a simpler terminal.
 `CODE_THEME` is the Pygments theme for code blocks in the terminal.
 
@@ -273,14 +271,14 @@ by hand. Components use roles such as `--bg-base`, `--fg-muted` and
 Any OpenAI-compatible server works. The normal path is:
 
 ```sh
-./cli setup                                                # wizard
-./cli model add lab http://192.168.1.20:8080/v1 MODEL      # or by hand
-./cli model use lab
+uv run kova setup                                                # wizard
+uv run kova model add lab http://192.168.1.20:8080/v1 MODEL      # or by hand
+uv run kova model use lab
 ```
 
 Add `--key KEY` if the server needs a bearer token. `base_url` is the prefix
 Kova appends `/chat/completions` and `/models` to, so it usually ends in `/v1`.
-`./cli model list` shows what is configured and which entry is active; inside a
+`uv run kova model list` shows what is configured and which entry is active; inside a
 chat, `/model` lists and switches them.
 
 The same entries live in `~/.kova/config.toml`:
@@ -321,9 +319,9 @@ A coding agent can go a long way here, as long as you give it the map:
 - Use a scratch home for manual poking, so your real chats are untouched:
 
   ```sh
-  KOVA_HOME=/tmp/kova-dev ./cli status   # creates /tmp/kova-dev/config.toml
+  KOVA_HOME=/tmp/kova-dev uv run kova status   # creates /tmp/kova-dev/config.toml
   # set port = 7788 in that file to avoid your real server on 7700
-  KOVA_HOME=/tmp/kova-dev ./cli
+  KOVA_HOME=/tmp/kova-dev uv run kova
   ```
 
 - Some tests pin exact behaviour on purpose: the order of tools in
