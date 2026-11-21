@@ -86,7 +86,8 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
                     results: dict[int, tuple[str, bool]], *,
                     limit: int = PARALLEL_LIMIT,
                     clock: Callable[[], float] = time.monotonic,
-                    controls: dict[str, Callable[[], bool]] | None = None) -> AsyncIterator[dict]:
+                    controls: dict[str, Callable[[], bool]] | None = None,
+                    delegated: bool = False) -> AsyncIterator[dict]:
     """Run ``calls`` concurrently and yield their task events.
 
     ``calls`` holds ``(index, call, tool, args)`` for each call, in request
@@ -101,8 +102,8 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
     group = f"group-{calls[0][1]['id']}"
     total = len(calls)
     started = clock()
-    yield {'type': 'task_start', 'id': group, 'parent': None, 'kind': 'parallel',
-           'label': f'{total} tools in parallel', 'model': model, 'total': total}
+    yield {'type': 'task_start', 'id': group, 'parent': None, 'kind': 'delegated' if delegated else 'parallel',
+           'label': 'Delegated analysis' if delegated else f'{total} tools in parallel', 'model': model, 'total': total}
     for _, call, _, args in calls:
         yield {'type': 'task_start', 'id': call['id'], 'parent': group, 'kind': 'tool',
                'name': call['name'], 'label': call['name'], 'args': args, 'model': model,
