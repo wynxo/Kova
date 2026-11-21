@@ -201,10 +201,15 @@ app = typer.Typer(
 @app.command("app")
 def desktop_app(
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
+    prepare: bool = typer.Option(False, "--prepare", hidden=True),
 ) -> None:
     """Open the Kova desktop app."""
     from .app import launch_desktop
+    from .app import main as app_main
 
+    if prepare:
+        app_main(["--prepare"])
+        return
     if browser:
         web_app()
     raise typer.Exit(launch_desktop())
