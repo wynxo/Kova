@@ -192,6 +192,8 @@ def test_the_browser_paints_a_layer_and_honours_the_fallbacks():
     css = (ASSETS / "app.css").read_text(encoding="utf-8")
     script = (ASSETS / "theme.js").read_text(encoding="utf-8")
     typography = (ASSETS / "typography.js").read_text(encoding="utf-8")
+    blur_css = (ASSETS / "blur.css").read_text(encoding="utf-8")
+    html = (ASSETS / "index.html").read_text(encoding="utf-8")
 
     assert "--theme-background" in script
     assert "linear-gradient" in script
@@ -207,6 +209,15 @@ def test_the_browser_paints_a_layer_and_honours_the_fallbacks():
     # The opaque fallback repeats the measured panel surfaces, not a new colour.
     assert "background:var(--bg-surface)" in css
     assert "background:var(--bg-base)" in css
+
+    # A slow-compositor decision forces the same opaque surfaces (#206).
+    assert '[data-background][data-blur="slow"]' in blur_css
+    assert "backdrop-filter:none" in blur_css
+    assert "background:var(--bg-surface)" in blur_css
+    assert "background:var(--bg-base)" in blur_css
+
+    assert "/app/assets/blur.js" in html
+    assert "/app/assets/blur.css" in html
 
 
 # ------------------------------------------------- worst-case text contrast (#206)
