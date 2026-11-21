@@ -132,3 +132,27 @@ def test_setup_yes_skips_persona_even_in_a_terminal(home, monkeypatch):
                          transport=httpx.MockTransport(catalog))
     assert load_config().active_model().model == 'alpha'
 
+
+def test_providers_add_skips_the_persona_questions(home, monkeypatch):
+    """Adding a second provider is not the first run, so it never renames the assistant."""
+    monkeypatch.setattr(onboarding.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(onboarding, '_secret', lambda prompt: 'private')
+    monkeypatch.setattr(onboarding, '_setup_persona', lambda cfg: pytest.fail('unexpected persona prompt'))
+    feed(monkeypatch, '', '1', '1')
+    onboarding.run_setup(load_config(), provider_kind='openai', persona=False,
+                         transport=httpx.MockTransport(catalog))
+    assert load_config().active_model().model == 'alpha'
+
+
+def test_providers_add_passes_persona_false(home, monkeypatch):
+    seen = {}
+
+    def fake_setup(cfg, **kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(onboarding, 'run_setup', fake_setup)
+    result = CliRunner().invoke(cli.app, ['providers', 'add'])
+    assert result.exit_code == 0, result.output
+    assert seen.get('persona') is False
+    assert seen.get('provider_kind') is None
+    assert 'kova model use' in result.output
