@@ -80,7 +80,7 @@ def test_installer_ref_and_no_git_archive(installer, git):
     source = ("kova-ai @ git+https://github.com/wynxo/Kova@v0.2.0" if git else
               "kova-ai @ https://github.com/wynxo/Kova/archive/v0.2.0.tar.gz")
     assert (home / "uv-args").read_text().splitlines() == [
-        "tool", "install", "--force", "--refresh", "--python", "3.12", source,
+        "tool", "install", "--force", "--refresh", "--upgrade-package", "kova-ai", "--python", "3.12", source,
     ]
     assert (home / "uv-paths").read_text().splitlines() == [
         str(home / ".local/bin"), str(home / ".local/share/uv/tools"),
@@ -418,9 +418,9 @@ def test_windows_installer_stages_the_desktop_app_path_and_uninstall_entry(windo
     assert (home / ".local" / "share" / "kova" / "uninstall.ps1").is_file()
 
     args = (home / "uv-args").read_text(encoding="utf-8").splitlines()
-    assert args[:6] == ["tool", "install", "--force", "--refresh", "--python", "3.12"]
-    assert Path(args[6]) == REPO
-    assert args[7:] == [str(home / ".local" / "bin"), str(home / ".local" / "share" / "uv" / "tools")]
+    assert args[:8] == ["tool", "install", "--force", "--refresh", "--upgrade-package", "kova-ai", "--python", "3.12"]
+    assert Path(args[8]) == REPO
+    assert args[9:] == [str(home / ".local" / "bin"), str(home / ".local" / "share" / "uv" / "tools")]
     assert not Path(env["KOVA_TEST_GIT_LOG"]).exists()
 
     bin_dir = str(home / ".local" / "bin").rstrip("\\")

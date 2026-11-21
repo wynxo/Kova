@@ -62,7 +62,7 @@ function Install-Kova {
     }
     # Future PyPI switch: replace Source above with 'kova-ai==VERSION'.
     Write-Host "Installing/updating Kova: $Source"
-    $UvArgs = @('tool', 'install', '--force', '--refresh', '--python', '3.12')
+    $UvArgs = @('tool', 'install', '--force', '--refresh', '--upgrade-package', 'kova-ai', '--python', '3.12')
     if ($Dev) {
         if (-not (Test-Path -LiteralPath (Join-Path $Source 'pyproject.toml'))) {
             throw '--dev needs a checkout (or KOVA_SOURCE).'

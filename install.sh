@@ -66,9 +66,9 @@ main() {
     # Future PyPI switch: replace source above with source='kova-ai==VERSION'.
     say "Installing/updating Kova: $source"
     if [ "$dev" -eq 1 ]; then
-        "$uv" tool install --force --refresh --python 3.12 --editable "$source"
+        "$uv" tool install --force --refresh --upgrade-package kova-ai --python 3.12 --editable "$source"
     else
-        "$uv" tool install --force --refresh --python 3.12 "$source"
+        "$uv" tool install --force --refresh --upgrade-package kova-ai --python 3.12 "$source"
     fi
 
     # The desktop app is optional: if it cannot be prepared, finish the CLI

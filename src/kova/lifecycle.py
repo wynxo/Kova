@@ -116,7 +116,11 @@ def check_update(ref: str) -> str:
 def update(ref: str, emit=print) -> None:
     egress.check_external_process()
     source = source_spec(ref)
-    command = [find_uv(), "tool", "install", "--force", "--refresh", "--python", "3.12", source]
+    # Re-resolve moving refs; --refresh alone can reinstall the cached Git commit.
+    command = [
+        find_uv(), "tool", "install", "--force", "--refresh", "--upgrade-package", "kova-ai",
+        "--python", "3.12", source,
+    ]
     where = source if os.environ.get("KOVA_SOURCE") else ref
     emit(f"→ Installing or updating Kova from {where}")
     env = tool_env()

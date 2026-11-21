@@ -104,7 +104,7 @@ def test_update_uses_selected_ref_and_archive_without_git(lifecycle, monkeypatch
     assert args[:4] == ["/test/uv", "tool", "install", "--force"]
     assert args[-1] == ("kova-ai @ git+https://github.com/wynxo/Kova@v0.2.0" if git else
                         "kova-ai @ https://github.com/wynxo/Kova/archive/v0.2.0.tar.gz")
-    assert "--refresh" in args
+    assert args[4:7] == ["--refresh", "--upgrade-package", "kova-ai"]
 
 
 def test_update_uv_failure_is_not_success(lifecycle, monkeypatch):
