@@ -80,7 +80,7 @@
 
 #chat-list .project-action {
   align-self: flex-start;
-  min-height: var(--space-8);
+  min-height: max(var(--control), var(--space-8));
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-md);
   font-size: var(--type-size-label);
@@ -131,7 +131,7 @@ dialog.project-dialog textarea { min-height: calc(2 * var(--space-10)); }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--space-8);
+  min-height: max(var(--control), var(--space-8));
   font-size: var(--type-size-body);
 }
 
