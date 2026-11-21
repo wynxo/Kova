@@ -80,7 +80,7 @@
 
 #chat-list .project-action {
   align-self: flex-start;
-  min-height: max(var(--control), var(--space-8));
+  min-height: var(--space-8);
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-md);
   font-size: var(--type-size-label);
@@ -127,12 +127,16 @@ dialog.project-dialog textarea { min-height: calc(2 * var(--space-10)); }
   gap: var(--space-1);
 }
 
-.project-checkbox {
+.project-dialog .project-checkbox {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: max(var(--control), var(--space-8));
+  min-height: var(--control);
   font-size: var(--type-size-body);
+}
+
+@media (max-width: 760px) {
+  .project-dialog .project-checkbox { min-height: var(--touch-target); }
 }
 
 .project-checkbox input:focus-visible {
