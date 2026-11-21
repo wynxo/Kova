@@ -17,9 +17,11 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files, project_pins
+from kova import (__version__, bots, checkpoints, hunks, pairing, plugins, egress,
+                  reasoning_effort, ui_prefs, project_files, project_pins)
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
+from kova.bot_routes import actor_for_chat, install_bot_routes
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
@@ -62,6 +64,8 @@ class ChatBody(BaseModel):
     model: str | None = None
     reasoning_effort: ReasoningEffort | None = None
     project_id: str | None = None
+    #: A direct chat with this bot (kind ``bot``); refused for incognito chats.
+    bot_id: str | None = None
 
 
 class ProjectBody(BaseModel):
@@ -614,6 +618,7 @@ def create_app(
     install_local_model_routes(app, config, _require_token)
     from kova.extension_routes import install_extension_routes
     install_extension_routes(app, config, _require_token)
+    install_bot_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""
@@ -701,16 +706,21 @@ def create_app(
             with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
                 try:
                     async with chat_lock(chat_id):
-                        if app.state.store.get_chat(chat_id) is None:
+                        chat = app.state.store.get_chat(chat_id)
+                        if chat is None:
                             queue.put_nowait({"type": "error", "message": "chat was deleted"})
                             return
+                        # A direct bot chat answers as its bot; a missing or
+                        # broken bot falls back to the default assistant.
+                        actor = actor_for_chat(app, config, chat)
                         app.state.conversation_states.transition(chat_id, "turn_start")
                         app.state.steering[chat_id] = steering
                         try:
                             async for event in app.state.agent.run_turn(
                                     chat_id, text, model=model, steering=steering,
                                     attachment_ids=attachments, capabilities=capabilities,
-                                    record_user=record_user, turn_id=turn_id, variant=variant):
+                                    record_user=record_user, turn_id=turn_id, variant=variant,
+                                    actor=actor):
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
@@ -951,7 +961,24 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from None
         project_id = body.project_id if body else None
         ephemeral = bool(body and body.ephemeral)
+        bot_id = (body.bot_id if body else None) or None
         folder = body.cwd if body else None
+        bot = None
+        if bot_id is not None:
+            if ephemeral:
+                raise HTTPException(status_code=422,
+                                    detail="Incognito chats cannot have bots or groups.")
+            # A direct chat with one bot: its mode and web flag are the chat's
+            # defaults, and it answers in its own folder.
+            bot = bots.get_bot(config.home, bot_id,
+                               models=[entry.name for entry in config.models])
+            if bot is None:
+                raise HTTPException(status_code=404, detail="bot not found")
+            mode = mode or bot.model.mode
+            if body is not None and body.web is None:
+                body = body.model_copy(update={"web": bot.model.web})
+            if folder is None:
+                folder = str(actor_folder(bot))
         if project_id is not None:
             if ephemeral:
                 raise HTTPException(422, "Incognito chats cannot belong to a project.")
@@ -978,6 +1005,8 @@ def create_app(
                 colour=colour,
                 icon=icon,
                 project_id=project_id,
+                kind="bot" if bot is not None else "chat",
+                bot_id=bot.id if bot is not None else None,
                 **model_settings,
             )
         except LookupError as exc:
@@ -985,6 +1014,16 @@ def create_app(
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
         return chat
+
+    def actor_folder(bot) -> Path:
+        """The bot's working folder, created on first use like Kova Files itself."""
+        folder = Path(bot.permissions.folder).expanduser() if bot.permissions.folder else \
+            bots.default_folder(config.files_path, bot.id)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(422, f"The bot's working folder could not be created: {exc.strerror or exc}") from None
+        return folder
 
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
@@ -1007,8 +1046,16 @@ def create_app(
         chat = app.state.store.get_chat(chat_id, include_usage=True, include_message_meta=True)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        return {**chat, "state": app.state.conversation_states.get(chat_id),
-                "alternatives": app.state.store.turn_alternatives(chat_id)}
+        reply = {**chat, "state": app.state.conversation_states.get(chat_id),
+                 "alternatives": app.state.store.turn_alternatives(chat_id)}
+        if chat.get("kind") == "bot" and chat.get("bot_id"):
+            # The bot's identity as clients show it, not its persona text: the
+            # editor fetches that from /bots/{id} when it is opened.
+            bot = bots.get_bot(config.home, chat["bot_id"],
+                               models=[entry.name for entry in config.models])
+            if bot is not None:
+                reply["bot"] = bot.summary()
+        return reply
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
@@ -1019,6 +1066,8 @@ def create_app(
             return await move_chat(chat_id, body.project_id, request)
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
+        if "bot_id" in body.model_fields_set:
+            raise HTTPException(409, "A chat's bot is fixed when it starts. Create a new chat instead.")
         changes: dict[str, str | bool | None] = {}
         if body.title is not None:
             title = body.title.strip()
