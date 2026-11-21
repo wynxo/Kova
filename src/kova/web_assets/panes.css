@@ -105,6 +105,7 @@ body.panes-dragging iframe { pointer-events:none; }
 }
 .side-panel-tab {
   flex:none;
+  position:relative;
   max-width:var(--pane-tab-max);
   overflow:hidden;
   padding:var(--space-1) var(--space-3);
@@ -124,6 +125,18 @@ body.panes-dragging iframe { pointer-events:none; }
   color:var(--fg-default);
   font-weight:600;
   box-shadow:inset 0 calc(var(--space-0-5) * -1) 0 var(--border-strong);
+}
+/* The tab keeps its compact single-line shape; the 24px minimum target is its
+   hit area (#201), the way the switch keeps its 20px shape in app.css.
+   mobile.css replaces it with the 44px touch size. */
+.side-panel-tab::after {
+  content:"";
+  position:absolute;
+  top:50%;
+  left:50%;
+  width:var(--space-6);
+  height:var(--space-6);
+  transform:translate(-50%, -50%);
 }
 .side-panel-tab:focus-visible,
 .side-panel-head .icon-button:focus-visible {

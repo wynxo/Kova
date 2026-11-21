@@ -147,11 +147,14 @@
   .shortcut-preset { height:auto; min-height:var(--touch-target); }
   /* A dialog field is thumb height too. The palette's own field already puts
      the target in its row, so it keeps its measured line. The theme editor is
-     an aside rather than a dialog, so it says so explicitly. */
+     an aside rather than a dialog, so it says so explicitly. The per-chat
+     appearance buttons (#201) are an aside the same way. */
   dialog input:not([type="checkbox"]):not(.palette-input),
   dialog select,
   .theme-editor input,
-  .theme-editor select { min-height:var(--touch-target); }
+  .theme-editor select,
+  .appearance-swatch,
+  .appearance-icon { min-height:var(--touch-target); }
   .theme-editor input, .theme-editor select { block-size:auto; }
   .privacy-timeline-toggle,
   #provider-key-link { min-height:var(--touch-target); }
@@ -195,6 +198,10 @@
   .settings-tab,
   .message-details-toggle,
   .starters-edit,
+  .side-panel-tab,
+  .appearance-swatch,
+  .appearance-icon,
+  label:has(> input[type="checkbox"]),
   .brand {
     position:relative;
   }
@@ -221,6 +228,10 @@
   .settings-tab::after,
   .message-details-toggle::after,
   .starters-edit::after,
+  .side-panel-tab::after,
+  .appearance-swatch::after,
+  .appearance-icon::after,
+  label:has(> input[type="checkbox"])::after,
   .brand::after {
     content:"";
     position:absolute; top:50%; left:50%;
