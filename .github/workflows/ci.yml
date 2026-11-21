@@ -163,6 +163,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb xauth libgtk-3-0t64 libasound2t64
           uv run --locked --group visual playwright install --with-deps chromium
+      - name: Allow Electron's user namespace sandbox on the hosted runner
+        run: |
+          # The unpacked npm Electron cannot use the setuid helper. Allow its
+          # unprivileged namespace sandbox on this disposable Ubuntu runner.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Exercise fresh installs through the terminal, browser and Electron
         env:
           KOVA_E2E: "1"
