@@ -454,6 +454,7 @@ def ask(
             first_line = ((text or prompt).strip().splitlines() or [""])[0]
             title = ASK_TITLE_PREFIX + first_line[:54]
             chat_id = client.create_chat("Incognito" if incognito else title, mode=mode,
+                                         first_turn=True, model=model,
                                          **({"ephemeral": True} if incognito else {}))["id"]
             if incognito:
                 cleanup_id = chat_id
@@ -669,10 +670,12 @@ def _status_rows(cfg, info: dict | None, *, notes: int | None, reminders: int | 
         server = Text.assemble(dot(colour('SUCCESS')), ("  up", ""), (f"  ·  v{info['version']}", colour('MUTED')))
         entry = next((m for m in info.get("models", []) if m.get("name") == info.get("model")), None)
         name = f"{info['model']}" + (f" · {entry['model']}" if entry and entry.get("model") else "")
+        configured = any(m.model.strip() for m in cfg.models if m.name == info.get("model"))
+        model_state = "reachable" if info.get("model_ok") else "not reachable" if configured else "not configured"
         model = Text.assemble(
             dot(colour('SUCCESS') if info.get("model_ok") else colour('WARNING')),
             ("  " + name, ""),
-            ("  ·  reachable" if info.get("model_ok") else "  ·  not reachable", colour('SUCCESS') if info.get("model_ok") else colour('WARNING')),
+            ("  ·  " + model_state, colour('SUCCESS') if info.get("model_ok") else colour('WARNING')),
         )
     note_word = "note" if notes == 1 else "notes"
     memory = Text(f"{notes} {note_word}" if notes is not None else "—", style=colour('MUTED'))
@@ -767,7 +770,7 @@ def status():
                              "Kova status",
                              tone=colour('ACCENT') if info.get("model_ok") else colour('WARNING')))
     if not info.get("model_ok"):
-        _muted("The model server isn't answering; run: kova setup")
+        _muted("To configure or reconnect your model, run: kova setup")
 
 
 @app.command("usage")

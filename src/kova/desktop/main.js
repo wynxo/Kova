@@ -300,7 +300,7 @@ async function start() {
     // Authentication, not model health, determines whether this is our server.
     try { value = await ticket(); } catch { launchServer(); }
     const deadline = Date.now() + 30000;
-    while (!value && Date.now() < deadline && !quitting) {
+    while (!value && child && Date.now() < deadline && !quitting) {
       await new Promise(resolve => setTimeout(resolve, 400));
       try { value = await ticket(); } catch {}
     }
@@ -308,7 +308,8 @@ async function start() {
     if (!quitting) {
       try {
         const token = fs.readFileSync(path.join(home, 'token'), 'utf8').trim();
-        const response = await fetch(origin + '/persona', {headers: {Authorization: 'Bearer ' + token}});
+        const response = await fetch(origin + '/persona', {
+          headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(2500)});
         if (response.ok) {
           const persona = await response.json();
           if (typeof persona.name === 'string' && persona.name) {
@@ -321,7 +322,10 @@ async function start() {
     if (!quitting) await win.loadURL(origin + '/app' + (chrome === 'themed' ? '?titlebar=themed' : '') + '#ticket=' + encodeURIComponent(value));
   } catch (e) {
     console.error(e.message);
-    if (!quitting) await status(true);
+    if (!quitting) {
+      await status(true);
+      show();
+    }
   } finally { starting = false; }
 }
 process.on('SIGINT', () => app.quit());
