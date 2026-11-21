@@ -503,7 +503,7 @@ def test_windows_installers_refuse_an_administrator_shell(windows_installer):
 def test_windows_batch_wrappers_forward_arguments_and_exit_codes(windows_installer, script):
     home, stub, env, run = windows_installer
     # --help leaves the scripts early, so the wrappers run as the real install would.
-    command = [os.environ.get("COMSPEC", "cmd.exe"), "/c", script, "--help"]
+    command = [os.environ.get("COMSPEC", "cmd.exe"), "/c", str(Path(script)), "--help"]
     result = subprocess.run(
         command, capture_output=True, text=True, encoding="utf-8", errors="replace",
         env=env, cwd=REPO,

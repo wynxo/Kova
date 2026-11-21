@@ -86,7 +86,7 @@ function Install-Kova {
         $ToolPython = Join-Path $env:UV_TOOL_DIR 'kova-ai\Scripts\python.exe'
         $PackagedDesktop = $false
         if ((Test-Path -LiteralPath $App) -and (Test-Path -LiteralPath $ToolPython)) {
-            $PackagedDesktop = [bool](& $ToolPython -c 'from kova import app; print(int(hasattr(app, "refresh_desktop")))' | Where-Object { $_ -eq '1' })
+            $PackagedDesktop = [bool](& $ToolPython -c 'from kova import app; print(int(hasattr(app, ''refresh_desktop'')))' | Where-Object { $_ -eq '1' })
         }
         if ($PackagedDesktop) {
             & $App --prepare
