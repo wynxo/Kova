@@ -182,11 +182,12 @@ def memory_folder(value: str) -> Path:
 
 
 class NoteBody(BaseModel):
-    """A memory note to save, optionally into one project's own scope."""
+    """A memory note to save, optionally into one project's or bot's own scope."""
     title: str
     body: str
     tags: list[str] = Field(default_factory=list)
     project_id: str | None = None
+    bot_id: str | None = None
 
 
 class MemoryEditBody(BaseModel):
@@ -1772,13 +1773,31 @@ def create_app(
         app.state.agent.memory = memory
         app.state.tool_context.memory = memory
         return {"ok": True}
-    def memory_for(project_id: str | None):
-        """The global store, or exactly one project's private scope.
+    def memory_for(project_id: str | None, bot_id: str | None = None):
+        """The global store, or exactly one project's or bot's private scope.
 
         A project is never searched by id from another project's route: only
         this named scope is mounted, so a model or client cannot traverse to a
-        sibling. Listing without an id stays the global store, unchanged.
+        sibling. The same holds for a bot's notes, which sit in their own
+        hidden folder. Listing without an id stays the global store, unchanged.
+        Naming both a project and a bot is refused rather than guessed at.
         """
+        if project_id and bot_id:
+            raise HTTPException(status_code=422,
+                                detail="Choose a project or a bot, not both.")
+        if bot_id:
+            from kova import bots as bot_store
+            bot = bot_store.get_bot(config.home, bot_id,
+                                    models=[entry.name for entry in config.models])
+            if bot is None:
+                raise HTTPException(status_code=404, detail="bot not found")
+            if not bot.memory.own:
+                raise HTTPException(status_code=422,
+                                    detail="This bot has no memory of its own.")
+            try:
+                return app.state.memory.bot_scope(bot.id, budget=bot.memory.budget)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if not project_id:
             return app.state.memory
         project = app.state.store.get_project(project_id)
@@ -1793,8 +1812,9 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @api.get("/memory")
-    async def memory_list(q: str | None = None, project_id: str | None = None) -> list[dict]:
-        mem = memory_for(project_id)
+    async def memory_list(q: str | None = None, project_id: str | None = None,
+                          bot_id: str | None = None) -> list[dict]:
+        mem = memory_for(project_id, bot_id)
         # The same hybrid ranking the prompt recall uses: keyword hits ordered
         # by the deterministic lexical signal, so CLI and web searches agree.
         notes = await asyncio.to_thread(mem.search, q, 50, mode="hybrid") if q \
@@ -1803,7 +1823,7 @@ def create_app(
 
     @api.post("/memory", dependencies=memory_write)
     async def memory_add(body: NoteBody) -> dict:
-        mem = memory_for(body.project_id)
+        mem = memory_for(body.project_id, body.bot_id)
         try:
             note = await asyncio.to_thread(mem.save, body.title, body.body, body.tags)
         except ValueError as exc:
@@ -1835,19 +1855,21 @@ def create_app(
         return _memory_settings(config)
 
     @api.delete("/memory/{slug}", dependencies=memory_write)
-    async def memory_delete(slug: str, project_id: str | None = None) -> dict:
-        if not memory_for(project_id).delete(slug):
+    async def memory_delete(slug: str, project_id: str | None = None,
+                            bot_id: str | None = None) -> dict:
+        if not memory_for(project_id, bot_id).delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
 
     @api.patch("/memory/{slug}", dependencies=memory_write)
     async def memory_edit(slug: str, body: MemoryEditBody,
-                          project_id: str | None = None) -> dict:
+                          project_id: str | None = None,
+                          bot_id: str | None = None) -> dict:
         """Rewrite one note in place, keeping its slug, provenance and creation date."""
         if body.title is None and body.body is None and body.tags is None:
             raise HTTPException(status_code=422, detail="nothing to update")
         try:
-            note = await asyncio.to_thread(memory_for(project_id).update, slug,
+            note = await asyncio.to_thread(memory_for(project_id, bot_id).update, slug,
                                            title=body.title, body=body.body, tags=body.tags)
         except ValueError as exc:
             status = 422 if "No note named" not in str(exc) else 404

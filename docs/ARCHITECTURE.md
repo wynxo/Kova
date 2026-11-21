@@ -153,14 +153,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
 | `DELETE /jobs/{jid}` | token or session | delete a job |
-| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id` |
+| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id`, or one bot's with `bot_id` |
 | `POST /memory/consolidate` | token or session | plan one consolidation run, and apply it unless asked to dry-run |
 | `GET /memory/diary` | token or session | what the background memory passes did, oldest first |
 | `POST /memory/location` | token or session | switch memory folder at runtime |
 | `GET /memory/revisions` | token or session | recent background memory writes with their undo state |
 | `GET/PATCH /memory/settings` | token or session | read / change the background passes' switches and gates |
 | `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
-| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global or a `project_id` scope |
+| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global, a `project_id` or a `bot_id` scope |
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
@@ -762,6 +762,17 @@ or delete inside exactly one scope; without it they behave as before. Project
 scope ids are matched against a filename-safe pattern, never joined from raw
 input. Each turn mounts at most the chat's current project, and a chat moved to
 another project stops reading the old scope on its next turn.
+
+A bot with `memory.own` gets the same arrangement at
+`<write dir>/.kova-bots/<bot-id>/` (`Memory.bot_scope`, with the bot's own
+budget): the global store, another bot and a project never list or search it,
+and a bot turn binds its memory tools to that scope, so the bot cannot write
+the user's notes or anyone else's. `memory.user_memory = "read"` adds the
+global index and recalled notes to the prompt as read-only context; `"none"`
+gives the bot nothing about the user beyond the chat. A bot with
+`memory.own = false` keeps recall but loses every memory-write tool. The HTTP
+memory routes take `bot_id` exactly as they take `project_id`, and refuse both
+together.
 
 ## Tools
 

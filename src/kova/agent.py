@@ -54,6 +54,8 @@ Never say you are a different assistant or made by another company. You are Kova
 }
 
 _WEB_TOOLS = ("web_search", "web_fetch")
+#: The tools that write notes; a bot without its own scope never gets them.
+MEMORY_WRITE_TOOLS = ("memory_add", "memory_patch", "memory_remove", "memory_save")
 
 
 def select_tools(mode: str, web: bool, tools: dict[str, Tool], *, local_only: bool = False) -> dict[str, Tool]:
@@ -81,7 +83,10 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
                         project_memory_usage: int | None = None,
                         project_memory_budget: int | None = None,
                         project_index: str | None = None,
-                        actor: Actor | None = None) -> str:
+                        actor: Actor | None = None,
+                        user_memories: list[Note] | None = None,
+                        user_index: str | None = None,
+                        project_memory_read_only: bool = False) -> str:
     """Build the identity, current context, and relevant memory prompt.
 
     ``memories`` are the topic notes recall picked for this message; ``index``
@@ -94,7 +99,8 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     the design fixes: identity, role, context, memory.
     """
     persona = persona or Persona()
-    if actor is not None and not actor.is_default:
+    bot = actor is not None and not actor.is_default
+    if bot:
         try:  # a bot name is validated when it is saved; keep a hand-built one safe too
             persona = Persona(actor.name, persona.tone)
         except ValueError:
@@ -102,22 +108,23 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
     identity = identity.replace("Kova", persona.name).replace(
         "Be warm, direct and genuinely helpful.", persona.instruction)
-    if actor is not None and not actor.is_default and actor.role.strip():
+    if bot and actor.role.strip():
         identity += f"\n\nYour role:\n{actor.role.strip()}"
     tools = ", ".join(tool_names) if tool_names else "none"
     prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
               f"Available tools: {tools}")
     if memories or memory_budget is not None:
+        subject = "in your own notes" if bot else "about the user"
         if memory_budget:
             used = memory_usage or 0
             percent = round(used * 100 / memory_budget)
-            header = (f"What you remember about the user (memory {used:,} of "
+            header = (f"What you remember {subject} (memory {used:,} of "
                       f"{memory_budget:,} chars used, {percent}% full; over-budget "
                       "writes fail, so patch or remove notes to free space):")
         elif memory_budget == 0:
-            header = "What you remember about the user (memory size is unlimited):"
+            header = f"What you remember {subject} (memory size is unlimited):"
         else:
-            header = "What you remember about the user:"
+            header = f"What you remember {subject}:"
         if memories:
             notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in memories)
             prompt += f"\n\n{header}\n{notes}"
@@ -126,17 +133,30 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     if index:
         prompt += ("\n\nMemory index (always loaded; open a topic note or run memory_search "
                    f"when you need the detail):\n{index}")
+    if user_memories or user_index:
+        # A bot with its own memory may still read what the user saved, but the
+        # notes are context only: no tool of its turn can change them.
+        header = "What the user has saved (read-only; you cannot change these notes):"
+        if user_memories:
+            notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in user_memories)
+            prompt += f"\n\n{header}\n{notes}"
+        else:
+            prompt += f"\n\n{header} nothing relevant this time."
+        if user_index:
+            prompt += ("\n\nThe user's memory index (read-only; always loaded; use what is "
+                       f"here but do not rewrite it):\n{user_index}")
     if project_name is not None or project_memories or project_memory_budget is not None:
         label = f' for project "{project_name}"' if project_name else ""
+        read_only = " (read-only)" if project_memory_read_only else ""
         if project_memory_budget:
             used = project_memory_usage or 0
             percent = round(used * 100 / project_memory_budget)
-            header = (f"What this project remembers{label} (memory {used:,} of "
+            header = (f"What this project remembers{label}{read_only} (memory {used:,} of "
                       f"{project_memory_budget:,} chars used, {percent}% full):")
         elif project_memory_budget == 0:
-            header = f"What this project remembers{label} (memory size is unlimited):"
+            header = f"What this project remembers{label}{read_only} (memory size is unlimited):"
         else:
-            header = f"What this project remembers{label}:"
+            header = f"What this project remembers{label}{read_only}:"
         if project_memories:
             notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in project_memories)
             prompt += f"\n\n{header}\n{notes}"
@@ -489,6 +509,17 @@ class Agent:
                     project_memory = self.memory.project_scope(project['id'])
                 except ValueError:  # a hand-edited id must not break the turn
                     project_memory = None
+        # A bot with `memory.own` mounts its own hidden scope: the same
+        # arrangement as a project scope, so no other store lists or searches
+        # it. Without one, the bot may still recall the user's notes but its
+        # write tools are removed below.
+        bot = actor is not None and not actor.is_default
+        bot_memory = None
+        if bot and actor.memory_own and not incognito:
+            try:
+                bot_memory = self.memory.bot_scope(actor.id, budget=actor.memory_budget)
+            except ValueError:  # a hand-edited id must not break the turn
+                bot_memory = None
         # Full access is the user's explicit choice to run unconfined; every
         # other mode runs commands inside the OS sandbox when the kernel
         # supports one, and asks when it does not.
@@ -553,6 +584,14 @@ class Agent:
             # tool are in: a tool the bot is not offered cannot be brought back
             # by a rule, an approval or an approval setting.
             tools = {name: tool for name, tool in tools.items() if actor.allows(name)}
+            if bot_memory is not None:
+                # Only the bot's own notes are writable: the user's global
+                # notes and a project's scope stay readable context at most.
+                scoped = {tool.name: tool for tool in memory_tools_for(bot_memory)}
+                tools = {name: scoped.get(name, tool) for name, tool in tools.items()}
+            else:
+                tools = {name: tool for name, tool in tools.items()
+                         if name not in MEMORY_WRITE_TOOLS}
         delegate_attempts = 0
         tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
@@ -564,21 +603,35 @@ class Agent:
                 if message.get('role') == 'user' and message.get('content', '').strip():
                     title_source = message['content']
                     break
+        # For a bot, the primary store is its own scope; the user's global notes
+        # are read-only context, and only when the bot opts in to reading them.
+        primary = bot_memory or self.memory
         try:
-            memories = [] if incognito else await asyncio.to_thread(self.memory.search, model_text, 5, mode="hybrid")
+            memories = [] if incognito else await asyncio.to_thread(primary.search, model_text, 5, mode="hybrid")
         except Exception:  # memory trouble must never block a chat
             memories = []
         try:
-            memory_usage = 0 if incognito else await asyncio.to_thread(self.memory.usage)
+            memory_usage = 0 if incognito else await asyncio.to_thread(primary.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
         # The index is always loaded; topic notes are only the ones recall picked.
         try:
-            index = "" if incognito else await asyncio.to_thread(self.memory.index_text,
+            index = "" if incognito else await asyncio.to_thread(primary.index_text,
                                             getattr(self.config, 'memory_index_lines', 200))
         except Exception:  # a broken index must not block the prompt either
             index = ""
         memories = [note for note in memories if note.slug != "index"]
+        user_memories: list[Note] = []
+        user_index = ""
+        if bot_memory is not None and not incognito and actor.user_memory == "read":
+            try:
+                user_memories = await asyncio.to_thread(self.memory.search, model_text, 5,
+                                                        mode="hybrid")
+                user_index = await asyncio.to_thread(self.memory.index_text,
+                                                     getattr(self.config, 'memory_index_lines', 200))
+            except Exception:  # the user's notes must never block a bot's turn
+                user_memories, user_index = [], ""
+            user_memories = [note for note in user_memories if note.slug != "index"]
         project_memories: list[Note] = []
         project_usage = 0
         project_index = ""
@@ -604,7 +657,7 @@ class Agent:
             persona = Persona()
         prompt = build_system_prompt(self.now(), list(tools), memories, mode, persona=persona,
                                      memory_usage=memory_usage,
-                                     memory_budget=getattr(self.memory, 'budget', 0),
+                                     memory_budget=getattr(primary, 'budget', 0),
                                      index=index or None,
                                      project_name=project["name"] if project_memory else None,
                                      project_memories=project_memories,
@@ -612,7 +665,10 @@ class Agent:
                                      project_memory_budget=(
                                          project_memory.budget if project_memory else None),
                                      project_index=project_index or None,
-                                     actor=actor)
+                                     actor=actor,
+                                     user_memories=user_memories or None,
+                                     user_index=user_index or None,
+                                     project_memory_read_only=bot_memory is not None)
         if incognito:
             prompt += ("\nIncognito: this conversation lives only in server memory. "
                        "Do not save memories, use tools, or claim it will be remembered. "
@@ -791,7 +847,7 @@ class Agent:
                         # stored; a failure there can never break the reply.
                         for notice in await self.memory_review.after_turn(
                                 chat_id=chat_id, mode=mode, memory=self.memory,
-                                review_memory=project_memory,
+                                review_memory=bot_memory or project_memory,
                                 client=client, now=self.now()):
                             yield notice
                     done = {'type': 'done', 'message_id': message_id, 'created': created, 'model': entry.name, 'usage': usage}
