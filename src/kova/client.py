@@ -104,6 +104,10 @@ class KovaClient:
     def privacy_update(self, local_only: bool) -> dict:
         return self._request('PATCH', '/privacy', json={'local_only': local_only}).json()
 
+    def set_persona(self, name: str, tone: str) -> dict:
+        """Persist the first-run assistant identity on the live server."""
+        return self._request("POST", "/persona", json={"name": name, "tone": tone}).json()
+
     def preferences(self) -> dict:
         """Every UI preference the server holds, with defaults filled in."""
         return self._request('GET', '/preferences').json()

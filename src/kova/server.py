@@ -857,6 +857,8 @@ def create_app(
         current = load_config(config.home)
         current.persona_name, current.persona_tone, current.persona_configured = identity.name, identity.tone, True
         save_config(current)
+        config.persona_name, config.persona_tone = identity.name, identity.tone
+        config.persona_configured = True
         return {"name": identity.name, "tone": identity.tone, "configured": True}
 
     @api.get("/preferences")

@@ -275,6 +275,9 @@ class Terminal:
                            COLUMNS=str(columns), LINES=str(rows), PYTHONPATH=os.pathsep.join(
                                [str(Path(__file__).resolve().parents[1] / "src"),
                                 environment.get("PYTHONPATH", "")]))
+        if executable is not None:
+            # Installed-client tests supply their entire disposable environment.
+            environment = {"TERM": "xterm-256color", "COLUMNS": str(columns), "LINES": str(rows)}
         environment.update(env or {})
         # A pty pair and Popen rather than pty.fork(): this process runs the
         # fake server's threads, and forking a threaded process is unsafe.

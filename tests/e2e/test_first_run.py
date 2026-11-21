@@ -100,6 +100,17 @@ def wait_http(url, process=None):
     pytest.fail("Local HTTP endpoint did not become ready")
 
 
+def wait_for_port_to_close(port):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with socket.socket() as conn:
+            conn.settimeout(1)
+            if conn.connect_ex(("127.0.0.1", port)) != 0:
+                return
+        time.sleep(0.1)
+    pytest.fail("Background server did not release its port")
+
+
 @contextmanager
 def running(command, cwd, env):
     process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
@@ -163,18 +174,18 @@ def install(request, tmp_path):
         kova("stop", check=False)
 
 
-def test_first_run(install, stub):
+def test_first_run(stub, install):
     from playwright.sync_api import expect, sync_playwright
 
     kind, home, data, config, port, env, cli, kova = install
     base = f"http://127.0.0.1:{port}"
     config.write_text(config.read_text() + f'\n[[models]]\nname = "local"\nbase_url = "{stub}/v1"\nmodel = ""\n')
-    term = Terminal(home, home, env={**env, "KOVA_HOME": str(data), "PYTHONPATH": ""}, executable=cli)
+    term = Terminal(home, home, env=env, executable=cli)
     try:
         term.screen("Run the setup wizard first?")
         term.type(b"n\r")
         term.screen("Name your assistant")
-        term.type(b"\r")
+        term.type(b"Demo Assistant\r")
         term.screen("Choose a tone")
         term.type(b"\r")
         term.screen('Try "')
@@ -194,12 +205,13 @@ def test_first_run(install, stub):
         assert api.get("/chats").json() == before
 
         kova("setup", "--url", stub, "--model", "stub-model", "--yes")
+        assert api.get("/persona").json()["name"] == "Demo Assistant"
         assert REPLY in kova("ask", "hi").stdout
         result = json.loads(kova("ask", "--json", "hi").stdout)
         assert result["answer"] == REPLY
         assert result["tools"] == ["reminder_list"]
 
-        term = Terminal(home, home, "--new", env={**env, "KOVA_HOME": str(data), "PYTHONPATH": ""},
+        term = Terminal(home, home, "--new", env=env,
                         executable=cli)
         try:
             term.screen('Try "')
@@ -211,6 +223,7 @@ def test_first_run(install, stub):
             term.close()
 
         kova("stop")
+        wait_for_port_to_close(port)
         with running([cli, "serve"], home, env) as server:
             wait_http(base + "/health?probe=0", server)
             assert api.get("/").headers["location"] == "/app"

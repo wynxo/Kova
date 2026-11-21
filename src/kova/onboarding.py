@@ -81,7 +81,7 @@ def _running_client(cfg: Config) -> KovaClient | None:
     base = f'http://127.0.0.1:{cfg.port}'
     client = KovaClient(base, ensure_token(cfg.home), http=httpx.Client(base_url=base, timeout=2, trust_env=False))
     try:
-        client.health()
+        client.health(probe=False)
         return client
     except KovaError:
         client.http.close()
@@ -175,9 +175,18 @@ def _setup_persona(cfg: Config) -> None:
             console.print(str(exc))
     tones = list(TONES)
     tone = tones[_select('Choose a tone', [t.title() for t in tones])]
-    current = load_config(cfg.home)
-    current.persona_name, current.persona_tone, current.persona_configured = name, tone, True
-    save_config(current)
+    client = _running_client(cfg)
+    if client is not None:
+        try:
+            client.set_persona(name, tone)
+        except KovaError as exc:
+            raise SetupError(f'Could not save the assistant identity: {exc}') from None
+        finally:
+            client.http.close()
+    else:
+        current = load_config(cfg.home)
+        current.persona_name, current.persona_tone, current.persona_configured = name, tone, True
+        save_config(current)
     cfg.persona_name, cfg.persona_tone, cfg.persona_configured = name, tone, True
     console.print(Text(f'✓ {name} it is.', style='green'))
 
