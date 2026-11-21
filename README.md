@@ -136,7 +136,10 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 
 The desktop app's **Settings → Models and providers** has provider setup with key/custom/local options, browser
 sign-in and consented installed-login reuse. Its model menu groups choices by
-provider. Terminal chat's `/model` picker has the same groups and type-to-filter;
+provider, keeps every connection visible, and offers **Add provider** and
+**Manage providers** from the same list; Settings lists each connection and can
+add more of its models later without asking for the key again. Terminal chat's
+`/model` picker has the same groups and type-to-filter;
 `/provider` is an alias for it.
 
 ```sh

@@ -78,7 +78,7 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 128 endpoints: 127 route handlers plus the static asset mount.
+The app exposes 130 endpoints: 129 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -199,6 +199,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
+| `GET /providers/{identifier}/models` | token or session | the models a connected provider offers (cached for a minute) |
+| `POST /providers/{identifier}/models` | token or session | add more models from a provider that is already connected |
 | `DELETE /providers/{identifier}` | token or session | remove a provider connection |
 | `POST /providers/{identifier}/login` | token or session | sign in to a connected provider again |
 | `POST /providers/{identifier}/logout` | token or session | sign out of a provider connection |
@@ -512,8 +514,14 @@ search field that filters chats, the chat list and a single **Settings** row.
 The message box shows **+** (attach files, slash commands, and an incognito chat
 on the start screen), the text, one chip naming the model, and Send; the chip
 opens one popover with the model, Work/Chat mode, permission mode, working
-folder and web search. The header is the sidebar toggle, the chat title and,
-once a chat is open, its actions menu. A healthy connection shows nothing:
+folder and web search. The model list is every configured model grouped by its
+connection (Local before cloud) with search, favourites and the active model
+marked; a connected provider with no model chosen still appears and says so,
+and **Add provider…** and **Manage providers…** sit at the end of the same list.
+A model chosen on the start screen is remembered for that device, and a model
+chosen inside a chat is saved on the chat, so a reload keeps it. The header is
+the sidebar toggle, the chat title and, once a chat is open, its actions menu. A
+healthy connection shows nothing:
 reconnecting the event stream and polling `/health` are silent, the model's
 state is a detail of the chip, and only an action that actually failed (Kova
 unreachable, signed out, a used pairing code) shows one quiet line above the
@@ -525,7 +533,12 @@ Memory, Reminders, Extensions and MCP, Privacy, Phone, and Install and
 notifications. A section nav and a search box filter individual settings; rows
 activate the existing controls by id (kept, undrawn, in `index.html`'s
 `#settings-actions`) rather than reimplementing them, so every dialog is also
-reachable from the command palette.
+reachable from the command palette. Models and providers opens with the
+connected providers themselves: each connection's name, kind, address and model
+count, with **Change models** (more models from a connection that already has
+its key, without asking for it again) and **Remove**. **Add provider** runs the
+connect flow: a known provider or a custom OpenAI-compatible URL, its key, a
+model-catalog check, then the models to keep and the default for new chats.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal

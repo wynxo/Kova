@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
+import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,17 @@ class ProviderBody(BaseModel):
     active: str | None = None
     legacy_name: str | None = None
     login_id: str | None = None
+
+
+class ProviderModelsBody(BaseModel):
+    models: list[str] = Field(default_factory=list)
+    active: str | None = None
+
+
+#: How long one provider's model catalog is reused between model-picker opens.
+#: Long enough that opening the composer twice never waits on the network,
+#: short enough that a model added upstream shows up without a restart.
+CATALOG_TTL = 60.0
 
 
 def public_provider(p: ProviderEntry) -> dict:
@@ -94,6 +106,22 @@ def install_provider_routes(app, config: Config, require_token):
         except providers.ProviderError as exc:
             raise HTTPException(400, str(exc)) from None
 
+    catalogs: dict[str, tuple[float, list[str]]] = {}
+
+    def forget(identifier: str | None = None) -> None:
+        """Drop cached catalogs after anything that can change them."""
+        if identifier is None:
+            catalogs.clear()
+        else:
+            catalogs.pop(identifier, None)
+
+    def connected(identifier: str) -> ProviderEntry:
+        config.bind_providers()
+        p = next((p for p in config.providers if p.id == identifier), None)
+        if p is None:
+            raise HTTPException(404, 'No provider with that name.')
+        return p
+
     @router.get('/providers/catalog')
     async def choices():
         return {'providers': [public_spec(s) for s in providers.CATALOG],
@@ -135,7 +163,42 @@ def install_provider_routes(app, config: Config, require_token):
 
     @router.get('/providers')
     async def listing():
+        config.bind_providers()
         return [public_provider(p) for p in config.providers]
+
+    @router.get('/providers/{identifier}/models',
+                dependencies=[Depends(require_capability('models:read'))])
+    async def provider_models(identifier: str):
+        """Every model one connected provider offers, for the pickers.
+
+        The connection already holds the credentials, so this asks the provider
+        and never prompts. One catalog is cached for a minute, so opening the
+        composer twice does not wait on the network twice.
+        """
+        p = connected(identifier)
+        cached = catalogs.get(identifier)
+        if cached is not None and time.monotonic() - cached[0] < CATALOG_TTL:
+            return {'models': cached[1]}
+        models = await catalog(p)
+        catalogs[identifier] = (time.monotonic(), models)
+        return {'models': models}
+
+    @router.post('/providers/{identifier}/models', dependencies=write)
+    async def provider_add_models(identifier: str, body: ProviderModelsBody):
+        """Add more models from a provider that is already connected."""
+        p = connected(identifier)
+        available = await catalog(p)
+        unknown = [m for m in body.models if m not in available]
+        if not body.models:
+            raise HTTPException(400, 'Choose models from this provider catalog.')
+        if unknown or (body.active and body.active not in available):
+            raise HTTPException(400, 'Choose models from this provider catalog.')
+        try:
+            added = providers.add_models(config, identifier, body.models, active=body.active)
+        except providers.ProviderError as exc:
+            raise HTTPException(400, str(exc)) from None
+        forget(identifier)
+        return {'added': added, 'provider': public_provider(p)}
 
     @router.post('/providers/validate', dependencies=write)
     async def validate(body: ProviderBody):
@@ -159,6 +222,7 @@ def install_provider_routes(app, config: Config, require_token):
                 save_config(config)
             if body.login_id:
                 pending.pop(body.login_id, None)
+            forget(p.id)
             return public_provider(p)
         except providers.ProviderError as exc:
             raise HTTPException(400, str(exc)) from None
@@ -169,6 +233,7 @@ def install_provider_routes(app, config: Config, require_token):
             providers.remove_provider(config, identifier)
         except providers.ProviderError as exc:
             raise HTTPException(404, str(exc)) from None
+        forget(identifier)
         return {'ok': True}
 
     @router.post('/providers/{identifier}/logout', dependencies=write)
@@ -181,6 +246,7 @@ def install_provider_routes(app, config: Config, require_token):
             if model.provider == identifier:
                 model.api_key = None
         save_config(config)
+        forget(identifier)
         return {'ok': True, 'remote_revocation_confirmed': confirmed}
 
     @router.post('/providers/{identifier}/login', dependencies=write)
@@ -210,6 +276,7 @@ def install_provider_routes(app, config: Config, require_token):
             if model.provider == identifier:
                 model.api_key = p.api_key
         save_config(config)
+        forget(identifier)
         return public_provider(p)
 
     @router.post('/providers/auth/start', dependencies=write)

@@ -249,6 +249,47 @@ def install_provider(cfg: Config, provider: ProviderEntry, selected: list[str], 
     save_config(cfg)
 
 
+def add_models(cfg: Config, identifier: str, selected: list[str], active: str | None = None,
+               *, context: int = 131072) -> list[str]:
+    """Add more models from a provider that is already connected.
+
+    The connection keeps its key, headers and sign-in, so choosing a second
+    model never asks for the credentials again. Existing entries are kept as
+    they are; ``active`` (a model id from the same provider) makes one the
+    default. Returns the model names that were new.
+    """
+    provider = next((p for p in cfg.providers if p.id == identifier), None)
+    if provider is None:
+        raise ProviderError('No provider with that name.')
+    chosen = [m.strip() for m in selected if isinstance(m, str) and m.strip()]
+    if not chosen:
+        raise ProviderError('Choose at least one model.')
+    cfg.bind_providers()
+    wanted = None
+    if active:
+        wanted = active if active.startswith(f'{provider.id}/') else f'{provider.id}/{active}'
+        known = {f'{provider.id}/{m}' for m in chosen}
+        known |= {m.name for m in cfg.models if m.provider == provider.id}
+        if wanted not in known:
+            raise ProviderError('Choose the active model from this provider catalog.')
+    added: list[str] = []
+    for model in dict.fromkeys(chosen):
+        name = f'{provider.id}/{model}'
+        current = next((m for m in cfg.models if m.name == name), None)
+        if current is not None:
+            if current.provider != provider.id:
+                raise ProviderError(f'A model named {name} already exists. Choose another model.')
+            continue
+        cfg.models.append(ModelEntry(name, provider.base_url, model, provider=provider.id, context=context))
+        added.append(name)
+    # Discard an empty first-run placeholder, never configured entries.
+    cfg.models[:] = [m for m in cfg.models if m.model]
+    if wanted:
+        cfg.active = wanted
+    save_config(cfg)
+    return added
+
+
 def remove_provider(cfg: Config, identifier: str) -> None:
     if not any(p.id == identifier for p in cfg.providers):
         raise ProviderError('No provider with that name.')

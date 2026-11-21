@@ -82,7 +82,10 @@
       id: 'models', label: 'Models and providers', icon: 'square-terminal',
       keywords: 'model provider api key vision local ollama',
       items: [
-        {title: 'Providers', help: 'Add a hosted provider, or run a model on this computer.',
+        {title: 'Connected providers', help: 'Every model server this computer is connected to, with the models it gives you here. Add one, add more models from one, or remove one.',
+         keywords: 'provider connection list remove delete add models accounts api key openai anthropic custom manage switch',
+         host: 'providers-panel'},
+        {title: 'Connect another provider', help: 'Open the provider setup: a hosted key, a custom address, a browser sign-in, or a model on this computer.',
          keywords: 'add provider api key openai chatgpt custom local ollama',
          action: 'add-provider', actionLabel: 'Connect'},
         {title: 'Model settings', help: 'Vision and details for the model in the message box.',
@@ -252,6 +255,11 @@
     view.hidden = false;
     document.body.classList.add('settings-open');
     setBackground(true);
+    // Hosted widgets that read the server refresh here; app.js owns the
+    // providers panel, so settings.js only says the view is on screen.
+    if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+      document.dispatchEvent(new CustomEvent('kova:settings-open', {detail: {section: activeId}}));
+    }
     search.focus();
   }
 
