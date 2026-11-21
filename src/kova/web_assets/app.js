@@ -491,7 +491,7 @@
   }
   function toolHint(args) {
     if (typeof args === 'string') { try { args = JSON.parse(args); } catch (_) { return ''; } }
-    for (const key of ['command', 'path', 'query', 'url', 'title', 'text', 'when', 'name']) {
+    for (const key of ['command', 'path', 'query', 'url', 'title', 'text', 'when', 'name', 'task']) {
       if (typeof args?.[key] === 'string' && args[key].trim()) return args[key].replace(/\s+/g, ' ').trim().slice(0, 200);
     }
     return '';
@@ -1445,7 +1445,7 @@
     heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
     card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
     if (event.change_summary) card.append(el('small', '', event.change_summary));
-    if (event.args && event.tool !== 'run_command') {
+    if (event.args && !['run_command', 'delegate_analysis'].includes(event.tool)) {
       const details = el('details', 'approval-arguments');
       details.append(el('summary', '', 'Requested changes'), el('pre', '', JSON.stringify(event.args, null, 2)));
       card.append(details);

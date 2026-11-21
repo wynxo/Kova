@@ -103,7 +103,9 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
     total = len(calls)
     started = clock()
     yield {'type': 'task_start', 'id': group, 'parent': None, 'kind': 'delegated' if delegated else 'parallel',
-           'label': 'Delegated analysis' if delegated else f'{total} tools in parallel', 'model': model, 'total': total}
+           'label': (f'Delegated {total} analysis tasks' if delegated and total > 1 else
+                     'Delegated analysis' if delegated else f'{total} tools in parallel'),
+           'model': model, 'total': total}
     for _, call, _, args in calls:
         yield {'type': 'task_start', 'id': call['id'], 'parent': group, 'kind': 'tool',
                'name': call['name'], 'label': call['name'], 'args': args, 'model': model,

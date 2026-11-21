@@ -74,13 +74,14 @@ class ModelClient:
 
     def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
                  timeout: float = 300, privacy: str = "off", config: Config | None = None,
-                 reasoning_effort: str | None = None):
+                 reasoning_effort: str | None = None, *, fixed_destination: bool = False):
         self.entry = entry
         self.transport = transport
         self.timeout = timeout
         self.privacy = privacy
         self.config = config
         self.reasoning_effort = reasoning_effort
+        self._approved_url = entry.base_url if fixed_destination else None
         # Native tool continuations can require opaque reasoning blocks. Keep
         # them in this turn's client only, never in saved messages or events.
         self._reasoning_by_call: dict[str, list[dict]] = {}
@@ -124,6 +125,8 @@ class ModelClient:
     async def _stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[ModelEvent]:
         from kova.providers import ProviderError
         from kova.reasoning_effort import payload_fields
+        if self._approved_url is not None and self.entry.base_url != self._approved_url:
+            raise ModelError("The child model destination changed. Request fresh approval before sending the task.")
         if not self.entry.model.strip():
             raise ModelError("No model is configured. Run: kova setup")
         # Scan before even resolving provider credentials: block mode must not

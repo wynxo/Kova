@@ -432,3 +432,81 @@ async def test_child_analysis_requires_approval_and_has_no_tools_or_history(setu
         assert "private parent context" not in json.dumps(request)
         assert any(event.get("summary") == "Favor clarity for maintenance." for event in events)
     assert events[-1]["type"] == "done"
+
+
+@pytest.mark.parametrize("decision", ["allow", "deny", "stop"])
+async def test_child_batch_overlap_approval_order_and_turn_limit(setup, decision):
+    import httpx
+
+    cfg, store, memory, tools, chat_id = setup
+    tasks = ["First independent analysis", "Second independent analysis",
+             "Third independent analysis", "Fourth independent analysis"]
+    batch = tuple(("delegate_analysis", {"task": task}) for task in tasks)
+    retry = calls(("delegate_analysis", {"task": "Over the turn limit"}))
+    retry[0]["tool_calls"][0]["id"] = "retry"
+    fake = FakeModel([calls(*batch), retry, text("Done")])
+    first_finished = asyncio.Event()
+    all_running = asyncio.Event()
+    requested = []
+    stopped = asyncio.Event()
+
+    async def respond(request):
+        payload = json.loads(request.content)
+        task = payload["messages"][-1]["content"]
+        if payload["messages"][-1]["role"] != "user" or task not in tasks:
+            return fake._handle(request)
+        assert not payload.get("tools")
+        assert len(payload["messages"]) == 2
+        requested.append(task)
+        if len(requested) == len(tasks):
+            all_running.set()
+        try:
+            await asyncio.wait_for(all_running.wait(), 2)
+            if task == tasks[0]:
+                await asyncio.wait_for(first_finished.wait(), 2)
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+        return httpx.Response(200, text=f'data: {json.dumps({"choices": [{"delta": {"content": task}}]})}\n\ndata: [DONE]\n\n')
+
+    agent = Agent(cfg, store, memory, tools, transport=httpx.MockTransport(respond))
+    events = []
+    async with asyncio.timeout(5):
+        async for event in agent.run_turn(chat_id, "Analyze some independent tasks."):
+            events.append(event)
+            if event["type"] == "approval":
+                assert not requested
+                assert event["args"]["tasks"] == tasks
+                for task in tasks:
+                    assert task in event["summary"]
+                model = cfg.active_model()
+                assert model.base_url in event["summary"]
+                assert model.model in event["summary"]
+                agent.approvals.answer(chat_id, event["id"], "deny" if decision == "deny" else "allow")
+            if event["type"] == "task_done" and event["id"] == "call_1":
+                if decision == "stop":
+                    assert agent.stop_task(chat_id, "call_0")
+                else:
+                    first_finished.set()
+
+    assert sum(event["type"] == "approval" for event in events) == 1
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert [event["id"] for event in results] == [*(f"call_{i}" for i in range(4)), "retry"]
+    assert "per turn" in results[-1]["output"]
+    if decision == "deny":
+        assert not requested
+        assert not any(event["type"] == "task_start" for event in events)
+        assert all("Action denied" in event["output"] for event in results[:-1])
+    else:
+        assert sorted(requested) == sorted(tasks)
+        roots = [event for event in events if event["type"] == "task_start" and event["parent"] is None]
+        assert len(roots) == 1 and roots[0]["total"] == 4
+        assert [event["output"] for event in results[1:4]] == tasks[1:]
+        if decision == "stop":
+            assert stopped.is_set()
+            assert "user stopped" in results[0]["output"]
+        else:
+            assert results[0]["output"] == tasks[0]
+    assert chat_id not in agent.task_controls
+    assert not agent.approvals.pending
+    assert events[-1]["type"] == "done"
