@@ -126,7 +126,11 @@ const KovaAgentTree = (() => {
     function rootLabel() {
       const count = `${total} tool${total === 1 ? '' : 's'}`;
       const verb = finished || done === total && total ? 'Ran' : 'Running';
-      root.label.textContent = delegated ? 'Delegated analysis' : `${verb} ${count} in parallel${failed ? ` · ${failed} failed` : ''}`;
+      const analyses = total || tasks.size;
+      const activity = delegated
+        ? (analyses > 1 ? `Delegated ${analyses} analysis tasks` : 'Delegated analysis')
+        : `${verb} ${count} in parallel`;
+      root.label.textContent = activity + (failed ? ` · ${failed} failed` : '');
     }
     function paintAll() {
       root.paint(now);

@@ -226,4 +226,22 @@ assert.match(secondRoot.textContent, /Ran 2 tools in parallel/);
 // A reader's own choice survives the fold: the first tree was toggled by hand.
 turn.finish();
 assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stays open');
+// Multiple delegated children share one live root and keep distinct task rows.
+{
+  const inserted = [];
+  const delegated = context.tree.turn({insert: node => inserted.push(node), hint: args => args.task});
+  delegated.accept({type: 'task_start', id: 'dg', parent: null, kind: 'delegated', model: 'm', total: 2});
+  for (const [id, task] of [['d1', 'First analysis'], ['d2', 'Second analysis']]) {
+    delegated.accept({type: 'task_start', id, parent: 'dg', name: 'delegate_analysis', args: {task}});
+    delegated.accept({type: 'task_progress', id, parent: 'dg', status: 'running'});
+  }
+  assert.equal(inserted.length, 1);
+  const [group, first, second] = byRole(inserted[0], 'treeitem');
+  assert.match(group.textContent, /Delegated 2 analysis tasks/);
+  assert.match(first.textContent, /First analysis/);
+  assert.match(second.textContent, /Second analysis/);
+  assert.match(first.textContent, /Running/);
+  assert.match(second.textContent, /Running/);
+  delegated.finish();
+}
 console.log('agent tree ok');

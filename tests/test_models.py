@@ -105,3 +105,26 @@ async def test_explicit_completion_accepts_done_or_finish_reason(entry, terminal
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text=wire))
     events = [event async for event in ModelClient(entry, transport).stream([])]
     assert events[-1].type == "done"
+
+
+async def test_fixed_destination_refuses_to_send_after_managed_endpoint_changes(entry, monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from kova import managed_engine
+    from kova.config import load_config
+
+    @asynccontextmanager
+    async def use(model, *, transport=None):
+        model.base_url = "http://new-model.test/v1"
+        yield
+
+    engine = SimpleNamespace(use=use)
+    monkeypatch.setattr(managed_engine, "manager", lambda cfg: engine)
+    entry.provider = "managed-test"
+    fake = FakeModel([text("Unexpected")])
+    client = ModelClient(entry, fake.transport, config=load_config(tmp_path), fixed_destination=True)
+
+    with pytest.raises(ModelError, match="destination changed"):
+        _ = [event async for event in client.stream([{"role": "user", "content": "Approved task"}])]
+    assert not fake.requests
