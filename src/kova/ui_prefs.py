@@ -33,6 +33,9 @@ SCHEMA: dict[str, tuple[str, ...]] = {
     # older preferences.json without these keys keeps the shipped type scale.
     "text_size": ("small", "default", "large"),
     "density": ("compact", "default", "comfortable"),
+    # Corner shape (#176): the theme editor's Simple controls write this
+    # alongside density and font. "default" is the shipped radius scale.
+    "radius": ("sharp", "default", "round"),
     "font": ("inter", "system", "mono"),
     "motion": ("full", "reduced", "off"),
     # The thinking indicator (#171): the mark plus one small movement, a still
@@ -94,6 +97,7 @@ DEFAULTS: dict[str, Any] = {
     ],
     "text_size": "default",
     "density": "default",
+    "radius": "default",
     "font": "inter",
     "motion": "full",
     "thinking_animation": "thunderstorm",

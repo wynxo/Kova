@@ -1278,6 +1278,32 @@ html[data-motion="off"][data-background] main {
   --space-12:56px;
 }
 
+/* Corner shape (#176): the theme editor's Simple controls offer a sharp,
+   shipped or round scale. Both names are swapped together because the shell
+   geometry aliases (--r-*) and the semantic radius tokens (--radius-*) are
+   used side by side; "default" is the shipped scale and writes no rule. The
+   pill radius stays a pill in every setting. */
+[data-radius="sharp"] {
+  --radius-sm:0px;
+  --radius-md:2px;
+  --radius-lg:4px;
+  --r-xs:0px;
+  --r-sm:2px;
+  --r-md:4px;
+  --r-lg:6px;
+  --r-xl:8px;
+}
+[data-radius="round"] {
+  --radius-sm:8px;
+  --radius-md:14px;
+  --radius-lg:20px;
+  --r-xs:10px;
+  --r-sm:14px;
+  --r-md:18px;
+  --r-lg:24px;
+  --r-xl:28px;
+}
+
 /* Font: the bundled Inter stays the default, System leaves the choice to the
    device, and Monospace for chat sets the conversation in the bundled mono
    face while the surrounding UI keeps --font. Code blocks are already mono. */

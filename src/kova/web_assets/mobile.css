@@ -156,6 +156,10 @@
   .appearance-swatch,
   .appearance-icon { min-height:var(--touch-target); }
   .theme-editor input, .theme-editor select { block-size:auto; }
+  .theme-editor input[type="color"] { block-size:var(--touch-target); }
+  /* The editor's own mode and choice buttons are touch targets too. */
+  .theme-editor-mode,
+  .theme-editor-segment { min-block-size:var(--touch-target); }
   .privacy-timeline-toggle,
   #provider-key-link { min-height:var(--touch-target); }
   /* The colour swatch is a target too, so its column is thumb wide. */
