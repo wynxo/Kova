@@ -20,7 +20,7 @@ cd Kova
 uv run kova            # terminal chat (starts the background server)
 uv run kova status     # is the server up, which model is active
 uv run kova doctor     # check a first run: config, sandbox, port, token, Node, disk
-uv run kova-app    # the desktop app (Electron); --browser opens the web UI
+uv run kova app    # the desktop app (Electron); --browser opens the web UI
 ```
 
 These commands work on Windows too. The first run creates `.venv` and installs dependencies.
@@ -29,11 +29,11 @@ The server only listens on `127.0.0.1:7700`, and the clients start it for you.
 `uv run kova serve` runs it in the foreground when you want to see logs; `uv run kova stop`
 stops a background one.
 
-The desktop app needs Node.js 22+ and npm; `uv run kova-app` installs its
+The desktop app needs Node.js 22+ and npm; `uv run kova app` installs its
 Electron dependencies on first run (developer convenience only; normal installers
 prepare them and register an OS launcher at install time). Without Node/npm it says so and opens the
-web UI instead, which `uv run kova-app --browser` selects directly (the installed
-equivalent is `kova-web`).
+web UI instead, which `uv run kova app --browser` selects directly (the installed
+equivalent is `kova web`).
 
 If you have never picked a model, run `uv run kova setup`, or point Kova at a server
 with the recipe below.
@@ -271,15 +271,19 @@ by hand. Components use roles such as `--bg-base`, `--fg-muted` and
 Any OpenAI-compatible server works. The normal path is:
 
 ```sh
-uv run kova setup                                                # wizard
-uv run kova model add lab http://192.168.1.20:8080/v1 MODEL      # or by hand
-uv run kova model use lab
+uv run kova providers add                                  # pick a provider, paste its key
+uv run kova model use                                      # pick a provider and model
+uv run kova model use lab/model                            # or name one directly
 ```
 
-Add `--key KEY` if the server needs a bearer token. `base_url` is the prefix
-Kova appends `/chat/completions` and `/models` to, so it usually ends in `/v1`.
+`kova model use` with no argument lists every connected provider and its
+models in one picker (arrow keys or a number) and saves the choice; a name
+works too, as a saved entry, `<provider>/<model>`, or a model id. Adding a
+server by hand still works: `uv run kova model add lab http://192.168.1.20:8080/v1 MODEL`
+(plus `--key` when it needs a bearer token). `base_url` is the prefix Kova
+appends `/chat/completions` and `/models` to, so it usually ends in `/v1`.
 `uv run kova model list` shows what is configured and which entry is active; inside a
-chat, `/model` lists and switches them.
+chat, `/model` or `/provider` opens the same picker.
 
 The same entries live in `~/.kova/config.toml`:
 

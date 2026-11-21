@@ -1,9 +1,9 @@
 """Launchers for Kova's Electron desktop app and its browser web UI.
 
-``kova-app`` refreshes the staged Electron app from the installed package
+``kova app`` refreshes the staged Electron app from the installed package
 and installs its dependencies when missing or when the lockfile changes.
-``kova-web`` starts (or reuses) the server and opens the packaged web UI in the
-default browser; ``kova-app --browser`` is the historic alias for it.
+``kova web`` starts (or reuses) the server and opens the packaged web UI in the
+default browser; ``kova app --browser`` is an alternative way to open it.
 
 The Electron shell starts the server itself and mints its own single-use
 ticket, so the desktop path never touches the bearer token here.
@@ -54,7 +54,7 @@ def refresh_desktop(home: Path, npm: str | None = None) -> Path:
     project = home / DESKTOP_NAME
     lockfile = source / "package-lock.json"
     if not lockfile.is_file():
-        raise DesktopError("The desktop app files are missing. Reinstall Kova or use kova-web.")
+        raise DesktopError("The desktop app files are missing. Reinstall Kova or use kova web.")
     if npm is None:
         npm = shutil.which("npm")
     project.mkdir(parents=True, exist_ok=True)
@@ -84,19 +84,19 @@ def refresh_desktop(home: Path, npm: str | None = None) -> Path:
                     temporary.unlink(missing_ok=True)
         if pending.exists() or not _electron_installed(project):
             if npm is None:
-                raise DesktopError("Install Node.js 22+ with npm and run kova-app to finish updating Electron.")
+                raise DesktopError("Install Node.js 22+ with npm and run kova app to finish updating Electron.")
             pending.touch()
             print("Kova: preparing Electron ...", flush=True)
             if _run(npm_command(npm, "ci", "--include=dev"), project) != 0:
-                raise DesktopError("npm ci failed. Check your connection and run kova-app again, or use kova-web.")
+                raise DesktopError("npm ci failed. Check your connection and run kova app again, or use kova web.")
         # Electron 45 downloads its native binary on demand, not during npm ci.
         # App-menu launchers call that binary directly, so fetch it now.
         if not _electron_binary(project).is_file():
             node = shutil.which("node")
             if node is None or _run([node, "node_modules/electron/install.js"], project) != 0:
-                raise DesktopError("Electron could not be downloaded. Check your connection and run kova-app again.")
+                raise DesktopError("Electron could not be downloaded. Check your connection and run kova app again.")
             if not _electron_binary(project).is_file():
-                raise DesktopError("Electron is missing. Enable Electron downloads and run kova-app again.")
+                raise DesktopError("Electron is missing. Enable Electron downloads and run kova app again.")
         pending.unlink(missing_ok=True)
     return project
 
@@ -130,12 +130,12 @@ def launch_desktop() -> int:
     npm = shutil.which("npm")
     if npm is None:
         print("Kova: Node.js and npm are required for the desktop app. Install Node.js 22+ from "
-              "https://nodejs.org and run kova-app again. Opening the web UI instead.", file=sys.stderr)
-        return _open_in_browser("kova-web")
+              "https://nodejs.org and run kova app again. Opening the web UI instead.", file=sys.stderr)
+        return open_in_browser()
     project = desktop_dir()
     if project is None:
         print("Kova: the desktop app files are missing from this install. Reinstall Kova to add "
-              "them, or open the web UI with kova-web.", file=sys.stderr)
+              "them, or open the web UI with kova web.", file=sys.stderr)
         return 1
     if not os.environ.get(DESKTOP_DIR_ENV) and (
         project != _bundled_desktop() or not (project.parents[2] / "pyproject.toml").is_file()
@@ -149,7 +149,7 @@ def launch_desktop() -> int:
         print(f"Kova: installing desktop dependencies in {project} (first run only) ...")
         if _run(npm_command(npm, "ci"), project) != 0:
             print("Kova: npm ci failed, so the desktop app cannot start. Check your network "
-                  "connection to the npm registry, or open the web UI with kova-web.", file=sys.stderr)
+                  "connection to the npm registry, or open the web UI with kova web.", file=sys.stderr)
             return 1
     env = dict(os.environ)
     # `npm start` must launch the real Electron binary, not Node.
@@ -162,7 +162,7 @@ def launch_desktop() -> int:
     return _run(npm_command(npm, "start"), project, env=env)
 
 
-def _open_in_browser(command: str) -> int:
+def open_in_browser() -> int:
     """Start (or reuse) the server and open the packaged web UI in a browser."""
     client = None
     try:
@@ -173,9 +173,9 @@ def _open_in_browser(command: str) -> int:
             return f"{client.base_url}/app#ticket={quote(client.app_ticket(), safe='')}"
 
         if not webbrowser.open(login_url()):
-            raise KovaError(None, f"No browser could be opened. Check your default browser and run {command} again.")
+            raise KovaError(None, "No browser could be opened. Check your default browser and run kova web again.")
     except KovaError as exc:
-        message = ("The running server needs a restart for the web UI. Run kova stop, then kova-web."
+        message = ("The running server needs a restart for the web UI. Run kova stop, then kova web."
                    if exc.status == 404 else str(exc))
         print(f"Kova: {message}", file=sys.stderr)
         return 1
@@ -186,17 +186,17 @@ def _open_in_browser(command: str) -> int:
 
 
 def web_main(argv: list[str] | None = None) -> None:
-    """Console entry point for ``kova-web``: the web UI in the default browser."""
-    parser = argparse.ArgumentParser(prog="kova-web", description="Open Kova's web UI in your browser.")
+    """Compatibility entry point: the web UI in the default browser."""
+    parser = argparse.ArgumentParser(prog="kova web", description="Open Kova's web UI in your browser.")
     parser.parse_args(argv)
-    raise SystemExit(_open_in_browser("kova-web"))
+    raise SystemExit(open_in_browser())
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Console entry point for ``kova-app``: the Electron desktop app."""
-    parser = argparse.ArgumentParser(prog="kova-app", description="Open the Kova desktop app.")
+    """Compatibility entry point: the Electron desktop app."""
+    parser = argparse.ArgumentParser(prog="kova app", description="Open the Kova desktop app.")
     parser.add_argument("--browser", action="store_true",
-                        help="Open the web UI in your browser instead (same as kova-web).")
+                        help="Open the web UI in your browser instead (same as kova web).")
     parser.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.prepare:
@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Kova: could not prepare the desktop app: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         return
-    raise SystemExit(_open_in_browser("kova-web") if args.browser else launch_desktop())
+    raise SystemExit(open_in_browser() if args.browser else launch_desktop())
 
 
 if __name__ == "__main__":

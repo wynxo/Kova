@@ -74,7 +74,7 @@ main() {
     # The desktop app is optional: if it cannot be prepared, finish the CLI
     # install anyway and say how to add the app later.
     skip_desktop() {
-        say "Note: $* Kova itself is installed; open it in your browser with kova-web."
+        say "Note: $* Kova itself is installed; open it in your browser with kova web."
         if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
         register_desktop=0
     }
@@ -86,9 +86,9 @@ main() {
         # Prepare Electron from the installed revision before registering the launcher.
         data=${KOVA_HOME:-$HOME/.kova}
         dest=$data/desktop
-        if [ -x "$UV_TOOL_BIN_DIR/kova-app" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
+        if [ -x "$UV_TOOL_BIN_DIR/kova" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
             'from kova.app import refresh_desktop' 2>/dev/null; then
-            "$UV_TOOL_BIN_DIR/kova-app" --prepare ||
+            "$UV_TOOL_BIN_DIR/kova" app --prepare ||
                 { skip_desktop 'Preparing the desktop app failed.'; return; }
             desktop_src=$dest
         else
@@ -202,7 +202,7 @@ PLIST
         if [ -x "$lsregister" ]; then "$lsregister" -f "$HOME/Applications/Kova.app" || :; fi
         say 'Registered Kova in Applications and Spotlight.'
         ;;
-        *) say 'Note: this platform has no app-menu integration; use kova-app or kova-web.'; register_desktop=0 ;;
+        *) say 'Note: this platform has no app-menu integration; use kova app or kova web.'; register_desktop=0 ;;
         esac
     fi
     if [ "$register_desktop" -eq 1 ]; then
@@ -211,6 +211,6 @@ PLIST
         say 'Done (without the desktop app). Run: kova setup'
     fi
     say 'Terminal chat: kova setup, then kova'
-    say 'Desktop app: kova-app    Web UI in your browser: kova-web'
+    say 'Desktop app: kova app    Web UI in your browser: kova web'
 }
 main "$@"

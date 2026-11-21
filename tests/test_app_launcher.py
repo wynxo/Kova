@@ -1,4 +1,4 @@
-"""The kova-app (Electron) and kova-web (browser) launchers, without a real GUI."""
+"""The kova app (Electron) and kova web (browser) launchers, without a real GUI."""
 
 import subprocess
 from pathlib import Path
@@ -146,7 +146,7 @@ def test_desktop_without_app_files_asks_for_a_reinstall(monkeypatch, browser, ca
         launcher.main([])
     assert exc.value.code == 1
     error = capsys.readouterr().err
-    assert 'desktop app files are missing' in error and 'kova-web' in error
+    assert 'desktop app files are missing' in error and 'kova web' in error
     assert browser == []
 
 
@@ -178,7 +178,7 @@ def test_old_running_server_gives_restart_instruction(monkeypatch, capsys):
         launcher.web_main([])
     assert exc.value.code == 1
     error = capsys.readouterr().err
-    assert 'kova stop' in error and 'kova-web' in error
+    assert 'kova stop' in error and 'kova web' in error
 
 
 def test_refresh_repairs_legacy_stage_and_retries_failed_dependencies(monkeypatch, tmp_path, runs):

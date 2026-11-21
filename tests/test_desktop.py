@@ -180,10 +180,9 @@ def test_installed_commands_and_menu_entry_name_real_launchers():
     import tomllib
     repo = Path(__file__).resolve().parents[1]
     scripts = tomllib.loads((repo / "pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts == {"kova": "kova.cli:app", "kova-app": "kova.app:main",
-                       "kova-web": "kova.app:web_main"}
+    assert scripts == {"kova": "kova.cli:app"}
     entry = (repo / "src/kova/desktop" / "kova.desktop").read_text().splitlines()
-    assert "Exec=kova-app" in entry
+    assert "Exec=kova app" in entry
 
 
 def test_tool_card_assets():

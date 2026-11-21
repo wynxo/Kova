@@ -42,7 +42,7 @@ benchmark. See the [capture notes](docs/screenshots/README.md).
 
 Install as a normal user. Node.js 22+ with npm enables the desktop app and app-menu shortcut; use `--no-desktop` for a CLI-only install.
 
-**Launch:** Open **Kova** from your app menu, run `kova-app`, or use `kova-web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
+**Launch:** Open **Kova** from your app menu, run `kova app`, or use `kova web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
 
 **Update:** `kova update` (preview with `kova update --check`). **Uninstall:** `kova uninstall` (use `--keep-data` to keep chats and settings).
 
@@ -69,8 +69,8 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 
 Open **Kova** from the app menu to use the Electron window over the same local
 server as the CLI. The installer prepares Electron before adding the launcher,
-so the first click does not run npm. `kova-app` remains a terminal shortcut;
-`kova-web` opens the same chats in your browser. No chats, settings, provider
+so the first click does not run npm. `kova app` remains a terminal shortcut;
+`kova web` opens the same chats in your browser. No chats, settings, provider
 credentials or models are duplicated between clients.
 
 The one-line installers stage the shell in `~/.kova/desktop` (or `KOVA_HOME`).
@@ -128,7 +128,7 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 
 | Connection | What it does |
 | --- | --- |
-| **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
+| **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, OpenCode (or OpenCode Go), DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
 | **ChatGPT subscription** | Continue with ChatGPT in your browser using OAuth with PKCE. Kova verifies the account token, obtains your explicit ChatGPT-plan permission, and uses the public Responses endpoint. Availability and limits depend on your account and the sign-in preview. This is separate from an OpenAI API key. |
 | **Installed Codex login** | With your consent, read this machine's `~/.codex/auth.json` on each request. Kova never copies, changes, refreshes or revokes that login. If it expires, sign in again in the installed CLI. Only ChatGPT-token logins are supported, not API-key-only logins. |
 | **Local server** | Type an address such as `homelab:8080`, `192.168.1.20:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
@@ -136,7 +136,11 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 
 The desktop app's **Settings → Models and providers** has provider setup with key/custom/local options, browser
 sign-in and consented installed-login reuse. Its model menu groups choices by
-provider. Terminal chat's `/model` picker has the same groups and type-to-filter.
+provider, keeps every connection visible, and offers **Add provider** and
+**Manage providers** from the same list; Settings lists each connection and can
+add more of its models later without asking for the key again. Terminal chat's
+`/model` picker has the same groups and type-to-filter;
+`/provider` is an alias for it.
 
 ```sh
 kova providers                     # connected providers, never credentials
@@ -146,6 +150,7 @@ kova providers login CONNECTION    # sign in again / replace a key
 kova providers logout CONNECTION   # forget credentials; keep selected models
 kova providers remove CONNECTION   # remove connection and its selected models
 kova model list                    # selected models, grouped by provider
+kova model use                     # pick a provider and model
 kova model use CONNECTION/MODEL_ID
 ```
 
@@ -247,7 +252,8 @@ Models:
 
 - `kova model list` — selected models grouped by provider
 - `kova model add NAME URL MODEL [--key KEY]` — add one
-- `kova model use NAME` — set the active one
+- `kova model use` — pick one from every connected provider and its models
+- `kova model use CONNECTION/MODEL_ID` — set the active one without a prompt
 
 Reminders:
 
@@ -301,7 +307,7 @@ $ kova doctor
 ✓ Memory directory is writable (or can be created).
 ✓ Port is owned by this KOVA_HOME.
 ✓ landlock abi 6
-✓ Node.js 22.11.0 and npm found for kova-app.
+✓ Node.js 22.11.0 and npm found for kova app.
 ✓ Token file permissions are 0600.
 ✓ 32.0 GB free in KOVA_HOME.
 ✓ Config schema version 2; no unknown keys.
@@ -322,8 +328,8 @@ What each line means:
   different Kova on the same port would reject this home's requests.
 - **Sandbox** — Linux Landlock is available, shown as its ABI version. Without
   it, every `run_command` asks for approval, even in Auto mode.
-- **Node** — Node.js 22+ and npm are present for `kova-app`. If they are
-  missing, `kova-app` opens the web UI instead, which is not a failure.
+- **Node** — Node.js 22+ and npm are present for `kova app`. If they are
+  missing, `kova app` opens the web UI instead, which is not a failure.
 - **Token** — the local API token is readable only by you (mode 0600).
 - **Disk** — `KOVA_HOME` has at least 100 MB free for chats, notes and logs.
 - **Schema** — the config schema is current and has no keys this version
@@ -502,9 +508,9 @@ Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in
 
 ### Electron desktop app
 
-Developer-only: `uv run kova-app` runs the checkout
+Developer-only: `uv run kova app` runs the checkout
 through uv. It needs Node.js 22+/npm and can run `npm ci` on first use; this is
-not the normal user's launcher. `uv run kova-app --browser` opens the web UI.
+not the normal user's launcher. `uv run kova app --browser` opens the web UI.
 For build commands and the version-tagged release workflow, see
 [desktop/README.md](src/kova/desktop/README.md). Packaged shells still use the same
 separately installed Python backend.

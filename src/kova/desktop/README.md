@@ -64,7 +64,7 @@ using the README's one-line installer with `--no-desktop` (it supplies uv and
 Python 3.12). The shell bundles Electron, **not Python, uv, the backend, or a
 model**; Node/npm are unnecessary for downloads. It finds `kova` on PATH or in
 `~/.local/bin`, starts `kova serve` or reuses the authenticated running server,
-just like `kova-app`. Only checkout launches fall back to `uv run kova serve`.
+just like `kova app`. Only checkout launches fall back to `uv run kova serve`.
 Missing-backend errors link to the installation instructions and offer Retry.
 
 Use the .deb or NSIS .exe for app/Start-menu integration. Open the .dmg and drag
