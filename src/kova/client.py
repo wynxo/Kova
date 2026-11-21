@@ -104,6 +104,10 @@ class KovaClient:
     def privacy_update(self, local_only: bool) -> dict:
         return self._request('PATCH', '/privacy', json={'local_only': local_only}).json()
 
+    def set_persona(self, name: str, tone: str) -> dict:
+        """Persist the first-run assistant identity on the live server."""
+        return self._request("POST", "/persona", json={"name": name, "tone": tone}).json()
+
     def preferences(self) -> dict:
         """Every UI preference the server holds, with defaults filled in."""
         return self._request('GET', '/preferences').json()
@@ -202,12 +206,15 @@ class KovaClient:
     def create_chat(self, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
                     cwd: str | None = None, ephemeral: bool = False, *,
-                    project_id: str | None = None, bot_id: str | None = None) -> dict:
+                    project_id: str | None = None, bot_id: str | None = None,
+                    first_turn: bool = False, model: str | None = None) -> dict:
         body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
                 "project_id": project_id, "bot_id": bot_id}
         if ephemeral:
             body["ephemeral"] = True
         body = {field: value for field, value in body.items() if value is not None}
+        if first_turn:
+            body["first_turn_model"] = model
         return self._request("POST", "/chats", **({"json": body} if body else {})).json()
 
     # -- bots ------------------------------------------------------------

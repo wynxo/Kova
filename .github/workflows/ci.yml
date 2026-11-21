@@ -94,34 +94,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: src/kova/desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: desktop
+        working-directory: src/kova/desktop
 
       - name: Run tests
         run: node --test
-        working-directory: desktop
+        working-directory: src/kova/desktop
 
       - name: Configure Electron sandbox for the CI runner
         run: |
           # Resolving the executable also downloads it if npm left it lazy-installed.
           # Keep install output out of the executable path on a cold runner.
-          node -e "require('./desktop/node_modules/electron')"
-          electron_bin="$(node -p "require('./desktop/node_modules/electron')")"
+          node -e "require('./src/kova/desktop/node_modules/electron')"
+          electron_bin="$(node -p "require('./src/kova/desktop/node_modules/electron')")"
           sandbox_helper="$(dirname "$electron_bin")/chrome-sandbox"
           test -f "$sandbox_helper"
           sudo chown root:root "$sandbox_helper"
           sudo chmod 4755 "$sandbox_helper"
 
       - name: Smoke-test Electron startup
-        run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
+        run: xvfb-run -a src/kova/desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
 
       - name: Smoke-test the themed title bar startup
         env:
           KOVA_DESKTOP_TITLEBAR: themed
-        run: xvfb-run -a desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
+        run: xvfb-run -a src/kova/desktop/node_modules/.bin/electron scripts/desktop-startup.cjs
 
   privacy:
     name: Privacy
@@ -144,3 +144,32 @@ jobs:
         run: |
           printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/pr.txt"
           python scripts/privacy_check.py --text "$RUNNER_TEMP/pr.txt" --redact
+
+  first-run:
+    name: First run (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: .python-version
+          enable-cache: true
+      - name: Install Chromium and desktop prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth libgtk-3-0t64 libasound2t64
+          uv run --locked --group visual playwright install --with-deps chromium
+      - name: Allow Electron's user namespace sandbox on the hosted runner
+        run: |
+          # The unpacked npm Electron cannot use the setuid helper. Allow its
+          # unprivileged namespace sandbox on this disposable Ubuntu runner.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Exercise fresh installs through the terminal, browser and Electron
+        env:
+          KOVA_E2E: "1"
+          ELECTRON_OZONE_PLATFORM_HINT: x11
+        run: xvfb-run -a uv run --locked --group visual pytest -q -m e2e

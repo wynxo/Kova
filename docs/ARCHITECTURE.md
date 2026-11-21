@@ -78,15 +78,16 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 145 method/path pairs today. `tests/test_architecture_docs.py`
-walks the live app and fails when this table and the code drift apart in either
-direction, so add or delete a row in the same commit as the route.
+`tests/test_architecture_docs.py` walks the live app and fails when this table
+and the code drift apart in either direction, so add or delete a row in the
+same commit as the route.
 
 **Public** — no credential. Neither of these contains chat data or secrets.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | public | version, active model name, whether the model answers |
+| `GET /` | public | Redirect to the web UI at `/app`. |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
@@ -201,6 +202,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
+| `GET /providers/{identifier}/models` | token or session | the models a connected provider offers (cached for a minute) |
+| `POST /providers/{identifier}/models` | token or session | add more models from a provider that is already connected |
 | `DELETE /providers/{identifier}` | token or session | remove a provider connection |
 | `POST /providers/{identifier}/login` | token or session | sign in to a connected provider again |
 | `POST /providers/{identifier}/logout` | token or session | sign out of a provider connection |
@@ -323,7 +326,7 @@ Payload shapes, and the HTTP round-trip that answers an approval, are in the
 
 ### Browser login
 
-The web launcher never puts the bearer token in a URL. `kova-web`
+The web launcher never puts the bearer token in a URL. `kova web`
 (`src/kova/app.py`) asks the server for a ticket with the token, then opens:
 
 ```
@@ -368,17 +371,22 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
-`uv run kova "$@"` from the checkout. Commands talk to the server through
+`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
 the exception: it reads and writes `config.toml` directly, validates every value
 against a small schema, and never starts the server. `config show` redacts
 provider keys, custom headers and OAuth data; [CONFIG.md](CONFIG.md) documents
 every field.
+
+`kova model use` is the one place that switches the active provider and model.
+With a name it resolves a saved entry, `provider/model` or a model id; with no
+argument it opens the picker in `src/kova/model_picker.py`, which the terminal
+chat's `/model` (alias `/provider`) also uses. Both ask the server to save the
+choice, so it applies to the open chat and every later one.
 
 `kova ask` streams a turn without the interactive UI, prints the answer to
 stdout, and can emit `--json`. Its chats are titled with the
@@ -390,8 +398,8 @@ they stay out of the CLI's chat lists.
 `_run_chat` is the interactive loop behind plain `kova`. It picks the latest
 chat (or a new one), prints the header, and uses `prompt_toolkit` for input,
 history and Tab completion (`_CommandCompleter`). Slash commands are listed in
-`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model` and `/new` call
-the same API the desktop app does.
+`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model`, its `/provider`
+alias and `/new` call the same API the desktop app does.
 
 `_render_turn` consumes the SSE stream and repaints at most ten times a second
 with Rich `Live`. When the reply ends, the whole turn is printed to normal
@@ -402,18 +410,16 @@ prints reminder pop-ups while you chat.
 
 ### Desktop and web app
 
-`src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
-`desktop/` — the checkout it runs from, or the copy the installers stage under
-`KOVA_HOME/desktop`. Installers prepare Electron and register a normal OS launcher
-by default (opt out with `--no-desktop`); those launch the binary directly.
-The developer/terminal launcher can still run `npm ci` while
-`node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
-the browser; for any other failure it exits non-zero. The Electron shell starts
-(or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use
-ticket; the bearer token never reaches a command line or a URL. `kova-web` (and
-the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
-and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
-over `uv run kova-app`.
+`src/kova/app.py` holds both launchers. The Python package includes the Electron
+source. Installers, `kova update` and `kova app` refresh the staged copy under
+`KOVA_HOME/desktop` and run `npm ci` when dependencies are missing or the
+lockfile changes. OS shortcuts launch the prepared Electron binary directly.
+Installers can skip desktop setup with `--no-desktop`. Electron stores its
+profile separately in `KOVA_HOME/desktop-data`.
+
+The Electron shell starts (or reuses) the server, reads `~/.kova/token`, and
+mints a one-use ticket. The bearer token never reaches a command line or URL.
+`kova web` (also `kova app --browser`) opens the same UI in the default browser.
 
 The Electron shell also owns the Quick ask overlay (#71): a second, frameless
 `BrowserWindow` (`720×220`, always-on-top, `skipTaskbar`) that loads
@@ -506,7 +512,7 @@ conversation and an optional side panel. Both outer panes resize with a keyboard
 splitter whose width each device remembers. The panel holds one tab per thing opened in
 it (`window.KovaPanel.open({title, node, key})`: long code blocks, long tool output,
 diffs), and a tab can pop out into its own same-origin window, which the Electron shell
-allows only for blank `kova-panel-<n>` windows (`desktop/core.js` `panelWindow`). On wide
+allows only for blank `kova-panel-<n>` windows (`src/kova/desktop/core.js` `panelWindow`). On wide
 screens a collapsed sidebar leaves an icon rail (show sidebar, new chat, search,
 settings); on phones the panel is a full-screen sheet. Ctrl/Cmd+Alt+B shows or hides the
 panel and F6 / Shift+F6 move focus between the panes, through the same shortcut
@@ -517,8 +523,14 @@ search field that filters chats, the chat list and a single **Settings** row.
 The message box shows **+** (attach files, slash commands, and an incognito chat
 on the start screen), the text, one chip naming the model, and Send; the chip
 opens one popover with the model, Work/Chat mode, permission mode, working
-folder and web search. The header is the sidebar toggle, the chat title and,
-once a chat is open, its actions menu. A healthy connection shows nothing:
+folder and web search. The model list is every configured model grouped by its
+connection (Local before cloud) with search, favourites and the active model
+marked; a connected provider with no model chosen still appears and says so,
+and **Add provider…** and **Manage providers…** sit at the end of the same list.
+A model chosen on the start screen is remembered for that device, and a model
+chosen inside a chat is saved on the chat, so a reload keeps it. The header is
+the sidebar toggle, the chat title and, once a chat is open, its actions menu. A
+healthy connection shows nothing:
 reconnecting the event stream and polling `/health` are silent, the model's
 state is a detail of the chip, and only an action that actually failed (Kova
 unreachable, signed out, a used pairing code) shows one quiet line above the
@@ -530,7 +542,12 @@ Memory, Reminders, Extensions and MCP, Privacy, Phone, and Install and
 notifications. A section nav and a search box filter individual settings; rows
 activate the existing controls by id (kept, undrawn, in `index.html`'s
 `#settings-actions`) rather than reimplementing them, so every dialog is also
-reachable from the command palette.
+reachable from the command palette. Models and providers opens with the
+connected providers themselves: each connection's name, kind, address and model
+count, with **Change models** (more models from a connection that already has
+its key, without asking for it again) and **Remove**. **Add provider** runs the
+connect flow: a known provider or a custom OpenAI-compatible URL, its key, a
+model-catalog check, then the models to keep and the default for new chats.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
@@ -1236,7 +1253,7 @@ accounts and are covered by mocked HTTP/JWT tests, not automatic paid calls.
 
 ### Packaged Electron shell
 
-`desktop/main.js` owns a single-instance Electron window and tray around the
+`src/kova/desktop/main.js` owns a single-instance Electron window and tray around the
 unchanged /app client. It reads the configured KOVA_HOME and port, reuses an
 authenticated server or spawns the installed CLI (uv from source as fallback),
 then mints /app/session tickets for the existing fragment/login flow.
@@ -1247,7 +1264,7 @@ permissions keep the shell local. Startup/error pages are bundled files.
 Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.
 electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
-remains a separately installed prerequisite. See desktop/README.md.
+remains a separately installed prerequisite. See src/kova/desktop/README.md.
 
 ### Local chat attachments
 

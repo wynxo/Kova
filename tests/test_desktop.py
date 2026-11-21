@@ -180,10 +180,9 @@ def test_installed_commands_and_menu_entry_name_real_launchers():
     import tomllib
     repo = Path(__file__).resolve().parents[1]
     scripts = tomllib.loads((repo / "pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts == {"kova": "kova.cli:app", "kova-app": "kova.app:main",
-                       "kova-web": "kova.app:web_main"}
-    entry = (repo / "desktop" / "kova.desktop").read_text().splitlines()
-    assert "Exec=kova-app" in entry
+    assert scripts == {"kova": "kova.cli:app"}
+    entry = (repo / "src/kova/desktop" / "kova.desktop").read_text().splitlines()
+    assert "Exec=kova app" in entry
 
 
 def test_tool_card_assets():
@@ -219,7 +218,7 @@ def test_themed_title_bar_is_desktop_only_and_theme_driven():
     index = (assets / "index.html").read_text()
     desktop = (assets / "desktop.js").read_text()
     css = (assets / "app.css").read_text()
-    main = (Path(__file__).resolve().parents[1] / "desktop" / "main.js").read_text()
+    main = (Path(__file__).resolve().parents[1] / "src/kova/desktop" / "main.js").read_text()
     assert 'id="titlebar"' in index and 'aria-hidden="true"' in index
     assert "/app/assets/desktop.js" in index and "'/app/assets/desktop.js'" in (assets / "sw.js").read_text()
     assert "titlebar=themed" in desktop and "/Electron\\//" in desktop

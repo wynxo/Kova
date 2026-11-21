@@ -7,7 +7,9 @@ set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd -- "$here"
 
-if [ "$#" -eq 0 ]; then
-    exec "$here/install.sh" --dev
-fi
-exec "$here/install.sh" "$@"
+for arg in "$@"; do
+    if [ "$arg" = --ref ]; then
+        exec "$here/install.sh" "$@"
+    fi
+done
+exec "$here/install.sh" --dev "$@"
