@@ -36,7 +36,7 @@ from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
 from .keymap import Keymap
-from .markdown import ACCENT, BASH, MEMORY, MarkdownStream, display_width
+from .markdown import ACCENT, BASH, MEMORY, MarkdownStream, clean, display_width
 from .render import Renderer, compact_number, duration, shorten
 from .style import ACCENT_SOFT, FAINT, active_theme, colour_level
 from .terminal import KeyReader, RawMode, Screen
@@ -1061,11 +1061,17 @@ class ChatApp:
         r.end_text()
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         risk = event.get("risk") or "normal"
-        title, body, colour = r.permission_card(str(event.get("tool", "")), args, risk,
-                                                str(event.get("summary") or ""))
+        tool = str(event.get("tool", ""))
+        summary = str(event.get("summary") or "")
+        if tool == "delegate_analysis":
+            for line in clean(summary).splitlines():
+                r.line(line)
+            summary = "Review the model and task above before approving."
+        title, body, colour = r.permission_card(tool, args, risk, summary)
         options = [("Allow once", "allow", "y")]
-        options.append(("Allow this exact action for this session", "allow_session", "a"))
-        options.append(("Always allow this exact action", "allow_always", "w"))
+        if tool != "delegate_analysis":
+            options.append(("Allow this exact action for this session", "allow_session", "a"))
+            options.append(("Always allow this exact action", "allow_always", "w"))
         options.append(("No, and tell Kova what to do differently", "deny", "n"))
         self.overlay = Choice(title, body, options, colour=colour,
                               footer="enter to choose · esc to decline")

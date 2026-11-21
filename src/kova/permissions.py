@@ -244,21 +244,23 @@ class Approvals:
         return action, message
 
     def create(self, chat_id: str, name: str, args: dict, cwd: Path | None = None,
-               needs: frozenset = frozenset(), authority: frozenset | None = None) -> dict:
+               needs: frozenset = frozenset(), authority: frozenset | None = None,
+               *, summary: str | None = None) -> dict:
         identifier = uuid4().hex
         args = copy.deepcopy(args)
         command = shell_command_arg(name, args)
         risk = command_risk(command) if command is not None else "normal"
         future = asyncio.get_running_loop().create_future()
-        if command is None and "path" not in args and args:
-            # Tools without a path (MCP tools, for one) show their arguments.
-            summary = f"{name}: {json.dumps(args, ensure_ascii=False, sort_keys=True)[:500]}"
-        elif command is None:
-            summary = f"{name}: {args.get('path', '')}"
-        elif name == "run_command":
-            summary = command
-        else:
-            summary = f"{command}\nRepeats: {args.get('schedule', '')}"
+        if summary is None:
+            if command is None and "path" not in args and args:
+                # Tools without a path (MCP tools, for one) show their arguments.
+                summary = f"{name}: {json.dumps(args, ensure_ascii=False, sort_keys=True)[:500]}"
+            elif command is None:
+                summary = f"{name}: {args.get('path', '')}"
+            elif name == "run_command":
+                summary = command
+            else:
+                summary = f"{command}\nRepeats: {args.get('schedule', '')}"
         changes = None
         if name == "edit_file":
             old = str(args.get("old_string", ""))
@@ -285,6 +287,8 @@ class Approvals:
         pending = self.pending[identifier]
         try:
             decision = await asyncio.wait_for(pending.future, timeout=self.timeout)
+            if pending.tool == "delegate_analysis" and decision["decision"] != "deny":
+                return {**decision, "decision": "allow"}
             if decision["decision"] in {"allow_session", "allow_always"} and pending.risk != "destructive":
                 self.sessions.add(pending.chat_id)
                 self.rules.append(Rule("allow", pending.tool, scope="always" if decision["decision"] == "allow_always" else "session",
