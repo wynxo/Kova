@@ -1,7 +1,7 @@
 # The shell redesign: eight decisions ready to file
 
 The parts of the redesign are already specified — tokens and themes in
-[DESIGN.md](DESIGN.md), the conversation in `design-ui-1..3`, and the panels in #182–#213.
+[DESIGN.md](../DESIGN.md), the conversation in `design-ui-1..3`, and the panels in #182–#213.
 This page records the *shell* decisions: where things live when they are not the message.
 Each section below is one issue. The heading is the title; **Why**, **Proposal** and
 **Acceptance** are the body.
