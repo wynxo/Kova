@@ -163,7 +163,7 @@ SCAN = r"""
         tag: el.tagName.toLowerCase(),
         id: el.id,
         cls: typeof el.className === 'string' ? el.className : '',
-        name: (el.getAttribute('aria-label') || el.textContent || '')
+        name: (el.getAttribute('aria-label') || el.name || target.textContent || '')
           .trim().replace(/\s+/g, ' ').slice(0, 60),
         width: Math.round(width * 10) / 10,
         height: Math.round(height * 10) / 10,
@@ -252,7 +252,8 @@ def walk_surfaces(page, minimum):
     new_project.first.click()
     editor = page.locator("dialog.project-dialog")
     expect(editor).to_be_visible()
-    page.wait_for_timeout(200)
+    # Entry animation scales down the whole dialog, including its hit targets.
+    editor.evaluate("(element) => Promise.allSettled(element.getAnimations().map(a => a.finished))")
     problems += scan(page, minimum, "project editor")
     page.keyboard.press("Escape")
     expect(editor).to_be_hidden()
