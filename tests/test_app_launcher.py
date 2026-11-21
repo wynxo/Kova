@@ -1,4 +1,4 @@
-"""The kova-app (Electron) and kova-web (browser) launchers, without a real GUI."""
+"""The kova app (Electron) and kova web (browser) launchers, without a real GUI."""
 
 import subprocess
 from pathlib import Path
@@ -72,7 +72,7 @@ def test_browser_flag_keeps_working_as_the_web_alias(browser):
     assert browser == ['http://127.0.0.1:7700/app#ticket=first', 'closed']
 
 
-def test_desktop_dir_prefers_override_then_checkout_then_staged(monkeypatch, tmp_path):
+def test_desktop_dir_prefers_override_then_staged_then_bundle(monkeypatch, tmp_path):
     from kova import app as launcher
 
     module = tmp_path / 'checkout' / 'src' / 'kova' / 'app.py'
@@ -86,12 +86,12 @@ def test_desktop_dir_prefers_override_then_checkout_then_staged(monkeypatch, tmp
     (staged / 'node_modules').mkdir(parents=True)
     (staged / 'package.json').write_text('{}')
     assert launcher.desktop_dir(home) == staged
-    checkout = module.resolve().parents[2] / 'desktop'
+    checkout = module.with_name('desktop')
     checkout.mkdir()
     (checkout / 'package.json').write_text('{}')
-    assert launcher.desktop_dir(home) == checkout
-    monkeypatch.setenv('KOVA_DESKTOP_DIR', str(staged))
     assert launcher.desktop_dir(home) == staged
+    monkeypatch.setenv('KOVA_DESKTOP_DIR', str(checkout))
+    assert launcher.desktop_dir(home) == checkout
 
 
 def test_desktop_runs_electron_without_reinstalling(monkeypatch, tmp_path, runs):
@@ -146,7 +146,7 @@ def test_desktop_without_app_files_asks_for_a_reinstall(monkeypatch, browser, ca
         launcher.main([])
     assert exc.value.code == 1
     error = capsys.readouterr().err
-    assert 'desktop app files are missing' in error and 'kova-web' in error
+    assert 'desktop app files are missing' in error and 'kova web' in error
     assert browser == []
 
 
@@ -178,4 +178,32 @@ def test_old_running_server_gives_restart_instruction(monkeypatch, capsys):
         launcher.web_main([])
     assert exc.value.code == 1
     error = capsys.readouterr().err
-    assert 'kova stop' in error and 'kova-web' in error
+    assert 'kova stop' in error and 'kova web' in error
+
+
+def test_refresh_repairs_legacy_stage_and_retries_failed_dependencies(monkeypatch, tmp_path, runs):
+    from kova import app as launcher
+
+    source = project_with(tmp_path / 'source', electron=False)
+    staged = project_with(tmp_path / 'home', electron=True)
+    (source / 'main.js').write_text('current')
+    (source / 'package-lock.json').write_text('new lock')
+    (staged / 'main.js').write_text('stale')
+    (staged / 'package-lock.json').write_text('old lock')
+    native = launcher._electron_binary(staged)
+    native.parent.mkdir(parents=True)
+    native.touch()
+    (staged / 'launch').write_text('keep shortcut')
+    (staged.parent / 'chat.db').write_text('keep chats')
+    monkeypatch.setattr(launcher, '_bundled_desktop', lambda: source)
+    real_run = launcher._run
+    monkeypatch.setattr(launcher, '_run', lambda *args: 1)
+    with pytest.raises(launcher.DesktopError, match='npm ci failed'):
+        launcher.refresh_desktop(staged.parent)
+    monkeypatch.setattr(launcher, '_run', real_run)
+    launcher.refresh_desktop(staged.parent)
+    launcher.refresh_desktop(staged.parent)
+    assert len(runs) == 1
+    assert (staged / 'main.js').read_text() == 'current'
+    assert (staged / 'launch').read_text() == 'keep shortcut'
+    assert (staged.parent / 'chat.db').read_text() == 'keep chats'

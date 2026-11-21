@@ -99,12 +99,12 @@ uv run --project "$KOVA_DEMO_REPO" kova --new --mode work
    terminal:
 
    ```sh
-   uv run kova-web
+   uv run kova web
    ```
 
    Open the conversation just created, then narrow the browser to phone width.
    Show the shared history and sidebar drawer. Narrate: “Different clients, the
-   same local server and data.” Electron is optional: `uv run kova-app`.
+   same local server and data.” Electron is optional: `uv run kova app`.
 
 ## Slow model or unavailable provider
 

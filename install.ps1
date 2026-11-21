@@ -62,7 +62,7 @@ function Install-Kova {
     }
     # Future PyPI switch: replace Source above with 'kova-ai==VERSION'.
     Write-Host "Installing/updating Kova: $Source"
-    $UvArgs = @('tool', 'install', '--force', '--refresh', '--python', '3.12')
+    $UvArgs = @('tool', 'install', '--force', '--refresh', '--upgrade-package', 'kova-ai', '--python', '3.12')
     if ($Dev) {
         if (-not (Test-Path -LiteralPath (Join-Path $Source 'pyproject.toml'))) {
             throw '--dev needs a checkout (or KOVA_SOURCE).'
@@ -82,47 +82,62 @@ function Install-Kova {
         # Keep the desktop source and prepare Electron before creating the shortcut.
         $Data = if ($env:KOVA_HOME) { $env:KOVA_HOME } else { Join-Path $env:USERPROFILE '.kova' }
         $DesktopDest = Join-Path $Data 'desktop'
-        $DesktopSource = $null
-        if ($env:KOVA_SOURCE -and (Test-Path -LiteralPath (Join-Path $env:KOVA_SOURCE 'desktop\package.json'))) {
-            $DesktopSource = Join-Path $env:KOVA_SOURCE 'desktop'
-        } elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'desktop\package.json'))) {
-            $DesktopSource = Join-Path $PSScriptRoot 'desktop'
-        } elseif ($Dev -and (Test-Path -LiteralPath (Join-Path $Source 'desktop\package.json'))) {
-            $DesktopSource = Join-Path $Source 'desktop'
+        $App = Join-Path $Bin 'kova-app.exe'
+        $ToolPython = Join-Path $env:UV_TOOL_DIR 'kova-ai\Scripts\python.exe'
+        $PackagedDesktop = $false
+        if ((Test-Path -LiteralPath $App) -and (Test-Path -LiteralPath $ToolPython)) {
+            $PackagedDesktop = [bool](& $ToolPython -c 'from kova import app; print(int(hasattr(app, ''refresh_desktop'')))' | Where-Object { $_ -eq '1' })
+        }
+        if ($PackagedDesktop) {
+            & $App --prepare
+            if ($LASTEXITCODE -ne 0) { throw 'Preparing the desktop app failed. Run kova app to retry.' }
+            $DesktopSource = $DesktopDest
         } else {
-            $Zip = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N') + '.zip')
-            $Tree = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N'))
-            Write-Host "Downloading the desktop app from https://github.com/wynxo/Kova/archive/$Ref.zip ..."
-            try {
-                Invoke-WebRequest -UseBasicParsing "https://github.com/wynxo/Kova/archive/$Ref.zip" -OutFile $Zip
-                Expand-Archive -LiteralPath $Zip -DestinationPath $Tree -Force
-                $DesktopSource = Get-ChildItem -LiteralPath $Tree -Directory |
-                    ForEach-Object { Join-Path $_.FullName 'desktop' } |
-                    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') } |
-                    Select-Object -First 1
-            } catch {
-                Write-Host "Note: the desktop app files could not be downloaded ($($_.Exception.Message))."
-            } finally {
-                Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+            # Compatibility with refs that predate packaged desktop assets.
+            $DesktopSource = $null
+            if ($env:KOVA_SOURCE -and (Test-Path -LiteralPath (Join-Path $env:KOVA_SOURCE 'src\kova\desktop\package.json'))) {
+                $DesktopSource = Join-Path $env:KOVA_SOURCE 'src\kova\desktop'
+            } elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'src\kova\desktop\package.json'))) {
+                $DesktopSource = Join-Path $PSScriptRoot 'src\kova\desktop'
+            } elseif ($Dev -and (Test-Path -LiteralPath (Join-Path $Source 'src\kova\desktop\package.json'))) {
+                $DesktopSource = Join-Path $Source 'src\kova\desktop'
+            } else {
+                $Zip = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N') + '.zip')
+                $Tree = Join-Path ([IO.Path]::GetTempPath()) ('kova-' + [guid]::NewGuid().ToString('N'))
+                Write-Host "Downloading the desktop app from https://github.com/wynxo/Kova/archive/$Ref.zip ..."
+                try {
+                    Invoke-WebRequest -UseBasicParsing "https://github.com/wynxo/Kova/archive/$Ref.zip" -OutFile $Zip
+                    Expand-Archive -LiteralPath $Zip -DestinationPath $Tree -Force
+                    $DesktopSource = Get-ChildItem -LiteralPath $Tree -Directory |
+                        ForEach-Object { Join-Path $_.FullName 'desktop' } |
+                        Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') } |
+                        Select-Object -First 1
+                } catch {
+                    Write-Host "Note: the desktop app files could not be downloaded ($($_.Exception.Message))."
+                } finally {
+                    Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+                }
             }
         }
         if ($DesktopSource) {
-            New-Item -ItemType Directory -Path $DesktopDest -Force | Out-Null
-            Get-ChildItem -LiteralPath $DesktopSource -Force |
-                Where-Object { $_.Name -notin 'node_modules', 'dist' } |
-                ForEach-Object {
-                    $Target = Join-Path $DesktopDest $_.Name
-                    Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
-                    Copy-Item -LiteralPath $_.FullName -Destination $Target -Recurse -Force
+            if (-not $PackagedDesktop) {
+                New-Item -ItemType Directory -Path $DesktopDest -Force | Out-Null
+                Get-ChildItem -LiteralPath $DesktopSource -Force |
+                    Where-Object { $_.Name -notin 'node_modules', 'dist' } |
+                    ForEach-Object {
+                        $Target = Join-Path $DesktopDest $_.Name
+                        Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
+                        Copy-Item -LiteralPath $_.FullName -Destination $Target -Recurse -Force
+                    }
+                Push-Location -LiteralPath $DesktopDest
+                try {
+                    Write-Host 'Preparing Electron (this may take a few minutes) ...'
+                    & npm ci --include=dev
+                    if ($LASTEXITCODE -ne 0) { throw 'npm ci failed. Check your connection to the npm registry and rerun this installer.' }
+                } finally {
+                    Pop-Location
+                    if ($Tree) { Remove-Item -LiteralPath $Tree -Recurse -Force -ErrorAction SilentlyContinue }
                 }
-            Push-Location -LiteralPath $DesktopDest
-            try {
-                Write-Host 'Preparing Electron (this may take a few minutes) ...'
-                & npm ci --include=dev
-                if ($LASTEXITCODE -ne 0) { throw 'npm ci failed. Check your connection to the npm registry and rerun this installer.' }
-            } finally {
-                Pop-Location
-                if ($Tree) { Remove-Item -LiteralPath $Tree -Recurse -Force -ErrorAction SilentlyContinue }
             }
             $Electron = Join-Path $DesktopDest 'node_modules\electron\dist\electron.exe'
             if (-not (Test-Path -LiteralPath $Electron)) { throw 'Electron is missing after npm ci. Rerun with Electron downloads enabled.' }
@@ -143,7 +158,7 @@ function Install-Kova {
             throw 'Desktop files could not be installed. Check your connection and rerun this installer to add it.'
         }
     } catch {
-        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova-web."
+        Write-Host "Note: $($_.Exception.Message) Kova itself is installed; open it in your browser with kova web."
         $RegisterDesktop = $false
     } }
 
@@ -158,14 +173,18 @@ function Install-Kova {
     $Support = Join-Path $env:USERPROFILE '.local\share\kova'
     New-Item -ItemType Directory -Path $Support -Force | Out-Null
     $Uninstaller = Join-Path $Support 'uninstall.ps1'
-    $LocalUninstaller = if ($env:KOVA_SOURCE) { Join-Path $env:KOVA_SOURCE 'uninstall.ps1' } elseif ($Dev) {
-        Join-Path $Source 'uninstall.ps1'
+    $LocalUninstaller = if ($env:KOVA_SOURCE) { Join-Path $env:KOVA_SOURCE 'scripts\uninstall.ps1' } elseif ($Dev) {
+        Join-Path $Source 'scripts\uninstall.ps1'
     } else { $null }
     if ($LocalUninstaller -and (Test-Path -LiteralPath $LocalUninstaller)) {
         Copy-Item -LiteralPath $LocalUninstaller -Destination $Uninstaller -Force
     } else {
         Write-Host 'Saving the standalone uninstaller for Windows Settings ...'
-        Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/wynxo/Kova/$Ref/uninstall.ps1" -OutFile $Uninstaller
+        try {
+            Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/wynxo/Kova/$Ref/scripts/uninstall.ps1" -OutFile $Uninstaller
+        } catch {
+            Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/wynxo/Kova/$Ref/uninstall.ps1" -OutFile $Uninstaller
+        }
     }
     $Kova = Join-Path $Bin 'kova.exe'
     $Version = ((& $Kova --version) -join '').Replace('Kova ', '')
@@ -185,6 +204,6 @@ function Install-Kova {
     if ($RegisterDesktop) { Write-Host 'Done. Open Kova from the Start menu and choose Add provider.' }
     else { Write-Host 'Done (without the desktop app). Run: kova setup' }
     Write-Host 'Terminal chat: kova setup, then kova'
-    Write-Host 'Desktop app: kova-app    Web UI in your browser: kova-web'
+    Write-Host 'Desktop app: kova app    Web UI in your browser: kova web'
 }
 Install-Kova -InstallArgs $args

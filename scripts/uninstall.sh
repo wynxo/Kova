@@ -1,5 +1,5 @@
 #!/bin/sh
-# curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.sh | sh
+# curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/scripts/uninstall.sh | sh
 main() {
     set -eu
     say() { printf '%s\n' "$*"; }
@@ -58,7 +58,7 @@ main() {
     fi
     if [ -n "$uv" ]; then
         # uv treats an already-absent tool as a successful no-op.
-        say 'Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai'
+        say 'Removing Kova: uv tool uninstall kova-ai'
         "$uv" tool uninstall kova-ai
     else
         say 'uv was not found; no uv tool can be removed.'
