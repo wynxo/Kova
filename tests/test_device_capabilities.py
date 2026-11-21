@@ -74,6 +74,8 @@ EXPECTED = {
     ("POST", "/providers/validate"): "providers:write",
     ("POST", "/providers"): "providers:write",
     ("DELETE", "/providers/{identifier}"): "providers:write",
+    ("GET", "/providers/{identifier}/models"): "models:read",
+    ("POST", "/providers/{identifier}/models"): "providers:write",
     ("POST", "/providers/{identifier}/logout"): "providers:write",
     ("POST", "/providers/{identifier}/login"): "providers:write",
     ("POST", "/providers/auth/start"): "providers:write",

@@ -121,6 +121,8 @@ const sandbox = {
       '/extensions/plugins': [{name: 'notes', version: '1.2.0', enabled: false, description: 'Notes helpers'}],
       '/chats/search?q=quarterly&limit=20': [{id: 'found-chat', title: 'Old notes', role: 'user',
         snippet: 'the quarterly numbers', created: '', last_message: ''}],
+      '/providers': [{id: 'openai', name: 'OpenAI', kind: 'openai',
+                      base_url: 'https://api.openai.com/v1', authenticated: true}],
       '/providers/catalog': {harness_available: true, providers: [
         {id: 'openai', name: 'OpenAI', key_url: 'https://platform.openai.com/api-keys',
          capabilities: ['api_key', 'tools']},
