@@ -45,13 +45,13 @@ async function start() {
   fs.writeFileSync(path.join(home, 'config.toml'),
     `port = ${server.address().port}\n[desktop]\ntitle_bar = "${themed ? 'themed' : 'native'}"\n`);
   fs.writeFileSync(path.join(home, 'token'), 'smoke-test');
-  app.setPath('userData', path.join(home, 'desktop'));
   const expected = origin + '/app' + (themed ? '?titlebar=themed' : '') + '#ticket=smoke-test';
 
   app.on('web-contents-created', (_event, contents) => {
     contents.on('did-finish-load', () => {
       if (contents.getURL() !== expected) return;
       if (contents.getTitle() !== 'Kova startup smoke') return;
+      if (app.getPath('userData') !== path.join(home, 'desktop-data')) return;
       clearTimeout(timeout);
       loaded = true;
       console.log(`Desktop loaded the ${themed ? 'themed' : 'native'} chat page`);
@@ -59,7 +59,7 @@ async function start() {
     });
   });
 
-  require('../desktop/main.js');
+  require('../src/kova/desktop/main.js');
 }
 
 start().catch(error => {

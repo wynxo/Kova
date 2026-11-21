@@ -168,13 +168,13 @@ def _sandbox_check() -> Check:
 def _node_check() -> Check:
     node, npm = shutil.which('node'), shutil.which('npm')
     if node is None and npm is None:
-        return Check('node', True, 'Node.js/npm not found; kova-app opens the web UI (kova-web) instead.')
+        return Check('node', True, 'Node.js/npm not found; kova app opens the web UI (kova web) instead.')
     if node is None or npm is None:
         missing = 'Node.js' if node is None else 'npm'
         return Check(
             'node', False,
-            f'{missing} is missing; kova-app needs both Node.js 22+ and npm.',
-            'Install Node.js 22+ or use kova-web',
+            f'{missing} is missing; kova app needs both Node.js 22+ and npm.',
+            'Install Node.js 22+ or use kova web',
         )
     try:
         result = subprocess.run([node, '--version'], capture_output=True, text=True,
@@ -186,10 +186,10 @@ def _node_check() -> Check:
     if major < MIN_NODE_MAJOR:
         return Check(
             'node', False,
-            f'Node.js {version} is too old for kova-app; Node.js 22+ is required.',
-            'Install Node.js 22+ or use kova-web',
+            f'Node.js {version} is too old for kova app; Node.js 22+ is required.',
+            'Install Node.js 22+ or use kova web',
         )
-    return Check('node', True, f'Node.js {version} and npm found for kova-app.')
+    return Check('node', True, f'Node.js {version} and npm found for kova app.')
 
 
 def _token_check(cfg) -> Check:

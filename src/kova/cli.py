@@ -198,6 +198,26 @@ app = typer.Typer(
 )
 
 
+@app.command("app")
+def desktop_app(
+    browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
+) -> None:
+    """Open the Kova desktop app."""
+    from .app import launch_desktop
+
+    if browser:
+        web_app()
+    raise typer.Exit(launch_desktop())
+
+
+@app.command("web")
+def web_app() -> None:
+    """Open Kova's web UI in your default browser."""
+    from .app import open_in_browser
+
+    raise typer.Exit(open_in_browser())
+
+
 def _version(value: bool) -> None:
     if value:
         console.print(Text.assemble(

@@ -66,7 +66,7 @@ compare. Defaults are what a fresh install writes.
 | TOML key | `Config` field | Default | Allowed | What it changes |
 | --- | --- | --- | --- | --- |
 | `active` | `active` | `local` | name of a configured model | The model selected for new turns. `kova model use NAME` also updates the server immediately. |
-| `port` | `port` | `7700` | 1–65535 | Local server port. The desktop, CLI and `kova-web` use the same value. |
+| `port` | `port` | `7700` | 1–65535 | Local server port. The desktop, CLI and `kova web` use the same value. |
 | `compact_threshold` | `compact_threshold` | `0.75` | 0.1–0.99 | Fraction of the model's context that triggers automatic conversation compaction. `/compact` in the terminal does the same thing on demand. |
 | `files_path` | `files_path` | `~/Kova Files` | non-empty path | Root for the file tools. Relative paths are resolved when set; every resolved path must stay inside this folder. |
 | `bind` | `bind` | `loopback` | `loopback` or `lan` | `loopback` listens only on `127.0.0.1`. `lan` also starts the private-network listener used by paired phones; it never opens the public internet. `kova pair` toggles this too. |

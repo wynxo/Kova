@@ -116,13 +116,26 @@ def check_update(ref: str) -> str:
 def update(ref: str, emit=print) -> None:
     egress.check_external_process()
     source = source_spec(ref)
-    command = [find_uv(), "tool", "install", "--force", "--refresh", "--python", "3.12", source]
+    # Re-resolve moving refs; --refresh alone can reinstall the cached Git commit.
+    command = [
+        find_uv(), "tool", "install", "--force", "--refresh", "--upgrade-package", "kova-ai",
+        "--python", "3.12", source,
+    ]
     where = source if os.environ.get("KOVA_SOURCE") else ref
     emit(f"→ Installing or updating Kova from {where}")
+    env = tool_env()
     try:
-        subprocess.run(command, check=True, env=tool_env())
+        subprocess.run(command, check=True, env=env)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
+    if (kova_home() / "desktop" / "package.json").is_file():
+        # Use the newly installed executable, not modules from the old process.
+        launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova-app.exe" if os.name == "nt" else "kova-app")
+        try:
+            subprocess.run([str(launcher), "--prepare"], check=True, env=env)
+        except (OSError, subprocess.CalledProcessError):
+            emit("Kova CLI was updated, but desktop preparation failed. Run kova app to retry, or use kova web.")
+            return
     emit("✓ Updated Kova. Run: kova")
 
 
@@ -243,7 +256,7 @@ def uninstall(*, purge: bool, keep_data: bool, confirm, emit=print) -> None:
     except (autostart.AutostartError, OSError) as exc:
         emit(f"! Could not remove the start-at-login entry: {exc}")
     uv = find_uv()
-    emit("→ Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai")
+    emit("→ Removing Kova: uv tool uninstall kova-ai")
     try:
         if sys.platform == "win32":
             _windows_uninstall(uv, home, purge and home.exists())
