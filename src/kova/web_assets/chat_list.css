@@ -13,10 +13,8 @@
   margin:var(--space-3) var(--space-2) var(--space-1);
   color:var(--fg-muted);
   font-size:var(--type-size-label);
-  font-weight:600;
-  letter-spacing:.04em;
+  font-weight:560;
   line-height:var(--type-leading-tight);
-  text-transform:uppercase;
 }
 .history-group:first-child { margin-top:var(--space-1); }
 

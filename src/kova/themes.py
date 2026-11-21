@@ -25,7 +25,7 @@ BUILTIN: tuple[str, ...] = ("kova-dark", "kova-light")
 TOKENS_PATH = Path(__file__).with_name("tokens.json")
 
 APPEARANCES = ("dark", "light")
-GROUPS = ("bg", "fg", "border", "accent", "status", "syntax", "chat")
+GROUPS = ("bg", "fg", "border", "accent", "status", "step", "syntax", "chat")
 CHAT_TOKENS = {
     "width": ("narrow", "normal", "wide"),
     "message-style": ("document", "bubbles", "compact"),

@@ -11,7 +11,7 @@
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/app/assets/icon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
-  <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/app/assets/fonts/Geologica-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <script src="/app/assets/desktop.js"></script>
   <!-- Not deferred: the theme, text size, density and font are on <html> before
@@ -72,6 +72,9 @@
   <script defer src="/app/assets/plan-card.js"></script>
   <link rel="stylesheet" href="/app/assets/compare.css">
   <script defer src="/app/assets/compare.js"></script>
+  <!-- The live step trace (docs/DESIGN.md): after every turn component it
+       draws a node for, before the phone layout. -->
+  <link rel="stylesheet" href="/app/assets/trace.css">
   <link rel="stylesheet" href="/app/assets/mobile.css">
   <script defer src="/app/assets/mobile.js"></script>
   <script defer src="/app/assets/thinking.js"></script>
@@ -128,8 +131,14 @@
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <span class="kova-mark welcome-mark" aria-hidden="true"></span>
-        <p id="welcome-greeting" class="welcome-greeting"></p>
-        <h1>What are you working on?</h1>
+        <h1 id="welcome-title">Kova runs on this computer.</h1>
+        <p id="welcome-greeting" class="welcome-greeting">You see every step it takes, and you can stop it at any point.</p>
+        <ul class="trace-legend" aria-label="What a reply shows">
+          <li data-step="think"><strong>Thinks out loud</strong><span>Open any thought to read what it weighed up.</span></li>
+          <li data-step="tool"><strong>Uses tools</strong><span>Every file it reads, command it runs and search it makes is listed with its output.</span></li>
+          <li data-step="ask"><strong>Asks first</strong><span>You decide which actions wait for your OK.</span></li>
+          <li data-step="agent"><strong>Splits up big jobs</strong><span>Parallel tasks show as a tree, and you can stop any one of them.</span></li>
+        </ul>
         <div id="starters" class="starters" role="group" aria-label="Suggested prompts" hidden></div>
         <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>

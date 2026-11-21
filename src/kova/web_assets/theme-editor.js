@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const GROUPS = {bg: 'Backgrounds', fg: 'Text', border: 'Borders', accent: 'Accent', status: 'Status', syntax: 'Code'};
+  const GROUPS = {bg: 'Backgrounds', fg: 'Text', border: 'Borders', accent: 'Accent', status: 'Status', step: 'Steps', syntax: 'Code'};
   const HEX = /^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i;
   const BACKGROUNDS = {none: 'None', gradient: 'Gradient', noise: 'Noise', image: 'Image'};
   const CHECK_URL = '/themes?validate_only=true';
@@ -368,7 +368,7 @@
       // the warning sits beside the values it is about as well as in the footer.
       const failing = new Set(incomplete);
       for (const message of messages) {
-        for (const match of message.matchAll(/(?:bg|fg|border|accent|status|syntax)\.[a-z0-9-]+/g)) {
+        for (const match of message.matchAll(/(?:bg|fg|border|accent|status|step|syntax)\.[a-z0-9-]+/g)) {
           failing.add(match[0]);
         }
       }
@@ -840,7 +840,7 @@
         ['compact', 'Compact'], ['default', 'Default'], ['comfortable', 'Comfortable'],
       ], value => typography('setDensity', value));
       const font = segmented('theme-editor-font', 'Font', [
-        ['inter', 'Inter'], ['system', 'System'], ['mono', 'Monospace'],
+        ['inter', 'Geologica'], ['system', 'System'], ['mono', 'Monospace'],
       ], value => typography('setFont', value));
       const densityChoice = el('div', 'theme-editor-choice');
       densityChoice.append(el('span', 'theme-editor-choice-label', 'Density'), density.group);

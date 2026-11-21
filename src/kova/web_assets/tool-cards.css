@@ -47,7 +47,7 @@
 
 /* The status mark: quiet while running, a tick when done, an alert when failed. */
 .tool-card-mark { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
-.tool-card-mark.running { background: var(--accent-default); animation: tool-card-breathe 1.2s var(--motion-ease-standard) infinite; }
+.tool-card-mark.running { background: var(--step-tool); animation: tool-card-breathe 1.2s var(--motion-ease-standard) infinite; }
 .tool-card-mark.ok { color: var(--status-success); }
 .tool-card-mark.failed { color: var(--status-danger); }
 .tool-card-mark.unknown { background: var(--fg-faint); }
@@ -59,6 +59,7 @@
   padding-inline-start: var(--space-3);
   border-inline-start: var(--space-0-5) solid var(--border-subtle);
 }
+.tool-card-rows > * { min-width: 0; }
 .tool-card-rows[hidden], .tool-card-body[hidden] { display: none; }
 
 .tool-card-body { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-3) var(--space-5); }

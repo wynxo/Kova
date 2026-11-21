@@ -8,8 +8,8 @@
   display: flex;
   flex-direction: column;
   padding: 0;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
+  border: 0;
+  background: var(--bg-base);
   color: var(--fg-default);
   overflow: hidden;
   animation: settings-in var(--motion-slow) var(--motion-ease-standard);
@@ -22,19 +22,19 @@ body.settings-open { overflow: hidden; }
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-6);
+  padding: var(--space-6) var(--space-6) var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
 }
 .settings-head h2 {
   margin: 0;
-  font-size: var(--type-size-title);
-  font-weight: 620;
-  letter-spacing: -.015em;
+  font-size: var(--type-size-heading);
+  font-weight: 680;
+  letter-spacing: -.02em;
 }
 .settings-lede {
   margin: var(--space-1) 0 0;
   color: var(--fg-muted);
-  font-size: var(--type-size-label);
+  font-size: var(--type-size-body);
   line-height: var(--type-leading-body);
 }
 
@@ -49,14 +49,14 @@ body.settings-open { overflow: hidden; }
   flex-direction: column;
   gap: var(--space-3);
   min-height: 0;
-  padding: var(--space-4);
+  padding: var(--space-5) var(--space-4);
   border-right: 1px solid var(--border-subtle);
   background: var(--bg-base);
   overflow-y: auto;
 }
 .settings-content {
   min-height: 0;
-  padding: var(--space-5) var(--space-6) var(--space-6);
+  padding: var(--space-6) var(--space-8) var(--space-8);
   overflow-y: auto;
 }
 
@@ -105,7 +105,8 @@ body.settings-open { overflow: hidden; }
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  position: relative;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg-muted);
   font: inherit;
@@ -116,11 +117,15 @@ body.settings-open { overflow: hidden; }
               color var(--motion-fast) var(--motion-ease-standard);
 }
 .settings-tab:hover { background: var(--bg-raised); color: var(--fg-default); }
-.settings-tab[aria-selected="true"] { background:var(--bg-raised); color:var(--fg-default); }
+.settings-tab[aria-selected="true"] { background:var(--bg-raised); color:var(--fg-default); font-weight:560; }
+.settings-tab[aria-selected="true"]::before {
+  content:""; position:absolute; left:0; top:var(--space-2); bottom:var(--space-2);
+  width:var(--space-0-5); border-radius:var(--radius-pill); background:var(--fg-default);
+}
 .settings-tab .icon { flex: none; }
 
 .settings-section { display: grid; gap: var(--space-2); max-width: 680px; }
-.settings-section-title { margin: 0 0 var(--space-2); font-size: var(--type-size-title); font-weight: 600; }
+.settings-section-title { margin: 0 0 var(--space-3); font-size: var(--type-size-heading); font-weight: 680; letter-spacing: -.02em; }
 /* A plain list: hairlines between rows, no cards. */
 .settings-rows { display: grid; }
 .settings-row {
