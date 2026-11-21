@@ -82,6 +82,10 @@ CATALOG = (
     ProviderSpec('groq', 'Groq', 'https://api.groq.com/openai/v1', 'https://console.groq.com/keys'),
     ProviderSpec('mistral', 'Mistral', 'https://api.mistral.ai/v1', 'https://console.mistral.ai/api-keys'),
     ProviderSpec('xai', 'xAI', 'https://api.x.ai/v1', 'https://console.x.ai'),
+    # OpenCode serves every model behind one OpenAI-compatible gateway; the two
+    # plans use different base URLs, so each is its own catalog entry.
+    ProviderSpec('opencode', 'OpenCode', 'https://opencode.ai/inference/openai/v1', 'https://opencode.ai/console'),
+    ProviderSpec('opencode-go', 'OpenCode Go', 'https://opencode.ai/inference/go/openai/v1', 'https://opencode.ai/console'),
     ProviderSpec('chatgpt', 'ChatGPT subscription', 'https://api.openai.com/v1', adapter='responses', auth_style='oauth',
                  capabilities=frozenset({'browser_login', 'reasoning'})),
     ProviderSpec('codex', 'Installed Codex login', 'https://chatgpt.com/backend-api/codex', adapter='responses', auth_style='harness',

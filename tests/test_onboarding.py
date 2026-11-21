@@ -32,7 +32,7 @@ def catalog(request):
 
 def test_setup_never_scans_or_chats(home, monkeypatch):
     monkeypatch.setattr(onboarding.server_finder, 'discover', lambda **kw: pytest.fail('network scan'))
-    feed(monkeypatch, '11', 'homelab:8080', '', '1,2', '2')
+    feed(monkeypatch, '13', 'homelab:8080', '', '1,2', '2')
     onboarding.run_setup(load_config(), transport=httpx.MockTransport(catalog))
     cfg = load_config()
     assert len(cfg.models) == 2
@@ -131,3 +131,4 @@ def test_setup_yes_skips_persona_even_in_a_terminal(home, monkeypatch):
     onboarding.run_setup(load_config(), url='http://homelab:8080', yes=True,
                          transport=httpx.MockTransport(catalog))
     assert load_config().active_model().model == 'alpha'
+
