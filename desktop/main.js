@@ -143,7 +143,8 @@ function saveBounds() {
 // the window where the reader put it, once it has stopped moving for a moment.
 function scheduleBounds() { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 400); }
 async function create() {
-  ({home, origin, config} = settings());
+  const configSettings = settings();
+  ({home, origin} = configSettings);
   fs.mkdirSync(home, {recursive: true, mode: 0o700});
   // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
   app.setPath('userData', path.join(home, 'desktop'));
@@ -224,7 +225,7 @@ async function create() {
   // The global shortcut is a convenience; a platform that refuses it (Wayland
   // often does) still has the tray's Quick ask item and the composer focus key.
   try {
-    const accelerator = quickAsk(config);
+    const accelerator = quickAsk(configSettings.config);
     if (!globalShortcut.register(accelerator, toggleQuick)) {
       console.error(`Could not register the Quick ask shortcut ${accelerator}; another app may own it.`);
     }

@@ -199,7 +199,8 @@ const KovaToolCards = (() => {
       // A turn that ends folds its tools away, unless the reader opened them.
       if (!touched) show(false);
     }
-    return {node: card, add, result, finish};
+    function hide() { card.hidden = true; }
+    return {node: card, add, result, finish, hide};
   }
   return {create, duration};
 })();

@@ -25,6 +25,10 @@
    go on. The server tells the model the user stopped it. */
 const KovaAgentTree = (() => {
   const STATUS = {queued: 'Waiting', running: 'Running', ok: 'Done', failed: 'Failed', interrupted: 'Interrupted', stopped: 'Stopped'};
+  const ACTION = {
+    queued: 'Waiting to start', running: 'Running tool', ok: 'Result received',
+    failed: 'Tool failed', stopped: 'Stopped by user', interrupted: 'Turn interrupted',
+  };
   let nextId = 0;
   function node(tag, cls, text) {
     const result = document.createElement(tag);
@@ -103,7 +107,7 @@ const KovaAgentTree = (() => {
     return entry;
   }
 
-  function create({label = titleCase, hint = () => '', model = '', now = () => performance.now(), stopTask = null,
+  function create({label = titleCase, hint = () => '', model = '', delegated = false, now = () => performance.now(), stopTask = null,
                    every = (fn, ms) => setInterval(fn, ms), stop = id => clearInterval(id)} = {}) {
     const uid = `agent-tree-${++nextId}`;
     const tree = node('div', 'agent-tree');
@@ -122,15 +126,16 @@ const KovaAgentTree = (() => {
     function rootLabel() {
       const count = `${total} tool${total === 1 ? '' : 's'}`;
       const verb = finished || done === total && total ? 'Ran' : 'Running';
-      root.label.textContent = `${verb} ${count} in parallel${failed ? ` · ${failed} failed` : ''}`;
+      root.label.textContent = delegated ? 'Delegated analysis' : `${verb} ${count} in parallel${failed ? ` · ${failed} failed` : ''}`;
     }
     function paintAll() {
       root.paint(now);
       for (const task of tasks.values()) task.paint(now);
     }
     function tick() {
-      paintAll();
       const busy = !finished && (root.state === 'running' || [...tasks.values()].some(t => t.state === 'running'));
+      root.paint(now);
+      for (const task of tasks.values()) if (task.state === 'running') task.paint(now);
       if (!busy && timer != null) { stop(timer); timer = null; }
     }
     function startTimer() { if (timer == null && !finished) timer = every(tick, 1000); }
@@ -139,7 +144,7 @@ const KovaAgentTree = (() => {
     // Roving focus: exactly one tree item is in the tab order.
     function visible() {
       const out = [root];
-      if (!root.children.hidden) for (const task of tasks.values()) out.push(task);
+      if (!root.children.hidden) for (const task of tasks.values()) if (task.parent != null) out.push(task);
       return out;
     }
     function focus(entry) {
@@ -199,6 +204,11 @@ const KovaAgentTree = (() => {
     }
     clickable(root);
 
+    function paintTask(task) {
+      const action = ACTION[task.state];
+      task.hint.textContent = task.argument ? `${action} · ${task.argument}` : action;
+      task.paint(now);
+    }
     function add(event) {
       total += 1;
       const task = item(2, `${uid}-${tasks.size}`);
@@ -208,7 +218,7 @@ const KovaAgentTree = (() => {
       task.stopButton.setAttribute('aria-label', `Stop ${label(event.name || event.label)}`);
       task.stopButton.addEventListener('click', clickEvent => { clickEvent?.stopPropagation?.(); stopOne(task); });
       task.label.textContent = label(event.name || event.label);
-      task.hint.textContent = hint(event.args);
+      task.argument = hint(event.args);
       task.model.textContent = event.model || model;
       task.state = event.status === 'running' ? 'running' : 'queued';
       if (task.state === 'running') task.start = now();
@@ -219,7 +229,7 @@ const KovaAgentTree = (() => {
       tasks.set(event.id, task);
       root.children.append(task.element);
       if (!root.touched) root.open(true);
-      rootLabel(); task.paint(now); root.paint(now);
+      rootLabel(); paintTask(task); root.paint(now);
       startTimer();
       return task;
     }
@@ -231,6 +241,7 @@ const KovaAgentTree = (() => {
           root.end = now(); root.state = event.ok === false || event.type === 'task_error' ? 'failed' : 'ok';
           done = event.done ?? done; failed = event.failed ?? failed;
           if (event.elapsed_ms != null) root.end = root.start + event.elapsed_ms;
+          tick();
           announce(`${total} parallel tools finished${failed ? `, ${failed} failed` : ''}.`);
         }
         rootLabel(); root.paint(now);
@@ -244,11 +255,16 @@ const KovaAgentTree = (() => {
         if (task.start == null) task.start = now();
         task.end = event.elapsed_ms != null ? task.start + event.elapsed_ms : now();
         task.state = event.stopped ? 'stopped' : event.type === 'task_error' || event.ok === false ? 'failed' : 'ok';
+        const excerpt = event.type === 'task_error' ? event.message : event.summary;
+        if (typeof excerpt === 'string' && excerpt.trim()) {
+          task.summary = excerpt.trim();
+          task.children.append(node('blockquote', 'agent-tree-result', excerpt));
+        }
         if (task.state === 'stopped') announce(`${task.label.textContent} stopped.`);
         else if (task.state === 'failed') announce(`${task.label.textContent} failed.`);
       }
-      task.paint(now);
-      startTimer();
+      paintTask(task);
+      root.hint.textContent = `${task.label.textContent}: ${ACTION[task.state]}`;
     }
     function toolCall(event) {
       tasks.get(event.id)?.card?.add({...event, label: label(event.name), hint: hint(event.args)});
@@ -264,14 +280,54 @@ const KovaAgentTree = (() => {
         if (task.state === 'queued' || task.state === 'running') {
           task.state = 'interrupted';
           if (task.start != null) task.end = now();
+          paintTask(task);
         }
         task.card?.finish();
         if (!task.touched) task.open(false);
       }
       if (root.state === 'running') { root.state = tasks.size && [...tasks.values()].every(t => t.state === 'ok') ? 'ok' : 'interrupted'; root.end = now(); }
       rootLabel(); paintAll();
+      collapse();
       // A finished turn folds its tree away, unless the reader chose otherwise.
       if (!root.touched) root.open(false);
+    }
+
+    // Fold a finished turn: successful calls collapse into one "Done · N" group
+    // that quotes each call's one-line summary. The group opens if the reader
+    // wants the summaries, but a finished turn still folds the whole tree.
+    function collapse() {
+      const ok = [...tasks.values()].filter(t => t.state === 'ok');
+      if (ok.length <= 1) return;
+      for (const task of ok) task.card?.hide?.();
+      const group = node('div', 'agent-tree-node');
+      group.setAttribute('role', 'treeitem');
+      group.setAttribute('aria-level', '2');
+      const row = node('div', 'agent-tree-row');
+      const mark = node('span', 'icon i-check tool-card-mark ok');
+      mark.setAttribute('aria-hidden', 'true');
+      const label = node('span', 'agent-tree-label');
+      label.setAttribute('id', 'agent-tree-done-label');
+      label.textContent = `Done · ${ok.length}`;
+      const hint = node('span', 'agent-tree-hint');
+      hint.textContent = 'Success summary';
+      const chevron = node('span', 'icon i-chevron-right agent-tree-chevron');
+      chevron.setAttribute('aria-hidden', 'true');
+      row.append(mark, label, hint, chevron);
+      const children = node('div', 'agent-tree-children');
+      children.setAttribute('role', 'group');
+      for (const task of ok) {
+        const line = node('div', 'agent-tree-summary');
+        line.textContent = task.summary || '-';
+        children.append(line);
+      }
+      group.append(row, children);
+      group.element.setAttribute('tabindex', '-1');
+      group.element.setAttribute('aria-labelledby', 'agent-tree-done-label');
+      group.open = (open) => { children.hidden = !open; };
+      group.element.onclick = () => group.open(group.children.hidden);
+      children.hidden = true;
+      const first = tasks.keys().next().value;
+      tasks.get(first).element.replaceWith(group);
     }
     root.id = null;
     return {node: tree, add, update, toolCall, toolResult, finish,
@@ -287,7 +343,7 @@ const KovaAgentTree = (() => {
       accept(event) {
         const kind = event?.type;
         if (kind === 'task_start' && event.parent == null) {
-          const tree = create({label, hint, model: event.model || '', now, stopTask});
+          const tree = create({label, hint, model: event.model || '', delegated: event.kind === 'delegated', now, stopTask});
           tree.setId(event.id);
           trees.set(event.id, tree); all.push(tree);
           insert?.(tree.node);
