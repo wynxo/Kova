@@ -130,13 +130,31 @@ def update(ref: str, emit=print) -> None:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
     if (kova_home() / "desktop" / "package.json").is_file():
         # Use the newly installed executable, not modules from the old process.
-        launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova-app.exe" if os.name == "nt" else "kova-app")
+        launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova.exe" if os.name == "nt" else "kova")
         try:
-            subprocess.run([str(launcher), "--prepare"], check=True, env=env)
+            subprocess.run([str(launcher), "app", "--prepare"], check=True, env=env)
         except (OSError, subprocess.CalledProcessError):
             emit("Kova CLI was updated, but desktop preparation failed. Run kova app to retry, or use kova web.")
             return
+    _repair_menu_entry(Path(env["UV_TOOL_BIN_DIR"]))
     emit("✓ Updated Kova. Run: kova")
+
+
+def _repair_menu_entry(bin_dir: Path) -> None:
+    """Point an old Linux app-menu entry at `kova app` (the kova-app command is gone)."""
+    entry = Path.home() / ".local/share/applications/kova.desktop"
+    try:
+        text = entry.read_text()
+    except OSError:
+        return
+    if "kova-app" not in text:
+        return
+    lines = [f'Exec="{bin_dir / "kova"}" app' if line.startswith("Exec=") and "kova-app" in line else line
+             for line in text.splitlines()]
+    try:
+        entry.write_text("\n".join(lines) + "\n")
+    except OSError:
+        pass
 
 
 def verified_server(pid: int, home: Path):

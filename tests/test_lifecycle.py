@@ -249,5 +249,28 @@ def test_update_refreshes_existing_desktop_with_new_launcher(lifecycle, monkeypa
     assert result.exit_code == 0, result.output
     install, prepare = run.call_args_list
     assert install.args[0][:3] == ["/test/uv", "tool", "install"]
-    launcher = "kova-app.exe" if lifecycle.os.name == "nt" else "kova-app"
-    assert prepare.args[0] == [str(lifecycle.Path(prepare.kwargs["env"]["UV_TOOL_BIN_DIR"]) / launcher), "--prepare"]
+    launcher = "kova.exe" if lifecycle.os.name == "nt" else "kova"
+    assert prepare.args[0] == [str(lifecycle.Path(prepare.kwargs["env"]["UV_TOOL_BIN_DIR"]) / launcher),
+                               "app", "--prepare"]
+
+
+def test_update_repairs_old_menu_entry_that_called_kova_app(lifecycle, monkeypatch):
+    entry = lifecycle.Path.home() / ".local/share/applications/kova.desktop"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nName=Kova\nExec=/old/bin/kova-app\nType=Application\n")
+    monkeypatch.setattr(lifecycle.subprocess, "run", Mock())
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    text = entry.read_text()
+    assert "kova-app" not in text
+    assert any(line.startswith("Exec=") and line.endswith('kova" app') for line in text.splitlines())
+    assert "Name=Kova" in text
+
+
+def test_kova_app_prepare_refreshes_desktop(monkeypatch):
+    from kova import app as app_module
+    called = []
+    monkeypatch.setattr(app_module, "refresh_desktop", lambda home: called.append(home))
+    result = CliRunner().invoke(app, ["app", "--prepare"])
+    assert result.exit_code == 0, result.output
+    assert len(called) == 1
