@@ -64,6 +64,11 @@ class ChatBody(BaseModel):
     project_id: str | None = None
 
 
+class CreateChatBody(ChatBody):
+    # An immediate turn can require a model; ordinary drafts remain valid without one.
+    first_turn_model: str | None = None
+
+
 class ProjectBody(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     instructions: str = Field(default="", max_length=16_384)
@@ -350,7 +355,8 @@ class _ModelHealth:
 
     def _entry(self) -> ModelEntry | None:
         try:
-            return self._config.active_model()
+            entry = self._config.active_model()
+            return entry if entry.model.strip() else None
         except KeyError:
             return None
 
@@ -851,6 +857,8 @@ def create_app(
         current = load_config(config.home)
         current.persona_name, current.persona_tone, current.persona_configured = identity.name, identity.tone, True
         save_config(current)
+        config.persona_name, config.persona_tone = identity.name, identity.tone
+        config.persona_configured = True
         return {"name": identity.name, "tone": identity.tone, "configured": True}
 
     @api.get("/preferences")
@@ -939,7 +947,14 @@ def create_app(
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
 
     @api.post("/chats")
-    async def create_chat(request: Request, body: ChatBody | None = None) -> dict:
+    async def create_chat(request: Request, body: CreateChatBody | None = None) -> dict:
+        if body and "first_turn_model" in body.model_fields_set:
+            entry = config.model_entry(body.first_turn_model)
+            if entry is None and body.first_turn_model is not None:
+                raise HTTPException(404, f"unknown model '{body.first_turn_model}'")
+            if entry is None or not entry.model.strip():
+                raise HTTPException(422, "No model is set up yet. Run: kova setup")
+            egress.check_url(entry.base_url, config)
         mode = body.mode if body else None
         if mode is not None and mode not in MODES:
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")

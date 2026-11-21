@@ -83,6 +83,7 @@ COMMANDS = {
     "permissions": ("/permissions [mode|rules]", "When Kova asks before acting: manual, auto, full"),
     "web": ("/web [on|off]", "Show web search state; /web on|off toggles it"),
     "model": ("/model [name]", "List models; /model <name> switches"),
+    "provider": ("/provider [name]", "Switch provider and model with a picker (same as /model)"),
     "compare": ("/compare [-m a,b] <text>", "Ask several models the same thing, then keep one answer"),
     "cd": ("/cd <folder>", "Change the folder Kova works in"),
     "memory": ("/memory [list|show|forget]", "Browse what Kova remembers; /memory show <slug>, /memory forget <slug>"),
@@ -674,7 +675,7 @@ class ChatApp:
         """``(value, detail)`` for the argument being typed after ``/name``."""
         if previous:
             return []
-        if name == "model":
+        if name in ("model", "provider"):
             if not self._models:
                 self._load_lists_later()
             return [(entry["name"], "current" if entry["name"] == self.model else entry["model"])
@@ -1518,29 +1519,41 @@ class ChatApp:
 
     def _cmd_model(self, rest: str) -> None:
         if not rest:
-            models = self.client.models_list()
+            models = [entry for entry in self.client.models_list() if entry.get("model")]
             self._models = models
             models = sorted(models, key=lambda m: (m.get("provider_name", ""), m["name"]))
             items = [(entry["name"], entry["model"], entry["name"]) for entry in models]
             if not items:
-                self._done("No models yet. Run kova setup to add one.")
+                self._done("No models yet. Run kova providers add to connect one.")
                 return
             self._choose("Select model", items, self._cmd_model, current=self.model,
-                         subtitle="Used for every chat",
+                         subtitle="Used for this chat and every future one",
                          groups={entry["name"]: entry.get("provider_name", "Custom") for entry in models})
             return
+        from kova import model_picker
+
+        rows = model_picker.choices(self.client.models_list())
+        chosen = model_picker.resolve(rows, rest)
+        if chosen is None:
+            self.renderer.error(f'No model named "{rest}". Type /model to see them.')
+            return
         try:
-            self.client.model_use(rest)
+            self.client.model_use(chosen.name)
         except KovaError as exc:
             if exc.status != 404:
                 raise
             self.renderer.error(f'No model named "{rest}". Type /model to see them.')
             return
-        self.model = rest
+        self.model = chosen.name
         self._refresh_health()
         self._sync_context_window()
         self._refresh_capabilities()  # another model means another provider contract
-        self._done(f"Now using {self.p.bold(rest)}.")
+        self._done(f"Now using {chosen.shown} on {chosen.provider}. "
+                   "This and every new chat use it.")
+
+    def _cmd_provider(self, rest: str) -> None:
+        """``/provider`` is the same picker as ``/model``."""
+        self._cmd_model(rest)
 
     def _cmd_permissions(self, rest: str) -> None:
         if rest.lower() == "rules":

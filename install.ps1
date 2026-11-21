@@ -82,14 +82,14 @@ function Install-Kova {
         # Keep the desktop source and prepare Electron before creating the shortcut.
         $Data = if ($env:KOVA_HOME) { $env:KOVA_HOME } else { Join-Path $env:USERPROFILE '.kova' }
         $DesktopDest = Join-Path $Data 'desktop'
-        $App = Join-Path $Bin 'kova-app.exe'
+        $App = Join-Path $Bin 'kova.exe'
         $ToolPython = Join-Path $env:UV_TOOL_DIR 'kova-ai\Scripts\python.exe'
         $PackagedDesktop = $false
         if ((Test-Path -LiteralPath $App) -and (Test-Path -LiteralPath $ToolPython)) {
             $PackagedDesktop = [bool](& $ToolPython -c 'from kova import app; print(int(hasattr(app, ''refresh_desktop'')))' | Where-Object { $_ -eq '1' })
         }
         if ($PackagedDesktop) {
-            & $App --prepare
+            & $App app --prepare
             if ($LASTEXITCODE -ne 0) { throw 'Preparing the desktop app failed. Run kova app to retry.' }
             $DesktopSource = $DesktopDest
         } else {
