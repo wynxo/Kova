@@ -107,7 +107,7 @@ const KovaAgentTree = (() => {
     return entry;
   }
 
-  function create({label = titleCase, hint = () => '', model = '', now = () => performance.now(), stopTask = null,
+  function create({label = titleCase, hint = () => '', model = '', delegated = false, now = () => performance.now(), stopTask = null,
                    every = (fn, ms) => setInterval(fn, ms), stop = id => clearInterval(id)} = {}) {
     const uid = `agent-tree-${++nextId}`;
     const tree = node('div', 'agent-tree');
@@ -126,7 +126,7 @@ const KovaAgentTree = (() => {
     function rootLabel() {
       const count = `${total} tool${total === 1 ? '' : 's'}`;
       const verb = finished || done === total && total ? 'Ran' : 'Running';
-      root.label.textContent = `${verb} ${count} in parallel${failed ? ` · ${failed} failed` : ''}`;
+      root.label.textContent = delegated ? 'Delegated analysis' : `${verb} ${count} in parallel${failed ? ` · ${failed} failed` : ''}`;
     }
     function paintAll() {
       root.paint(now);
@@ -303,7 +303,7 @@ const KovaAgentTree = (() => {
       accept(event) {
         const kind = event?.type;
         if (kind === 'task_start' && event.parent == null) {
-          const tree = create({label, hint, model: event.model || '', now, stopTask});
+          const tree = create({label, hint, model: event.model || '', delegated: event.kind === 'delegated', now, stopTask});
           tree.setId(event.id);
           trees.set(event.id, tree); all.push(tree);
           insert?.(tree.node);

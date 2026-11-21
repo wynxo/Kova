@@ -1457,6 +1457,7 @@
     status.setAttribute('role', 'status');
     const buttons = [];
     for (const [decision, text] of [['allow', 'Allow once'], ['allow_session', 'Allow for session'], ['allow_always', 'Always allow this'], ['deny', 'Deny']]) {
+      if (event.tool === 'delegate_analysis' && (decision === 'allow_session' || decision === 'allow_always')) continue;
       const button = el('button', decision === 'allow' ? 'btn primary' : decision === 'deny' ? 'btn danger' : 'btn', text); button.type = 'button';
       button.onclick = () => safe(async () => {
         buttons.forEach(b => { b.disabled = true; }); input.disabled = true;

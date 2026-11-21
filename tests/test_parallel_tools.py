@@ -400,3 +400,35 @@ def test_the_task_stop_route_and_client(tmp_path, monkeypatch):
         client = KovaClient('http://127.0.0.1:7700', token, http=http)
         assert client.stop_task(chat, 'call_0') is True
         assert client.stop_task(chat, 'call_9') is False
+
+
+@pytest.mark.parametrize("decision", ["allow", "deny"])
+async def test_child_analysis_requires_approval_and_has_no_tools_or_history(setup, decision):
+    cfg, store, memory, tools, chat_id = setup
+    task = "Summarize this tradeoff: speed versus clarity."
+    scripts = [calls(("delegate_analysis", {"task": task}))]
+    if decision == "allow":
+        scripts.append(text("Favor clarity for maintenance."))
+    fake = FakeModel([*scripts, text("Done")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    agent.approvals.rules.append(Rule("allow", "delegate_analysis"))
+    events = []
+    async for event in agent.run_turn(chat_id, "Delegate some analysis; private parent context."):
+        events.append(event)
+        if event["type"] == "approval":
+            assert len(fake.requests) == 1
+            assert task in event["summary"]
+            agent.approvals.answer(chat_id, event["id"], decision)
+    assert any(event["type"] == "approval" for event in events)
+    assert len(fake.requests) == (3 if decision == "allow" else 2)
+    children = [event for event in events if event["type"] == "task_start"]
+    if decision == "deny":
+        assert not children
+    else:
+        assert children[0]["kind"] == "delegated"
+        request = fake.requests[1]
+        assert not request.get("tools")
+        assert request["messages"][-1]["content"] == task
+        assert "private parent context" not in json.dumps(request)
+        assert any(event.get("summary") == "Favor clarity for maintenance." for event in events)
+    assert events[-1]["type"] == "done"

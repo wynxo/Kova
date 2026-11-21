@@ -293,12 +293,15 @@ calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
 action, and a quoted excerpt of each finished tool's output or error when its row
 is expanded. Reloaded transcripts still show ordinary tool cards.
 
-These tasks are calls in the parent model step, not delegated agents. Scheduled
-prompt jobs run separate top-level turns; compare generates separate candidate
-replies, and MCP exposes external tools. None provides a supported child-agent
-lifecycle tied to a parent turn. Real delegation in #192 still needs a child
-runtime with its own context, model and tool permissions, explicit lifecycle
-and cancellation, and a way to return a final result to the parent.
+Parallel reads are calls in the parent model step, not child model tasks.
+In work mode, `delegate_analysis` can instead make one separate completion
+to the current configured model after the user approves the destination and
+exact task text. It sends only that task and a fixed system instruction,
+with no history or tools. The child is time- and size-bounded and reuses the
+individual stop control, result, and live task tree (`kind: "delegated"` on
+the root). It cannot spawn more work. Multiple children, independent model
+selection, child tools with scoped permissions, and replay of the live tree
+are not part of this slice.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`
