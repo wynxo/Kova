@@ -64,6 +64,68 @@ body:has(> .theme-editor) {
   display: grid;
   gap: var(--space-1);
 }
+.theme-editor-modes {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-0-5);
+  border: var(--space-0-5) solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-base);
+}
+.theme-editor-mode {
+  flex: 1;
+  min-block-size: var(--space-8);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-pill);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  font-weight: 500;
+}
+.theme-editor-mode:hover:not([aria-selected="true"]) {
+  color: var(--fg-default);
+}
+.theme-editor-mode[aria-selected="true"] {
+  background: var(--bg-raised);
+  color: var(--fg-default);
+}
+.theme-editor-simple {
+  display: grid;
+  gap: var(--space-3);
+}
+.theme-editor-choice {
+  display: grid;
+  gap: var(--space-1);
+}
+.theme-editor-choice-label {
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
+.theme-editor-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.theme-editor-segment {
+  min-block-size: var(--space-8);
+  padding-inline: var(--space-3);
+  border: var(--space-0-5) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+}
+.theme-editor-segment:hover:not([aria-checked="true"]) {
+  color: var(--fg-default);
+}
+.theme-editor-segment[aria-checked="true"] {
+  border-color: var(--accent-default);
+  color: var(--accent-default);
+}
+.theme-editor-colour.is-invalid > span {
+  color: var(--status-danger);
+}
+.theme-editor-colour.is-invalid input {
+  border-color: var(--status-danger);
+}
 .theme-editor-group {
   border-top: var(--space-0-5) solid var(--border-subtle);
   padding-block: var(--space-2);
@@ -109,6 +171,15 @@ body:has(> .theme-editor) {
 .theme-editor input[type="color"] {
   padding: var(--space-0-5);
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.theme-editor input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.theme-editor input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: var(--radius-sm);
 }
 .theme-editor-share {
   min-inline-size: 16rem;

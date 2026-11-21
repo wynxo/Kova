@@ -119,10 +119,12 @@ def test_an_older_preferences_file_gains_the_new_defaults(tmp_path):
 def test_typography_and_density_preferences_are_shared(http):
     """Text size, density and font (#179) start at today's look."""
     served = http.get("/preferences").json()
-    assert (served["text_size"], served["density"], served["font"]) == ("default", "default", "inter")
+    assert (served["text_size"], served["density"], served["radius"], served["font"]) == \
+        ("default", "default", "default", "inter")
 
     for name, values in (("text_size", ("small", "large", "default")),
                          ("density", ("compact", "comfortable", "default")),
+                         ("radius", ("sharp", "round", "default")),
                          ("font", ("system", "mono", "inter"))):
         for value in values:
             saved = http.put("/preferences", json={name: value})
@@ -188,6 +190,7 @@ def test_avatars_preference_is_shared(http):
     ({"reasoning": "open"}, "must be one of"),
     ({"text_size": "huge"}, "must be one of"),
     ({"density": "cozy"}, "must be one of"),
+    ({"radius": "squircle"}, "must be one of"),
     ({"font": "comic"}, "must be one of"),
     ({"motion": "none"}, "must be one of"),
     ({"thinking_animation": "spin"}, "must be one of"),

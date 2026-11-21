@@ -294,14 +294,15 @@ action, and a quoted excerpt of each finished tool's output or error when its ro
 is expanded. Reloaded transcripts still show ordinary tool cards.
 
 Parallel reads are calls in the parent model step, not child model tasks.
-In work mode, `delegate_analysis` can instead make one separate completion
-to the current configured model after the user approves the destination and
-exact task text. It sends only that task and a fixed system instruction,
-with no history or tools. The child is time- and size-bounded and reuses the
-individual stop control, result, and live task tree (`kind: "delegated"` on
-the root). It cannot spawn more work. Multiple children, independent model
-selection, child tools with scoped permissions, and replay of the live tree
-are not part of this slice.
+In work mode, consecutive independent `delegate_analysis` calls can run
+concurrently against the current configured model. One approval lists the exact
+tasks and the shared model destination; declining sends none of that batch.
+There are at most four attempts per turn, including denials. Each child sends
+only its approved task and a fixed system instruction, with no history or
+tools. Children are time- and size-bounded and reuse individual Stop, ordered
+tool results, and the live task tree (`kind: "delegated"` on the root).
+Separate model selection, scoped child tools and nested tool steps, child
+usage accounting, and replay of the live tree are not part of this slice.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`

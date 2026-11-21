@@ -8,6 +8,7 @@ import json
 import unicodedata
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -486,10 +487,14 @@ class Agent:
             # Bind per-chat state, never mutate the server-wide registry.
             replacements = [*files.tools(), *core.tools(cwd, sandboxed=confined)]
             tools.update({tool.name: tool for tool in replacements if tool.name in tools})
+        tools.pop(delegation.NAME, None)  # Reserved for the tool-free child runner.
         if mode == 'work' and capabilities is None and entry is not None and entry.model:
+            child_entry = deepcopy(entry)
+
             async def delegate(args):
-                child = ModelClient(entry, transport=self.transport,
-                                    privacy=self.config.privacy_secrets, config=self.config)
+                child = ModelClient(deepcopy(child_entry), transport=self.transport,
+                                    privacy=self.config.privacy_secrets, config=self.config,
+                                    fixed_destination=True)
                 return await delegation.analyze(child, args['task'])
 
             tools[delegation.NAME] = Tool(
@@ -497,9 +502,10 @@ class Agent:
                 f"Ask the configured model ({entry.name}) to analyze a standalone text task. "
                 "Use only for ordinary work explicitly requested by the user. "
                 "The exact task text is shown for approval and sent to that model. "
-                "No tools or chat history are passed. At most one attempt per turn.",
+                "No tools or chat history are passed. Consecutive independent calls can run together. "
+                f"At most {delegation.ATTEMPT_LIMIT} attempts per turn, including denials.",
                 delegation.PARAMETERS, delegate)
-        delegated = False
+        delegate_attempts = 0
         tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
         # A title comes from the user's words, or, for an attachment-only
@@ -741,25 +747,82 @@ class Agent:
                 # Consecutive read-only calls that need no answer run at once (#192).
                 ready = [parallel_args(call) for call in calls]
                 groups = parallel.runs([args is not None for args in ready])
+                # Delegation is a separate run: never move it across other tools.
+                delegate_groups = {}
+                for index in range(len(calls) - 1, -1, -1):
+                    if delegation.NAME in tools and calls[index]['name'] == delegation.NAME:
+                        delegate_groups[index] = delegate_groups.get(index + 1, index + 1)
                 grouped: dict[int, tuple[str, bool]] = {}
+                delegated_started: set[int] = set()
                 for index, call in enumerate(calls):
                     name = call['name']
-                    if index in groups:
+                    is_delegate = index in delegate_groups and index not in grouped
+                    batch = []
+                    if is_delegate:
+                        for i in range(index, delegate_groups[index]):
+                            child_call = calls[i]
+                            try:
+                                args = json.loads(child_call['arguments'])
+                                validate(delegation.PARAMETERS, args)
+                                if not args['task'].strip():
+                                    raise ToolError('Supply a nonempty task.')
+                                if delegate_attempts >= delegation.ATTEMPT_LIMIT:
+                                    raise ToolError(f'At most {delegation.ATTEMPT_LIMIT} child analyses may be attempted per turn.')
+                                delegate_attempts += 1
+                                policy, reason = self.approvals.policy(chat_id, name, args, cwd)
+                                if policy == 'deny':
+                                    raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
+                            except (ToolError, ValueError, TypeError) as exc:
+                                grouped[i] = (f'Error: {exc}', False)
+                            else:
+                                ready[i] = args
+                                batch.append((i, child_call, tools[name], args))
+                    elif index in groups:
                         batch = [(i, calls[i], tools[calls[i]['name']], ready[i])
                                  for i in range(index, groups[index])]
+                    if batch:
                         try:
+                            if is_delegate:
+                                destination = delegation.destination(child_entry)
+                                tasks = [args['task'] for _, _, _, args in batch]
+                                binding_args = {'destination': destination, 'tasks': tasks}
+                                listing = '\n'.join(f'{i}. {json.dumps(task, ensure_ascii=False)}'
+                                                    for i, task in enumerate(tasks, 1))
+                                subject = f'all {len(tasks)} tasks' if len(tasks) > 1 else 'this task'
+                                approval = self.approvals.create(
+                                    chat_id, name, binding_args, cwd=cwd,
+                                    summary=f'Send {subject} to {destination} for child analysis:\n{listing}')
+                                binding = approval['binding']
+                                try:
+                                    yield approval
+                                    decision = await self.approvals.wait(approval['id'])
+                                finally:
+                                    pending = self.approvals.pending.pop(approval['id'], None)
+                                    if pending and not pending.future.done():
+                                        pending.future.cancel()
+                                yield {'type': 'approval_resolved', 'id': approval['id'], **decision}
+                                if action_key(name, binding_args, cwd) != binding:
+                                    raise ToolError('Action changed after approval; request fresh authorization.')
+                                if decision['decision'] == 'deny':
+                                    raise ToolError('Action denied. Do not retry without new authorization.' +
+                                                    (f" User guidance: {decision['message']}" if decision.get('message') else ''))
+                                delegated_started.update(i for i, _, _, _ in batch)
                             controls = self.task_controls.setdefault(chat_id, {})
-                            async for event in parallel.run_group(batch, entry.name, grouped,
-                                                                  controls=controls):
-                                yield event
+                            async with aclosing(parallel.run_group(batch, entry.name, grouped,
+                                                                  controls=controls, delegated=is_delegate)) as events:
+                                async for event in events:
+                                    yield event
+                        except ToolError as exc:
+                            for i, _, _, _ in batch:
+                                grouped[i] = (f'Error: {exc}', False)
                         except asyncio.CancelledError:
-                            for _, batched, _, _ in batch:
+                            end = delegate_groups[index] if is_delegate else groups[index]
+                            for batched in calls[index:end]:
                                 self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
                             raise
                         finally:
                             if not self.task_controls.get(chat_id):
                                 self.task_controls.pop(chat_id, None)
-                    delegated_started = False
                     ran = index in grouped
                     if ran:
                         args = ready[index]
@@ -781,14 +844,8 @@ class Agent:
                             try:
                                 if not isinstance(args, dict):
                                     raise ToolError('arguments must be an object')
-                                if name in CORE_TOOLS or name == delegation.NAME:
+                                if name in CORE_TOOLS:
                                     validate(tools[name].parameters, args)
-                                if name == delegation.NAME:
-                                    if delegated:
-                                        raise ToolError('Only one child analysis may be attempted per turn.')
-                                    if not args['task'].strip():
-                                        raise ToolError('Supply a nonempty task.')
-                                    delegated = True
                                 if name == 'ask_user':
                                     question = self.approvals.create(chat_id, name, args, cwd=cwd,
                                                                      authority=capabilities)
@@ -818,14 +875,12 @@ class Agent:
                                 policy, reason = self.approvals.policy(chat_id, name, args, cwd)
                                 if policy == 'deny':
                                     raise ToolError('Action denied by permission rule. ' + (reason or 'Do not retry.'))
-                                if name == delegation.NAME or policy == 'ask' or (policy != 'allow' and needs_approval(
+                                if policy == 'ask' or (policy != 'allow' and needs_approval(
                                         name, args, permission, cwd, self.config.files_path,
                                         False, sandboxed=confined, external=tools[name].external)):
                                     approval = self.approvals.create(chat_id, name, args, cwd=cwd,
                                                                      needs=needs(name, tools[name], args),
-                                                                     authority=capabilities,
-                                                                     summary=(f"Send to {entry.name} for child analysis:\n{args['task']}"
-                                                                              if name == delegation.NAME else None))
+                                                                     authority=capabilities)
                                     approved_binding = approval["binding"]
                                     try:
                                         yield approval
@@ -846,22 +901,7 @@ class Agent:
                                     if tracker is not None:
                                         # Remember the file as it is now, before the write lands.
                                         await asyncio.to_thread(tracker.note, prepared[0])
-                                if name == delegation.NAME:
-                                    controls = self.task_controls.setdefault(chat_id, {})
-                                    try:
-                                        async with aclosing(parallel.run_group(
-                                            [(index, call, tools[name], args)], entry.name, grouped,
-                                            controls=controls, delegated=True,
-                                        )) as events:
-                                            delegated_started = True
-                                            async for event in events:
-                                                yield event
-                                    finally:
-                                        if not controls:
-                                            self.task_controls.pop(chat_id, None)
-                                    result, ok = grouped.pop(index)
-                                else:
-                                    result = await parallel.call_tool(tools[name], args)
+                                result = await parallel.call_tool(tools[name], args)
                                 if name == 'update_plan':
                                     items = args['items']
                                     self.store.update_chat(chat_id, plan=items)
@@ -873,7 +913,7 @@ class Agent:
                                 raise
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
-                    if name == delegation.NAME and not delegated_started:
+                    if name == delegation.NAME and index not in delegated_started:
                         yield {'type': 'tool_call', 'id': call['id'], 'name': name, 'args': args}
                     result = str(result)
                     full_output = result

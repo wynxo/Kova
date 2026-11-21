@@ -289,11 +289,29 @@ colour nearest to the theme's.
 
 In **Settings > General > Theme**, choose **Customize…** to start from the current
 palette, duplicate another installed theme, or **Import** a theme JSON file (up
-to 32 KiB). Edit a swatch or its hex value to preview the change on the app.
-Kova checks contrast as you edit and lists any failing token pairs. **Save** is
-available once the checks pass; it installs and selects the new theme without
-overwriting any existing theme ID. **Cancel** restores the previous appearance.
-**Export** downloads the validated draft as JSON without installing it.
+to 32 KiB). The editor opens in **Simple** mode:
+
+- **Accent** picks one colour and derives hover, pressed and the text drawn on
+  it, so the whole accent role stays consistent.
+- **Background tone** tints the background, surface and raised roles neutral,
+  warm or cool, using the theme's own status colours for the tint.
+- **Text contrast** softens or strengthens the text roles against the
+  background. Leaving it at Default keeps the source theme's values exactly.
+- **Corners**, **Density** and **Font** are appearance settings, not theme
+  tokens. They are shared with every paired device through the preferences
+  document and are never written into the theme file.
+
+Switch to **Advanced** for every semantic colour role, grouped as backgrounds,
+text, borders, accent, status and code, plus the **Background** layer (none,
+gradient, noise or image). Both modes edit the same draft, preview changes on
+the real app as you go, and mark any colour row named by a failing WCAG pair.
+**Save** is available once the checks pass; it installs and selects the new
+theme without overwriting any existing theme ID. **Reset to base** returns
+every colour and any background to the theme the draft started from, leaving
+its name and ID alone. **Cancel** restores the previous appearance. **Export**
+downloads the validated draft as JSON without installing it, and **Copy share
+string** produces a short `kova-theme:` string you can paste on another device
+with **Import string**.
 
 To edit by hand, start from an example in `design/themes/`: copy one into
 `~/.kova/themes/`, change only semantic tokens, and re-run `kova themes check`

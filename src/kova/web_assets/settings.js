@@ -14,7 +14,7 @@
   const SECTIONS = [
     {
       id: 'general', label: 'General', icon: 'settings',
-      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density font typography motion animation thinking indicator loading',
+      keywords: 'appearance theme light dark system sounds startup sign out keyboard reasoning text size density radius corners font typography motion animation thinking indicator loading',
       items: [
         {title: 'Theme', help: 'Follow this device, choose light or dark, or use a theme file you installed.',
          keywords: 'appearance colour color light dark mode system auto device installed custom theme file customize import export browse gallery',
@@ -28,6 +28,9 @@
         {title: 'Density', help: 'Tighten or open the space around messages, sidebar rows and the message box.',
          keywords: 'density spacing compact comfortable padding layout tight roomy air',
          control: 'density'},
+        {title: 'Corners', help: 'Keep controls and panels sharp, as shipped, or rounder.',
+         keywords: 'corners radius round sharp shape square soft',
+         control: 'radius'},
         {title: 'Font', help: 'Keep the bundled Inter, follow this device, or set the conversation in a monospace face.',
          keywords: 'font typeface inter system monospace mono code readable',
          control: 'font'},
@@ -595,6 +598,10 @@
      items: [['compact', 'Compact', 'Tighter gaps, for more on screen'],
              ['default', 'Default', 'The shipped spacing'],
              ['comfortable', 'Comfortable', 'More air between rows and messages']]},
+    {name: 'radius', label: 'Corners', read: 'radius', write: 'setRadius', fallback: 'default',
+     items: [['sharp', 'Sharp', 'Square controls and panels'],
+             ['default', 'Default', 'The shipped corner scale'],
+             ['round', 'Round', 'Softer controls and panels']]},
     {name: 'font', label: 'Font', read: 'font', write: 'setFont', fallback: 'inter',
      items: [['inter', 'Inter', 'The bundled typeface'],
              ['system', 'System', "This device's interface font"],
