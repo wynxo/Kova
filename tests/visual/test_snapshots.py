@@ -415,6 +415,7 @@ def test_slow_blur_fallback_uses_solid_theme_panels(chromium, kova):
             "motion": "full",
         })
         page = context.new_page()
+        page.route("**/app/assets/blur.js", lambda route: route.fulfill(body=""))
         with page.expect_response(kova.base_url + "/events") as events:
             assert page.goto(f"{kova.base_url}/app#ticket={kova.app_ticket()}").ok
         assert events.value.ok
