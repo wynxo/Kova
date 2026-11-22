@@ -174,6 +174,8 @@ def open_in_browser() -> int:
 
         if not webbrowser.open(login_url()):
             raise KovaError(None, "No browser could be opened. Check your default browser and run kova web again.")
+        # The ticket fragment is a one-use secret: say where we went without it.
+        print(f"Kova: opened {client.base_url}/app in your browser.", flush=True)
     except KovaError as exc:
         message = ("The running server needs a restart for the web UI. Run kova stop, then kova web."
                    if exc.status == 404 else str(exc))

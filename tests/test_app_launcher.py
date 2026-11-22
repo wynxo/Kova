@@ -63,6 +63,17 @@ def test_web_launcher_uses_one_time_fragment_and_closes_client(browser):
     assert browser == ['http://127.0.0.1:7700/app#ticket=first', 'closed']
 
 
+def test_web_launcher_says_what_it_opened(browser, capsys):
+    from kova import app as launcher
+
+    with pytest.raises(SystemExit) as exc:
+        launcher.web_main([])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "Kova: opened http://127.0.0.1:7700/app in your browser." in output
+    assert "ticket=" not in output  # the one-use ticket never goes to the terminal
+
+
 def test_browser_flag_keeps_working_as_the_web_alias(browser):
     from kova import app as launcher
 
