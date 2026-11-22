@@ -30,7 +30,7 @@ MAX_VOICE_SECONDS = 60
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop',
+    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop', 'updates',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -47,6 +47,7 @@ CONFIG_SECTION_KEYS = {
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
     #: Desktop shell options read by the Electron app, not the server.
     'desktop': frozenset({'quick_ask', 'title_bar'}),
+    'updates': frozenset({'hint'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
@@ -206,6 +207,7 @@ class Config:
     memory_path: Path
     files_path: Path
     port: int = 7700
+    update_hint: bool = True
     compact_threshold: float = 0.75
     memory_write_subdir: str | None = None
     memory_budget: int = DEFAULT_MEMORY_BUDGET
@@ -301,13 +303,13 @@ def _default(home: Path) -> Config:
                   memory_path=home / 'memory', files_path=Path.home() / 'Kova Files')
 
 
-def load_config(home: Path | None = None) -> Config:
+def load_config(home: Path | None = None, *, read_only: bool = False) -> Config:
     home = Path(home) if home else kova_home()
-    home.mkdir(parents=True, exist_ok=True)
     path = home / 'config.toml'
     if not path.exists():
         cfg = _default(home)
-        save_config(cfg)
+        if not read_only:
+            save_config(cfg)
         return cfg
     data = tomllib.loads(path.read_text())
     _report_unknown_config_keys(path, data)
@@ -325,7 +327,8 @@ def load_config(home: Path | None = None) -> Config:
     privacy = data.get('privacy')
     privacy_secrets = normalize_mode(
         privacy.get('secrets') if isinstance(privacy, Mapping) else privacy)
-    voice = data.get('voice', {}) if isinstance(data.get('voice'), Mapping) else {}
+    voice = data.get('voice') if isinstance(data.get('voice'), Mapping) else {}
+    updates = data.get('updates') if isinstance(data.get('updates'), Mapping) else {}
     cfg = Config(home=home, models=models, providers=providers,
                  active=data.get('active', models[0].name if models else ''),
                  memory_path=Path(mem_path).expanduser(),
@@ -340,6 +343,7 @@ def load_config(home: Path | None = None) -> Config:
                  memory_consolidate_max_loss=float(mem.get('consolidate_max_loss', 0.25)),
                  files_path=Path(data.get('files_path', str(Path.home() / 'Kova Files'))).expanduser(),
                  port=int(data.get('port', 7700)),
+                 update_hint=updates.get('hint', True) is not False,
                  compact_threshold=float(data.get('compact_threshold', 0.75)),
                  oauth_host_id=data.get('oauth_host_id', 'urn:uuid:' + str(uuid.uuid4())),
                  tui_theme=data.get('tui', {}).get('theme', 'dark'),
@@ -365,7 +369,8 @@ def load_config(home: Path | None = None) -> Config:
     cfg._extra = {k: v for k, v in data.items() if k not in TOP_LEVEL_CONFIG_KEYS}
     cfg.bind_providers()
     # Tighten legacy credential files too, not only new writes.
-    path.chmod(0o600)
+    if not read_only:
+        path.chmod(0o600)
     return cfg
 
 
@@ -545,6 +550,8 @@ def save_config(cfg: Config) -> None:
     doc['active'] = cfg.active
     doc['port'] = cfg.port
     doc['compact_threshold'] = cfg.compact_threshold
+    if not cfg.update_hint or 'updates' in doc:
+        _put(_section(doc, 'updates'), 'hint', cfg.update_hint)
     doc['files_path'] = str(cfg.files_path)
     memory = _section(doc, 'memory')
     _put(memory, 'path', str(cfg.memory_path))

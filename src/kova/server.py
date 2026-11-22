@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files, project_pins
+from kova import __version__, build, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files, project_pins
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
@@ -326,6 +326,7 @@ def _model_dict(entry: ModelEntry) -> dict:
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
+INSTALLED_BUILD_POLL_SECONDS = 15
 EVENTS_KEEPALIVE = 15.0  # seconds between /events pings; the web UI reconnects after 3 missed
 HEALTH_TTL = 15.0  # seconds a cached model reachability result stays fresh
 
@@ -526,6 +527,15 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 pass  # cleanup must never stop the server
 
+    async def watch_installed_build() -> None:
+        while True:
+            await asyncio.sleep(INSTALLED_BUILD_POLL_SECONDS)
+            with suppress(OSError, ValueError):
+                installed = await asyncio.to_thread(build.tool_build)
+                if installed and installed.fingerprint:
+                    app.state.restart_available = installed.fingerprint != app.state.build.fingerprint
+
+    update_watch = asyncio.create_task(watch_installed_build()) if build.managed() and app.state.build.fingerprint else None
     cleanup = asyncio.create_task(sweep_attachments())
     from kova.managed_engine import manager
     engine = manager(config)
@@ -542,6 +552,10 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
         reminders.cancel()
         cleanup.cancel()
         engine_idle.cancel()
+        if update_watch is not None:
+            update_watch.cancel()
+            with suppress(asyncio.CancelledError):
+                await update_watch
         if mcp_connect is not None:
             mcp_connect.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -593,6 +607,8 @@ def create_app(
         return JSONResponse(status_code=409, content={'detail': str(exc)})
 
     app.state.config = config
+    app.state.build = build.installed()
+    app.state.restart_available = False
     app.state.transport = transport
     app.state.now = now
     app.state.model_health = _ModelHealth(config, transport, now)
@@ -625,13 +641,22 @@ def create_app(
         return app.state.chat_locks.setdefault(chat_id, asyncio.Lock())
 
     @app.get("/health")
-    async def health(probe: bool | None = Query(None)) -> dict:
+    async def health(request: Request, probe: bool | None = Query(None)) -> dict:
         status = await app.state.model_health.get(force=probe is True, wait=probe is not False)
         if config.privacy_local_only:
             with suppress(KeyError):
                 if not egress.is_loopback_url(config.active_model().base_url):
                     status = {**status, 'model_ok': False}
-        return {"version": __version__, "model": config.active, "local_only": config.privacy_local_only, **status}
+        info = {"version": __version__, "build": app.state.build.fingerprint,
+                "restart_available": app.state.restart_available,
+                "model": config.active, "local_only": config.privacy_local_only, **status}
+        # The desktop's restart check needs to know if work would be interrupted;
+        # don't announce that activity on the public health endpoint.
+        with suppress(HTTPException):
+            await _require_bearer(request)
+            info["busy"] = bool(app.state.turns or any(not task.done() for task in app.state.compare_tasks.values())
+                                or app.state.scheduler.busy or app.state.agent.approvals.pending)
+        return info
 
     api = APIRouter(dependencies=[Depends(_require_token)])
     # A paired phone needs these on top of chat (pairing.CAPABILITIES).

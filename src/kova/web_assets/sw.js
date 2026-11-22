@@ -14,7 +14,7 @@ const SHARE_MAX_BYTES = 2 * 1024 * 1024;
 const SHARE_MAX_FILES = 3;
 
 self.addEventListener('install', event => event.waitUntil(
-  caches.open(CACHE).then(cache => cache.addAll(SHELL))));
+  caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(Promise.all([
   caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('kova-shell-') && key !== CACHE).map(key => caches.delete(key)))),
   self.clients.claim()

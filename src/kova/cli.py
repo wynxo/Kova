@@ -202,6 +202,7 @@ app = typer.Typer(
 def desktop_app(
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
     prepare: bool = typer.Option(False, "--prepare", hidden=True),
+    check_server: bool = typer.Option(False, "--check-server", hidden=True),
 ) -> None:
     """Open the Kova desktop app."""
     from .app import launch_desktop
@@ -209,6 +210,11 @@ def desktop_app(
 
     if prepare:
         app_main(["--prepare"])
+        return
+    if check_server:
+        from .update_runtime import restart_stale_server
+        if restart_stale_server():
+            _ok("Restarted the server on the installed build.")
         return
     if browser:
         web_app()
@@ -258,6 +264,8 @@ def _lifecycle_line(message: str) -> Text:
     text = message.strip()
     if text.startswith(f"{SYMBOL_OK} "):
         return Text.assemble((f"{SYMBOL_OK} ", f"bold {colour('SUCCESS')}"), (text[2:], ""))
+    if text.startswith("✗ "):
+        return Text.assemble(("✗ ", f"bold {colour('ERROR')}"), (text[2:], ""))
     if text.startswith(f"{SYMBOL_ARROW} "):
         return Text.assemble((f"{SYMBOL_ARROW} ", colour('ACCENT_SOFT')), (text[2:], colour('MUTED')))
     return Text(text, style=colour('MUTED'))
@@ -282,16 +290,20 @@ def _print_update_check(message: str) -> None:
 def update(
     ref: str | None = typer.Option(None, "--ref", help="GitHub branch, tag, or commit (default: KOVA_REF or main)."),
     check: bool = typer.Option(False, "--check", help="Only compare installed and remote versions/commits."),
+    verbose: bool = typer.Option(False, "--verbose", help="Show full uv and desktop preparation output."),
 ):
-    """Check for updates or reinstall the latest Kova with uv."""
+    """Update Kova and its desktop app, or check without changing anything."""
     try:
         target = lifecycle.selected_ref(ref)
         if check:
             _print_update_check(lifecycle.check_update(target))
         else:
-            lifecycle.update(target, emit=_lifecycle_emit)
+            lifecycle.update(target, emit=_lifecycle_emit, verbose=verbose,
+                             progress=console.status if console.is_terminal and not verbose else None)
     except (lifecycle.LifecycleError, OSError) as exc:
         _fail(str(exc))
+    except lifecycle.psutil.Error as exc:
+        _fail(f"Could not inspect the running installation: {exc}")
 
 
 @app.command()
@@ -634,7 +646,39 @@ def serve():
 
     from kova.server import create_app
 
-    uvicorn.run(create_app(load_config()), host="127.0.0.1", port=load_config().port, timeout_graceful_shutdown=3)
+    from filelock import FileLock, Timeout
+    from kova.config import private_write
+
+    cfg = load_config()
+    pidfile = cfg.home / "server.pid"
+    try:
+        with FileLock(cfg.home / ".server-start.lock", timeout=0):
+            private_write(pidfile, str(os.getpid()))
+            try:
+                uvicorn.run(create_app(cfg), host="127.0.0.1", port=cfg.port, timeout_graceful_shutdown=3)
+            finally:
+                pidfile.unlink(missing_ok=True)
+    except Timeout:
+        _fail("A Kova server is already running for this data directory.")
+
+
+@app.command()
+def restart():
+    """Start a fresh background server and wait for it to answer."""
+    from kova import build, update_runtime
+
+    cfg = load_config()
+    try:
+        if process := update_runtime.running_server(cfg):
+            update_runtime.stop(process)
+        client = ensure_server(cfg)
+        try:
+            update_runtime.verify_server(cfg, build.installed())
+        finally:
+            client.http.close()
+    except (lifecycle.LifecycleError, lifecycle.psutil.Error, KovaError, OSError) as exc:
+        _fail(str(exc))
+    _ok("Server is healthy on the installed build.")
 
 
 @app.command()
@@ -771,6 +815,7 @@ def status():
         console.print(brand.card(_status_rows(cfg, None, notes=None, reminders=None),
                                  "Kova status", tone=colour('ERROR')))
         _muted("It starts by itself when you run kova.")
+        _show_update_hint(cfg)
         return
 
     try:
@@ -796,6 +841,14 @@ def status():
                              tone=colour('ACCENT') if info.get("model_ok") else colour('WARNING')))
     if not info.get("model_ok"):
         _muted("To configure or reconnect your model, run: kova setup")
+    if info.get("restart_available"):
+        _muted("A newer Kova is installed. Run: kova restart")
+    _show_update_hint(cfg)
+
+
+def _show_update_hint(cfg) -> None:
+    if console.is_terminal and (message := lifecycle.update_hint(cfg)):
+        _muted(message)
 
 
 @app.command("usage")

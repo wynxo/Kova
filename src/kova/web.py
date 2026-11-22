@@ -8,6 +8,7 @@ The page exchanges it for an HttpOnly cookie, then removes the fragment.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -150,8 +151,20 @@ def install_web(app, require_bearer) -> None:
         return JSONResponse(data, media_type="application/manifest+json")
 
     @app.get("/app/sw.js", include_in_schema=False)
-    async def worker():
-        return FileResponse(ASSETS / "sw.js", media_type="application/javascript")
+    def worker():
+        # Installed wheels identify their web assets through RECORD. Source
+        # checkouts have no wheel hashes, so hash the shipped shell itself.
+        fingerprint = app.state.build.fingerprint
+        if not fingerprint:
+            digest = hashlib.sha256()
+            for path in sorted(ASSETS.rglob("*")):
+                if path.is_file():
+                    digest.update(path.relative_to(ASSETS).as_posix().encode())
+                    digest.update(hashlib.sha256(path.read_bytes()).digest())
+            fingerprint = digest.hexdigest()
+        script = (ASSETS / "sw.js").read_text(encoding="utf-8")
+        return Response(script.replace("kova-shell-v29", f"kova-shell-{fingerprint[:24]}", 1),
+                        media_type="application/javascript")
 
     @app.get("/app/gallery", include_in_schema=False)
     async def gallery():
