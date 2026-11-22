@@ -226,7 +226,7 @@ class TestHeader:
         assert " K  Kova" in rendered and "█▄▀" not in rendered   # the tile, not the wordmark
         assert "model    local  ready" in rendered
         assert "mode     work" in rendered
-        assert "2 notes  in /tmp/mem" in rendered
+        assert f"2 notes  in {_Path('/tmp/mem')}" in rendered
         assert "/help" in rendered
 
     def test_no_heavy_box(self, monkeypatch):
