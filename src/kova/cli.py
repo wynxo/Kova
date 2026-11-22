@@ -3168,7 +3168,7 @@ def config_show(
     console.print(table)
 
 
-@_config.command("set")
+@_config.command("set", context_settings={"ignore_unknown_options": True})
 def config_set(key: str, value: str):
     """Validate and save one setting. Use a dotted key, such as memory.budget."""
     cfg = load_config()
