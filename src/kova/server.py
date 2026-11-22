@@ -21,7 +21,7 @@ from kova import (__version__, bots, build, checkpoints, hunks, pairing, plugins
                   reasoning_effort, ui_prefs, project_files, project_pins)
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
-from kova.bot_routes import actor_for_chat, install_bot_routes
+from kova.bot_routes import actor_for_chat, grants_host_access, install_bot_routes
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
@@ -30,7 +30,7 @@ from kova.modes import DEFAULT_MODE, MODES, capabilities as mode_capabilities
 from kova.reasoning_effort import ReasoningEffort
 from kova.reminders import ReminderLoop
 from kova.scheduler import Scheduler, parse_schedule
-from kova.store import Store
+from kova.store import MAX_GROUP_MEMBERS, Store
 from kova.theme_routes import install_theme_routes
 from kova.tools import ToolContext, ToolError, build_tools
 from kova.tools.reminders import parse_when
@@ -66,11 +66,151 @@ class ChatBody(BaseModel):
     project_id: str | None = None
     #: A direct chat with this bot (kind ``bot``); refused for incognito chats.
     bot_id: str | None = None
+    group: dict | None = None
+    preset: str | None = None
 
 
 class CreateChatBody(ChatBody):
     # An immediate turn can require a model; ordinary drafts remain valid without one.
     first_turn_model: str | None = None
+    members: list[str] | None = Field(default=None, min_length=1, max_length=MAX_GROUP_MEMBERS)
+
+
+class AddMemberBody(BaseModel):
+    bot_id: str
+
+
+class EditMemberBody(BaseModel):
+    muted: bool | None = Field(default=None, strict=True)
+    position: int | None = Field(default=None, ge=0, strict=True)
+    settings: dict | None = None
+
+
+# TODO(2.1 integration): use group_settings.validate/resolve/matching_preset
+# and its preset data here once that module lands. Keep the routes independent
+# of the schema work in progress; these are the wire defaults from the spec.
+_GROUP_DEFAULTS = {
+    "answer": {"mode": "lead", "lead": None, "bots": [], "count": 2,
+               "auto_max": 2, "mentions": "replace"},
+    "replies": {"mode": "mentioned", "max_hops": 3, "ping_pong": 2, "allow_pass": True},
+    "limits": {"max_bot_turns": 8, "max_tokens": 40_000,
+               "max_cost_usd": None, "max_seconds": 600},
+    "approvals": "ask", "folder": "shared", "folder_path": None, "share_work": "replies",
+    "see_earlier_replies": True, "retry": "rerun", "memory": "private", "instructions": "",
+}
+_GROUP_PRESETS = {
+    "ask-one": {},
+    "panel": {"answer": {"mode": "everyone"}, "replies": {"mode": "off"},
+              "see_earlier_replies": False},
+    "team": {"answer": {"mode": "auto"}},
+    "debate": {"answer": {"mode": "everyone"}, "replies": {"mode": "turns", "max_hops": 4},
+               "instructions": "Answer the other participants' points directly. "
+                               "Say plainly when you have been convinced. "
+                               "Reply (pass) when you have nothing new."},
+}
+_PRESET_PRESERVED = {"approvals", "folder", "folder_path", "memory", "limits"}
+_APPROVAL_POLICIES = ("ask", "once", "allow", "deny")
+_GROUP_CHOICES = {
+    "answer.mode": ("mentioned", "lead", "auto", "everyone", "subset", "count", "random", "lead_only"),
+    "answer.mentions": ("replace", "add"),
+    "replies.mode": ("off", "mentioned", "turns"),
+    "approvals": _APPROVAL_POLICIES,
+    "folder": ("shared", "own"),
+    "share_work": ("replies", "tools", "everything"),
+    "retry": ("rerun", "stale"),
+    "memory": ("private", "read_others", "group"),
+}
+_GROUP_RANGES = {
+    "answer.count": (1, 8), "answer.auto_max": (1, 8),
+    "replies.max_hops": (0, 8), "replies.ping_pong": (1, 8),
+    "limits.max_bot_turns": (1, 16), "limits.max_tokens": (1_000, 400_000),
+    "limits.max_seconds": (30, 3_600), "max_rounds": (1, 11),
+    "max_output_tokens": (100, 32_000),
+}
+_MEMBER_OVERRIDES = dict(approvals="ask", answers=False, max_rounds=6,
+                         max_output_tokens=4000, project_memory=False)
+
+
+def _validate_group_patch(patch: dict, *, member: bool = False) -> None:
+    def check(values: dict, defaults: dict, prefix: str = "") -> None:
+        for key, value in values.items():
+            name = prefix + key
+            if key not in defaults:
+                raise HTTPException(422, f"Unknown group setting: {name}")
+            if value is None or (member and name == "approvals" and value == "same"):
+                continue
+            default = defaults[key]
+            if isinstance(default, dict) and isinstance(value, dict):
+                check(value, default, name + ".")
+                continue
+            if name in _GROUP_CHOICES:
+                valid = value in _GROUP_CHOICES[name]
+            elif name in _GROUP_RANGES:
+                low, high = _GROUP_RANGES[name]
+                valid = type(value) is int and low <= value <= high
+            elif name == "answer.bots":
+                valid = isinstance(value, list) and len(value) <= 8 and all(
+                    isinstance(bot_id, str) and bot_id for bot_id in value)
+            elif name == "limits.max_cost_usd":
+                valid = type(value) in (int, float) and 0 < value < float("inf")
+            elif name in {"answer.lead", "folder_path", "instructions"}:
+                valid = isinstance(value, str) and len(value) <= 2000
+            else:
+                valid = type(value) is type(default)
+            if not valid:
+                raise HTTPException(422, f"Invalid group setting: {name}")
+
+    check(patch, _MEMBER_OVERRIDES if member else _GROUP_DEFAULTS)
+
+
+def _merge_group_settings(base: dict, patch: dict) -> dict:
+    """Merge partial tables; a null key removes the stored override."""
+    result = dict(base)
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict):
+            nested = _merge_group_settings(result.get(key, {}), value)
+            if nested:
+                result[key] = nested
+            else:
+                result.pop(key, None)
+        else:
+            result[key] = value
+    return result
+
+
+def _resolve_group_settings(stored: dict) -> dict:
+    answer = {"count": 1} if stored.get("answer", {}).get("mode") == "random" else {}
+    defaults = {**_GROUP_DEFAULTS, "answer": {**_GROUP_DEFAULTS["answer"], **answer}}
+    return _merge_group_settings(defaults, stored)
+
+
+def _group_changes(before: dict, after: dict) -> dict:
+    changes = {}
+    for key, value in after.items():
+        if isinstance(value, dict):
+            nested = _group_changes(before.get(key, {}), value)
+            if nested:
+                changes[key] = nested
+        elif key not in before or before[key] != value:
+            changes[key] = value
+    return changes
+
+
+def _patched_group_settings(stored: dict, patch: dict, preset: str | None) -> dict:
+    _validate_group_patch(patch)
+    if preset is not None:
+        if preset not in _GROUP_PRESETS:
+            raise HTTPException(422, "Unknown group preset.")
+        stored = {**{key: value for key, value in stored.items() if key in _PRESET_PRESERVED},
+                  **_GROUP_PRESETS[preset]}
+    merged = _merge_group_settings(stored, patch)
+    # Strip no-op overrides, using the effective mode's default count.
+    mode = merged.get("answer", {}).get("mode", "lead")
+    defaults = _resolve_group_settings({"answer": {"mode": mode}})
+    defaults["answer"]["mode"] = _GROUP_DEFAULTS["answer"]["mode"]
+    return _group_changes(defaults, _resolve_group_settings(merged))
 
 
 class ProjectBody(BaseModel):
@@ -624,6 +764,7 @@ def create_app(
     app.state.chat_locks = {}
     app.state.chat_turns = {}
     app.state.steering = {}
+    group_turn_events: dict[str, asyncio.Queue] = {}
     # Finished compare answers waiting for "Keep this one", in memory only (#96).
     app.state.compares = {}
     app.state.compare_tasks = {}
@@ -746,6 +887,8 @@ def create_app(
                         actor = actor_for_chat(app, config, chat)
                         app.state.conversation_states.transition(chat_id, "turn_start")
                         app.state.steering[chat_id] = steering
+                        if chat["kind"] == "group":
+                            group_turn_events[chat_id] = queue
                         try:
                             async for event in app.state.agent.run_turn(
                                     chat_id, text, model=model, steering=steering,
@@ -759,6 +902,7 @@ def create_app(
                                     event['alternatives'] = app.state.store.turn_alternatives(chat_id)
                                 queue.put_nowait(event)
                         finally:
+                            group_turn_events.pop(chat_id, None)
                             app.state.conversation_states.transition(chat_id, "turn_end")
                 except asyncio.CancelledError:
                     queue.put_nowait({"type": "stopped"})
@@ -978,9 +1122,84 @@ def create_app(
         await asyncio.to_thread(app.state.memory.remove_scope, project_id)
         return {"ok": True}
 
+    def member_bot(bot_id: str):
+        return bots.get_bot(config.home, bot_id, models=[entry.name for entry in config.models])
+
+    def require_member_bot(bot_id: str):
+        bot = member_bot(bot_id)
+        if bot is None and bot_id != "kova":
+            raise HTTPException(404, "bot not found")
+        return bot
+
+    def public_member(member: dict, bot) -> dict:
+        bot_id = member["bot_id"]
+        if bot is not None:
+            name, handle = bot.name, bot.handle
+            avatar = bot.summary()
+            avatar = {key: avatar[key] for key in ("colour", "icon", "image")}
+        else:
+            name, handle = (config.persona_name, "kova") if bot_id == "kova" else (bot_id, bot_id)
+            avatar = None
+        return {**member, "id": bot_id, "name": name, "handle": handle, "avatar": avatar}
+
+    def public_group(chat: dict, bot_cache: dict | None = None) -> dict:
+        if chat["kind"] != "group":
+            return chat
+        if bot_cache is None:
+            bot_cache = {}
+        members = []
+        for member in chat["members"]:
+            bot_id = member["bot_id"]
+            if bot_id not in bot_cache:
+                bot_cache[bot_id] = member_bot(bot_id)
+            members.append(public_member(member, bot_cache[bot_id]))
+        group = _resolve_group_settings(chat["group_settings"])
+        preset = next((name for name, values in _GROUP_PRESETS.items()
+                       if _resolve_group_settings(values) == group), "custom")
+        return {**chat, "members": members, "group": group, "preset": preset}
+
+    def get_group(chat_id: str) -> dict:
+        chat = app.state.store.get_chat(chat_id)
+        if chat is None:
+            raise HTTPException(404, "chat not found")
+        if chat["kind"] != "group":
+            raise HTTPException(422, "Only group chats have members or group settings.")
+        return chat
+
+    def guard_group_approval(request: Request, policy: str, bot_ids: list[str]) -> None:
+        allowed = pairing.request_capabilities(request)
+        if policy != "allow" or allowed is None or "host:exec" in allowed:
+            return
+        for bot_id in bot_ids:
+            bot = member_bot(bot_id)
+            if bot_id == "kova" or (bot is not None and grants_host_access(
+                    bot, files_path=config.files_path, home=config.home, memory_path=config.memory_path)):
+                pairing.require_capability("host:exec")(request)
+
+    def validate_group_access(request: Request, before: dict, after: dict, members: list[str]) -> None:
+        pairing.require_capability("settings:write")(request)
+        if after.get("folder_path") != before.get("folder_path") and after.get("folder_path") is not None:
+            after["folder_path"] = working_folder(after["folder_path"])
+            limit_chat_settings(request, None, after["folder_path"])
+        if after.get("approvals") != before.get("approvals"):
+            guard_group_approval(request, after.get("approvals", "ask"), members)
+
+    def publish_group_settings(chat_id: str, request: Request, changed: dict) -> None:
+        if not changed:
+            return
+        device = app.state.devices.find(request.cookies.get(pairing.DEVICE_COOKIE)) \
+            if pairing.is_lan_request(request) else None
+        event = {"type": "group_settings_changed", "chat_id": chat_id,
+                 "changed": changed, "by": device["name"] if device else "user"}
+        app.state.bus.publish(event)
+        if (queue := group_turn_events.get(chat_id)) is not None:
+            queue.put_nowait(event)
+
     @api.get("/chats")
     async def list_chats() -> list[dict]:
-        return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in app.state.store.list_chats(include_ephemeral=True)]
+        bot_cache = {}
+        return [{**public_group(chat, bot_cache), "state": app.state.conversation_states.get(chat["id"])}
+                for chat in app.state.store.list_chats(include_ephemeral=True)]
 
     @api.post("/chats")
     async def create_chat(request: Request, body: CreateChatBody | None = None) -> dict:
@@ -1002,6 +1221,22 @@ def create_app(
         project_id = body.project_id if body else None
         ephemeral = bool(body and body.ephemeral)
         bot_id = (body.bot_id if body else None) or None
+        members = body.members if body else None
+        group_settings = None
+        if members is not None:
+            if ephemeral or bot_id is not None:
+                raise HTTPException(422, "A group cannot be incognito or a direct bot chat.")
+            if len(members) != len(set(members)):
+                raise HTTPException(422, "Group members must be unique.")
+            preset = body.preset
+            if preset is None:
+                preset = config.groups_preset if config.groups_preset in _GROUP_PRESETS else "ask-one"
+            group_settings = _patched_group_settings({}, body.group or {}, preset)
+            validate_group_access(request, {}, group_settings, members)
+            for member_id in members:
+                require_member_bot(member_id)
+        elif body and (body.group is not None or body.preset is not None):
+            raise HTTPException(422, "Group settings need a member list.")
         folder = body.cwd if body else None
         bot = None
         if bot_id is not None:
@@ -1045,15 +1280,17 @@ def create_app(
                 colour=colour,
                 icon=icon,
                 project_id=project_id,
-                kind="bot" if bot is not None else "chat",
+                kind="group" if members is not None else "bot" if bot is not None else "chat",
                 bot_id=bot.id if bot is not None else None,
+                members=members,
+                group_settings=group_settings,
                 **model_settings,
             )
         except LookupError as exc:
             raise HTTPException(404, "project not found") from exc
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
-        return chat
+        return public_group(chat)
 
     def actor_folder(bot) -> Path:
         """The bot's working folder, created on first use like Kova Files itself."""
@@ -1079,7 +1316,8 @@ def create_app(
             chat = app.state.store.fork_chat(chat_id, through=through)
             if chat is None:
                 raise HTTPException(status_code=404, detail="reply not found" if through is not None else "chat not found")
-            return app.state.store.get_chat(chat["id"], include_usage=True, include_message_meta=True)
+            return public_group(app.state.store.get_chat(
+                chat["id"], include_usage=True, include_message_meta=True))
 
     @api.get("/chats/{chat_id}")
     async def get_chat(chat_id: str) -> dict:
@@ -1095,7 +1333,7 @@ def create_app(
                                models=[entry.name for entry in config.models])
             if bot is not None:
                 reply["bot"] = bot.summary()
-        return reply
+        return public_group(reply)
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
@@ -1108,7 +1346,8 @@ def create_app(
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
         if "bot_id" in body.model_fields_set:
             raise HTTPException(409, "A chat's bot is fixed when it starts. Create a new chat instead.")
-        changes: dict[str, str | bool | None] = {}
+        changes: dict = {}
+        changing_group = body.group is not None or body.preset is not None
         if body.title is not None:
             title = body.title.strip()
             if not title:
@@ -1140,10 +1379,19 @@ def create_app(
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
         changes.update(chat_model_settings(body, chat))
-        if not changes and pinned is None:
+        if not changes and pinned is None and not changing_group:
             raise HTTPException(status_code=422, detail="nothing to update")
         if changes and any(not task.done() for task in app.state.chat_turns.get(chat_id, ())):
             raise HTTPException(status_code=409, detail="Stop the active turn before changing chat settings")
+        group_changed = {}
+        if changing_group:
+            if chat["kind"] != "group":
+                raise HTTPException(422, "Only group chats have group settings.")
+            before = chat["group_settings"]
+            after = _patched_group_settings(before, body.group or {}, body.preset)
+            validate_group_access(request, before, after, [m["bot_id"] for m in chat["members"]])
+            changes["group_settings"] = after
+            group_changed = _group_changes(_resolve_group_settings(before), _resolve_group_settings(after))
         # A phone's title, mode or permission is the phone writing in the chat, so
         # it keeps that phone's limits; no setting a phone picks can widen a turn.
         # A colour, icon or pin on its own is cosmetic: it carries no text or file
@@ -1151,13 +1399,62 @@ def create_app(
         if set(changes) - {"colour", "icon"}:
             wrote_in(chat_id, request)
         app.state.store.update_chat(chat_id, pinned=pinned, **changes)
+        publish_group_settings(chat_id, request, group_changed)
         if body.permission is not None or body.cwd is not None:
             app.state.agent.approvals.sessions.discard(chat_id)
         chat = app.state.store.get_chat(chat_id)
         keys = ("id", "title", "mode", "web", "permission", "cwd", "colour", "icon", "pinned")
         if "model" in changes:
             keys += ("model", "reasoning_effort")
+        if changing_group:
+            return public_group({key: chat[key] for key in
+                                 (*keys, "kind", "bot_id", "members", "group_settings")})
         return {key: chat[key] for key in keys}
+
+    @api.post("/chats/{chat_id}/members", dependencies=settings_write)
+    async def add_member(chat_id: str, body: AddMemberBody, request: Request) -> dict:
+        chat = get_group(chat_id)
+        bot = require_member_bot(body.bot_id)
+        guard_group_approval(request, chat["group_settings"].get("approvals", "ask"), [body.bot_id])
+        try:
+            member = app.state.store.add_chat_member(chat_id, body.bot_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        wrote_in(chat_id, request)
+        return public_member(member, bot)
+
+    @api.patch("/chats/{chat_id}/members/{bot_id}", dependencies=settings_write)
+    async def update_member(chat_id: str, bot_id: str, body: EditMemberBody, request: Request) -> dict:
+        chat = get_group(chat_id)
+        member = next((row for row in chat["members"] if row["bot_id"] == bot_id), None)
+        if member is None:
+            raise HTTPException(404, "group member not found")
+        settings = None
+        if body.settings is not None:
+            _validate_group_patch(body.settings, member=True)
+            patch = body.settings
+            if patch.get("approvals") == "same":
+                patch = {**patch, "approvals": None}
+            settings = _merge_group_settings(member["settings"], patch)
+            default = chat["group_settings"].get("approvals", "ask")
+            policy = settings.get("approvals", default)
+            if policy != member["settings"].get("approvals", default):
+                guard_group_approval(request, policy, [bot_id])
+        try:
+            updated = app.state.store.update_chat_member(chat_id, bot_id, muted=body.muted,
+                                                         position=body.position, settings=settings)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        wrote_in(chat_id, request)
+        return public_member(updated, member_bot(bot_id))
+
+    @api.delete("/chats/{chat_id}/members/{bot_id}", dependencies=settings_write)
+    async def delete_member(chat_id: str, bot_id: str, request: Request) -> dict:
+        get_group(chat_id)
+        if not app.state.store.delete_chat_member(chat_id, bot_id):
+            raise HTTPException(404, "group member not found")
+        wrote_in(chat_id, request)
+        return {"ok": True}
 
     async def move_chat(chat_id: str, project_id: str | None, request: Request) -> dict:
         """Put a chat in a project (``null`` takes it out). Only membership moves:

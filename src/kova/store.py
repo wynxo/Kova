@@ -30,6 +30,7 @@ _UNSET: object = object()
 #: The three chat kinds (design 2.3): today's chat, a direct chat with one bot,
 #: and a group. A direct bot chat names exactly one bot; the others name none.
 CHAT_KINDS = ("chat", "bot", "group")
+MAX_GROUP_MEMBERS = 8
 
 
 def _utc_now_iso() -> str:
@@ -267,7 +268,17 @@ class Store:
                 reasoning_effort TEXT,
                 project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 kind TEXT NOT NULL DEFAULT 'chat',
-                bot_id TEXT
+                bot_id TEXT,
+                group_settings TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS chat_members (
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                bot_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                muted INTEGER NOT NULL DEFAULT 0,
+                settings TEXT NOT NULL DEFAULT '{}',
+                joined TEXT NOT NULL,
+                PRIMARY KEY (chat_id, bot_id)
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -438,6 +449,8 @@ class Store:
             self._conn.execute("ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'")
         if "bot_id" not in columns:
             self._conn.execute("ALTER TABLE chats ADD COLUMN bot_id TEXT")
+        if "group_settings" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN group_settings TEXT NOT NULL DEFAULT '{}'")
         # A project's colour, icon and default model (#196) are nullable, so an
         # older database keeps its projects with the default look and model.
         project_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(projects)")}
@@ -733,14 +746,20 @@ class Store:
                     ephemeral: bool = False, colour: str | None = None,
                     icon: str | None = None, model: str | None = None,
                     reasoning_effort: str | None = None, project_id: str | None = None,
-                    kind: str = "chat", bot_id: str | None = None) -> dict:
+                    kind: str = "chat", bot_id: str | None = None,
+                    members: list[str] | None = None, group_settings: dict | None = None) -> dict:
+        if (ephemeral or self._memory_only) and (kind != "chat" or bot_id is not None):
+            raise ValueError("Incognito chats cannot have bots or groups.")
+        if kind == "group":
+            if not members or len(members) > MAX_GROUP_MEMBERS:
+                raise ValueError("A group needs 1–8 members.")
+            if len(members) != len(set(members)):
+                raise ValueError("Group members must be unique.")
+        elif members is not None or group_settings is not None:
+            raise ValueError("Only group chats have members or group settings.")
         if project_id is not None and (ephemeral or self._memory_only):
             raise ValueError("Incognito chats cannot belong to a project.")
         if ephemeral and not self._memory_only:
-            # Incognito stays conversation-only with the default assistant: a
-            # bot chat or a group is never created in RAM (design 2.3).
-            if kind != "chat" or bot_id is not None:
-                raise ValueError("Incognito chats cannot have bots or groups.")
             return self._temporary_store().create_chat(
                 title or "Incognito", "chat", False, "manual", cwd, model=model,
                 reasoning_effort=reasoning_effort)
@@ -768,16 +787,99 @@ class Store:
             created = _utc_now_iso()
             self._conn.execute(
                 "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon, "
-                "model, reasoning_effort, project_id, kind, bot_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "model, reasoning_effort, project_id, kind, bot_id, group_settings) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (cid, title, created, mode, web, permission, cwd, colour, icon, model,
-                 reasoning_effort, project_id, kind, bot_id),
+                 reasoning_effort, project_id, kind, bot_id, json.dumps(group_settings or {})),
             )
+            if kind == "group":
+                self._conn.executemany(
+                    "INSERT INTO chat_members (chat_id, bot_id, position, joined) VALUES (?, ?, ?, ?)",
+                    [(cid, member, position, created) for position, member in enumerate(members)],
+                )
             return {"id": cid, "title": title, "created": created, "mode": mode, "web": web,
                     "permission": permission, "cwd": cwd, "colour": colour, "icon": icon,
                     "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False,
                     "project_id": project_id, "kind": kind, "bot_id": bot_id,
+                    **self._group_fields(cid, kind, group_settings or {}),
                     **({"ephemeral": True} if self._memory_only else {})}
+
+    def _group_fields(self, chat_id: str, kind: str, settings: dict) -> dict:
+        if kind != "group":
+            return {}
+        return {"group_settings": settings, "members": self.chat_members(chat_id)}
+
+    def chat_members(self, chat_id: str) -> list[dict]:
+        """Members in answer order, with only their stored overrides."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT bot_id, position, muted, settings, joined FROM chat_members "
+                "WHERE chat_id = ? ORDER BY position, bot_id", (chat_id,)).fetchall()
+        return [{**dict(row), "muted": bool(row["muted"]),
+                 "settings": json.loads(row["settings"])} for row in rows]
+
+    def add_chat_member(self, chat_id: str, bot_id: str) -> dict:
+        with self._lock, self._conn:
+            chat = self._conn.execute("SELECT kind FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if chat is None or chat["kind"] != "group":
+                raise LookupError("group chat not found")
+            members = self.chat_members(chat_id)
+            if any(member["bot_id"] == bot_id for member in members):
+                raise ValueError("This bot is already a member.")
+            if len(members) >= MAX_GROUP_MEMBERS:
+                raise ValueError("A group can have at most 8 members.")
+            joined = _utc_now_iso()
+            self._conn.execute(
+                "INSERT INTO chat_members (chat_id, bot_id, position, joined) VALUES (?, ?, ?, ?)",
+                (chat_id, bot_id, len(members), joined))
+            return {"bot_id": bot_id, "position": len(members), "muted": False,
+                    "settings": {}, "joined": joined}
+
+    def _order_chat_members(self, chat_id: str, members: list[dict]) -> None:
+        self._conn.executemany(
+            "UPDATE chat_members SET position = ? WHERE chat_id = ? AND bot_id = ?",
+            [(position, chat_id, member["bot_id"]) for position, member in enumerate(members)
+             if member["position"] != position])
+
+    def update_chat_member(self, chat_id: str, bot_id: str, *, muted: bool | None = None,
+                           position: int | None = None, settings: dict | None = None) -> dict:
+        with self._lock, self._conn:
+            members = self.chat_members(chat_id)
+            member = next((row for row in members if row["bot_id"] == bot_id), None)
+            if member is None:
+                raise LookupError("group member not found")
+            if position is not None:
+                if not 0 <= position < len(members):
+                    raise ValueError("Position is outside the member list.")
+                members.remove(member)
+                members.insert(position, member)
+                self._order_chat_members(chat_id, members)
+                member["position"] = position
+            if muted is not None:
+                member["muted"] = muted
+            if settings is not None:
+                member["settings"] = settings
+            self._conn.execute(
+                "UPDATE chat_members SET muted = ?, settings = ? WHERE chat_id = ? AND bot_id = ?",
+                (member["muted"], json.dumps(member["settings"]), chat_id, bot_id))
+            return member
+
+    def delete_chat_member(self, chat_id: str, bot_id: str) -> bool:
+        with self._lock, self._conn:
+            deleted = self._conn.execute(
+                "DELETE FROM chat_members WHERE chat_id = ? AND bot_id = ?", (chat_id, bot_id))
+            if deleted.rowcount:
+                self._order_chat_members(chat_id, self.chat_members(chat_id))
+            return bool(deleted.rowcount)
+
+    def remove_bot_from_groups(self, bot_id: str) -> None:
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT chat_id FROM chat_members WHERE bot_id = ?", (bot_id,)).fetchall()
+            self._conn.execute("DELETE FROM chat_members WHERE bot_id = ?", (bot_id,))
+            for row in rows:
+                chat_id = row["chat_id"]
+                self._order_chat_members(chat_id, self.chat_members(chat_id))
 
     def fork_chat(self, chat_id: str, *, through: int | None = None) -> dict | None:
         """Clone a conversation, optionally ending at a particular reply."""
@@ -845,14 +947,18 @@ class Store:
 
                 self._conn.execute(
                     "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, "
-                    "colour, icon, model, reasoning_effort, project_id, kind, bot_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "colour, icon, model, reasoning_effort, project_id, kind, bot_id, group_settings) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
                      source['web'], source['permission'], source['cwd'],
                      remap(source['plan']) if through is None else '[]',
                      source['capabilities'], source['colour'], source['icon'], source['model'],
                      source['reasoning_effort'], source['project_id'], source['kind'],
-                     source['bot_id']))
+                     source['bot_id'], source['group_settings']))
+                self._conn.execute(
+                    "INSERT INTO chat_members (chat_id, bot_id, position, muted, settings, joined) "
+                    "SELECT ?, bot_id, position, muted, settings, joined FROM chat_members WHERE chat_id = ?",
+                    (cid, chat_id))
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute(
@@ -886,7 +992,7 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
-                "c.colour, c.icon, c.pinned, c.project_id, c.kind, c.bot_id, "
+                "c.colour, c.icon, c.pinned, c.project_id, c.kind, c.bot_id, c.group_settings, "
                 "COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id AND m.active = 1 "
@@ -911,6 +1017,7 @@ class Store:
                 "pinned": bool(r["pinned"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
+                **self._group_fields(r["id"], r["kind"], json.loads(r["group_settings"])),
             }
             for r in rows
         ]
@@ -928,9 +1035,11 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
-                "colour, icon, pinned, model, reasoning_effort, project_id, kind, bot_id "
+                "colour, icon, pinned, model, reasoning_effort, project_id, kind, bot_id, group_settings "
                 "FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
+            if row is not None:
+                group_fields = self._group_fields(chat_id, row["kind"], json.loads(row["group_settings"]))
         if row is None:
             return None
         return {
@@ -946,6 +1055,7 @@ class Store:
             "project_id": row["project_id"],
             "kind": row["kind"],
             "bot_id": row["bot_id"],
+            **group_fields,
             "colour": row["colour"],
             "icon": row["icon"],
             "pinned": bool(row["pinned"]),
@@ -964,7 +1074,7 @@ class Store:
                     cwd: str | None = None, plan: list[dict] | None = None,
                     colour: str | None = _UNSET, icon: str | None = _UNSET,
                     pinned: bool | None = None, model: str | None = _UNSET,
-                    reasoning_effort: str | None = _UNSET) -> None:
+                    reasoning_effort: str | None = _UNSET, group_settings: dict | None = None) -> None:
         """Change chat settings, its pin or its latest plan; ``None`` leaves a field alone.
 
         ``colour``/``icon`` use ``_UNSET`` for "leave alone" because ``None``
@@ -986,6 +1096,8 @@ class Store:
             changes["model"] = model
         if reasoning_effort is not _UNSET:
             changes["reasoning_effort"] = reasoning_effort
+        if group_settings is not None:
+            changes["group_settings"] = json.dumps(group_settings)
         if not changes:
             return
         assignments = ", ".join(f"{name} = ?" for name in changes)

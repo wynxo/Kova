@@ -30,7 +30,7 @@ MAX_VOICE_SECONDS = 60
 TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
-    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop', 'updates',
+    'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop', 'updates', 'groups',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -48,6 +48,7 @@ CONFIG_SECTION_KEYS = {
     #: Desktop shell options read by the Electron app, not the server.
     'desktop': frozenset({'quick_ask', 'title_bar'}),
     'updates': frozenset({'hint'}),
+    'groups': frozenset({'preset'}),
 }
 MODEL_CONFIG_KEYS = frozenset({
     'name', 'base_url', 'model', 'api_key', 'context', 'provider', 'vision',
@@ -249,6 +250,7 @@ class Config:
     voice_tts: str = "espeak-ng"
     voice_language: str | None = None
     voice_max_seconds: int = MAX_VOICE_SECONDS
+    groups_preset: str = "ask-one"
     _extra: dict = field(default_factory=dict, repr=False)
 
     def bind_providers(self) -> None:
@@ -329,6 +331,7 @@ def load_config(home: Path | None = None, *, read_only: bool = False) -> Config:
         privacy.get('secrets') if isinstance(privacy, Mapping) else privacy)
     voice = data.get('voice') if isinstance(data.get('voice'), Mapping) else {}
     updates = data.get('updates') if isinstance(data.get('updates'), Mapping) else {}
+    groups = data.get('groups') if isinstance(data.get('groups'), Mapping) else {}
     cfg = Config(home=home, models=models, providers=providers,
                  active=data.get('active', models[0].name if models else ''),
                  memory_path=Path(mem_path).expanduser(),
@@ -363,7 +366,8 @@ def load_config(home: Path | None = None, *, read_only: bool = False) -> Config:
                  voice_stt=str(voice.get('stt') or 'local'),
                  voice_tts=str(voice.get('tts') or 'espeak-ng'),
                  voice_language=str(voice.get('language') or '') or None,
-                 voice_max_seconds=max(1, int(voice.get('max_seconds') or MAX_VOICE_SECONDS)))
+                 voice_max_seconds=max(1, int(voice.get('max_seconds') or MAX_VOICE_SECONDS)),
+                 groups_preset=str(groups.get('preset') or 'ask-one'))
     # Kept for inspection and for recreating a deleted file; ordinary saves
     # preserve unknown keys by editing the document that is already on disk.
     cfg._extra = {k: v for k, v in data.items() if k not in TOP_LEVEL_CONFIG_KEYS}
@@ -601,6 +605,8 @@ def save_config(cfg: Config) -> None:
         _put(voice, 'max_seconds', cfg.voice_max_seconds)
         if not any(voice):
             del doc['voice']
+    if cfg.groups_preset != 'ask-one' or 'groups' in doc:
+        _put(_section(doc, 'groups'), 'preset', cfg.groups_preset)
     private_write(cfg.home / 'config.toml', tomlkit.dumps(doc))
 
 
