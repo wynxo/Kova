@@ -263,8 +263,9 @@ class Approvals:
                 summary = f"{command}\nRepeats: {args.get('schedule', '')}"
         changes = None
         if name == "edit_file":
-            old = str(args.get("old_string", ""))
-            new = str(args.get("new_string", ""))
+            # The tool's schema names them old_text/new_text; older callers sent *_string.
+            old = str(args.get("old_text", args.get("old_string", "")))
+            new = str(args.get("new_text", args.get("new_string", "")))
             changes = f"Replace {len(old.splitlines())} lines ({len(old)} chars) with {len(new.splitlines())} lines ({len(new)} chars)"
             summary += "\n" + changes
         # One serializer for the live stream event and the recoverable listing,

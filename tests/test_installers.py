@@ -49,6 +49,9 @@ mkdir -p node_modules/electron/dist
 cat > node_modules/electron/dist/electron <<'ELECTRON'
 #!/bin/sh
 printf '%s\\n' "$KOVA_HOME" > "$HOME/launched"
+printf 'fake Electron diagnostics\n' >&2
+if [ -n "${FAKE_ELECTRON_FAIL:-}" ]; then exit 7; fi
+if [ -n "${KOVA_DESKTOP_STARTUP:-}" ]; then printf ready > "$KOVA_DESKTOP_STARTUP"; fi
 ELECTRON
 chmod +x node_modules/electron/dist/electron
 mkdir -p node_modules/electron/dist/Electron.app/Contents/MacOS node_modules/electron/dist/Electron.app/Contents/Resources
@@ -162,7 +165,15 @@ def test_installer_packages_a_menu_entry_using_the_current_cli(installer):
     result = run("install.sh")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert f'Exec={cli} app --data-home "{data}"' in entry.read_text()
+    launch = data / "desktop/launch"
+    assert f'Exec="{launch}"' in entry.read_text()
+    launch_env = {**env, "FAKE_ELECTRON_FAIL": "1", "PATH": ""}
+    launch_env.pop("KOVA_HOME")
+    launched = subprocess.run([str(launch)], env=launch_env, capture_output=True, text=True)
+    assert launched.returncode == 1
+    assert "Electron exited with status 7" in launched.stderr
+    assert "fake Electron diagnostics" in (data / "desktop.log").read_text()
+    assert (home / "launched").read_text().strip() == str(data)
     assert icon.read_bytes() == (data / "desktop/assets/icon.png").read_bytes()
     assert (share / "icons/hicolor/16x16/apps/kova.png").is_file()
     assert (share / "icons/hicolor/scalable/apps/kova.svg").is_file()

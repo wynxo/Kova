@@ -13,6 +13,10 @@ const PAIRS = [
   ["status.warning", "bg.surface", 4.5, "warning text"],
   ["border.strong", "bg.surface", 3.0, "input and focus-ring boundaries"],
   ["border.subtle", "bg.surface", 1.2, "decorative dividers"],
+  ["step.think", "bg.base", 4.5, "thinking steps on the trace"],
+  ["step.tool", "bg.base", 4.5, "tool-call steps on the trace"],
+  ["step.ask", "bg.base", 4.5, "steps that wait for the user"],
+  ["step.agent", "bg.base", 4.5, "sub-agent steps on the trace"],
   ["syntax.keyword", "bg.base", 3.0, "code keyword colour"],
   ["syntax.comment", "bg.base", 3.0, "code comment colour"]
 ];
@@ -26,6 +30,8 @@ const TOKENS = [
   ["accent.pressed", "group-accent"], ["accent.on", "group-accent"], ["accent.soft", "group-accent"],
   ["status.success", "group-status"], ["status.warning", "group-status"],
   ["status.danger", "group-status"], ["status.info", "group-status"],
+  ["step.think", "group-status"], ["step.tool", "group-status"],
+  ["step.ask", "group-status"], ["step.agent", "group-status"],
   ["syntax.keyword", "group-status"], ["syntax.string", "group-status"],
   ["syntax.number", "group-status"], ["syntax.comment", "group-status"],
   ["syntax.function", "group-status"], ["syntax.type", "group-status"],

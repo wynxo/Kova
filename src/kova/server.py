@@ -17,9 +17,11 @@ from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from kova import __version__, checkpoints, hunks, pairing, plugins, egress, reasoning_effort, ui_prefs, project_files, project_pins
+from kova import (__version__, bots, build, checkpoints, hunks, pairing, plugins, egress,
+                  reasoning_effort, ui_prefs, project_files, project_pins)
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
+from kova.bot_routes import actor_for_chat, install_bot_routes
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
 from kova.memory import Memory, Note
@@ -62,6 +64,8 @@ class ChatBody(BaseModel):
     model: str | None = None
     reasoning_effort: ReasoningEffort | None = None
     project_id: str | None = None
+    #: A direct chat with this bot (kind ``bot``); refused for incognito chats.
+    bot_id: str | None = None
 
 
 class CreateChatBody(ChatBody):
@@ -187,11 +191,12 @@ def memory_folder(value: str) -> Path:
 
 
 class NoteBody(BaseModel):
-    """A memory note to save, optionally into one project's own scope."""
+    """A memory note to save, optionally into one project's or bot's own scope."""
     title: str
     body: str
     tags: list[str] = Field(default_factory=list)
     project_id: str | None = None
+    bot_id: str | None = None
 
 
 class MemoryEditBody(BaseModel):
@@ -326,6 +331,7 @@ def _model_dict(entry: ModelEntry) -> dict:
             "provider": entry.provider, "provider_name": entry._provider.name if entry._provider else entry.provider}
 
 
+INSTALLED_BUILD_POLL_SECONDS = 15
 EVENTS_KEEPALIVE = 15.0  # seconds between /events pings; the web UI reconnects after 3 missed
 HEALTH_TTL = 15.0  # seconds a cached model reachability result stays fresh
 
@@ -526,6 +532,15 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 pass  # cleanup must never stop the server
 
+    async def watch_installed_build() -> None:
+        while True:
+            await asyncio.sleep(INSTALLED_BUILD_POLL_SECONDS)
+            with suppress(OSError, ValueError):
+                installed = await asyncio.to_thread(build.tool_build)
+                if installed and installed.fingerprint:
+                    app.state.restart_available = installed.fingerprint != app.state.build.fingerprint
+
+    update_watch = asyncio.create_task(watch_installed_build()) if build.managed() and app.state.build.fingerprint else None
     cleanup = asyncio.create_task(sweep_attachments())
     from kova.managed_engine import manager
     engine = manager(config)
@@ -542,6 +557,10 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
         reminders.cancel()
         cleanup.cancel()
         engine_idle.cancel()
+        if update_watch is not None:
+            update_watch.cancel()
+            with suppress(asyncio.CancelledError):
+                await update_watch
         if mcp_connect is not None:
             mcp_connect.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -593,6 +612,8 @@ def create_app(
         return JSONResponse(status_code=409, content={'detail': str(exc)})
 
     app.state.config = config
+    app.state.build = build.installed()
+    app.state.restart_available = False
     app.state.transport = transport
     app.state.now = now
     app.state.model_health = _ModelHealth(config, transport, now)
@@ -619,19 +640,29 @@ def create_app(
     install_local_model_routes(app, config, _require_token)
     from kova.extension_routes import install_extension_routes
     install_extension_routes(app, config, _require_token)
+    install_bot_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
         """One turn at a time per chat; deleting a chat waits for its turn."""
         return app.state.chat_locks.setdefault(chat_id, asyncio.Lock())
 
     @app.get("/health")
-    async def health(probe: bool | None = Query(None)) -> dict:
+    async def health(request: Request, probe: bool | None = Query(None)) -> dict:
         status = await app.state.model_health.get(force=probe is True, wait=probe is not False)
         if config.privacy_local_only:
             with suppress(KeyError):
                 if not egress.is_loopback_url(config.active_model().base_url):
                     status = {**status, 'model_ok': False}
-        return {"version": __version__, "model": config.active, "local_only": config.privacy_local_only, **status}
+        info = {"version": __version__, "build": app.state.build.fingerprint,
+                "restart_available": app.state.restart_available,
+                "model": config.active, "local_only": config.privacy_local_only, **status}
+        # The desktop's restart check needs to know if work would be interrupted;
+        # don't announce that activity on the public health endpoint.
+        with suppress(HTTPException):
+            await _require_bearer(request)
+            info["busy"] = bool(app.state.turns or any(not task.done() for task in app.state.compare_tasks.values())
+                                or app.state.scheduler.busy or app.state.agent.approvals.pending)
+        return info
 
     api = APIRouter(dependencies=[Depends(_require_token)])
     # A paired phone needs these on top of chat (pairing.CAPABILITIES).
@@ -706,16 +737,21 @@ def create_app(
             with egress.scope(config=config, store=app.state.store, chat_id=chat_id, items=records):
                 try:
                     async with chat_lock(chat_id):
-                        if app.state.store.get_chat(chat_id) is None:
+                        chat = app.state.store.get_chat(chat_id)
+                        if chat is None:
                             queue.put_nowait({"type": "error", "message": "chat was deleted"})
                             return
+                        # A direct bot chat answers as its bot; a missing or
+                        # broken bot falls back to the default assistant.
+                        actor = actor_for_chat(app, config, chat)
                         app.state.conversation_states.transition(chat_id, "turn_start")
                         app.state.steering[chat_id] = steering
                         try:
                             async for event in app.state.agent.run_turn(
                                     chat_id, text, model=model, steering=steering,
                                     attachment_ids=attachments, capabilities=capabilities,
-                                    record_user=record_user, turn_id=turn_id, variant=variant):
+                                    record_user=record_user, turn_id=turn_id, variant=variant,
+                                    actor=actor):
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
@@ -965,7 +1001,24 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from None
         project_id = body.project_id if body else None
         ephemeral = bool(body and body.ephemeral)
+        bot_id = (body.bot_id if body else None) or None
         folder = body.cwd if body else None
+        bot = None
+        if bot_id is not None:
+            if ephemeral:
+                raise HTTPException(status_code=422,
+                                    detail="Incognito chats cannot have bots or groups.")
+            # A direct chat with one bot: its mode and web flag are the chat's
+            # defaults, and it answers in its own folder.
+            bot = bots.get_bot(config.home, bot_id,
+                               models=[entry.name for entry in config.models])
+            if bot is None:
+                raise HTTPException(status_code=404, detail="bot not found")
+            mode = mode or bot.model.mode
+            if body is not None and body.web is None:
+                body = body.model_copy(update={"web": bot.model.web})
+            if folder is None:
+                folder = str(actor_folder(bot))
         if project_id is not None:
             if ephemeral:
                 raise HTTPException(422, "Incognito chats cannot belong to a project.")
@@ -992,6 +1045,8 @@ def create_app(
                 colour=colour,
                 icon=icon,
                 project_id=project_id,
+                kind="bot" if bot is not None else "chat",
+                bot_id=bot.id if bot is not None else None,
                 **model_settings,
             )
         except LookupError as exc:
@@ -999,6 +1054,16 @@ def create_app(
         # A phone chose its title and settings: the chat keeps that phone's limits.
         wrote_in(chat["id"], request)
         return chat
+
+    def actor_folder(bot) -> Path:
+        """The bot's working folder, created on first use like Kova Files itself."""
+        folder = Path(bot.permissions.folder).expanduser() if bot.permissions.folder else \
+            bots.default_folder(config.files_path, bot.id)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(422, f"The bot's working folder could not be created: {exc.strerror or exc}") from None
+        return folder
 
     @api.get("/chats/search")
     async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
@@ -1021,8 +1086,16 @@ def create_app(
         chat = app.state.store.get_chat(chat_id, include_usage=True, include_message_meta=True)
         if chat is None:
             raise HTTPException(status_code=404, detail="chat not found")
-        return {**chat, "state": app.state.conversation_states.get(chat_id),
-                "alternatives": app.state.store.turn_alternatives(chat_id)}
+        reply = {**chat, "state": app.state.conversation_states.get(chat_id),
+                 "alternatives": app.state.store.turn_alternatives(chat_id)}
+        if chat.get("kind") == "bot" and chat.get("bot_id"):
+            # The bot's identity as clients show it, not its persona text: the
+            # editor fetches that from /bots/{id} when it is opened.
+            bot = bots.get_bot(config.home, chat["bot_id"],
+                               models=[entry.name for entry in config.models])
+            if bot is not None:
+                reply["bot"] = bot.summary()
+        return reply
 
     @api.patch("/chats/{chat_id}")
     async def update_chat(chat_id: str, body: ChatBody, request: Request) -> dict:
@@ -1033,6 +1106,8 @@ def create_app(
             return await move_chat(chat_id, body.project_id, request)
         if body.ephemeral is not None:
             raise HTTPException(409, "Incognito is fixed when a chat starts. Create a new chat instead.")
+        if "bot_id" in body.model_fields_set:
+            raise HTTPException(409, "A chat's bot is fixed when it starts. Create a new chat instead.")
         changes: dict[str, str | bool | None] = {}
         if body.title is not None:
             title = body.title.strip()
@@ -1787,13 +1862,31 @@ def create_app(
         app.state.agent.memory = memory
         app.state.tool_context.memory = memory
         return {"ok": True}
-    def memory_for(project_id: str | None):
-        """The global store, or exactly one project's private scope.
+    def memory_for(project_id: str | None, bot_id: str | None = None):
+        """The global store, or exactly one project's or bot's private scope.
 
         A project is never searched by id from another project's route: only
         this named scope is mounted, so a model or client cannot traverse to a
-        sibling. Listing without an id stays the global store, unchanged.
+        sibling. The same holds for a bot's notes, which sit in their own
+        hidden folder. Listing without an id stays the global store, unchanged.
+        Naming both a project and a bot is refused rather than guessed at.
         """
+        if project_id and bot_id:
+            raise HTTPException(status_code=422,
+                                detail="Choose a project or a bot, not both.")
+        if bot_id:
+            from kova import bots as bot_store
+            bot = bot_store.get_bot(config.home, bot_id,
+                                    models=[entry.name for entry in config.models])
+            if bot is None:
+                raise HTTPException(status_code=404, detail="bot not found")
+            if not bot.memory.own:
+                raise HTTPException(status_code=422,
+                                    detail="This bot has no memory of its own.")
+            try:
+                return app.state.memory.bot_scope(bot.id, budget=bot.memory.budget)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if not project_id:
             return app.state.memory
         project = app.state.store.get_project(project_id)
@@ -1808,8 +1901,9 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @api.get("/memory")
-    async def memory_list(q: str | None = None, project_id: str | None = None) -> list[dict]:
-        mem = memory_for(project_id)
+    async def memory_list(q: str | None = None, project_id: str | None = None,
+                          bot_id: str | None = None) -> list[dict]:
+        mem = memory_for(project_id, bot_id)
         # The same hybrid ranking the prompt recall uses: keyword hits ordered
         # by the deterministic lexical signal, so CLI and web searches agree.
         notes = await asyncio.to_thread(mem.search, q, 50, mode="hybrid") if q \
@@ -1818,7 +1912,7 @@ def create_app(
 
     @api.post("/memory", dependencies=memory_write)
     async def memory_add(body: NoteBody) -> dict:
-        mem = memory_for(body.project_id)
+        mem = memory_for(body.project_id, body.bot_id)
         try:
             note = await asyncio.to_thread(mem.save, body.title, body.body, body.tags)
         except ValueError as exc:
@@ -1850,19 +1944,21 @@ def create_app(
         return _memory_settings(config)
 
     @api.delete("/memory/{slug}", dependencies=memory_write)
-    async def memory_delete(slug: str, project_id: str | None = None) -> dict:
-        if not memory_for(project_id).delete(slug):
+    async def memory_delete(slug: str, project_id: str | None = None,
+                            bot_id: str | None = None) -> dict:
+        if not memory_for(project_id, bot_id).delete(slug):
             raise HTTPException(status_code=404, detail="note not found")
         return {"ok": True}
 
     @api.patch("/memory/{slug}", dependencies=memory_write)
     async def memory_edit(slug: str, body: MemoryEditBody,
-                          project_id: str | None = None) -> dict:
+                          project_id: str | None = None,
+                          bot_id: str | None = None) -> dict:
         """Rewrite one note in place, keeping its slug, provenance and creation date."""
         if body.title is None and body.body is None and body.tags is None:
             raise HTTPException(status_code=422, detail="nothing to update")
         try:
-            note = await asyncio.to_thread(memory_for(project_id).update, slug,
+            note = await asyncio.to_thread(memory_for(project_id, bot_id).update, slug,
                                            title=body.title, body=body.body, tags=body.tags)
         except ValueError as exc:
             status = 422 if "No note named" not in str(exc) else 404

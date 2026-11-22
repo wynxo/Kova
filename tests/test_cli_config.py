@@ -188,6 +188,20 @@ def test_config_set_valid_values_round_trip(home, key, value, attr, expected):
     assert getattr(load_config(), attr) == expected
 
 
+def test_config_set_accepts_a_value_that_starts_with_a_dash(home):
+    result = invoke("config", "set", "persona.name", "-Nova")
+    assert result.exit_code == 0, result.output
+    assert load_config().persona_name == "-Nova"
+
+
+def test_config_set_negative_number_reaches_validation_without_a_separator(home):
+    result = invoke("config", "set", "memory.budget", "-1")
+    assert result.exit_code == 1, result.output
+    output = " ".join(result.output.split())
+    assert "No such option" not in output
+    assert "at least 0" in output
+
+
 def test_config_set_paths_are_expanded_and_resolved(home):
     result = invoke("config", "set", "files_path", str(home / "files"))
     assert result.exit_code == 0, result.output
@@ -248,8 +262,6 @@ def test_config_set_tui_key_and_refuses_a_duplicate(home):
 def test_config_set_invalid_values_are_refused_without_saving(home, key, value, needle):
     before = (home / "config.toml").read_text()
     args = ["config", "set", key]
-    if value.startswith("-"):
-        args.append("--")
     result = runner.invoke(cli.app, [*args, value])
     assert result.exit_code == 1, result.output
     assert needle in " ".join(result.output.split())

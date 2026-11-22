@@ -93,9 +93,9 @@
     // turned back on after "Turn off".
     if (edit) edit.hidden = false;
   }
-  function renderGreeting() {
-    const line = $('welcome-greeting');
-    if (line) line.textContent = state.persona?.name ? `Hi, I’m ${state.persona.name}.` : '';
+  function renderWelcome() {
+    const title = $('welcome-title');
+    if (title && state.persona?.name) title.textContent = `${state.persona.name} shows its work.`;
   }
   $('starters-edit')?.addEventListener('click', () => safe(async () => {
     const module = starterComponent(); if (!module) return;
@@ -765,6 +765,8 @@
     input.addEventListener('blur', () => finish(true));
   }
   let historyClick;
+  // What a sidebar row says while its chat needs attention, in plain words.
+  const CHAT_STATE = {'working': 'Working', 'blocked-on-approval': 'Waiting for your OK'};
   function history(chats, focusChatId = null) {
     const list = $('chat-list');
     list.replaceChildren();
@@ -798,7 +800,10 @@
         button.append(titleRow); button.title = title;
         // A row is its title. A second line appears only while the chat needs
         // attention (working, or waiting on an approval); the date groups say when.
-        if (chat.state && chat.state !== 'done') button.append(el('span', 'history-date', chat.state.replaceAll('-', ' ')));
+        if (chat.state && chat.state !== 'done' && chat.state !== 'idle') {
+          row.dataset.state = chat.state;
+          button.append(el('span', 'history-date', CHAT_STATE[chat.state] || chat.state.replaceAll('-', ' ')));
+        }
         button.onclick = event => {
           clearTimeout(historyClick);
           const version = state.navigationVersion;
@@ -1270,6 +1275,7 @@
     if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
     return `${Math.round(seconds / 3600)} h ago`;
   }
+  let restartNoticeShown = false;
   async function health() {
     try {
       const status = await json('/health');
@@ -1281,6 +1287,10 @@
       controls();
       if (!state.connected) return;
       clearNotice('offline');
+      if (status.restart_available && !restartNoticeShown) {
+        restartNoticeShown = true;
+        toast('A newer Kova is installed. Run kova restart when you are done working.', 'Kova update');
+      }
       // The model's state is a detail of the model chip, not a header badge: a
       // turn that fails because the model is down says so in the conversation.
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
@@ -1439,12 +1449,22 @@
     }
     section.append(list); return section;
   }
+  // The approval names the action it is asking about, so the question can be
+  // answered without reading the arguments first.
+  function approvalQuestion(tool) {
+    if (tool === 'run_command') return 'Run this command?';
+    if (tool === 'write_file') return 'Write this file?';
+    if (tool === 'edit_file') return 'Edit this file?';
+    if (tool === 'delegate_analysis') return 'Send these tasks to the model?';
+    if (tool === 'job_add') return 'Schedule this job?';
+    return `Allow ${String(tool || 'this tool').replaceAll('_', ' ')}?`;
+  }
   function approvalCard(event) {
     const card = el('section', 'approval-card');
     card.setAttribute('aria-label', 'Tool approval');
     card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     const heading = el('div', 'approval-heading');
-    heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
+    heading.append(icon('shield-check'), el('strong', '', approvalQuestion(event.tool)), el('span', `risk-badge risk-${event.risk}`, event.risk));
     card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
     if (event.change_summary) card.append(el('small', '', event.change_summary));
     if (event.args && !['run_command', 'delegate_analysis'].includes(event.tool)) {
@@ -1538,6 +1558,8 @@
       el('span', 'thinking-fill thinking-anim'));
     window.KovaThinking?.apply(activityMark);
     const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
+    // The live node at the end of the trace takes the channel of what runs now.
+    activity.dataset.step = 'think';
     function paint() {
       scheduled = false;
       for (const block of blocks) {
@@ -1565,7 +1587,7 @@
         if (tasks?.accept(event)) {
           current = null; toolGroup = null;
           if (kind === 'tool_call') toolCount += 1;
-          activity.hidden = kind !== 'tool_result'; activityText.textContent = 'Working…';
+          activity.hidden = kind !== 'tool_result'; activityText.textContent = 'Working…'; activity.dataset.step = 'tool';
           schedule(); return;
         }
         if (kind === 'text' || kind === 'reasoning') {
@@ -1576,7 +1598,7 @@
             // The reasoning text waits until the burst ends; until then the
             // thinking row is the whole visible state.
             activity.hidden = false;
-            activityText.textContent = 'Thinking…';
+            activityText.textContent = 'Thinking…'; activity.dataset.step = 'think';
             if (!current || current.kind !== kind) current = {kind, text: '', start: performance.now(), end: 0};
             current.text += event.text || '';
           } else {
@@ -1654,7 +1676,7 @@
           }
         } else if (kind === 'tool_result') {
           toolGroup?.result(event);
-          current = null; activity.hidden = false; activityText.textContent = 'Working…';
+          current = null; activity.hidden = false; activityText.textContent = 'Working…'; activity.dataset.step = 'tool';
         } else if (kind === 'error') {
           // One announcement for a failure: the live region, not a second alert.
           const error = el('div', 'turn-error'); error.append(icon('triangle-alert'), el('span', '', event.message));
@@ -2619,7 +2641,7 @@
       });
       dialog.remove();
     }
-    pageTitle(); renderGreeting();
+    pageTitle(); renderWelcome();
   }
 
   // The /events stream carries reminders and chat states. A non-200 reply (a 401

@@ -205,9 +205,9 @@ check_asset "mark.svg" "image/svg+xml"
 check_asset "vendor/marked.js" "javascript"
 check_asset "vendor/purify.js" "javascript"
 check_asset "vendor/highlight.js" "javascript"
-check_asset "fonts/InterVariable.woff2" "font/woff2"
-check_asset "fonts/InterVariable-Italic.woff2" "font/woff2"
-check_asset "fonts/JetBrainsMonoVariable.woff2" "font/woff2"
+check_asset "fonts/Geologica-latin.woff2" "font/woff2"
+check_asset "fonts/Geologica-latin-ext.woff2" "font/woff2"
+check_asset "fonts/MartianMono-latin.woff2" "font/woff2"
 
 STATUS="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
   "$BASE/app/assets/%2e%2e/%2e%2e/server.py")"

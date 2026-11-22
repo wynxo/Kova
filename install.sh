@@ -89,7 +89,7 @@ main() {
         dest=$data/desktop
         if [ -x "$UV_TOOL_BIN_DIR/kova" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
             'from kova.app import refresh_desktop' 2>/dev/null; then
-            if "$UV_TOOL_DIR/kova-ai/bin/python" -c 'import kova.desktop_registration' 2>/dev/null; then
+            if "$UV_TOOL_DIR/kova-ai/bin/python" -c 'from kova import app; assert hasattr(app, "prepare_installed_desktop") or hasattr(app, "register_desktop")' 2>/dev/null; then
                 "$UV_TOOL_BIN_DIR/kova" app --prepare --register ||
                     { skip_desktop 'Preparing or registering the desktop app failed.'; return; }
                 packaged_registration=1

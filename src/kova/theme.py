@@ -31,14 +31,15 @@ WARNING = "#ffaf5f"
 ERROR = "#ff5f6d"
 BASH = "#ff79c6"         # the "!" shell prefix and shell tool rows
 MEMORY = "#7aa2ff"       # the "#" memory prefix and memory tool rows
-CODE = "#ffb38a"         # inline code: a warm peach that reads on dark and light themes
+CODE = "#ffb38a"         # inline code, and trace steps that change things (writes, commands)
+THINK = "#c77dff"        # reasoning: the thinking node in the step trace
 GRADIENT = ("#ffffff", "#d8d8e0", "#b4b4c0", "#8a8f98")  # monochrome logo
 CODE_THEME = "monokai"   # Pygments theme for code blocks
 
 #: Every role a renderer may name, in a stable order.
 ROLES: tuple[str, ...] = (
     "ACCENT", "ACCENT_SOFT", "USER", "MUTED", "FAINT", "BORDER", "SURFACE", "ON_ACCENT",
-    "SUCCESS", "WARNING", "ERROR", "BASH", "MEMORY", "CODE",
+    "SUCCESS", "WARNING", "ERROR", "BASH", "MEMORY", "CODE", "THINK",
 )
 
 #: The semantic token each role follows. ``kova-light`` takes every role from its
@@ -60,7 +61,7 @@ ROLE_TOKENS: dict[str, str] = {
 }
 
 #: Roles with no semantic token follow the theme's 16-colour ANSI palette instead.
-ROLE_ANSI: dict[str, int] = {"USER": 6, "BASH": 5}
+ROLE_ANSI: dict[str, int] = {"USER": 6, "BASH": 5, "THINK": 5}
 
 #: ``tui.theme`` / ``KOVA_THEME`` spellings that name a built-in.
 ALIASES: dict[str, str] = {"dark": "kova-dark", "light": "kova-light"}

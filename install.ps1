@@ -87,7 +87,7 @@ function Install-Kova {
         $PackagedDesktop = $false
         $PackagedRegistration = $false
         if ((Test-Path -LiteralPath $App) -and (Test-Path -LiteralPath $ToolPython)) {
-            $DesktopCapabilities = & $ToolPython -c 'from importlib.util import find_spec; from kova import app; print(int(hasattr(app, ''refresh_desktop'')) + int(find_spec(''kova.desktop_registration'') is not None))'
+            $DesktopCapabilities = & $ToolPython -c 'from kova import app; print(int(hasattr(app, ''refresh_desktop'')) + int(hasattr(app, ''prepare_installed_desktop'') or hasattr(app, ''register_desktop'')))'
             $PackagedDesktop = $DesktopCapabilities -in '1', '2'
             $PackagedRegistration = $DesktopCapabilities -eq '2'
         }

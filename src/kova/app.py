@@ -25,7 +25,6 @@ from filelock import FileLock, Timeout
 
 from kova.client import KovaError, ensure_server
 from kova.config import kova_home, load_config
-from kova.desktop_registration import register_desktop, registered_linux_home, registration_path
 
 DESKTOP_DIR_ENV = "KOVA_DESKTOP_DIR"
 DESKTOP_NAME = "desktop"
@@ -221,6 +220,8 @@ def open_in_browser() -> int:
 
         if not webbrowser.open(login_url()):
             raise KovaError(None, "No browser could be opened. Check your default browser and run kova web again.")
+        # The ticket fragment is a one-use secret: say where we went without it.
+        print(f"Kova: opened {client.base_url}/app in your browser.", flush=True)
     except KovaError as exc:
         message = ("The running server needs a restart for the web UI. Run kova stop, then kova web."
                    if exc.status == 404 else str(exc))
@@ -239,6 +240,23 @@ def web_main(argv: list[str] | None = None) -> None:
     raise SystemExit(open_in_browser())
 
 
+def prepare_installed_desktop(*, register: bool = False) -> None:
+    from kova.desktop_integration import menu_path, refresh_desktop_integration, registered_linux_home
+
+    home = kova_home().absolute()
+    menu = menu_path()
+    repair = not register and menu is not None and menu.exists()
+    bin_dir = Path(os.environ.get("UV_TOOL_BIN_DIR") or Path.home() / ".local/bin")
+    launcher = bin_dir / ("kova.exe" if os.name == "nt" else "kova")
+    if repair and sys.platform == "linux":
+        if not os.environ.get("KOVA_HOME"):
+            home = registered_linux_home(menu) or home
+        refresh_desktop_integration(home, launcher, legacy_source=_bundled_desktop())
+    refresh_desktop(home)
+    if register or (repair and sys.platform != "linux"):
+        refresh_desktop_integration(home, launcher)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Compatibility entry point: the Electron desktop app."""
     parser = argparse.ArgumentParser(prog="kova app", description="Open the Kova desktop app.")
@@ -252,16 +270,8 @@ def main(argv: list[str] | None = None) -> None:
         os.environ["KOVA_HOME"] = str(args.data_home)
     if args.prepare:
         try:
-            home = kova_home().absolute()
-            entry = registration_path()
-            if not args.register and entry is not None and entry.is_file():
-                if not os.environ.get("KOVA_HOME"):
-                    home = registered_linux_home(entry) or home
-                register_desktop(home, _bundled_desktop())
-            refresh_desktop(home)
-            if args.register:
-                register_desktop(home, _bundled_desktop())
-        except (DesktopError, OSError, Timeout) as exc:
+            prepare_installed_desktop(register=args.register)
+        except (DesktopError, OSError, Timeout, subprocess.SubprocessError) as exc:
             print(f"Kova: could not prepare the desktop app: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         return

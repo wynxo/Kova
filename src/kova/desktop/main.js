@@ -1,6 +1,6 @@
 'use strict';
 const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, globalShortcut, clipboard} = require('electron');
-const {spawn} = require('node:child_process');
+const {execFile, spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const {settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId} = require('./core');
@@ -321,6 +321,17 @@ async function start() {
   starting = true;
   try {
     await status();
+    // A standalone package install may have left an older idle server alive.
+    // Only the backend CLI can authenticate, identify and restart that process.
+    // Best effort: with no backend CLI found, launchServer() below reports the real error.
+    let backend = null;
+    try { backend = serverCommand(path.resolve(__dirname, '../../..'), home); } catch {}
+    if (backend) {
+      const args = backend.args.slice(0, -1).concat('app-reconcile');
+      await new Promise(resolve => execFile(backend.command, args, {
+        cwd: backend.cwd, env: {...process.env, KOVA_HOME: home}, windowsHide: true, timeout: 25000,
+      }, () => resolve()));
+    }
     let value;
     // Authentication, not model health, determines whether this is our server.
     try { value = await ticket(); } catch { launchServer(); }

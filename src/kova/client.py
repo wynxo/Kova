@@ -206,16 +206,59 @@ class KovaClient:
     def create_chat(self, title: str | None = None, mode: str | None = None,
                     web: bool | None = None, permission: str | None = None,
                     cwd: str | None = None, ephemeral: bool = False, *,
-                    project_id: str | None = None,
+                    project_id: str | None = None, bot_id: str | None = None,
                     first_turn: bool = False, model: str | None = None) -> dict:
         body = {"title": title, "mode": mode, "web": web, "permission": permission, "cwd": cwd,
-                "project_id": project_id}
+                "project_id": project_id, "bot_id": bot_id}
         if ephemeral:
             body["ephemeral"] = True
         body = {field: value for field, value in body.items() if value is not None}
         if first_turn:
             body["first_turn_model"] = model
         return self._request("POST", "/chats", **({"json": body} if body else {})).json()
+
+    # -- bots ------------------------------------------------------------
+    def bots_list(self) -> list[dict]:
+        """Every bot, with its state (``ok`` or the file's error) and live status."""
+        return self._request("GET", "/bots").json()
+
+    def bot_get(self, bot_id: str) -> dict:
+        """One bot, including its persona text and definition."""
+        return self._request("GET", f"/bots/{quote(bot_id, safe='')}").json()
+
+    def bot_create(self, definition: dict, persona: str | None = None,
+                   validate_only: bool = False) -> dict:
+        """Create a bot from a definition; ``validate_only`` checks it without saving."""
+        payload = {**definition}
+        if persona is not None:
+            payload["persona"] = persona
+        params = {"validate_only": "true"} if validate_only else None
+        return self._request("POST", "/bots", json=payload, params=params).json()
+
+    def bot_update(self, bot_id: str, changes: dict, persona: str | None = None) -> dict:
+        """Change only the fields named; nested tables merge one level deep."""
+        payload = {**changes}
+        if persona is not None:
+            payload["persona"] = persona
+        return self._request("PATCH", f"/bots/{quote(bot_id, safe='')}", json=payload).json()
+
+    def bot_delete(self, bot_id: str) -> bool:
+        return self._request("DELETE", f"/bots/{quote(bot_id, safe='')}",
+                             missing_ok=True).status_code == 200
+
+    def bot_avatar(self, bot_id: str) -> tuple[bytes, str]:
+        """The bot's avatar image bytes and media type."""
+        response = self._request("GET", f"/bots/{quote(bot_id, safe='')}/avatar")
+        return response.content, response.headers.get("content-type", "application/octet-stream")
+
+    def bot_avatar_set(self, bot_id: str, data: bytes, filename: str,
+                       mime: str = "image/png") -> dict:
+        """Replace the avatar; the server checks the type and the 256 KB cap."""
+        return self._request("PUT", f"/bots/{quote(bot_id, safe='')}/avatar",
+                             files={"file": (filename, data, mime)}).json()
+
+    def bot_avatar_clear(self, bot_id: str) -> dict:
+        return self._request("DELETE", f"/bots/{quote(bot_id, safe='')}/avatar").json()
 
     def list_chats(self, include_ask: bool = False) -> list[dict]:
         """Chats, most recently used first. One-off ``kova ask`` chats are hidden unless asked for."""
@@ -561,20 +604,21 @@ class KovaClient:
         return self._request("POST", "/mcp/reload", timeout=90).json()
 
 
-def _spawn_server(cfg: Config) -> int:
-    """Start ``kova serve`` detached and record its pid; return the pid."""
+def _spawn_server(cfg: Config, *, python: str | Path | None = None) -> int:
+    """Start ``kova serve`` detached; the server records its own pid."""
     log = cfg.home / "server.log"
     cfg.home.mkdir(parents=True, exist_ok=True)
+    detach = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+              if os.name == "nt" else {"start_new_session": True})
     with open(log, "w") as handle:
         process = subprocess.Popen(
-            [sys.executable, "-m", "kova", "serve"],
+            [python or sys.executable, "-m", "kova", "serve"],
+            stdin=subprocess.DEVNULL,
             stdout=handle,
             stderr=handle,
-            start_new_session=True,
             env={**os.environ, "KOVA_HOME": str(cfg.home)},
+            **detach,
         )
-    cfg.home.mkdir(parents=True, exist_ok=True)
-    (cfg.home / "server.pid").write_text(str(process.pid))
     return process.pid
 
 

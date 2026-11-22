@@ -11,7 +11,7 @@
   <link rel="icon" href="/app/assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="/app/assets/icon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/app/assets/icon-180.png">
-  <link rel="preload" href="/app/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/app/assets/fonts/Geologica-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app/assets/tokens.css">
   <script src="/app/assets/desktop.js"></script>
   <!-- Not deferred: the theme, text size, density and font are on <html> before
@@ -72,6 +72,9 @@
   <script defer src="/app/assets/plan-card.js"></script>
   <link rel="stylesheet" href="/app/assets/compare.css">
   <script defer src="/app/assets/compare.js"></script>
+  <!-- The live step trace (docs/DESIGN.md): after every turn component it
+       draws a node for, before the phone layout. -->
+  <link rel="stylesheet" href="/app/assets/trace.css">
   <link rel="stylesheet" href="/app/assets/mobile.css">
   <script defer src="/app/assets/mobile.js"></script>
   <script defer src="/app/assets/thinking.js"></script>
@@ -129,8 +132,14 @@
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <span class="kova-mark welcome-mark" aria-hidden="true"></span>
-        <p id="welcome-greeting" class="welcome-greeting"></p>
-        <h1>What are you working on?</h1>
+        <h1 id="welcome-title">Kova shows its work.</h1>
+        <p id="welcome-greeting" class="welcome-greeting">Follow each step as it happens. Stop a reply whenever you need to.</p>
+        <ul class="trace-legend" aria-label="What a reply shows">
+          <li data-step="think"><strong>Thinking</strong><span>Read the reasoning when your model shares it.</span></li>
+          <li data-step="tool"><strong>Tool calls</strong><span>See what ran and inspect its result.</span></li>
+          <li data-step="ask"><strong>Approvals</strong><span>Allow or deny actions that need your OK.</span></li>
+          <li data-step="agent"><strong>Parallel tasks</strong><span>Follow each branch and stop individual tasks.</span></li>
+        </ul>
         <div id="starters" class="starters" role="group" aria-label="Suggested prompts" hidden></div>
         <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>
