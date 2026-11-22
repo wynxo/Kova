@@ -99,7 +99,8 @@ def test_a_new_bot_is_written_with_private_atomic_files(tmp_path):
     folder = tmp_path / "bots" / "researcher"
     for name in ("bot.toml", "persona.md"):
         mode = stat.S_IMODE((folder / name).stat().st_mode)
-        assert mode == 0o600, f"{name} is {oct(mode)}"
+        # Windows does not expose POSIX modes; os.chmod only toggles read-only there.
+        assert os.name == "nt" or mode == 0o600, f"{name} is {oct(mode)}"
     assert (folder / "persona.md").read_text() == "Be brief."
     assert not [path for path in folder.iterdir() if path.name.startswith(".bot-")], \
         "no temporary file may be left behind"

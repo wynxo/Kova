@@ -9,6 +9,7 @@ really answers as its bot, and the fallback when its bot is gone.
 from __future__ import annotations
 
 import json
+import os
 import stat
 
 import pytest
@@ -53,7 +54,7 @@ def test_a_bot_is_created_read_edited_and_deleted(kova):
     assert created["model"] == "big" and created["persona"].startswith("You research")
     folder = cfg.home / "bots" / "researcher"
     assert (folder / "bot.toml").is_file() and (folder / "persona.md").read_text().startswith("You")
-    assert stat.S_IMODE((folder / "bot.toml").stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE((folder / "bot.toml").stat().st_mode) == 0o600
 
     listed = client.get("/bots", headers=headers).json()
     assert [(bot["id"], bot["state"], bot["status"]) for bot in listed] == [
@@ -226,7 +227,8 @@ def test_an_avatar_is_uploaded_read_and_cleared(kova):
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()["image"] == "avatar.png"
     image = (cfg.home / "bots" / "researcher" / "avatar.png")
-    assert image.read_bytes() == PNG and stat.S_IMODE(image.stat().st_mode) == 0o600
+    assert image.read_bytes() == PNG
+    assert os.name == "nt" or stat.S_IMODE(image.stat().st_mode) == 0o600
     served = client.get("/bots/researcher/avatar", headers=headers)
     assert served.status_code == 200 and served.content == PNG
     assert served.headers["content-type"] == "image/png"
