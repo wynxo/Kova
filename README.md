@@ -44,7 +44,20 @@ Install as a normal user. Node.js 22+ with npm enables the desktop app and app-m
 
 **Launch:** Open **Kova** from your app menu, run `kova app`, or use `kova web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
 
-**Update:** `kova update` (preview with `kova update --check`). **Uninstall:** `kova uninstall` (use `--keep-data` to keep chats and settings).
+### Update Kova
+
+Run **`kova update`** to refresh the CLI, terminal chat, and web UI. If you use the desktop app, the same command replaces its files and Electron dependencies and refreshes the app-menu entry and icons. It also updates an enabled start-at-login entry and migrates existing config and data. A running server is restarted and checked; an open desktop app is reopened. Finish any active work before updating. An open browser tab may need a refresh, or a new session via `kova web`.
+
+- `kova update --check` compares the installed version and commit with GitHub without changing your installation or data. The full update shows a short changelog when GitHub has both commits.
+- `kova update --verbose` shows the full uv/npm output. If a step fails, the summary names it and gives a repair command. An unsuccessful uv install keeps the old CLI.
+- `kova restart` restarts and checks the local server without reinstalling. Opening the desktop app also restarts an idle, older server if you updated the package separately.
+- On Windows, the updater finishes in a separate console so it can replace the CLI executable after it exits.
+
+An interactive `kova status` can check for updates at most once every 24 hours. To disable that hint, add `hint = false` under `[updates]` in `config.toml`. Local-only mode doesn't check GitHub.
+
+If you're on an older install that only replaces the CLI, run `kova update` once more after the new updater is installed to refresh the rest.
+
+**Uninstall:** `kova uninstall` (use `--keep-data` to keep chats and settings).
 
 For standalone desktop installers, see [GitHub Releases](https://github.com/wynxo/Kova/releases) and the [desktop setup notes](src/kova/desktop/README.md).
 

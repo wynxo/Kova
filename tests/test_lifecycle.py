@@ -2,6 +2,7 @@
 
 import json
 import signal
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from kova import build, updater
 from kova.cli import app
 
 
@@ -33,6 +35,11 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.delenv("KOVA_REF", raising=False)
     monkeypatch.delenv("KOVA_SOURCE", raising=False)
     monkeypatch.setattr(lifecycle, "find_uv", lambda: "/test/uv")
+    monkeypatch.setattr(lifecycle.egress, "get", Mock(side_effect=httpx.ConnectError("offline")))
+    monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: None)
+    monkeypatch.setattr(updater.runtime, "running_desktop", lambda home: None)
+    monkeypatch.setattr(updater.autostart, "status", lambda **_: updater.autostart.Status("linux", "desktop", False))
+    monkeypatch.setattr(updater, "menu_path", lambda: tmp_path / ".local/share/applications/kova.desktop")
     monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(platform="linux", stdin=sys.stdin))
     return lifecycle
 
@@ -42,8 +49,8 @@ def install_metadata(lifecycle, monkeypatch, commit=None):
     if commit:
         origin["vcs_info"] = {"vcs": "git", "commit_id": commit}
     dist = Mock(version="0.1.0")
-    dist.read_text.return_value = json.dumps(origin)
-    monkeypatch.setattr(lifecycle.metadata, "distribution", lambda name: dist)
+    dist.read_text.side_effect = lambda file: json.dumps(origin) if file == "direct_url.json" else None
+    monkeypatch.setattr(build.metadata, "distribution", lambda name: dist)
 
 
 def remote(lifecycle, monkeypatch, sha="b" * 40, version="0.1.0"):
@@ -65,6 +72,7 @@ def test_update_check_compares_commits_without_installing(lifecycle, monkeypatch
     assert result.exit_code == 0, result.output
     assert ("Up to date" if same else "Update available") in result.output
     assert not run.called
+    assert not lifecycle.kova_home().exists()
 
 
 def test_update_check_without_commit_does_not_claim_current(lifecycle, monkeypatch):
@@ -93,25 +101,132 @@ def test_update_check_network_error(lifecycle, monkeypatch):
     assert "Traceback" not in result.output
 
 
+def write_tool(version, *, source_commit=None):
+    tool = build.tool_dir()
+    dist = tool / f"lib/python3.12/site-packages/kova_ai-{version}.dist-info"
+    dist.mkdir(parents=True, exist_ok=True)
+    (dist / "METADATA").write_text(f"Name: kova-ai\nVersion: {version}\n")
+    (dist / "RECORD").write_text(f"kova/cli.py,sha256={version},1\n")
+    if source_commit:
+        (dist / "kova-source-commit").write_text(source_commit)
+    return dist
+
+
+def fake_install(lifecycle, monkeypatch):
+    """Record commands, have uv create tool metadata and make CLI report it."""
+    calls = []
+
+    def run(args, **options):
+        calls.append(([str(arg) for arg in args], options))
+        if args[0] == "/test/uv":
+            # uv --force replaces the whole tool environment; never leave the old dist-info beside the new one.
+            shutil.rmtree(build.tool_dir() / "lib", ignore_errors=True)
+            write_tool("0.2.0")
+            launcher = updater.Path(options["env"]["UV_TOOL_BIN_DIR"]) / ("kova.exe" if updater.os.name == "nt" else "kova")
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_text("new launcher")
+        output = "Kova v0.2.0" if args[-1] == "--version" else ""
+        return subprocess.CompletedProcess(args, 0, output)
+
+    monkeypatch.setattr(updater.subprocess, "run", run)
+    return calls
+
+
 @pytest.mark.parametrize("git", [True, False])
 def test_update_uses_selected_ref_and_archive_without_git(lifecycle, monkeypatch, git):
     monkeypatch.setattr(lifecycle.shutil, "which", lambda name: "/test/git" if git else None)
-    run = Mock(return_value=subprocess.CompletedProcess([], 0))
-    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    calls = fake_install(lifecycle, monkeypatch)
     result = CliRunner().invoke(app, ["update", "--ref", "v0.2.0"])
     assert result.exit_code == 0, result.output
-    args = run.call_args.args[0]
+    args, opts = calls[0]
     assert args[:4] == ["/test/uv", "tool", "install", "--force"]
     assert args[-1] == ("kova-ai @ git+https://github.com/wynxo/Kova@v0.2.0" if git else
                         "kova-ai @ https://github.com/wynxo/Kova/archive/v0.2.0.tar.gz")
     assert args[4:7] == ["--refresh", "--upgrade-package", "kova-ai"]
+    assert opts["capture_output"] is True
+    assert not lifecycle.kova_home().exists()
 
 
-def test_update_uv_failure_is_not_success(lifecycle, monkeypatch):
-    monkeypatch.setattr(lifecycle.subprocess, "run", Mock(side_effect=subprocess.CalledProcessError(1, "uv")))
+def test_update_preview_shows_short_commit_subjects(lifecycle, monkeypatch):
+    write_tool("0.1.0", source_commit="a" * 40)
+    remote(lifecycle, monkeypatch, version="0.2.0")
+    get = lifecycle.egress.get
+    def request(url, **kwargs):
+        if "/compare/" in url:
+            assert ("a" * 40 + "..." + "b" * 40) in url
+            return httpx.Response(200, json={"commits": [{"commit": {"message": "Improve update\n\nLong body"}},
+                                                          {"commit": {"message": "Refresh desktop"}}]},
+                                  request=httpx.Request("GET", url))
+        return get(url, **kwargs)
+    monkeypatch.setattr(lifecycle.egress, "get", request)
+    calls = fake_install(lifecycle, monkeypatch)
+    result = CliRunner().invoke(app, ["update", "--verbose"])
+    assert result.exit_code == 0, result.output
+    assert "0.1.0 (aaaaaaaaaaaa) → 0.2.0 (bbbbbbbbbbbb)" in result.output
+    assert "Improve update" in result.output and "Refresh desktop" in result.output
+    assert "Long body" not in result.output
+    assert calls[0][1]["capture_output"] is False
+
+
+def test_update_uv_failure_rolls_back_tool_and_does_not_interrupt_old_server(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="linux"))
+    dist = write_tool("0.1.0")
+    bin_dir = updater.Path(lifecycle.tool_env()["UV_TOOL_BIN_DIR"])
+    bin_dir.mkdir(parents=True)
+    launcher = bin_dir / ("kova.exe" if updater.os.name == "nt" else "kova")
+    launcher.write_text("old launcher")
+    stop = Mock()
+    monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: object())
+    monkeypatch.setattr(updater.runtime, "stop", stop)
+    def fail(args, **options):
+        (dist / "METADATA").unlink()
+        launcher.write_text("broken launcher")
+        raise subprocess.CalledProcessError(1, "uv", stderr="network failed")
+    monkeypatch.setattr(lifecycle.subprocess, "run", fail)
     result = CliRunner().invoke(app, ["update"])
     assert result.exit_code == 1
-    assert "Updated" not in result.output
+    assert "network failed" in result.output and "Run: kova update" in result.output
+    assert build.tool_build().version == "0.1.0"
+    assert launcher.read_text() == "old launcher"
+    stop.assert_not_called()
+
+
+def test_windows_worker_recovers_the_running_install_when_uv_fails(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(updater, "_check_windows_tool_idle", lambda: None)
+    monkeypatch.setattr(build, "managed", lambda: False)
+    old = write_tool("0.1.0")
+    server, desktop = object(), object()
+    monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: server)
+    monkeypatch.setattr(updater.runtime, "running_desktop", lambda home: desktop)
+    stop, start_server, start_desktop = Mock(), Mock(), Mock()
+    monkeypatch.setattr(updater.runtime, "stop", stop)
+    monkeypatch.setattr(updater.runtime, "start_server", start_server)
+    monkeypatch.setattr(updater.runtime, "start_desktop", start_desktop)
+
+    def fail(*args, **kwargs):
+        (old / "METADATA").unlink()
+        raise subprocess.CalledProcessError(1, "uv", stderr="replacement failed")
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", fail)
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 1, result.output
+    assert "replacement failed" in result.output
+    assert [call.args[0] for call in stop.call_args_list] == [server, desktop]
+    assert start_server.call_args.args[1].version == "0.1.0"
+    start_desktop.assert_called_once()
+    assert build.tool_build().version == "0.1.0"
+
+
+def test_windows_installed_cli_defers_update_until_launcher_exits(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(build, "managed", lambda: True)
+    defer = Mock()
+    monkeypatch.setattr(updater, "_defer_windows", defer)
+    result = CliRunner().invoke(app, ["update", "--verbose"])
+    assert result.exit_code == 0, result.output
+    defer.assert_called_once_with("main", True)
+    assert "separate console" in result.output
 
 
 @pytest.mark.parametrize("args,answer,deleted", [
@@ -239,32 +354,67 @@ def test_windows_cli_uninstall_helper_removes_start_menu_shortcut(lifecycle, mon
     assert "Remove-Item -LiteralPath" in script
 
 
-def test_update_refreshes_existing_desktop_with_new_launcher(lifecycle, monkeypatch):
-    desktop = lifecycle.kova_home() / "desktop"
-    desktop.mkdir(parents=True)
-    (desktop / "package.json").write_text("{}")
-    run = Mock()
-    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+@pytest.mark.parametrize("evidence", ["stage directory", "desktop profile", "menu entry"])
+def test_update_uses_new_package_even_if_the_desktop_manifest_is_missing(lifecycle, monkeypatch, evidence):
+    home = lifecycle.kova_home()
+    if evidence == "stage directory":
+        (home / "desktop").mkdir(parents=True)
+    elif evidence == "desktop profile":
+        (home / "desktop-data").mkdir(parents=True)
+    else:
+        menu = updater.menu_path()
+        menu.parent.mkdir(parents=True)
+        menu.write_text("Exec=kova-app")
+    calls = fake_install(lifecycle, monkeypatch)
     result = CliRunner().invoke(app, ["update"])
     assert result.exit_code == 0, result.output
-    install, prepare = run.call_args_list
-    assert install.args[0][:3] == ["/test/uv", "tool", "install"]
-    launcher = "kova.exe" if lifecycle.os.name == "nt" else "kova"
-    assert prepare.args[0] == [str(lifecycle.Path(prepare.kwargs["env"]["UV_TOOL_BIN_DIR"]) / launcher),
-                               "app", "--prepare"]
+    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "stage", "register", "verify-desktop"]
+    for args, options in calls[2:]:
+        assert args[:3] == [str(build.tool_python()), "-m", "kova.updater"]
+        assert options["env"]["KOVA_HOME"] == str(home)
 
 
-def test_update_repairs_old_menu_entry_that_called_kova_app(lifecycle, monkeypatch):
-    entry = lifecycle.Path.home() / ".local/share/applications/kova.desktop"
-    entry.parent.mkdir(parents=True)
-    entry.write_text("[Desktop Entry]\nName=Kova\nExec=/old/bin/kova-app\nType=Application\n")
-    monkeypatch.setattr(lifecycle.subprocess, "run", Mock())
+def test_update_failure_in_desktop_still_refreshes_login_and_restarts(lifecycle, monkeypatch):
+    server, desktop = object(), object()
+    monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: server)
+    monkeypatch.setattr(updater.runtime, "running_desktop", lambda home: desktop)
+    monkeypatch.setattr(updater.autostart, "status", lambda **_: updater.autostart.Status("linux", "desktop", True, enabled=True))
+    calls = fake_install(lifecycle, monkeypatch)
+    run = updater.subprocess.run
+    def fail_stage(args, **kwargs):
+        if args[-1] == "stage":
+            raise subprocess.CalledProcessError(1, "prepare", stderr="npm ci failed")
+        return run(args, **kwargs)
+    monkeypatch.setattr(updater.subprocess, "run", fail_stage)
+    stop, start_server, start_desktop, verify = Mock(), Mock(), Mock(), Mock()
+    monkeypatch.setattr(updater.runtime, "stop", stop)
+    monkeypatch.setattr(updater.runtime, "start_server", start_server)
+    monkeypatch.setattr(updater.runtime, "start_desktop", start_desktop)
+    monkeypatch.setattr(updater.runtime, "verify_server", verify)
     result = CliRunner().invoke(app, ["update"])
-    assert result.exit_code == 0, result.output
-    text = entry.read_text()
-    assert "kova-app" not in text
-    assert any(line.startswith("Exec=") and line.endswith('kova" app') for line in text.splitlines())
-    assert "Name=Kova" in text
+    assert result.exit_code == 1, result.output
+    assert [call.args[0] for call in stop.call_args_list] == [server, desktop]
+    assert start_server.call_args.args[1].version == "0.2.0"
+    assert verify.call_args.args[1].fingerprint == start_server.call_args.args[1].fingerprint
+    start_desktop.assert_called_once()
+    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "login", "verify-desktop"]
+    assert "npm ci failed" in result.output and "previous desktop kept" in result.output
+    assert "✓ Restart server and wait for /health" in result.output
+
+
+def test_cached_hint_is_opt_out_and_only_once_a_day(lifecycle, monkeypatch):
+    cfg = updater.load_config()
+    monkeypatch.setattr(build, "managed", lambda: True)
+    monkeypatch.setattr(build, "installed", lambda: build.Build("0.1.0", "a" * 40))
+    look_up = Mock(return_value=build.Build("0.1.0", "b" * 40))
+    monkeypatch.setattr(lifecycle, "remote_build", look_up)
+    cfg.update_hint = False
+    assert lifecycle.update_hint(cfg) is None
+    look_up.assert_not_called()
+    cfg.update_hint = True
+    assert "Run: kova update" in lifecycle.update_hint(cfg)
+    assert lifecycle.update_hint(cfg) is None
+    look_up.assert_called_once()
 
 
 def test_kova_app_prepare_refreshes_desktop(monkeypatch):

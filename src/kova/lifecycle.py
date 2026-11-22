@@ -1,27 +1,25 @@
-"""User-level uv installation management. Never starts a server or creates config."""
+"""User-level uv installation management and read-only update discovery."""
 
 from __future__ import annotations
 
 import base64
-import json
 import os
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import time
 import tomllib
-from importlib import metadata
 from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
-from kova import egress
 import psutil
 
-from kova import __version__, autostart
-from kova.config import kova_home
+from kova import autostart, build, egress
+from kova.config import Config, kova_home, load_config, private_write
 
 REPOSITORY = "https://github.com/wynxo/Kova"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Kova"
@@ -71,90 +69,95 @@ def find_uv() -> str:
 
 
 def installed_info() -> tuple[str, str | None]:
+    current = build.installed()
+    return current.version, current.commit
+
+
+def remote_build(ref: str, *, timeout: float = 5) -> build.Build:
     try:
-        dist = metadata.distribution("kova-ai")
-    except metadata.PackageNotFoundError:
-        return __version__, None
+        # Config and egress accounting must not write anything for --check.
+        with egress.scope(config_loader=lambda: load_config(read_only=True), audit=False):
+            response = egress.get(
+                f"https://api.github.com/repos/wynxo/Kova/commits/{quote(ref, safe='')}",
+                timeout=timeout, follow_redirects=True,
+            )
+            response.raise_for_status()
+            target = response.json()["sha"]
+            if not build.COMMIT.fullmatch(target):
+                raise ValueError("invalid GitHub commit")
+            response = egress.get(
+                f"https://raw.githubusercontent.com/wynxo/Kova/{target}/pyproject.toml",
+                timeout=timeout, follow_redirects=True,
+            )
+            response.raise_for_status()
+            version = tomllib.loads(response.text)["project"]["version"]
+            if not isinstance(version, str):
+                raise ValueError("invalid project version")
+    except (httpx.HTTPError, egress.LocalOnlyError, ValueError, KeyError, TypeError) as exc:
+        raise LifecycleError(f"Could not check for updates: {exc}") from exc
+    return build.Build(version, target)
+
+
+def changelog(old: str | None, new: str | None) -> list[str]:
+    if not old or not new or old == new or not (build.COMMIT.fullmatch(old) and build.COMMIT.fullmatch(new)):
+        return []
     try:
-        origin = json.loads(dist.read_text("direct_url.json") or "{}")
-        commit = origin.get("vcs_info", {}).get("commit_id")
-        if not commit:
-            match = re.search(r"/archive/([0-9a-f]{40})\.tar\.gz$", origin.get("url", ""))
-            commit = match[1] if match else None
-        return dist.version, commit
-    except (ValueError, TypeError):
-        return dist.version, None
+        with egress.scope(config_loader=lambda: load_config(read_only=True), audit=False):
+            response = egress.get(
+                f"https://api.github.com/repos/wynxo/Kova/compare/{old}...{new}?per_page=6",
+                timeout=5, follow_redirects=True,
+            )
+            response.raise_for_status()
+        subjects = []
+        for item in response.json()["commits"][:6]:
+            lines = item["commit"]["message"].splitlines()
+            if lines:
+                subject = "".join(char for char in lines[0] if char.isprintable()).strip()
+                if subject:
+                    subjects.append(subject[:140])
+        return subjects
+    except (httpx.HTTPError, egress.LocalOnlyError, AttributeError, ValueError, KeyError, TypeError):
+        return []
 
 
 def check_update(ref: str) -> str:
     """Read-only comparison; same version alone cannot prove a branch is current."""
-    try:
-        response = egress.get(
-            f"https://api.github.com/repos/wynxo/Kova/commits/{quote(ref, safe='')}",
-            timeout=15, follow_redirects=True,
-        )
-        response.raise_for_status()
-        target = response.json()["sha"]
-        response = egress.get(
-            f"https://raw.githubusercontent.com/wynxo/Kova/{target}/pyproject.toml",
-            timeout=15, follow_redirects=True,
-        )
-        response.raise_for_status()
-        version = tomllib.loads(response.text)["project"]["version"]
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        raise LifecycleError(f"Could not check for updates: {exc}") from exc
+    target = remote_build(ref)
     current_version, commit = installed_info()
-    if commit == target:
-        return f"Up to date: Kova {current_version} ({target[:12]}, {ref})."
-    if commit or version != current_version:
-        return (f"Update available: {current_version} ({(commit or 'unknown')[:12]}) → "
-                f"{version} ({target[:12]}, {ref}). Run: kova update --ref {ref}")
-    return (f"Kova {current_version}; {ref} is {version} ({target[:12]}). Installed commit unavailable; "
+    if commit == target.commit:
+        return f"Up to date: Kova {target.version} ({target.commit[:12]}, {ref})."
+    if commit or target.version != current_version:
+        return (f"Update available: {build.Build(current_version, commit).label()} → "
+                f"{target.label()} [{ref}]. Run: kova update --ref {ref}")
+    return (f"Kova {current_version}; {ref} is {target.label()}. Installed commit unavailable; "
             "version matches, but freshness cannot be confirmed. Run: kova update")
 
 
-def update(ref: str, emit=print) -> None:
-    egress.check_external_process()
-    source = source_spec(ref)
-    # Re-resolve moving refs; --refresh alone can reinstall the cached Git commit.
-    command = [
-        find_uv(), "tool", "install", "--force", "--refresh", "--upgrade-package", "kova-ai",
-        "--python", "3.12", source,
-    ]
-    where = source if os.environ.get("KOVA_SOURCE") else ref
-    emit(f"→ Installing or updating Kova from {where}")
-    env = tool_env()
-    try:
-        subprocess.run(command, check=True, env=env)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise LifecycleError(f"Kova update failed: {exc}") from exc
-    if (kova_home() / "desktop" / "package.json").is_file():
-        # Use the newly installed executable, not modules from the old process.
-        launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova.exe" if os.name == "nt" else "kova")
-        try:
-            subprocess.run([str(launcher), "app", "--prepare"], check=True, env=env)
-        except (OSError, subprocess.CalledProcessError):
-            emit("Kova CLI was updated, but desktop preparation failed. Run kova app to retry, or use kova web.")
-            return
-    _repair_menu_entry(Path(env["UV_TOOL_BIN_DIR"]))
-    emit("✓ Updated Kova. Run: kova")
+def update_hint(cfg: Config) -> str | None:
+    """Check at most once in 24 hours, even across terminals and offline failures."""
+    from filelock import FileLock, Timeout
 
-
-def _repair_menu_entry(bin_dir: Path) -> None:
-    """Point an old Linux app-menu entry at `kova app` (the kova-app command is gone)."""
-    entry = Path.home() / ".local/share/applications/kova.desktop"
+    if not cfg.update_hint or cfg.privacy_local_only or not build.managed() or os.environ.get("KOVA_SOURCE"):
+        return None
+    cache = cfg.home / ".update-checked"
     try:
-        text = entry.read_text()
-    except OSError:
-        return
-    if "kova-app" not in text:
-        return
-    lines = [f'Exec="{bin_dir / "kova"}" app' if line.startswith("Exec=") and "kova-app" in line else line
-             for line in text.splitlines()]
-    try:
-        entry.write_text("\n".join(lines) + "\n")
-    except OSError:
+        with FileLock(cache.with_suffix(".lock"), timeout=0):
+            now = time.time()
+            if cache.is_file() and now - float(cache.read_text()) < 86400:
+                return None
+            private_write(cache, str(now))
+            target = remote_build(selected_ref(), timeout=2)
+            current = build.installed()
+            if target.commit != current.commit and (current.commit or target.version != current.version):
+                return f"Kova update available ({target.label()}). Run: kova update"
+    except (LifecycleError, Timeout, ValueError, OSError):
         pass
+    return None
+
+
+def update(ref: str, emit=print, *, verbose=False, progress=None) -> None:
+    from kova.updater import update_installation
+    update_installation(ref, emit, verbose=verbose, progress=progress)
 
 
 def verified_server(pid: int, home: Path):
@@ -213,7 +216,11 @@ def remove_desktop_registration() -> None:
     if sys.platform == "linux":
         share = Path.home() / ".local/share"
         (share / "applications/kova.desktop").unlink(missing_ok=True)
-        (share / "icons/hicolor/512x512/apps/kova.png").unlink(missing_ok=True)
+        from kova.desktop_integration import ICON_FILES
+        icons = share / "icons/hicolor"
+        for size in ICON_FILES:
+            (icons / f"{size}x{size}/apps/kova.png").unlink(missing_ok=True)
+        (icons / "scalable/apps/kova.svg").unlink(missing_ok=True)
         for name, args in (
             ("update-desktop-database", [str(share / "applications")]),
             ("gtk-update-icon-cache", ["-f", "-t", str(share / "icons/hicolor")]),

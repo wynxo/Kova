@@ -1275,6 +1275,7 @@
     if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
     return `${Math.round(seconds / 3600)} h ago`;
   }
+  let restartNoticeShown = false;
   async function health() {
     try {
       const status = await json('/health');
@@ -1286,6 +1287,10 @@
       controls();
       if (!state.connected) return;
       clearNotice('offline');
+      if (status.restart_available && !restartNoticeShown) {
+        restartNoticeShown = true;
+        toast('A newer Kova is installed. Run kova restart when you are done working.', 'Kova update');
+      }
       // The model's state is a detail of the model chip, not a header badge: a
       // turn that fails because the model is down says so in the conversation.
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
