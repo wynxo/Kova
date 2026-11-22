@@ -556,9 +556,10 @@ def test_chat_think_toggle_and_no_think(runner):
     result = cli_runner.invoke(cli.app, ["--new", "--no-think"],
                                input="first\n/think\nmiddle\n/think\nlast\n/exit\n")
     assert result.exit_code == 0, result.output
-    assert "hidden first" not in result.output
-    assert "visible middle" in result.output
-    assert "hidden last" not in result.output
+    assert "hidden first" not in result.output        # --no-think hides the trace row
+    assert "visible middle" in result.output          # /think expands the reasoning
+    # Collapsed is the third state: one line of the reasoning stays in the trace.
+    assert "thought   hidden last" in result.output
     assert all(reply in result.output for reply in ("First reply", "Middle reply", "Last reply"))
 
 

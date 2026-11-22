@@ -99,7 +99,6 @@ def test_rules_panels_and_the_input_bar_are_ascii_too(monkeypatch):
 
 def test_glyph_sets_are_switched_not_copied_by_the_module():
     use(True)
-    assert glyphs().ascii
+    assert glyphs().ascii and glyphs().think == ":"
     use(False)
-    assert not glyphs().ascii
-    assert glyphs_module._DEFAULT is not None
+    assert not glyphs().ascii and glyphs().think == UNICODE["think"]
