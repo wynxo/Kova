@@ -1,0 +1,500 @@
+{
+  "_readme": "Who answers one group message. tests/test_mentions.py runs every case through src/kova/mentions.py; src/kova/web_assets/group-route.js (the who-answers chip) runs the same file through its preview. `members` names a set below. `settings` is a partial group settings mapping; `override` is the per-message answer override; `seed` and `turn` drive random and the count rotation; `author` marks a bot's final reply (a hand-off, and the chip does not apply). `expect.authors`/`reasons` are the server's queue in order; `expect.preview` is the chip's deterministic view ({authors} or {decides} or {count} or {random, count}); omitted keys mean [] / null / false.",
+  "version": 1,
+  "members": {
+    "crew": [
+      {"id": "researcher", "handle": "researcher", "name": "Researcher", "position": 1},
+      {"id": "coder", "handle": "coder", "name": "Coder", "position": 2},
+      {"id": "critic", "handle": "critic", "name": "Critic", "position": 3}
+    ],
+    "quiet": [
+      {"id": "researcher", "handle": "researcher", "name": "Researcher", "position": 1},
+      {"id": "coder", "handle": "coder", "name": "Coder", "position": 2},
+      {"id": "critic", "handle": "critic", "name": "Critic", "position": 3, "muted": true}
+    ],
+    "silent": [
+      {"id": "researcher", "handle": "researcher", "name": "Researcher", "position": 1, "muted": true},
+      {"id": "coder", "handle": "coder", "name": "Coder", "position": 2, "muted": true},
+      {"id": "critic", "handle": "critic", "name": "Critic", "position": 3, "muted": true}
+    ],
+    "mixed": [
+      {"id": "researcher", "handle": "researcher", "name": "Researcher", "position": 1},
+      {"id": "coder", "handle": "coder", "name": "Coder", "position": 2},
+      {"id": "critic", "handle": "critic", "name": "Critic", "position": 3, "muted": true},
+      {"id": "note", "handle": "note", "name": "Note", "position": 4, "answers": "always"}
+    ],
+    "pair": [
+      {"id": "coder", "handle": "coder", "name": "Coder", "position": 1},
+      {"id": "critic", "handle": "critic", "name": "Critic", "position": 2}
+    ]
+  },
+  "cases": [
+    {
+      "name": "lead answers when nobody is mentioned",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "Could you look at this?",
+      "expect": {"authors": ["researcher"], "reasons": ["lead"],
+                 "preview": {"authors": ["researcher"]}}
+    },
+    {
+      "name": "a configured lead answers instead of the first member",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead", "lead": "coder"}},
+      "message": "Could you look at this?",
+      "expect": {"authors": ["coder"], "reasons": ["lead"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "a mention wins over the mode",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@coder could you check the build?",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "mentions answer in the order they appear",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@critic and then @coder take a look",
+      "expect": {"authors": ["critic", "coder"], "reasons": ["mention", "mention"],
+                 "preview": {"authors": ["critic", "coder"]}}
+    },
+    {
+      "name": "the same mention twice answers once",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@coder @coder are you there?",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "an unknown handle is not a mention, so the mode decides",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@nobody look at this",
+      "expect": {"authors": ["researcher"], "reasons": ["lead"], "unknown": ["nobody"],
+                 "preview": {"authors": ["researcher"]}}
+    },
+    {
+      "name": "mentioned mode stores an unaddressed message and nobody answers",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "Hello team",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "mentioned mode answers the mention",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@coder please take this",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "mentioned mode keeps the mention order",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@critic @coder both of you",
+      "expect": {"authors": ["critic", "coder"], "reasons": ["mention", "mention"],
+                 "preview": {"authors": ["critic", "coder"]}}
+    },
+    {
+      "name": "only unknown handles in mentioned mode means nobody",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@nobody take this",
+      "expect": {"authors": [], "reasons": [], "unknown": ["nobody"], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a known mention answers even with an unknown one beside it",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@nobody @coder take this",
+      "expect": {"authors": ["coder"], "reasons": ["mention"], "unknown": ["nobody"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "an email address is not a mention",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "email@coder.dev wrote this",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "everyone answers in position order",
+      "members": "crew",
+      "settings": {"answer": {"mode": "everyone"}},
+      "message": "Status?",
+      "expect": {"authors": ["researcher", "coder", "critic"],
+                 "reasons": ["everyone", "everyone", "everyone"],
+                 "preview": {"authors": ["researcher", "coder", "critic"]}}
+    },
+    {
+      "name": "a mention replaces everyone by default",
+      "members": "crew",
+      "settings": {"answer": {"mode": "everyone"}},
+      "message": "@coder status?",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "mentions add puts the mentioned bot first, then the picks",
+      "members": "crew",
+      "settings": {"answer": {"mode": "everyone", "mentions": "add"}},
+      "message": "@coder status?",
+      "expect": {"authors": ["coder", "researcher", "critic"],
+                 "reasons": ["mention", "everyone", "everyone"],
+                 "preview": {"authors": ["coder", "researcher", "critic"]}}
+    },
+    {
+      "name": "everyone with every member muted answers nobody",
+      "members": "silent",
+      "settings": {"answer": {"mode": "everyone"}},
+      "message": "Status?",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "subset answers its members in position order",
+      "members": "crew",
+      "settings": {"answer": {"mode": "subset", "bots": ["critic", "coder"]}},
+      "message": "Compare these",
+      "expect": {"authors": ["coder", "critic"], "reasons": ["subset", "subset"],
+                 "preview": {"authors": ["coder", "critic"]}}
+    },
+    {
+      "name": "a mention wins in subset mode",
+      "members": "crew",
+      "settings": {"answer": {"mode": "subset", "bots": ["coder", "critic"]}},
+      "message": "@researcher compare these",
+      "expect": {"authors": ["researcher"], "reasons": ["mention"],
+                 "preview": {"authors": ["researcher"]}}
+    },
+    {
+      "name": "subset skips a muted member",
+      "members": "quiet",
+      "settings": {"answer": {"mode": "subset", "bots": ["critic", "coder"]}},
+      "message": "Compare these",
+      "expect": {"authors": ["coder"], "reasons": ["subset"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "count turns start at the first member",
+      "members": "crew",
+      "settings": {"answer": {"mode": "count"}},
+      "message": "Next?",
+      "turn": 0,
+      "expect": {"authors": ["researcher", "coder"], "reasons": ["rotation", "rotation"],
+                 "preview": {"count": 2}}
+    },
+    {
+      "name": "the next message rotates to the next members",
+      "members": "crew",
+      "settings": {"answer": {"mode": "count"}},
+      "message": "Next?",
+      "turn": 1,
+      "expect": {"authors": ["coder", "critic"], "reasons": ["rotation", "rotation"],
+                 "preview": {"count": 2}}
+    },
+    {
+      "name": "the rotation wraps around the group",
+      "members": "crew",
+      "settings": {"answer": {"mode": "count"}},
+      "message": "Next?",
+      "turn": 2,
+      "expect": {"authors": ["critic", "researcher"], "reasons": ["rotation", "rotation"],
+                 "preview": {"count": 2}}
+    },
+    {
+      "name": "a mention wins over the count rotation",
+      "members": "crew",
+      "settings": {"answer": {"mode": "count"}},
+      "message": "@coder just you",
+      "turn": 2,
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "random picks one by default, seeded so the test is stable",
+      "members": "crew",
+      "settings": {"answer": {"mode": "random"}},
+      "message": "Surprise me",
+      "seed": 0,
+      "expect": {"authors": ["coder"], "reasons": ["random"],
+                 "preview": {"random": true, "count": 1}}
+    },
+    {
+      "name": "random picks the requested count, in position order",
+      "members": "crew",
+      "settings": {"answer": {"mode": "random", "count": 2}},
+      "message": "Surprise me",
+      "seed": 0,
+      "expect": {"authors": ["coder", "critic"], "reasons": ["random", "random"],
+                 "preview": {"random": true, "count": 2}}
+    },
+    {
+      "name": "a mention wins over random",
+      "members": "crew",
+      "settings": {"answer": {"mode": "random"}},
+      "message": "@researcher just you",
+      "seed": 0,
+      "expect": {"authors": ["researcher"], "reasons": ["mention"],
+                 "preview": {"authors": ["researcher"]}}
+    },
+    {
+      "name": "auto leaves the pick to the lead",
+      "members": "crew",
+      "settings": {"answer": {"mode": "auto"}},
+      "message": "What should we do next?",
+      "expect": {"authors": [], "reasons": [], "decides": "researcher",
+                 "preview": {"decides": "researcher"}}
+    },
+    {
+      "name": "a mention skips the lead's routing call",
+      "members": "crew",
+      "settings": {"answer": {"mode": "auto"}},
+      "message": "@coder what do you think?",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "mentions add still asks the lead to pick",
+      "members": "crew",
+      "settings": {"answer": {"mode": "auto", "mentions": "add"}},
+      "message": "@coder what do you think?",
+      "expect": {"authors": ["coder"], "reasons": ["mention"], "decides": "researcher",
+                 "preview": {"decides": "researcher"}}
+    },
+    {
+      "name": "lead only answers itself",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead_only"}},
+      "message": "Where are we?",
+      "expect": {"authors": ["researcher"], "reasons": ["lead"],
+                 "preview": {"authors": ["researcher"]}}
+    },
+    {
+      "name": "lead only takes a mention as a request to the lead",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead_only"}},
+      "message": "@coder can you do this?",
+      "expect": {"authors": ["researcher"], "reasons": ["lead"], "requested": ["coder"],
+                 "preview": {"authors": ["researcher"], "requested": ["coder"]}}
+    },
+    {
+      "name": "@all breaks out of lead only",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead_only"}},
+      "message": "@all take a look",
+      "expect": {"authors": ["researcher", "coder", "critic"], "all": true,
+                 "reasons": ["all", "all", "all"],
+                 "preview": {"authors": ["researcher", "coder", "critic"]}}
+    },
+    {
+      "name": "@all queues every unmuted member whatever the mode",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@all look at this",
+      "expect": {"authors": ["researcher", "coder", "critic"], "all": true,
+                 "reasons": ["all", "all", "all"],
+                 "preview": {"authors": ["researcher", "coder", "critic"]}}
+    },
+    {
+      "name": "@everyone is the same as @all",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@everyone look at this",
+      "expect": {"authors": ["researcher", "coder", "critic"], "all": true,
+                 "reasons": ["all", "all", "all"],
+                 "preview": {"authors": ["researcher", "coder", "critic"]}}
+    },
+    {
+      "name": "@all never wakes a muted member",
+      "members": "quiet",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@all look at this",
+      "expect": {"authors": ["researcher", "coder"], "all": true,
+                 "reasons": ["all", "all"],
+                 "preview": {"authors": ["researcher", "coder"]}}
+    },
+    {
+      "name": "an always-answer member is appended after the lead",
+      "members": "mixed",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "Hello team",
+      "expect": {"authors": ["researcher", "note"], "reasons": ["lead", "always"],
+                 "preview": {"authors": ["researcher", "note"]}}
+    },
+    {
+      "name": "an always-answer member is not queued twice",
+      "members": "mixed",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@note please write this down",
+      "expect": {"authors": ["note"], "reasons": ["mention"],
+                 "preview": {"authors": ["note"]}}
+    },
+    {
+      "name": "an always-answer member joins beside a mention",
+      "members": "mixed",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@coder check this",
+      "expect": {"authors": ["coder", "note"], "reasons": ["mention", "always"],
+                 "preview": {"authors": ["coder", "note"]}}
+    },
+    {
+      "name": "a mention of a muted member is reported, and nobody answers",
+      "members": "quiet",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@critic what do you think?",
+      "expect": {"authors": [], "reasons": [], "muted": ["critic"], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a muted mention does not stop another mentioned bot",
+      "members": "quiet",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "@critic @coder take this",
+      "expect": {"authors": ["coder"], "reasons": ["mention"], "muted": ["critic"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "a mention inside a code span does not count",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "Use `@coder` here",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a mention inside a fenced code block does not count",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "```\n@coder\n```",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a mention inside a quote does not count",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "> @coder do it",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a real mention beside a code span still counts",
+      "members": "crew",
+      "settings": {"answer": {"mode": "mentioned"}},
+      "message": "@coder and `@critic`",
+      "expect": {"authors": ["coder"], "reasons": ["mention"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "the per-message override to everyone applies to this message only",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "Status?",
+      "override": {"mode": "everyone"},
+      "expect": {"authors": ["researcher", "coder", "critic"], "override": true,
+                 "reasons": ["everyone", "everyone", "everyone"],
+                 "preview": {"authors": ["researcher", "coder", "critic"]}}
+    },
+    {
+      "name": "the override can choose these bots",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "Compare these",
+      "override": {"mode": "subset", "bots": ["critic"]},
+      "expect": {"authors": ["critic"], "override": true, "reasons": ["subset"],
+                 "preview": {"authors": ["critic"]}}
+    },
+    {
+      "name": "the override can count bots for one message",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "message": "Next?",
+      "turn": 1,
+      "override": {"mode": "count", "count": 1},
+      "expect": {"authors": ["coder"], "override": true, "reasons": ["rotation"],
+                 "preview": {"count": 1}}
+    },
+    {
+      "name": "the override can ask for a mention-only message",
+      "members": "crew",
+      "settings": {"answer": {"mode": "everyone"}},
+      "message": "Hello team",
+      "override": {"mode": "mentioned"},
+      "expect": {"authors": [], "reasons": [], "override": true, "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a bot's final reply hands work on by mention",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "author": "researcher",
+      "message": "@coder please add a year column",
+      "expect": {"authors": ["coder"], "reasons": ["handoff"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "a bot mentioning itself is ignored",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "author": "coder",
+      "message": "@coder I will do it",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a hand-off never wakes a muted member",
+      "members": "quiet",
+      "settings": {"answer": {"mode": "lead"}},
+      "author": "researcher",
+      "message": "@critic can you check this?",
+      "expect": {"authors": [], "reasons": [], "muted": ["critic"], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a hand-off does not append always-answer members",
+      "members": "mixed",
+      "settings": {"answer": {"mode": "lead"}},
+      "author": "researcher",
+      "message": "@coder take this",
+      "expect": {"authors": ["coder"], "reasons": ["handoff"],
+                 "preview": {"authors": ["coder"]}}
+    },
+    {
+      "name": "replies off stops hand-offs",
+      "members": "crew",
+      "settings": {"replies": {"mode": "off"}},
+      "author": "researcher",
+      "message": "@coder take this",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "take turns does not hand off by mention",
+      "members": "crew",
+      "settings": {"replies": {"mode": "turns"}},
+      "author": "researcher",
+      "message": "@coder take this",
+      "expect": {"authors": [], "reasons": [], "empty": true,
+                 "preview": {"authors": []}}
+    },
+    {
+      "name": "a bot can call everyone but not itself",
+      "members": "crew",
+      "settings": {"answer": {"mode": "lead"}},
+      "author": "coder",
+      "message": "@all status",
+      "expect": {"authors": ["researcher", "critic"], "all": true,
+                 "reasons": ["all", "all"],
+                 "preview": {"authors": ["researcher", "critic"]}}
+    }
+  ]
+}

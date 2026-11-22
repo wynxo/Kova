@@ -122,6 +122,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /bots` | token or session | list every bot with its state and live status / create one from a definition (`?validate_only=true` checks a draft) |
 | `GET/PATCH/DELETE /bots/{bot_id}` | token or session | read one bot with its persona / change the named fields / remove it, its memory and its routines |
 | `GET/PUT/DELETE /bots/{bot_id}/avatar` | token or session | read / replace / clear the avatar image, type-checked and capped at 256 KB |
+| `GET /group-settings` | token or session | the schema every settings surface renders: each group and member setting with its label, help, type, range, default, Simple flag and hard ceiling, plus the four presets |
 | `GET/POST /chats` | token or session | list / create chats; optionally set `project_id`, `bot_id` (direct bot chat), or `members` (group) with optional `preset` and `group` overrides |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
@@ -698,6 +699,32 @@ and starts one on the first message; the full-screen terminal takes the same pat
 so adding a bot never changes what it opens, and `/incognito` is refused in a bot
 chat because incognito is conversation-only.
 
+### Group settings and who answers
+
+`src/kova/group_settings.py` is the one schema for a group chat: every group
+and per-member setting with its key, label, one-line help, type, range or
+allowed values, default, whether it belongs in the Simple view and the hard
+ceiling no layer may exceed; the four presets (*Ask one*, *Panel*, *Team with a
+lead*, *Debate*); `validate(partial)`, `resolve(stored)`,
+`member_resolve(group, member, bot)` and `matching_preset(settings)`. Storage
+holds only the values the user changed (`None` resets one), so a better default
+shipped later reaches every group nobody customised, and picking a preset only
+writes the keys presets manage, never approvals, folders, memory or limits. The
+schema is served by `GET /group-settings`, and every client renders its
+settings views from that response. Two design settings land with their own
+tasks, because a setting appears only when it works: retry in groups and memory
+sharing.
+
+`src/kova/mentions.py` is the pure mention parser and router. It finds
+`@handles` outside code spans, fenced blocks and `>` quotes, ignores
+`email@coder.dev`, a bot's mention of itself and muted members, and returns the
+queue for every answer mode (`mentioned`, `lead`, `auto`, `everyone`, `subset`,
+`count`, `random`, `lead_only`), with `@all`/`@everyone`, the per-message
+override, the `count` rotation and seeded `random`. Its `preview` is the
+deterministic part the who-answers chip shows; `tests/fixtures/group_routing.json`
+is shared with the browser's twin so the two cannot drift. Commands, storage
+and the runner are separate modules that consume these two.
+
 ## Store
 
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
@@ -1189,6 +1216,8 @@ with `KOVA_LIVE=1`.
 | `src/kova/secrets.py` | bounded credential detectors and placeholders |
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
 | `src/kova/bots.py` | bot definitions: format, validation, file I/O |
+| `src/kova/group_settings.py` | group and member settings: schema, validation, presets, resolution |
+| `src/kova/mentions.py` | `@mention` parsing and the who-answers router for every group mode |
 | `src/kova/actors.py` | who answers: the default assistant or one bot in one chat |
 | `src/kova/bot_routes.py` | the `/bots` router, avatars and the phone capability guard |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
