@@ -16,10 +16,11 @@ from uuid import uuid4
 import httpx
 
 from kova import delegation, egress, parallel, plugins, providers, sandbox
+from kova.actors import Actor
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
-from kova.persona import Persona
+from kova.persona import DEFAULT_NAME, Persona
 from kova.memory import Memory, Note
 from kova.models import ModelClient, ModelError
 from kova.modes import DEFAULT_MODE, capabilities as mode_capabilities
@@ -53,6 +54,8 @@ Never say you are a different assistant or made by another company. You are Kova
 }
 
 _WEB_TOOLS = ("web_search", "web_fetch")
+#: The tools that write notes; a bot without its own scope never gets them.
+MEMORY_WRITE_TOOLS = ("memory_add", "memory_patch", "memory_remove", "memory_save")
 
 
 def select_tools(mode: str, web: bool, tools: dict[str, Tool], *, local_only: bool = False) -> dict[str, Tool]:
@@ -79,32 +82,49 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
                         project_memories: list[Note] | None = None,
                         project_memory_usage: int | None = None,
                         project_memory_budget: int | None = None,
-                        project_index: str | None = None) -> str:
+                        project_index: str | None = None,
+                        actor: Actor | None = None,
+                        user_memories: list[Note] | None = None,
+                        user_index: str | None = None,
+                        project_memory_read_only: bool = False) -> str:
     """Build the identity, current context, and relevant memory prompt.
 
     ``memories`` are the topic notes recall picked for this message; ``index``
     is the small index note that is always loaded, so the model knows what
     exists even when nothing matched. A project chat also gets its own scope,
     labelled with the project's name so the two stores never look like one.
+
+    ``actor`` names the speaker. The default assistant (or ``None``) is today's
+    prompt; a bot swaps in its own name and adds its role section, in the order
+    the design fixes: identity, role, context, memory.
     """
     persona = persona or Persona()
+    bot = actor is not None and not actor.is_default
+    if bot:
+        try:  # a bot name is validated when it is saved; keep a hand-built one safe too
+            persona = Persona(actor.name, persona.tone)
+        except ValueError:
+            persona = Persona(DEFAULT_NAME, persona.tone)
     identity = _IDENTITIES.get(mode, _IDENTITIES[DEFAULT_MODE])
     identity = identity.replace("Kova", persona.name).replace(
         "Be warm, direct and genuinely helpful.", persona.instruction)
+    if bot and actor.role.strip():
+        identity += f"\n\nYour role:\n{actor.role.strip()}"
     tools = ", ".join(tool_names) if tool_names else "none"
     prompt = (f"{identity}\nCurrent time: {now.isoformat()}\nCurrent mode: {mode}\n"
               f"Available tools: {tools}")
     if memories or memory_budget is not None:
+        subject = "in your own notes" if bot else "about the user"
         if memory_budget:
             used = memory_usage or 0
             percent = round(used * 100 / memory_budget)
-            header = (f"What you remember about the user (memory {used:,} of "
+            header = (f"What you remember {subject} (memory {used:,} of "
                       f"{memory_budget:,} chars used, {percent}% full; over-budget "
                       "writes fail, so patch or remove notes to free space):")
         elif memory_budget == 0:
-            header = "What you remember about the user (memory size is unlimited):"
+            header = f"What you remember {subject} (memory size is unlimited):"
         else:
-            header = "What you remember about the user:"
+            header = f"What you remember {subject}:"
         if memories:
             notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in memories)
             prompt += f"\n\n{header}\n{notes}"
@@ -113,17 +133,30 @@ def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Not
     if index:
         prompt += ("\n\nMemory index (always loaded; open a topic note or run memory_search "
                    f"when you need the detail):\n{index}")
+    if user_memories or user_index:
+        # A bot with its own memory may still read what the user saved, but the
+        # notes are context only: no tool of its turn can change them.
+        header = "What the user has saved (read-only; you cannot change these notes):"
+        if user_memories:
+            notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in user_memories)
+            prompt += f"\n\n{header}\n{notes}"
+        else:
+            prompt += f"\n\n{header} nothing relevant this time."
+        if user_index:
+            prompt += ("\n\nThe user's memory index (read-only; always loaded; use what is "
+                       f"here but do not rewrite it):\n{user_index}")
     if project_name is not None or project_memories or project_memory_budget is not None:
         label = f' for project "{project_name}"' if project_name else ""
+        read_only = " (read-only)" if project_memory_read_only else ""
         if project_memory_budget:
             used = project_memory_usage or 0
             percent = round(used * 100 / project_memory_budget)
-            header = (f"What this project remembers{label} (memory {used:,} of "
+            header = (f"What this project remembers{label}{read_only} (memory {used:,} of "
                       f"{project_memory_budget:,} chars used, {percent}% full):")
         elif project_memory_budget == 0:
-            header = f"What this project remembers{label} (memory size is unlimited):"
+            header = f"What this project remembers{label}{read_only} (memory size is unlimited):"
         else:
-            header = f"What this project remembers{label}:"
+            header = f"What this project remembers{label}{read_only}:"
         if project_memories:
             notes = "\n\n".join(f"## {note.title}\n{note.body}" for note in project_memories)
             prompt += f"\n\n{header}\n{notes}"
@@ -363,27 +396,40 @@ class Agent:
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None,
+                       hop: int = 0) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy.
 
         A chat a paired phone wrote in keeps that phone's limits here, for every
         caller (the server, scheduled prompt jobs), not only for HTTP requests.
         ``turn_id`` and ``variant`` name the attempt a retry or edit is writing;
         every other turn starts a new one.
+
+        ``actor`` is who answers: ``None`` is today's behaviour, byte for byte.
+        A bot's turn tags every event with its ``author`` and a fresh
+        ``bot_turn_id``, so a client can put a reply and its tool calls in the
+        right lane without changing anything for the default assistant.
+        ``hop`` is 0 for a reply to the user and 1+ for a hand-off between bots.
         """
         capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
+        bot_turn_id = (uuid4().hex if actor is not None and not actor.is_default else None)
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities,
                                               record_user=record_user, turn_id=turn_id,
-                                              variant=variant):
-                yield event
+                                              variant=variant, actor=actor,
+                                              bot_turn_id=bot_turn_id, hop=hop):
+                if bot_turn_id is None:
+                    yield event
+                else:
+                    yield {**event, 'author': actor.id, 'bot_turn_id': bot_turn_id}
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
-                       variant: int | None = None) -> AsyncIterator[dict]:
+                       variant: int | None = None, actor: Actor | None = None,
+                       bot_turn_id: str | None = None, hop: int = 0) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` overrides the saved chat model for one turn; unset chats use the default.
@@ -391,6 +437,8 @@ class Agent:
         ``capabilities`` limits a turn a paired phone started (kova.pairing): tools
         that need more are not offered at all, so no approval or rule can bring
         them back. None means the computer itself, with no limit.
+        ``actor`` narrows the same turn to a bot: its model, tool allowlist,
+        permission ceiling, folder, memory scopes and round/output limits.
         """
         from kova import attachments
         from kova.tools import Tool
@@ -409,11 +457,33 @@ class Agent:
             model_text = f'{text}\n\n{block}' if text else block
         chat = self.store.get_chat(chat_id)
         chat_model = (chat or {}).get('model')
-        entry = self.config.model_entry(model if model is not None else chat_model)
+        # A bot's own model wins over the saved chat model, unless this single
+        # turn names one. A removed model entry falls back the same way it
+        # always has: the chat's model, then the active one.
+        selected = model
+        if selected is None and actor is not None and actor.model:
+            chosen = self.config.model_entry(actor.model)
+            if chosen is not None and chosen.model:
+                selected = actor.model
+        entry = self.config.model_entry(selected if selected is not None else chat_model)
         previous_model = self.store.last_turn_model(chat_id)
         turn_model = entry.name if entry is not None and entry.model else None
         turn_id = turn_id or uuid4().hex
         variant = variant or 1
+        # A bot's rows carry who wrote them; the default assistant's stay NULL,
+        # which is exactly what every row written before bots existed has.
+        author = actor.id if actor is not None and not actor.is_default else None
+        author_name = actor.name if author is not None else None
+
+        def stored(*args, **kwargs):
+            """Store one row of this turn under its author, unless it is the default's."""
+            if author is not None:
+                kwargs.setdefault('author', author)
+                kwargs.setdefault('author_name', author_name)
+                kwargs.setdefault('bot_turn_id', bot_turn_id)
+                kwargs.setdefault('hop', hop)
+            return self.store.add_message(*args, **kwargs)
+
         user_message_id = self.store.add_message(
             chat_id, 'user', text, turn_model=turn_model, turn_id=turn_id, variant=variant,
         ) if record_user else None
@@ -432,8 +502,24 @@ class Agent:
         incognito = self.store.is_ephemeral(chat_id)
         mode = 'chat' if incognito else (chat or {}).get('mode') or DEFAULT_MODE
         web = (chat or {}).get('web', True)
-        cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser().resolve()
-        permission = (chat or {}).get('permission', 'manual')
+        cwd = Path((chat or {}).get('cwd') or self.config.files_path).expanduser()
+        if actor is not None and actor.folder is not None:
+            # A bot answers in its own folder; like the Kova Files default, it
+            # is created on first use instead of failing the turn.
+            cwd = Path(actor.folder).expanduser()
+            if not cwd.is_dir():
+                try:
+                    cwd.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    yield {'type': 'error',
+                           'message': 'The bot working folder could not be created. Choose another folder.'}
+                    return
+        cwd = cwd.resolve()
+        # A bot never gets more than the stricter of its ceiling and the chat's
+        # permission; Actor.for_chat already resolved the two. The default
+        # assistant's actor keeps the chat's own permission.
+        permission = (actor.permission if actor is not None and not actor.is_default
+                      else (chat or {}).get('permission', 'manual'))
         # A chat in a project with its own memory mounts exactly that scope.
         # Incognito never reads or writes memory, and a project without the
         # opt-in keeps today's global store. No other project is ever reachable.
@@ -446,6 +532,17 @@ class Agent:
                     project_memory = self.memory.project_scope(project['id'])
                 except ValueError:  # a hand-edited id must not break the turn
                     project_memory = None
+        # A bot with `memory.own` mounts its own hidden scope: the same
+        # arrangement as a project scope, so no other store lists or searches
+        # it. Without one, the bot may still recall the user's notes but its
+        # write tools are removed below.
+        bot = actor is not None and not actor.is_default
+        bot_memory = None
+        if bot and actor.memory_own and not incognito:
+            try:
+                bot_memory = self.memory.bot_scope(actor.id, budget=actor.memory_budget)
+            except ValueError:  # a hand-edited id must not break the turn
+                bot_memory = None
         # Full access is the user's explicit choice to run unconfined; every
         # other mode runs commands inside the OS sandbox when the kernel
         # supports one, and asks when it does not.
@@ -505,6 +602,19 @@ class Agent:
                 "No tools or chat history are passed. Consecutive independent calls can run together. "
                 f"At most {delegation.ATTEMPT_LIMIT} attempts per turn, including denials.",
                 delegation.PARAMETERS, delegate)
+        if actor is not None and not actor.is_default:
+            # Last, after the mode, the device limits and every bound per-chat
+            # tool are in: a tool the bot is not offered cannot be brought back
+            # by a rule, an approval or an approval setting.
+            tools = {name: tool for name, tool in tools.items() if actor.allows(name)}
+            if bot_memory is not None:
+                # Only the bot's own notes are writable: the user's global
+                # notes and a project's scope stay readable context at most.
+                scoped = {tool.name: tool for tool in memory_tools_for(bot_memory)}
+                tools = {name: scoped.get(name, tool) for name, tool in tools.items()}
+            else:
+                tools = {name: tool for name, tool in tools.items()
+                         if name not in MEMORY_WRITE_TOOLS}
         delegate_attempts = 0
         tracker = ChangeTracker(self.blobs, cwd) if files is not None else None
         needs_title = chat is not None and not chat['title']
@@ -516,21 +626,35 @@ class Agent:
                 if message.get('role') == 'user' and message.get('content', '').strip():
                     title_source = message['content']
                     break
+        # For a bot, the primary store is its own scope; the user's global notes
+        # are read-only context, and only when the bot opts in to reading them.
+        primary = bot_memory or self.memory
         try:
-            memories = [] if incognito else await asyncio.to_thread(self.memory.search, model_text, 5, mode="hybrid")
+            memories = [] if incognito else await asyncio.to_thread(primary.search, model_text, 5, mode="hybrid")
         except Exception:  # memory trouble must never block a chat
             memories = []
         try:
-            memory_usage = 0 if incognito else await asyncio.to_thread(self.memory.usage)
+            memory_usage = 0 if incognito else await asyncio.to_thread(primary.usage)
         except Exception:  # a broken note must not block the prompt either
             memory_usage = 0
         # The index is always loaded; topic notes are only the ones recall picked.
         try:
-            index = "" if incognito else await asyncio.to_thread(self.memory.index_text,
+            index = "" if incognito else await asyncio.to_thread(primary.index_text,
                                             getattr(self.config, 'memory_index_lines', 200))
         except Exception:  # a broken index must not block the prompt either
             index = ""
         memories = [note for note in memories if note.slug != "index"]
+        user_memories: list[Note] = []
+        user_index = ""
+        if bot_memory is not None and not incognito and actor.user_memory == "read":
+            try:
+                user_memories = await asyncio.to_thread(self.memory.search, model_text, 5,
+                                                        mode="hybrid")
+                user_index = await asyncio.to_thread(self.memory.index_text,
+                                                     getattr(self.config, 'memory_index_lines', 200))
+            except Exception:  # the user's notes must never block a bot's turn
+                user_memories, user_index = [], ""
+            user_memories = [note for note in user_memories if note.slug != "index"]
         project_memories: list[Note] = []
         project_usage = 0
         project_index = ""
@@ -556,14 +680,18 @@ class Agent:
             persona = Persona()
         prompt = build_system_prompt(self.now(), list(tools), memories, mode, persona=persona,
                                      memory_usage=memory_usage,
-                                     memory_budget=getattr(self.memory, 'budget', 0),
+                                     memory_budget=getattr(primary, 'budget', 0),
                                      index=index or None,
                                      project_name=project["name"] if project_memory else None,
                                      project_memories=project_memories,
                                      project_memory_usage=project_usage,
                                      project_memory_budget=(
                                          project_memory.budget if project_memory else None),
-                                     project_index=project_index or None)
+                                     project_index=project_index or None,
+                                     actor=actor,
+                                     user_memories=user_memories or None,
+                                     user_index=user_index or None,
+                                     project_memory_read_only=bot_memory is not None)
         if incognito:
             prompt += ("\nIncognito: this conversation lives only in server memory. "
                        "Do not save memories, use tools, or claim it will be remembered. "
@@ -590,9 +718,14 @@ class Agent:
             yield {'type': 'error', 'message': "No model is set up yet. Run: kova setup"}
             return
         effort = (chat or {}).get('reasoning_effort') if entry.name == chat_model else entry.reasoning_effort
+        if actor is not None and not actor.is_default and actor.reasoning_effort:
+            effort = actor.reasoning_effort
         client = ModelClient(entry, transport=self.transport,
                              privacy=getattr(self.config, "privacy_secrets", "off"), config=self.config,
-                             reasoning_effort=effort)
+                             reasoning_effort=effort,
+                             max_output_tokens=(actor.max_output_tokens
+                                                if actor is not None and not actor.is_default
+                                                else None))
         # A provider that does not declare tool calling is never sent schemas,
         # so its model can neither call tools nor reach an approval.
         schemas = (openai_schemas(tools) or None) if providers.supports(entry._provider, "tools") else None
@@ -631,13 +764,16 @@ class Agent:
 
         meter = TurnMeter()
         pricing = getattr(self.config, 'pricing', None) or {}
+        # A bot may use fewer model calls than the agent's own hard outer limit.
+        rounds = 11 if actor is None else max(1, min(11, actor.max_rounds))
+        last_round = rounds - 1
         try:
             repeat_count = 0
             repeat_fp = None
             repeat_error = None
             awaiting_replacement = False
             attempted_compaction = False
-            for step in range(11):
+            for step in range(rounds):
                 if steering is not None:
                     for message in steering.take():
                         # A steer joins the history at a round boundary, never
@@ -671,7 +807,7 @@ class Agent:
 
                 content: list[str] = []
                 calls: list[dict] = []
-                round_schemas = schemas if step < 10 else None
+                round_schemas = schemas if step < last_round else None
                 meter.start_round()
                 async for event in client.stream(messages, round_schemas):
                     if event.type in ('text', 'reasoning'):
@@ -684,10 +820,10 @@ class Agent:
                     elif event.type == 'privacy' and event.privacy is not None:
                         # A safe summary only: counts and kinds, never a value.
                         yield {'type': 'privacy', **event.privacy}
-                    elif event.type == 'tool_call_delta' and event.tool_call is not None and step < 10:
+                    elif event.type == 'tool_call_delta' and event.tool_call is not None and step < last_round:
                         meter.output()
                         yield {'type': 'tool_call_delta', **event.tool_call}
-                    elif event.type == 'tool_call' and event.tool_call is not None and step < 10:
+                    elif event.type == 'tool_call' and event.tool_call is not None and step < last_round:
                         meter.count(event.tool_call.get('arguments') or '')
                         calls.append(event.tool_call)
                 meter.end_round([messages, round_schemas] if round_schemas else messages)
@@ -707,12 +843,18 @@ class Agent:
                     if steering is not None and steering.pending:
                         # The user steered while this answer streamed: keep the
                         # answer, then let the model respond to the steer.
-                        self.store.add_message(chat_id, 'assistant', answer or None)
+                        stored(chat_id, 'assistant', answer or None)
                         continue
                     created = datetime.now(timezone.utc).isoformat()
-                    message_id = self.store.add_message(chat_id, 'assistant', answer, created=created)
+                    message_id = stored(chat_id, 'assistant', answer, created=created)
                     usage = meter.summary(entry, pricing)
                     self.store.record_usage(chat_id, message_id, usage)
+                    if (actor is not None and not actor.is_default and actor.max_output_tokens
+                            and (usage.get('completion_tokens') or 0) >= actor.max_output_tokens):
+                        # The bot's per-turn budget is spent: end here, and say so.
+                        yield {'type': 'notice', 'kind': 'bot_limit',
+                               'notice': f"{actor.name} reached its "
+                                         f"{actor.max_output_tokens:,}-token output limit for this turn."}
                     if needs_title:
                         current = self.store.get_chat(chat_id)
                         if current is not None and not current['title']:
@@ -728,7 +870,7 @@ class Agent:
                         # stored; a failure there can never break the reply.
                         for notice in await self.memory_review.after_turn(
                                 chat_id=chat_id, mode=mode, memory=self.memory,
-                                review_memory=project_memory,
+                                review_memory=bot_memory or project_memory,
                                 client=client, now=self.now()):
                             yield notice
                     done = {'type': 'done', 'message_id': message_id, 'created': created, 'model': entry.name, 'usage': usage}
@@ -743,7 +885,7 @@ class Agent:
                     return
                 formatted = [{**call.get('extra_fields', {}), 'id': call['id'], 'type': 'function', 'function': {
                     'name': call['name'], 'arguments': call['arguments']}} for call in calls]
-                self.store.add_message(chat_id, 'assistant', answer or None, tool_calls=formatted)
+                stored(chat_id, 'assistant', answer or None, tool_calls=formatted)
                 # Consecutive read-only calls that need no answer run at once (#192).
                 ready = [parallel_args(call) for call in calls]
                 groups = parallel.runs([args is not None for args in ready])
@@ -818,7 +960,7 @@ class Agent:
                         except asyncio.CancelledError:
                             end = delegate_groups[index] if is_delegate else groups[index]
                             for batched in calls[index:end]:
-                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
+                                stored(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=batched['id'])
                             raise
                         finally:
                             if not self.task_controls.get(chat_id):
@@ -859,7 +1001,7 @@ class Agent:
                                             pending.future.cancel()
                                     yield {'type': 'question_resolved', 'id': question['id']}
                                     result = decision.get('message') or 'No answer provided.'
-                                    self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                                    stored(chat_id, 'tool', result, tool_call_id=call['id'])
                                     yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': decision['decision'] == 'allow', 'summary': result[:200], 'output': result}
                                     continue
                                 prepared = None
@@ -909,7 +1051,7 @@ class Agent:
                                 if name == 'run_command':
                                     ok = json.loads(result)['ok']
                             except asyncio.CancelledError:
-                                self.store.add_message(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=call['id'])
+                                stored(chat_id, 'tool', 'Error: Action denied or interrupted because the turn was stopped.', tool_call_id=call['id'])
                                 raise
                             except Exception as exc:
                                 result, ok = f'Error: {exc}', False
@@ -937,11 +1079,11 @@ class Agent:
                         warning = ("Error: tool "
                                    f"'{name}' failed repeatedly and kept returning the same error. "
                                    "This call keeps failing — try a different approach or answer the user.")
-                        self.store.add_message(chat_id, 'tool', warning, tool_call_id=call['id'])
+                        stored(chat_id, 'tool', warning, tool_call_id=call['id'])
                         yield {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': False,
                                'summary': warning[:200], 'output': warning}
                     else:
-                        self.store.add_message(chat_id, 'tool', result, tool_call_id=call['id'])
+                        stored(chat_id, 'tool', result, tool_call_id=call['id'])
                         event = {'type': 'tool_result', 'id': call['id'], 'name': name, 'ok': ok, 'summary': result[:200], 'output': full_output}
                         if ok and tracker is not None and name in {'write_file', 'edit_file'}:
                             # A presentation failure must never fail a successful write.

@@ -50,7 +50,12 @@ INDEX_MAX_LINES = 200
 #: project scope. Hidden means the global store never scans it as ordinary
 #: notes, so a project's facts cannot leak into other chats or the memory browser.
 PROJECT_SCOPE_DIR = ".kova-projects"
-_PROJECT_ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+#: The same idea for one bot's private notes (design 2.5 and section 6): a
+#: bot's own facts sit beside the project scopes and are never listed or
+#: searched by the global store, another bot or a project.
+BOT_SCOPE_DIR = ".kova-bots"
+#: A scope id is a project id or a bot id; both are filename-safe and fixed.
+_SCOPE_ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 #: How much the lexical signal may move a hybrid ranking, relative to keyword score.
 HYBRID_WEIGHT = 0.5
@@ -271,12 +276,15 @@ class Memory:
     """
 
     def __init__(self, root: Path, write_subdir: str | None = None,
-                 budget: int | None = DEFAULT_MEMORY_BUDGET, scope_id: str = "") -> None:
+                 budget: int | None = DEFAULT_MEMORY_BUDGET, scope_id: str = "",
+                 scope_kind: str = "") -> None:
         self.root = Path(root)
         self.write_subdir = write_subdir
         self.budget = budget or 0
-        #: The project id when this instance is a project scope, else empty.
+        #: The project or bot id when this instance is a scope, else empty.
         self.scope_id = scope_id
+        #: ``project`` or ``bot``: what the scope is, for prompt and tool wording.
+        self.scope_kind = scope_kind
 
     @property
     def write_dir(self) -> Path:
@@ -287,6 +295,11 @@ class Memory:
         """Where project scopes live, hidden from the global store and backups."""
         return self.write_dir / PROJECT_SCOPE_DIR
 
+    @property
+    def bot_scopes_dir(self) -> Path:
+        """Where bot scopes live: the same hidden arrangement, one folder per bot."""
+        return self.write_dir / BOT_SCOPE_DIR
+
     def project_scope(self, project_id: str) -> "Memory":
         """One project's private store, nested under the write directory.
 
@@ -294,20 +307,45 @@ class Memory:
         on the global store never see it. A project chat mounts exactly one
         scope, which is what keeps two projects from reading each other's notes.
         """
-        if not _PROJECT_ID.match(project_id or ""):
+        if not _SCOPE_ID.match(project_id or ""):
             raise MemoryStoreError(f'Not a project id: "{project_id}".')
         path = self.scopes_dir / project_id
         if _redirected_directory(self.scopes_dir) or _redirected_directory(path):
             raise MemoryStoreError("Project memory directories must not be links or junctions.")
-        return Memory(path, None, self.budget, scope_id=project_id)
+        return Memory(path, None, self.budget, scope_id=project_id, scope_kind="project")
+
+    def bot_scope(self, bot_id: str, budget: int | None = None) -> "Memory":
+        """One bot's private store, at ``<write dir>/.kova-bots/<id>/``.
+
+        Hidden exactly like a project scope, so the global store, a project and
+        every other bot never list or search it. ``budget`` is the bot's own
+        character cap; without one the global budget applies.
+        """
+        if not _SCOPE_ID.match(bot_id or ""):
+            raise MemoryStoreError(f'Not a bot id: "{bot_id}".')
+        path = self.bot_scopes_dir / bot_id
+        if _redirected_directory(self.bot_scopes_dir) or _redirected_directory(path):
+            raise MemoryStoreError("Bot memory directories must not be links or junctions.")
+        return Memory(path, None, self.budget if budget is None else budget,
+                      scope_id=bot_id, scope_kind="bot")
 
     def remove_scope(self, project_id: str) -> bool:
         """Delete one project's whole scope, used when the project is removed."""
-        if not _PROJECT_ID.match(project_id or ""):
+        if not _SCOPE_ID.match(project_id or ""):
             return False
         path = self.scopes_dir / project_id
         with _WRITE_LOCK:
             if _redirected_directory(self.scopes_dir) or not path.is_dir():
+                return False
+            return _remove_tree(path)
+
+    def remove_bot_scope(self, bot_id: str) -> bool:
+        """Delete one bot's whole scope, used when the bot is deleted."""
+        if not _SCOPE_ID.match(bot_id or ""):
+            return False
+        path = self.bot_scopes_dir / bot_id
+        with _WRITE_LOCK:
+            if _redirected_directory(self.bot_scopes_dir) or not path.is_dir():
                 return False
             return _remove_tree(path)
 
