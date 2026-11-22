@@ -391,7 +391,16 @@
     });
   }
 
+  // A window opened from `kova web` (or a pairing URL) reaches this script
+  // before app.js has exchanged its one-use token for a session cookie, so the
+  // shared document is not readable yet. Keep the cached copy for this first
+  // frame; app.js calls sync() once the window is signed in.
+  const loginPending = () => typeof location === 'object' &&
+    /(^|[#&])(ticket|pair)=/.test(location.hash || '');
+
   window.KovaTheme = {KEY, appearance, choice: () => choice, choices, clearPalettePreview, detailUrl, endPreview, label, preview, previewPalette, refresh, set, sync, toggle};
-  sync();
-  refresh();
+  if (!loginPending()) {
+    sync();
+    refresh();
+  }
 })();
