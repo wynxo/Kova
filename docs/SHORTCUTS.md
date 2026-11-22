@@ -63,8 +63,9 @@ chat the same way, and `/fork 2` copies the second chat in the list.
 
 ## Status line
 
-The line under the input shows the chat mode, model, chat title and permission
-mode, then on the right:
+The line under the input is plain words, not chips: the chat mode, the model,
+when Kova asks (`asks before acting`, `asks before risky steps` or `never asks`),
+the chat title, and `waiting for you` while an approval is open. On the right:
 
 - tokens used (the last turn's output, or the live count while Kova is replying)
 - `ctx N%` — how full the active model's context window is, estimated from the

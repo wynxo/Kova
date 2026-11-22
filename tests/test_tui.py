@@ -22,6 +22,7 @@ from rich.console import Console
 from kova.tui.app import ChatApp, Job, TextPrompt, run_shell
 from kova.tui.editor import Editor, Suggestion, expand_mentions, load_history, save_history, suggest
 from kova.tui.markdown import MarkdownStream, Palette, clean, display_width
+from kova.tui.style import ERROR, WARNING
 from kova.tui.render import Renderer, command_output
 from kova.tui.terminal import KeyReader, Screen
 from kova.tui.widgets import (
@@ -31,7 +32,6 @@ from kova.tui.widgets import (
     input_box,
     menu,
     shimmer,
-    spinner_line,
     visible,
     welcome,
 )
@@ -232,7 +232,26 @@ def test_a_redraw_hands_the_transcript_back_its_style():
     screen.write("still bold")
     screen.render()
     last = chunks[-1]
-    assert last.index("\x1b[J\x1b[0;1m") < last.index("still bold")
+    erase = re.search(r"\x1b\[J\x1b\[A\r(\x1b\[\d+C)?\x1b\[0;1m", last)
+    assert erase and erase.start() < last.index("still bold")
+
+
+def test_redraws_never_erase_from_the_top_left_corner():
+    # tmux treats an erase-to-end from row 0, column 0 as clearing the screen and
+    # copies the whole screen into its scrollback (scroll-on-clear): every frame
+    # of the live region would pile up there. The erase starts one row down.
+    out = FakeTerminal()
+    chunks = []
+    out.write = chunks.append
+    screen = Screen(out, size_fn=lambda: out.size)
+    screen.set_live(["a", "b", "c"])
+    screen.render()
+    screen.set_live(["a", "b", "d"])
+    screen.render()
+    assert chunks[-1].count("\x1b[J") == 1 and "\r\x1b[K\x1b[B\r\x1b[J\x1b[A\r" in chunks[-1]
+    term = VT(20, 6)
+    term.feed("".join(chunks))
+    assert term.lines()[:3] == ["a", "b", "d"]
 
 
 def test_untrusted_text_cannot_steer_the_terminal():
@@ -245,26 +264,32 @@ def test_input_box_places_the_caret_on_wrapped_and_prefixed_text():
     lines, caret = input_box("x" * 50, 50, 30, p)
     term = VT(40, 10)
     term.feed("\r\n".join(lines))
-    assert caret == (3, 6) and term.line(3).startswith("│   xx")
+    assert caret == (2, 25) and term.line(2).startswith("  xxx") and term.line(0) == "─" * 30
     lines, caret = input_box("!ls -la", 7, 30, p)
-    assert lines[1].startswith("│ ! ls -la") and caret == (1, 10)
-    lines, caret = input_box("", 0, 30, p, placeholder='Try "x"')
-    assert 'Try "x"' in lines[1] and lines[1].startswith("│ ❯ ") and caret == (1, 4)
+    assert lines[1].startswith("! ls -la") and caret == (1, 8)
+    lines, caret = input_box("", 0, 30, p, placeholder='Try "x"', footer="esc stop")
+    assert 'Try "x"' in lines[1] and lines[1].startswith("▌ ") and caret == (1, 2)
+    assert lines[-1].endswith(" esc stop ─") and len(lines[-1]) == 30
 
 
 def test_menu_dialog_and_picker_render():
     p = Palette(False)
     shown = menu([Suggestion("/model ", "/model", "Choose"), Suggestion("/mode ", "/mode", "")],
                  1, 40, p)
-    assert shown == ["    /model  Choose", "  ❯ /mode"]
-    choice = Choice("Run a shell command?", ["  rm -rf x"],
-                    [("Yes", "allow", "y"), ("No", "deny", "n")])
+    assert shown == ["    /model  Choose", "  ▸ /mode"]
+    choice = Choice("Kova wants to run a command", ["$ rm -rf x"],
+                    [("allow once", "allow", "y"), ("no", "deny", "n")], footer="esc decline")
     assert choice.pick("2") == "deny" and choice.pick("y") == "allow" and choice.pick("z") is None
-    assert "❯ 1. Yes" in "\n".join(choice.render(40, p))
+    lines = choice.render(40, p)
+    assert lines[0] == "◆ Kova wants to run a command"
+    assert "┃ $ rm -rf x" in lines and "┃ ▸ y  allow once" in lines and "┃   n  no" in lines
+    assert lines[-1].endswith("esc decline ─") and all(visible(line) <= 40 for line in lines)
     picker = Picker("Select model", [("alpha", "", "a"), ("beta", "", "b")], None, current="b")
     assert picker.value == "b"
+    rendered = "\n".join(picker.render(40, p))
+    assert "── Select model" in rendered and "current" in rendered and "╭" not in rendered
     picker.type("alp")
-    assert picker.value == "a" and "Filter: alp" in "\n".join(picker.render(40, p))
+    assert picker.value == "a" and "filter  alp" in "\n".join(picker.render(40, p))
 
 
 def test_command_palette_filters_commands_models_and_chats():
@@ -275,8 +300,9 @@ def test_command_palette_filters_commands_models_and_chats():
               ("chat", "c2"): "Chats"}
     palette = CommandPalette(items, lambda _value: None, groups=groups)
     text = "\n".join(palette.render(80, Palette(False)))
-    assert "COMMANDS" in text and "MODELS" in text and "CHATS" in text
-    assert "\u276f /model" in text and "List models" in text
+    assert "Commands" in text and "Models" in text and "Chats" in text
+    assert "COMMANDS" not in text                        # group names stay in sentence case
+    assert "▸ /model" in text and "List models" in text
 
     fuzzy = CommandPalette(items, lambda _value: None, groups=groups)
     fuzzy.type("mdl")                                   # a subsequence of /model
@@ -312,20 +338,26 @@ def test_command_palette_fits_narrow_terminals_without_colour(width):
     assert all(visible(line) <= width for line in palette.render(width, Palette(False)))
 
 
-def test_spinner_and_welcome_read_plainly_without_colour():
+def test_live_node_and_welcome_read_plainly_without_colour():
     p = Palette(False)
     assert shimmer("Thinking", 3, p) == "Thinking"
-    line = spinner_line(p, verb="Pondering", frame=4, elapsed=12.0, tokens=1500, stopping=False)
-    assert line.endswith("Pondering…  12s · ↓ 1.5K tokens · esc to interrupt")
     coloured = shimmer("Thinking", 3, Palette(True))
     assert coloured.count("\x1b[38;") == len("Thinking")
+    r = renderer()
+    r.model = "local-model"
+    r.begin_turn()
+    live = r.live_lines(0, now=r.turn_started + 12)
+    assert len(live) == 1 and "\x1b" not in live[0]
+    assert live[0].startswith("◐ waiting") and "for local-model" in live[0] and live[0].endswith("12s")
     card = "\n".join(welcome(p, 80, version="1.0.0", model="local", mode="work", cwd="/p",
-                             memory="~/notes", notes=2, offline=True))
-    assert "model    local" in card and "● offline" in card and "mode     work" in card
-    assert "Ask anything." in card and "2 notes" in card and "█▄▀ █▀█" in card
-    assert "unreachable" in card and "\x1b" not in card
+                             memory="~/notes", notes=2, offline=True, permission="manual"))
+    assert "model    local  offline" in card and "mode     work" in card
+    assert "asks     before acting" in card
+    assert "Every step shows up here" in card and "2 notes" in card and "K  Kova" in card
+    assert "not answering" in card and "\x1b" not in card
+    assert "╭" not in card and "█▄▀" not in card            # no frame, no wordmark
     narrow = welcome(p, 34, version="1.0.0", model="local", mode="work", cwd="/p")
-    assert "◆ Kova" in "\n".join(narrow) and all(len(line) <= 34 for line in narrow)
+    assert "K  Kova" in "\n".join(narrow) and all(len(line) <= 34 for line in narrow)
 
 
 # ------------------------------------------------------------------ Markdown
@@ -410,21 +442,28 @@ def test_a_reply_has_one_kova_line_and_tool_rows_in_kova_style(monkeypatch):
     monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
     r = renderer()
     r.begin_turn()
-    for event in ({"type": "reasoning", "text": "hmm"},
+    for event in ({"type": "reasoning", "text": "hmm. Then more."},
                   {"type": "text", "text": "Let me check."},
                   {"type": "tool_call", "name": "web_search", "args": {"query": "berlin"}},
-                  {"type": "tool_result", "name": "web_search", "ok": True, "summary": "5 results"},
+                  {"type": "tool_result", "name": "web_search", "ok": True,
+                   "output": '[{"title": "a"}, {"title": "b"}]'},
                   {"type": "tool_call", "name": "read_file", "args": {"path": "x"}},
-                  {"type": "tool_result", "name": "read_file", "ok": False, "summary": "missing"},
+                  {"type": "tool_result", "name": "read_file", "ok": False, "summary": "Error: missing"},
                   {"type": "text", "text": "**Done**."},
                   {"type": "done"}):
         r.handle(event)
     r.finish_turn()
     text = r.out.getvalue()
-    assert text.count("◆ Kova") == 1 and text.index("◆ Kova") < text.index("Thought for")
-    assert "  ✓ Search(berlin) · 5 results" in text and "  ✗ Read(x) · missing" in text
+    lines = text.splitlines()
+    assert text.count("K Kova") == 1 and text.index("K Kova") < text.index("∴ thought")
+    thought = next(line for line in lines if line.startswith("∴ thought"))
+    assert "hmm." in thought and "Then more" not in thought and thought.endswith("1.0s")
+    search = next(line for line in lines if line.startswith("▹ search"))
+    assert "berlin" in search and "2 results" in search and search.endswith("s")
+    failed = next(line for line in lines if line.startswith("✗ read"))
+    assert " x " in failed and "missing" in failed
     assert "Done." in text and "**" not in text
-    assert "Worked for" in text
+    assert lines[-2].strip().endswith("s") and "Worked" not in text and "\u00b7" not in text
 
 
 def test_command_rows_collapse_and_expand_full_output():
@@ -435,12 +474,13 @@ def test_command_rows_collapse_and_expand_full_output():
     r.handle({"type": "tool_result", "name": "run_command", "ok": True, "summary": output})
     r.tool_row("run_command", {"command": "false"}, False, "")
     text = r.out.getvalue()
-    assert "  ✓ Bash(ls -la)" in text and "line 1" not in text
-    assert "  ✗ Bash(false)" in text
+    assert "▸ run       ls -la" in text and "✗ run       false" in text
+    # The last lines of a command's output stay under its row, on the spine.
+    assert "│           line 6" in text and "line 1" not in text and "3 earlier lines" in text
     r.tools_expanded = True
-    assert "line 6" in "\n".join(r.detail_lines())
+    assert "line 1" in "\n".join(r.detail_lines())
     r.tools_expanded = False
-    assert "line 6" not in "\n".join(r.detail_lines())
+    assert "line 1" not in "\n".join(r.detail_lines())
     assert command_output('{"output": "hi\\n", "exit_code": 2}') == "hi\n\nexit code 2"
     assert command_output("plain") == "plain"
 
@@ -450,30 +490,46 @@ def test_running_tools_show_name_and_arguments_in_the_live_region():
     r.begin_turn()
     r.handle({"type": "tool_call", "name": "web_search", "args": {"query": "weather berlin"}})
     live = plain("\n".join(r.live_lines(0)))
-    assert "⠋ Search(weather berlin)" in live and "esc to interrupt" in live
+    assert live.startswith("◐ search    weather berlin") and "searching" in live
     r.handle({"type": "tool_result", "name": "web_search", "ok": True, "summary": "ok"})
     r.handle({"type": "tool_call", "name": "run_command", "args": {"command": "git status"}})
-    assert "⠋ Bash(git status)" in plain("\n".join(r.live_lines(0)))
+    assert plain("\n".join(r.live_lines(1))).startswith("◓ run       git status")
 
 
 def test_plan_is_a_checklist():
     r = renderer()
     r.begin_turn()
-    r.handle({"type": "plan", "items": [{"text": "Inspect", "status": "done"},
-                                        {"text": "Change", "status": "in_progress"},
-                                        {"text": "Verify", "status": "pending"}]})
+    items = [{"text": "Inspect", "status": "done"}, {"text": "Change", "status": "in_progress"},
+             {"text": "Verify", "status": "pending"}]
+    r.handle({"type": "plan", "items": items})
     text = r.out.getvalue()
-    assert "◆ Plan 1/3\n    ✓ Inspect\n    ◐ Change\n    ○ Verify" in text
+    assert "≡ plan      1 of 3 done\n│           ✓ Inspect\n│           ▸ Change\n│           ◦ Verify" in text
+    # The same plan again is one row: progress and the current step.
+    items[1]["status"], items[2]["status"] = "done", "in_progress"
+    r.handle({"type": "plan", "items": items})
+    assert r.out.getvalue().splitlines()[-1] == "≡ plan      2 of 3 done   ✓ Change"
 
 
 def test_permission_card_warns_before_destruction():
-    title, body, _ = renderer().permission_card("run_command", {"command": "rm -rf build"},
-                                                "destructive", "Delete the build folder")
+    title, body, colour = renderer().permission_card("run_command", {"command": "rm -rf build"},
+                                                     "destructive", "Delete the build folder",
+                                                     where="~/projects/demo")
     text = "\n".join(body)
-    assert title == "Run a shell command?" and "rm -rf build" in text
-    assert "Destructive" in text and "Delete the build folder" in text
-    title, body, _ = renderer().permission_card("write_file", {"path": "a.txt"}, "normal", "")
-    assert title == "Write a file?" and "Destructive" not in "\n".join(body)
+    assert title == "Kova wants to run a command" and "$ rm -rf build" in text
+    assert "delete data" in text and "Delete the build folder" in text
+    assert "in ~/projects/demo" in text and colour == ERROR
+    title, body, colour = renderer().permission_card("write_file", {"path": "a.txt"}, "normal", "")
+    assert title == "Kova wants to write a file" and "delete data" not in "\n".join(body)
+    assert colour == WARNING
+
+
+def test_edit_approval_shows_the_change_with_its_indentation():
+    _, body, _ = renderer().permission_card(
+        "edit_file", {"path": "src/p.py", "old_text": "    return x\n",
+                      "new_text": "    if x:\n        return x\n"}, "normal", "edit_file: src/p.py")
+    assert body[0] == "src/p.py"
+    assert "−     return x" in body and "+     if x:" in body and "+         return x" in body
+    assert not any(line.startswith("edit_file") for line in body)
 
 
 # ------------------------------------------------------------------ the chat loop
@@ -591,12 +647,15 @@ def test_an_approval_asks_and_yes_allows_it():
     app.submit("check the repo")
     drain(app, until=lambda app: app.approval is not None)
     labels = [label for label, _value, _key in app.overlay.options]
-    assert labels == ["Allow once", "Allow this exact action for this session", "Always allow this exact action",
-                      "No, and tell Kova what to do differently"]
+    assert labels == ["allow once", "allow this exact action for this session",
+                      "always allow this exact action", "no, and tell Kova what to do instead"]
+    assert [key for _label, _value, key in app.overlay.options] == ["y", "a", "w", "n"]
+    screen = plain("\n".join(app.overlay.render(80, app.p)))
+    assert "Kova wants to run a command" in screen and "in " in screen
     app.on_key(SimpleNamespace(name="enter", text=""))
     drain(app)
     assert client.approvals == [("a1", "allow", None)]
-    assert "Allowed run_command" in transcript(app)
+    assert re.search(r"◆ allowed\s+run git status\s+once", transcript(app))
 
 
 def test_destructive_actions_cannot_be_allowed_for_the_whole_chat():
@@ -619,7 +678,7 @@ def test_no_asks_what_to_do_instead_and_sends_it():
     app.on_key(SimpleNamespace(name="enter", text=""))
     drain(app)
     assert client.approvals == [("a1", "deny", "use git log instead")]
-    assert "Declined run_command · use git log instead" in transcript(app)
+    assert re.search(r"◆ declined\s+run git status\s+use git log instead", transcript(app))
 
 
 def test_esc_declines_without_asking():
@@ -678,7 +737,7 @@ def test_steering_reaches_the_running_reply():
     drain(app)
     assert client.steers == ["use the other file"]
     text = transcript(app)
-    assert "Steered the reply: use the other file" in text
+    assert "↳ you       use the other file" in text
     assert "No reply is running" not in text
 
 
@@ -706,7 +765,26 @@ def test_stopping_calls_the_stop_endpoint_and_returns_the_queue_to_the_input():
     drain(app)
     assert client.stops == ["c1"] and app.editor.text == "waiting" and not app.queued
     text = transcript(app)
-    assert "partial" in text and text.count("Interrupted") == 1
+    assert "partial" in text and text.count("■ stopped") == 1
+
+
+def test_a_stopped_group_is_drawn_before_the_stopped_row():
+    r = renderer()
+    r.begin_turn()
+    r.handle({"type": "task_start", "id": "g", "label": "2 reads at once",
+              "kind": "parallel", "total": 2})
+    r.handle({"type": "task_start", "id": "t1", "parent": "g", "name": "read_file",
+              "args": {"path": "a.py"}})
+    r.handle({"type": "task_start", "id": "t2", "parent": "g", "name": "read_file",
+              "args": {"path": "b.py"}})
+    r.handle({"type": "task_done", "id": "t1", "ok": True, "summary": '{"content": "x"}'})
+    r.handle({"type": "task_error", "id": "t2", "message": "stopped", "stopped": True})
+    r.handle({"type": "stopped"})
+    r.finish_turn(stopped=True)
+    lines = r.out.getvalue().splitlines()
+    group = next(index for index, line in enumerate(lines) if "reads at once" in line)
+    stopped = next(index for index, line in enumerate(lines) if "■ stopped" in line)
+    assert group < stopped and "■ read    b.py" in "\n".join(lines)
 
 
 def test_plan_events_feed_the_status_line():
@@ -717,7 +795,22 @@ def test_plan_events_feed_the_status_line():
     app.refresh_chat()
     app.submit("plan it")
     drain(app)
-    assert "plan 1/2" in plain(app._status(120)) and "manual" in plain(app._status(120))
+    assert "plan 1/2" in plain(app._status(120)) and "asks before acting" in plain(app._status(120))
+
+
+def test_the_plan_is_pinned_above_the_input_while_a_turn_runs():
+    # docs/TERMINAL-DESIGN.md: one row, the current step and a progress bar.
+    app = chat_app(StubClient([]))
+    app.plan = [{"text": "Look", "status": "done"},
+                {"text": "Fix the parser and re-run the whole suite", "status": "in_progress"},
+                {"text": "Report", "status": "pending"}]
+    line = plain(app._pinned_plan(80))
+    assert line.startswith("≡ 1 of 3  Fix the parser") and line.endswith("▰▱▱")
+    assert len(line) <= 80
+    narrow = plain(app._pinned_plan(40))
+    assert narrow.startswith("≡ 1 of 3  ") and narrow.endswith("  ▰▱▱") and len(narrow) <= 40
+    app.plan = []
+    assert plain(app._pinned_plan(80)) == "≡ 0 of 0"
 
 
 def test_shift_tab_cycles_permission_and_tolerates_an_older_server():
@@ -848,7 +941,8 @@ def test_shell_output_and_memory_notes_go_where_they_belong(tmp_path):
                                      "$ echo shell-ok\nshell-ok")
     assert client.sent[0].endswith("what did it print?")
     text = transcript(app)
-    assert "✓ Bash(echo shell-ok)" in text and "Saved to memory" in text
+    assert re.search(r"▸ run\s+echo shell-ok\s+exit 0", text)
+    assert "│           shell-ok" in text and "▸ saved     I prefer short answers" in text
 
 
 def test_run_shell_reports_exit_codes_and_can_be_cancelled(tmp_path):
@@ -887,7 +981,8 @@ def test_piped_chat_declines_approvals_and_shows_plans():
     _render_turn(client, "c1", "check", False, Console(file=out, width=80))
     text = out.getvalue()
     assert answered == [("c1", "a1", "deny", None)]
-    assert "Update Todos" in text and "◐ Look" in text and "approvals need an interactive" in text
+    assert "≡ plan      0 of 1 done" in text and "│           ▸ Look" in text
+    assert "approvals need an interactive" in text
     assert "\x1b[" not in text
 
 
@@ -922,20 +1017,20 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("Now using other")
         term.type(b"hello\r")
         term.screen("Hello from the fake server.")
-        term.screen("Worked for")
+        assert "∴ thought" in term.vt.text()
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"\x1b[Z")                                           # shift+tab
-        term.screen("auto permissions")
+        term.screen("asks before risky steps")
         term.type(b"run it\r")
-        term.screen("Do you want to proceed?")                         # the approval dialog
+        term.screen("Kova wants to run a command")                     # the approval gate
         term.screen("git status")                                      # drawn after the title
         term.screen("exact action")
         term.type(b"1")
         term.screen("The tree is clean.")
-        assert "✓ Report what changed" in term.vt.text()
+        term.screen("✓ Report what changed")
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"rm it\r")
-        term.screen("Destructive")
+        term.screen("delete data")
         assert "don't ask again" not in term.vt.text()
         term.type(b"n")
         term.screen("What should Kova do instead?")
@@ -943,21 +1038,21 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
         term.screen("Okay, I won't run it.")
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"!echo shell-ok\r")
-        term.screen("Bash  echo shell-ok")
+        term.screen("run       echo shell-ok")
         term.type(b"# I like tea\r")
-        term.screen("Saved to memory")
+        term.screen("saved     I like tea")
         term.type(b"summarize @no")
         term.screen("@notes.md")                                       # file suggestions
         term.type(b"\t\r")
-        term.screen("Read notes.md (2 lines)")
+        term.screen("attached notes.md  2 lines")
         term.wait(lambda: IDLE in term.vt.text(), "the idle prompt")
         term.type(b"slow\r")
         term.screen("tick1")
         term.type(b"queued one\r")
-        term.screen("(queued)")
+        term.screen("queued one  queued")
         term.type(b"\x1b")                                             # esc interrupts
-        term.screen("Interrupted")
-        term.screen("│ ❯ queued one")                                  # the queue comes back
+        term.screen("■ stopped")
+        term.screen("▌ queued one")                                    # the queue comes back
         term.type(b"\x15/cd sub\r")
         term.screen("Folder:")
         term.type(b"?")
@@ -970,8 +1065,9 @@ def test_full_screen_chat_in_a_real_terminal(kova_home):
     finally:
         term.close()
     history = term.history()
-    assert "Bash  git status" in history and "shell-ok" in history and "Until next time." in history
-    for transient in ("Select model", "Do you want to proceed?", "esc to interrupt", IDLE):
+    assert re.search(r"◆ allowed\s+run git status", history) and "shell-ok" in history
+    assert "Until next time." in history
+    for transient in ("Select model", "Kova wants to run a command", "esc stop", IDLE):
         assert transient not in history, transient
     assert [d["decision"] for d in fake.decisions] == ["allow", "deny"]
     assert fake.decisions[1]["message"] == "use the trash"
@@ -1046,7 +1142,7 @@ def test_kova_simple_keeps_the_plain_prompt(kova_home):
     fake, home, project = kova_home
     term = Terminal(home, project, "--new", env={"KOVA_SIMPLE": "1"})
     try:
-        term.screen("/help commands", 30)
+        term.screen("/help lists every command", 30)
         term.type(b"hello\r")
         term.screen("Hello from the fake server.")
         # The line prompt asks the terminal where its cursor is; answer like one.
@@ -1108,7 +1204,7 @@ def test_live_details_in_narrow_pty(kova_home, no_color):
         term.screen("full-output-marker")
         term.type(b"\x0f")
         term.gone("full-output-marker")
-        term.gone("generating")
+        term.gone("writing its arguments")
         term.type(b"\x04")
         assert term.exit_status() == 0
     finally:
@@ -1227,7 +1323,7 @@ def test_a_turn_that_changed_files_prints_one_summary_line():
     app.submit("edit the notes")
     drain(app)
     text = transcript(app)
-    assert "1 file changed" in text and "+3 −1" in text and "/changes to review" in text
+    assert re.search(r"▸ changed\s+1 file  \+3 −1   /changes to review", text)
 
 
 def test_changes_lists_every_change_set():
@@ -1238,7 +1334,7 @@ def test_changes_lists_every_change_set():
     app = chat_app(client)
     app.command("/changes")
     text = transcript(app)
-    assert "Changes · 2 change sets" in text
+    assert "Changes  2 change sets" in text
     assert "fix the notes" in text and "+3 −1" in text
     assert "+2 −0" in text and "/diff <n> shows one" in text
 
@@ -1267,7 +1363,7 @@ def test_restore_asks_before_putting_the_files_back():
     app.on_key(SimpleNamespace(name="enter", text=""))
     assert client.restores == [7]
     text = transcript(app)
-    assert "Restore change set 7" in text
+    assert "Restored change set 7" in text
     assert "put back notes.txt" in text and "removed new.txt" in text
 
 

@@ -48,7 +48,9 @@ def test_rich_surfaces_use_the_light_palette(source, surface, terminal_home, mon
         renderable = turn.render()
     raw = capture(renderable)
     if surface != "status":
-        assert "38;2;13;12;19" in raw  # kova-light's accent token, not the near-white dark-theme accent
+        # The chat's speaker tile fills its one cell with the accent and writes the
+        # initial in the on-accent ink, so the token appears as a background there.
+        assert "13;12;19" in raw  # kova-light's accent token, not the near-white dark-theme accent
     else:
         assert "38;2;74;77;86" in raw  # kova-light's fg.muted
     assert "38;2;246;246;248" not in raw

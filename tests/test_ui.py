@@ -48,8 +48,11 @@ def test_reasoning_visibility_and_elapsed_time(no_think, show_thinking, details,
         {"type": "done"},
     ], no_think=no_think, show_thinking=show_thinking,
         clock=iter([10.0, 13.2, 13.2]), monkeypatch=monkeypatch)
-    assert ("Private working" in rendered) is details
-    assert ("thought for 3.2s" in rendered) is summary
+    # The collapsed trace keeps a one-line preview; ctrl+t shows all of it,
+    # --no-think hides the trace row with it.
+    assert ("Private working" in rendered) is (details or summary)
+    assert ("3.2s" in rendered) is summary          # the trace keeps the step's time
+    assert ("∴ thought" in rendered) is summary
     assert "Final answer" in rendered
     assert "Thinking…" not in rendered
 
@@ -63,10 +66,10 @@ def test_tools_replace_pending_status_and_escape_server_markup():
         {"type": "error", "message": "[bold]server error[/bold]"},
         {"type": "done"},
     ], terminal=True)
-    final = rendered[rendered.rfind("◆ Kova"):]
-    assert final.count("memory_search") == 1
-    assert "✓ memory_search · Found 2 notes" in final
-    assert "✗ read_file · [red]not allowed[/red]" in final
+    final = rendered[rendered.rfind(" K  Kova"):]
+    assert final.count("recall") == 1
+    assert "▹ recall    Found 2 notes" in final
+    assert "✗ read      [red]not allowed[/red]" in final
     assert "Error: [bold]server error[/bold]" in final
     assert "\x1b[31m" in raw
 
@@ -76,7 +79,7 @@ def test_tall_reply_commits_all_lines_to_scrollback():
         {"type": "text", "text": "\n\n".join(f"Paragraph {i}" for i in range(30))},
         {"type": "done"},
     ], terminal=True)
-    final = rendered[rendered.rfind("◆ Kova"):]
+    final = rendered[rendered.rfind(" K  Kova"):]
     assert {f"Paragraph {i}" for i in range(30)} <= {line.rstrip() for line in final.splitlines()}
 
 
@@ -155,7 +158,7 @@ class TestToolArgPreview:
         turn.accept({"type": "tool_call", "name": "web_search",
                      "args": {"query": "weather berlin"}})
         rendered = _capture(turn.render())
-        assert "web_search" in rendered
+        assert "search" in rendered and "web_search" not in rendered   # the step word
         assert "weather berlin" in rendered
 
     def test_finished_row_hides_args_and_keeps_summary(self):
@@ -166,7 +169,7 @@ class TestToolArgPreview:
                      "summary": "5 results"})
         turn.finished = True
         rendered = _capture(turn.render())
-        assert "✓ web_search · 5 results" in rendered
+        assert "▹ search    5 results" in rendered
 
     def test_interrupted_row_says_so(self):
         turn = _ui._Turn(False, False)
@@ -182,8 +185,8 @@ class TestReasoningCollapse:
         turn.end_reasoning()
         turn.finished = True
         rendered = _capture(turn.render())
-        assert "thought for" in rendered
-        assert "Thinking" not in rendered
+        assert "∴ thought" in rendered and "thinking hard" in rendered
+        assert "Thinking" not in rendered and "thought for" not in rendered
 
     def test_no_think_hides_everything(self):
         turn = _ui._Turn(True, False)
@@ -192,7 +195,7 @@ class TestReasoningCollapse:
         turn.finished = True
         rendered = _capture(turn.render())
         assert "thinking hard" not in rendered
-        assert "thought for" not in rendered
+        assert "thought" not in rendered
 
 
 class _StubClient:
@@ -220,10 +223,10 @@ def _header_text(monkeypatch, model_ok=True):
 class TestHeader:
     def test_wordmark_model_mode_and_memory(self, monkeypatch):
         rendered = _header_text(monkeypatch)
-        assert "Kova" in rendered
-        assert "model local" in rendered
-        assert "mode work" in rendered
-        assert "2 notes" in rendered
+        assert " K  Kova" in rendered and "█▄▀" not in rendered   # the tile, not the wordmark
+        assert "model    local  ready" in rendered
+        assert "mode     work" in rendered
+        assert "2 notes  in /tmp/mem" in rendered
         assert "/help" in rendered
 
     def test_no_heavy_box(self, monkeypatch):

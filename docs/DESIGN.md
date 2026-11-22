@@ -18,7 +18,8 @@ Background research, with sources, lives in [docs/research/design-ui.md](researc
 5. **Motion explains change.** Animation shows where something came from or went. It never
    decorates, never loops for attention, and can always be turned off.
 6. **One product, four surfaces.** Web, desktop, phone and the TUI share one look and the same
-   semantic tokens. The terminal is a renderer, not a separate design.
+   semantic tokens. The terminal is a renderer, not a separate design: how it draws the
+   conversation, step by step, is in [TERMINAL-DESIGN.md](TERMINAL-DESIGN.md).
 7. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is not
    shipped — including themes from the gallery.
 

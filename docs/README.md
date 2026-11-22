@@ -28,6 +28,7 @@ unless it sits in [`archive/`](archive/), which keeps superseded plans for histo
 ## Design notes / archive
 
 - [DESIGN.md](DESIGN.md) — the design system: principles, the token pipeline and the rules UI changes follow.
+- [TERMINAL-DESIGN.md](TERMINAL-DESIGN.md) — the terminal chat: the step trace, its glyphs, palette and layout.
 - [research/](research/README.md) — peer-agent research notes, labelled VERIFIED/UNSURE, with sources.
   - [research/design-ui.md](research/design-ui.md) — index to the design research for the redesign epic.
   - [research/design-ui-1-tokens-and-themes.md](research/design-ui-1-tokens-and-themes.md) — tokens, themes, TUI parity, motion and typography.

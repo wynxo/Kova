@@ -82,7 +82,7 @@ class FakeKova:
         script = next((name for name in ("run it", "rm it", "slow", "count", "details")
                        if re.search(rf"(^|\n){name}", text)), "")
         if script == "details":
-            emit({"type": "reasoning", "text": "reasoning-visible-marker"})
+            emit({"type": "reasoning", "text": "Checking the file first. reasoning-visible-marker"})
             time.sleep(1)
             raw = json.dumps({"path": "demo.py", "content": "print('live-marker')"})
             for i in range(1, len(raw) + 1):
