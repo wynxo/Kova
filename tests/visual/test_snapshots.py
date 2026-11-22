@@ -338,11 +338,84 @@ def test_saved_chat_style_overrides_theme_defaults_on_first_login(chromium, kova
         kova.set_preferences({"theme": "system", "message_style": "theme"})
 
 
-def test_reduced_transparency_uses_solid_theme_panels(chromium, kova):
+def test_simple_theme_exports_and_reimports_by_drop(chromium, kova):
     from playwright.sync_api import expect
 
+    theme_id = "roundtrip-demo"
     previous = kova.preferences()
-    kova._request("POST", "/themes", json={
+    viewport = {"width": 390, "height": 844}
+
+    def open_editor(page):
+        page.keyboard.press("Control+k")
+        page.locator("#command-palette-input").fill("Customize theme")
+        page.keyboard.press("Enter")
+        panel = page.locator(".theme-editor")
+        expect(panel.locator("#theme-editor-tab-simple")).to_have_attribute("aria-selected", "true")
+        expect(panel.get_by_role("button", name="Export", exact=True)).to_be_enabled()
+        return panel
+
+    def export(page, panel):
+        with page.expect_download() as download:
+            panel.get_by_role("button", name="Export", exact=True).click()
+        return json.loads(download.value.path().read_text())
+
+    try:
+        with chromium.new_context(viewport=viewport, service_workers="block") as context:
+            page = context.new_page()
+            open_screen(page, kova, "start", "dark")
+            root = page.locator("html")
+            panel = open_editor(page)
+            panel.locator("#theme-editor-name").fill("Roundtrip demo")
+            panel.locator("#theme-editor-id").fill(theme_id)
+            panel.locator("#theme-editor-simple-accent-hex").fill("#2dd4bf")
+            expect(root).to_have_css("--accent-default", "#2dd4bf")
+            base = root.evaluate("el => getComputedStyle(el).getPropertyValue('--bg-base').trim()")
+            panel.get_by_role("radio", name="Warm").click()
+            expect(root).not_to_have_css("--bg-base", base)
+            ink = root.evaluate("el => getComputedStyle(el).getPropertyValue('--fg-default').trim()")
+            panel.locator("#theme-editor-contrast").press("End")
+            expect(root).not_to_have_css("--fg-default", ink)
+            panel.locator("#theme-editor-radius").press("End")
+            panel.locator("#theme-editor-density-compact").click()
+            panel.locator("#theme-editor-font-mono").click()
+            expect(root).to_have_attribute("data-radius", "round")
+            expect(root).to_have_attribute("data-density", "compact")
+            expect(root).to_have_attribute("data-font", "mono")
+            document = export(page, panel)
+            panel.get_by_role("button", name="Cancel", exact=True).click()
+            expect(panel).to_be_hidden()
+
+        with chromium.new_context(viewport=viewport, service_workers="block") as context:
+            page = context.new_page()
+            open_screen(page, kova, "start", "dark")
+            panel = open_editor(page)
+            transfer = page.evaluate_handle("""document => {
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([JSON.stringify(document)], 'demo.json', {
+                    type: 'application/json'
+                }));
+                return transfer;
+            }""", document)
+            panel.dispatch_event("drop", {"dataTransfer": transfer})
+            expect(panel.locator("#theme-editor-id")).to_have_value(theme_id)
+            expect(page.locator("html")).to_have_css("--accent-default", "#2dd4bf")
+            assert export(page, panel) == document
+            panel.get_by_role("button", name="Save", exact=True).click()
+            expect(panel).to_be_hidden()
+            assert kova.preferences()["theme"] == theme_id
+            assert kova.theme(theme_id)["tokens"]["accent.default"] == "#2dd4bf"
+            page.reload()
+            expect(page.locator("html")).to_have_css("--accent-default", "#2dd4bf")
+    finally:
+        kova.set_preferences({key: previous[key] for key in ("theme", "radius", "density", "font")})
+        if any(option["id"] == theme_id for option in kova.themes()):
+            kova.remove_theme(theme_id)
+
+
+@pytest.fixture
+def backdrop_theme(kova):
+    previous = kova.preferences()
+    kova.save_theme({
         "id": "backdrop",
         "name": "Backdrop",
         "version": "1.0.0",
@@ -350,70 +423,76 @@ def test_reduced_transparency_uses_solid_theme_panels(chromium, kova):
         "extends": "kova-dark",
         "background": {"kind": "gradient", "stops": ["#14121c", "#1c1a26"]},
     })
-    context = chromium.new_context(viewport={"width": 1280, "height": 800})
+    kova.set_preferences({"theme": "backdrop", "backgrounds": "on", "motion": "full"})
     try:
-        kova.set_preferences({
-            "theme": "backdrop",
-            "backgrounds": "on",
-            "motion": "full",
-        })
+        yield
+    finally:
+        kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
+        kova.remove_theme("backdrop")
+
+
+def assert_solid_panels(page, *, forced_colors=False, backgrounds_off=False):
+    from playwright.sync_api import expect
+
+    sidebar_token = "--bg-base" if backgrounds_off else "--bg-surface"
+    for selector, token in [("#sidebar", sidebar_token), ("main", "--bg-base"),
+                            (".composer", "--bg-surface")]:
+        panel = page.locator(selector)
+        expected = panel.evaluate("""(node, token) => {
+            const probe = document.createElement('span');
+            probe.style.backgroundColor = token ? 'var(' + token + ')' : 'Canvas';
+            node.append(probe);
+            const color = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return color;
+        }""", None if forced_colors else token)
+        expect(panel).to_have_css("backdrop-filter", "none")
+        expect(panel).to_have_css("background-color", expected)
+
+
+@pytest.mark.parametrize("fallback", ["reduced-transparency", "motion-off", "forced-colors", "backgrounds-off"])
+def test_background_opt_outs_use_solid_theme_panels(chromium, kova, backdrop_theme, fallback):
+    from playwright.sync_api import expect
+
+    with chromium.new_context(viewport={"width": 1280, "height": 800},
+                              service_workers="block") as context:
         page = context.new_page()
+        page.route("**/app/assets/blur.js", lambda route: route.fulfill(body=""))
         with page.expect_response(kova.base_url + "/events") as events:
             assert page.goto(f"{kova.base_url}/app#ticket={kova.app_ticket()}").ok
         assert events.value.ok
         root = page.locator("html")
         expect(root).to_have_attribute("data-background", "gradient")
-
         expect(page.locator("main")).not_to_have_css("backdrop-filter", "none")
-        session = context.new_cdp_session(page)
-        session.send("Emulation.setEmulatedMedia", {
-            "features": [{"name": "prefers-reduced-transparency", "value": "reduce"}],
-        })
-        assert page.evaluate("matchMedia('(prefers-reduced-transparency: reduce)').matches")
+        if fallback == "reduced-transparency":
+            session = context.new_cdp_session(page)
+            session.send("Emulation.setEmulatedMedia", {
+                "features": [{"name": "prefers-reduced-transparency", "value": "reduce"}],
+            })
+        elif fallback == "forced-colors":
+            page.emulate_media(forced_colors="active")
+        elif fallback == "motion-off":
+            page.evaluate("window.KovaMotion.setMode('off')")
+            expect(root).to_have_attribute("data-motion", "off")
+        else:
+            page.locator("#open-settings").click()
+            group = page.get_by_role("radiogroup", name="Show theme backgrounds")
+            group.get_by_role("radio", name="Off", exact=True).click()
+            expect(root).to_have_attribute("data-backgrounds", "off")
+            assert page.evaluate("getComputedStyle(document.body, '::before').backgroundImage") == "none"
+            assert kova.preferences()["theme"] == "backdrop"
+        assert_solid_panels(page, forced_colors=fallback == "forced-colors",
+                            backgrounds_off=fallback == "backgrounds-off")
 
-        for selector, token in [
-            ("#sidebar", "--bg-surface"),
-            ("main", "--bg-base"),
-            (".composer", "--bg-surface"),
-        ]:
-            panel = page.locator(selector)
-            opaque = panel.evaluate("""(node, token) => {
-                const probe = document.createElement('span');
-                probe.style.color = 'var(' + token + ')';
-                node.append(probe);
-                const color = getComputedStyle(probe).color;
-                probe.remove();
-                return color;
-            }""", token)
-            expect(panel).to_have_css("backdrop-filter", "none")
-            expect(panel).to_have_css("background-color", opaque)
-    finally:
-        context.close()
-        kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
-        kova.remove_theme("backdrop")
 
-def test_slow_blur_fallback_uses_solid_theme_panels(chromium, kova):
+def test_slow_blur_fallback_uses_solid_theme_panels(chromium, kova, backdrop_theme):
     """A slow-compositor decision swaps the live backdrop blur for solid panels
     (#206). Set the decision directly to check the CSS independently of
     the runner's frame timing."""
     from playwright.sync_api import expect
 
-    previous = kova.preferences()
-    kova._request("POST", "/themes", json={
-        "id": "backdrop",
-        "name": "Backdrop",
-        "version": "1.0.0",
-        "appearance": "dark",
-        "extends": "kova-dark",
-        "background": {"kind": "gradient", "stops": ["#14121c", "#1c1a26"]},
-    })
-    context = chromium.new_context(viewport={"width": 1280, "height": 800})
-    try:
-        kova.set_preferences({
-            "theme": "backdrop",
-            "backgrounds": "on",
-            "motion": "full",
-        })
+    with chromium.new_context(viewport={"width": 1280, "height": 800},
+                              service_workers="block") as context:
         page = context.new_page()
         page.route("**/app/assets/blur.js", lambda route: route.fulfill(body=""))
         with page.expect_response(kova.base_url + "/events") as events:
@@ -427,24 +506,4 @@ def test_slow_blur_fallback_uses_solid_theme_panels(chromium, kova):
 
         # A slow-compositor decision forces the solid fallback.
         root.evaluate("el => el.setAttribute('data-blur', 'slow')")
-
-        for selector, token in [
-            ("#sidebar", "--bg-surface"),
-            ("main", "--bg-base"),
-            (".composer", "--bg-surface"),
-        ]:
-            panel = page.locator(selector)
-            opaque = panel.evaluate("""(node, token) => {
-                const probe = document.createElement('span');
-                probe.style.color = 'var(' + token + ')';
-                node.append(probe);
-                const color = getComputedStyle(probe).color;
-                probe.remove();
-                return color;
-            }""", token)
-            expect(panel).to_have_css("backdrop-filter", "none")
-            expect(panel).to_have_css("background-color", opaque)
-    finally:
-        context.close()
-        kova.set_preferences({key: previous[key] for key in ("theme", "backgrounds", "motion")})
-        kova.remove_theme("backdrop")
+        assert_solid_panels(page)

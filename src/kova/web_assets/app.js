@@ -961,16 +961,48 @@
     const shown = wide?.matches ? !document.body.classList.contains('sidebar-collapsed') : document.body.classList.contains('sidebar-open');
     $('menu').setAttribute('aria-expanded', String(shown));
   }
-  function sidebar(open) {
-    document.body.classList.toggle('sidebar-open', open); $('backdrop').hidden = !open;
+  function sidebar(open, focus = $('sidebar-close')) {
+    const drawer = $('sidebar'), backdrop = $('backdrop');
+    const wasOpen = document.body.classList.contains('sidebar-open');
+    const active = document.activeElement;
+    document.body.classList.toggle('sidebar-open', open); backdrop.hidden = !open;
+    if (open) {
+      drawer.setAttribute('role', 'dialog');
+      drawer.setAttribute('aria-modal', 'true');
+      drawer.setAttribute('data-focus-trap', '');
+      if (!wasOpen || focus !== $('sidebar-close')) {
+        const enter = () => {
+          focus.focus({preventScroll: true});
+          if (focus === $('search')) focus.select();
+        };
+        enter();
+        // Visibility can still be transitioning the first time the drawer opens.
+        if (document.activeElement !== focus) Promise.allSettled(
+          (drawer.getAnimations?.() || []).map(animation => animation.finished)
+        ).then(() => {
+          if (document.body.classList.contains('sidebar-open') && document.activeElement === active) {
+            enter();
+          }
+        });
+      }
+    } else if (wasOpen) {
+      drawer.removeAttribute('role');
+      drawer.removeAttribute('aria-modal');
+      drawer.removeAttribute('data-focus-trap');
+      if (active === backdrop || drawer.contains(active)) $('menu').focus({preventScroll: true});
+    }
     menuState();
   }
-  function toggleSidebar(show) {
+  function toggleSidebar(show, focus) {
     if (inZen()) toggleZen(false);
-    if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'));
+    if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'), focus);
     const collapsed = !(show ?? document.body.classList.contains('sidebar-collapsed'));
     document.body.classList.toggle('sidebar-collapsed', collapsed); menuState();
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
+    focus?.focus(); focus?.select?.();
+  }
+  function searchConversations() {
+    toggleSidebar(true, $('search'));
   }
   const inZen = () => document.body.classList.contains('zen-mode');
   let zenOverride = false;
@@ -2097,6 +2129,13 @@
   try { if (localStorage.getItem('kova-sidebar') === 'collapsed') document.body.classList.toggle('sidebar-collapsed', true); } catch (_) {}
   menuState(); wide?.addEventListener?.('change', () => { sidebar(false); });
   $('backdrop').onclick = () => sidebar(false); $('sidebar-close').onclick = () => sidebar(false);
+  $('sidebar').addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented ||
+        !document.body.classList.contains('sidebar-open')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    sidebar(false);
+  });
   $('open-shortcuts').onclick = () => { sidebar(false); $('shortcuts-dialog').showModal(); };
   $('shortcuts-close').onclick = () => $('shortcuts-dialog').close();
   // Command palette (#183). palette.js owns the dialog; this is only the registry,
@@ -2119,7 +2158,7 @@
     add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
     if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
-    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
+    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:searchConversations});
     add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
     add('Actions', {title:'Next conversation', hint:'Move down the conversation list', keywords:'chat history navigate down next newer', shortcut:shortcutKeys('next-conversation'), run:() => stepConversation(1)});
     add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
@@ -2320,7 +2359,7 @@
     palette: () => safe(openPalette),
     'new-conversation': () => { if (state.connected) safe(newChat); },
     'new-incognito': () => safe(newIncognito),
-    'search-conversations': () => { toggleSidebar(true); $('search').focus(); $('search').select?.(); },
+    'search-conversations': searchConversations,
     'previous-conversation': () => stepConversation(-1),
     'next-conversation': () => stepConversation(1),
     'toggle-sidebar': () => toggleSidebar(),

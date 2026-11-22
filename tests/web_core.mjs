@@ -39,6 +39,7 @@ class Element {
     return selector === '.option:not([hidden])' ? walk(this).find(n => n.classList.contains('option') && !n.hidden) : null;
   }
   closest() { return null; }
+  contains(node) { return node === this || this.children.some(child => child.contains(node)); }
   getBoundingClientRect() { return {top: 400, bottom: 432, left: 700, right: 850, width: 150}; }
   scrollIntoView() {}
   focus() { focusedElement = this; }
