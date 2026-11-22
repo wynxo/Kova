@@ -1,6 +1,8 @@
 """Backup export/import: contents, secrets, Obsidian scope and round-trips."""
 
 import json
+import os
+import stat
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from kova import backup as backup_module
+from kova import bots as bot_store
 from kova.backup import BackupError, export_archive, import_archive
 from kova.config import ensure_token, load_config, save_config
 from kova.memory import Memory
@@ -585,6 +588,131 @@ def test_export_is_private_and_does_not_follow_predictable_temp_symlink(tmp_path
         os.umask(previous)
     assert victim.read_text() == "keep me"
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def _seed_bot(cfg, bot_id="researcher", persona="You research questions on the web.", avatar=False):
+    """One saved bot, optionally with an avatar image and a memory note."""
+    definition = bot_store.BotDefinition(id=bot_id, name=bot_id.replace("-", " ").title(),
+                                         handle=bot_id)
+    saved = bot_store.save_bot(cfg.home, definition, persona=persona)
+    if avatar:
+        saved = bot_store.save_avatar(saved, b"\x89PNG\r\n\x1a\n" + b"0" * 64, "image/png")
+    return saved
+
+
+def test_export_contains_bots_persona_avatar_and_memory(tmp_path):
+    cfg = _home(tmp_path)
+    _seed_bot(cfg, avatar=True)
+    Memory(cfg.memory_path, cfg.memory_write_subdir).bot_scope("researcher").save(
+        "Topic", "researcher remembers this")
+    target = tmp_path / "backup.zip"
+
+    stats = export_archive(cfg, target)
+
+    assert stats["bots"] == 1 and stats["bot_notes"] == 1
+    with zipfile.ZipFile(target) as archive:
+        names = set(archive.namelist())
+        assert "bots/researcher/bot.toml" in names
+        assert "bots/researcher/persona.md" in names
+        assert "bots/researcher/avatar.png" in names
+        assert "bot-memory/researcher/topic.md" in names
+        assert archive.read("bots/researcher/persona.md").decode() == \
+            "You research questions on the web."
+        assert archive.read("bots/researcher/avatar.png") == \
+            (cfg.home / "bots" / "researcher" / "avatar.png").read_bytes()
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["bots"] == 1 and manifest["bot_notes"] == 1
+        assert "bots" in archive.read("README.txt").decode()
+
+
+def test_import_into_empty_home_restores_bots(tmp_path):
+    source = _home(tmp_path, "source")
+    _seed_bot(source, avatar=True)
+    Memory(source.memory_path, source.memory_write_subdir).bot_scope("researcher").save(
+        "Topic", "researcher remembers this")
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+
+    target = _home(tmp_path, "target")
+    stats = import_archive(target, backup)
+    assert (stats["bots"], stats["bot_notes"]) == (1, 1)
+
+    restored = bot_store.get_bot(target.home, "researcher")
+    assert restored is not None and restored.handle == "researcher"
+    assert (target.home / "bots" / "researcher" / "persona.md").read_text() == \
+        "You research questions on the web."
+    assert (target.home / "bots" / "researcher" / "avatar.png").read_bytes() == \
+        (source.home / "bots" / "researcher" / "avatar.png").read_bytes()
+    notes = Memory(target.memory_path, target.memory_write_subdir).bot_scope("researcher").list()
+    assert [note.slug for note in notes] == ["topic"]
+    if os.name != "nt":
+        assert stat.S_IMODE((target.home / "bots" / "researcher" / "bot.toml").stat().st_mode) == 0o600
+        assert stat.S_IMODE((target.home / "bots" / "researcher" / "persona.md").stat().st_mode) == 0o600
+
+    again = import_archive(target, backup)
+    assert (again["bots"], again["bots_skipped"]) == (0, 1)
+    assert (again["bot_notes"], again["bot_notes_skipped"]) == (0, 1)
+
+
+def test_merge_keeps_local_bot_unless_the_backup_is_newer(tmp_path):
+    import time
+
+    source = _home(tmp_path, "source")
+    _seed_bot(source, persona="New persona from the backup.")
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+
+    target = _home(tmp_path, "target")
+    _seed_bot(target, persona="Local persona wins.")
+    local_toml = target.home / "bots" / "researcher" / "bot.toml"
+    # The local file is newer than the backup, so the merge keeps it.
+    newer = time.time() + 3600
+    os.utime(local_toml, (newer, newer))
+    kept = import_archive(target, backup)
+    assert (kept["bots"], kept["bots_skipped"]) == (0, 1)
+    assert (target.home / "bots" / "researcher" / "persona.md").read_text() == "Local persona wins."
+
+    # The backup is newer than the local file, so it replaces it.
+    older = time.time() - 86400 * 30
+    os.utime(local_toml, (older, older))
+    replaced = import_archive(target, backup)
+    assert (replaced["bots"], replaced["bots_skipped"]) == (1, 0)
+    assert (target.home / "bots" / "researcher" / "persona.md").read_text() == \
+        "New persona from the backup."
+
+
+def _rewrite_with_extra_member(source, target, member, data=b"evil", symlink=False):
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(target, "w") as dst:
+        for item in src.infolist():
+            dst.writestr(item, src.read(item.filename))
+        if symlink:
+            info = zipfile.ZipInfo(member)
+            info.create_system = 3
+            info.external_attr = (0o120777 << 16)
+            dst.writestr(info, data)
+        else:
+            dst.writestr(member, data)
+
+
+@pytest.mark.parametrize("member,symlink", [
+    ("bots/../evil.txt", False),
+    ("bots/researcher/../../evil.txt", False),
+    ("bot-memory/../evil.md", False),
+    ("bots/researcher/evil.png", True),
+])
+def test_import_refuses_malicious_bot_paths(tmp_path, member, symlink):
+    source = _home(tmp_path, "source")
+    _seed_bot(source)
+    backup = tmp_path / "backup.zip"
+    export_archive(source, backup)
+    booby_trapped = tmp_path / "evil.zip"
+    _rewrite_with_extra_member(backup, booby_trapped, member, symlink=symlink)
+
+    target = _home(tmp_path, "target")
+    with pytest.raises(BackupError):
+        import_archive(target, booby_trapped)
+    assert not (target.home / "evil.txt").exists()
+    assert not (tmp_path / "evil.txt").exists()
 
 
 def test_failed_export_keeps_previous_backup_and_removes_temp(tmp_path, monkeypatch):
