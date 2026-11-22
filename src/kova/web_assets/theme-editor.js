@@ -286,7 +286,8 @@
     const reset = button('Reset to base', 'quiet');
     reset.addEventListener('click', () => resetToBase());
     const sources = el('div', 'theme-editor-sources');
-    sources.append(field('theme-editor-base', 'Start from', base), importButton, share, importStringButton, file);
+    sources.append(field('theme-editor-base', 'Start from', base), importButton, share, importStringButton, file,
+      el('p', 'theme-editor-hint', 'Or drop a theme JSON file anywhere on this panel to import it.'));
     const identity = el('fieldset', 'theme-editor-identity');
     identity.append(field('theme-editor-name', 'Name', name), field('theme-editor-id', 'Theme ID', id));
     const modes = el('div', 'theme-editor-modes');
@@ -996,17 +997,55 @@
     });
     exportButton.addEventListener('click', () => download(draft));
     importButton.addEventListener('click', () => file.click());
+    // The picker and a drop share one import path: the same size cap, the same
+    // parse and the same server validation either way.
+    async function importChosen(chosen, invalidLabel) {
+      if (chosen.size > MAX_FILE_BYTES) throw new Error('Theme files must be at most 32 KiB.');
+      let incoming;
+      try { incoming = JSON.parse(await chosen.text()); }
+      catch (_) { throw new Error(invalidLabel); }
+      await applyImport(incoming);
+    }
     file.addEventListener('change', () => {
       const chosen = file.files[0];
       file.value = '';
       if (!chosen) return;
-      return replace(async () => {
-        if (chosen.size > MAX_FILE_BYTES) throw new Error('Theme files must be at most 32 KiB.');
-        let incoming;
-        try { incoming = JSON.parse(await chosen.text()); }
-        catch (_) { throw new Error('Choose a valid theme JSON file.'); }
-        await applyImport(incoming);
-      }, 'Could not import this theme.');
+      return replace(() => importChosen(chosen, 'Choose a valid theme JSON file.'), 'Could not import this theme.');
+    });
+    // Drag-and-drop import (#176): a theme file may be dropped anywhere on the
+    // panel. Only file drags are claimed, so dragging text into a field keeps
+    // the browser's own behaviour, and the outline comes off however the drag
+    // ends.
+    let dragDepth = 0;
+    const dragHasFiles = transfer => {
+      const types = transfer?.types;
+      return Boolean(types) && (typeof types.contains === 'function'
+        ? types.contains('Files') : [...types].includes('Files'));
+    };
+    panel.addEventListener('dragenter', event => {
+      if (!dragHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      dragDepth += 1;
+      panel.classList.add('is-drop-target');
+    });
+    panel.addEventListener('dragover', event => {
+      if (!dragHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    });
+    panel.addEventListener('dragleave', () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) panel.classList.remove('is-drop-target');
+    });
+    panel.addEventListener('drop', event => {
+      if (!dragHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      dragDepth = 0;
+      panel.classList.remove('is-drop-target');
+      const chosen = event.dataTransfer.files[0];
+      if (chosen) {
+        return replace(() => importChosen(chosen, 'Drop a valid theme JSON file.'), 'Could not import this theme.');
+      }
     });
     importStringButton.addEventListener('click', () => {
       const text = share.value.trim();

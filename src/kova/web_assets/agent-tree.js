@@ -13,7 +13,9 @@
    Each node shows its label, model, status and elapsed time, and expands to its
    tool row (the same KovaToolCards component as every other tool call). The tree
    opens while the turn runs and folds when it ends, unless the reader opened or
-   closed it first.
+   closed it first. Calls that succeeded fold into one "Done · N" row quoting
+   each one-line result; a failed, stopped or interrupted call keeps its own row,
+   so the reason stays under the failed count in the parent header.
 
    Keyboard: it is an ARIA tree (role tree / treeitem / group, aria-expanded,
    aria-level) with one tab stop. Up and Down move, Right opens or steps in, Left
@@ -121,6 +123,9 @@ const KovaAgentTree = (() => {
     announcement.setAttribute('role', 'status');
     tree.append(root.element, announcement);
     const tasks = new Map();
+    // Finished calls fold into one "Done · N" row; a failed call keeps its own
+    // row, so the reason stays visible (#192).
+    const groups = [];
     let total = 0, done = 0, failed = 0, finished = false, timer = null;
 
     function rootLabel() {
@@ -145,19 +150,20 @@ const KovaAgentTree = (() => {
     function startTimer() { if (timer == null && !finished) timer = every(tick, 1000); }
     function announce(text) { if (announcement.textContent !== text) announcement.textContent = text; }
 
-    // Roving focus: exactly one tree item is in the tab order.
+    function entries() { return [root, ...groups, ...tasks.values()]; }
+    // Roving focus: exactly one tree item is in the tab order. A folded group
+    // hides its children, and a collapsed successful call is skipped.
     function visible() {
       const out = [root];
-      if (!root.children.hidden) for (const task of tasks.values()) out.push(task);
+      if (!root.children.hidden) for (const entry of [...groups, ...tasks.values()]) if (!entry.element.hidden) out.push(entry);
       return out;
     }
     function focus(entry) {
-      for (const candidate of [root, ...tasks.values()]) candidate.element.setAttribute('tabindex', candidate === entry ? '0' : '-1');
+      for (const candidate of entries()) candidate.element.setAttribute('tabindex', candidate === entry ? '0' : '-1');
       entry.element.focus?.();
     }
     function entryFor(element) {
-      if (element === root.element) return root;
-      return [...tasks.values()].find(task => task.element === element) || null;
+      return entries().find(entry => entry.element === element) || null;
     }
     tree.addEventListener?.('keydown', event => {
       const entry = entryFor(event.target);
@@ -261,6 +267,7 @@ const KovaAgentTree = (() => {
         task.state = event.stopped ? 'stopped' : event.type === 'task_error' || event.ok === false ? 'failed' : 'ok';
         const excerpt = event.type === 'task_error' ? event.message : event.summary;
         if (typeof excerpt === 'string' && excerpt.trim()) {
+          task.summary = excerpt.trim();
           task.children.append(node('blockquote', 'agent-tree-result', excerpt));
         }
         if (task.state === 'stopped') announce(`${task.label.textContent} stopped.`);
@@ -290,8 +297,41 @@ const KovaAgentTree = (() => {
       }
       if (root.state === 'running') { root.state = tasks.size && [...tasks.values()].every(t => t.state === 'ok') ? 'ok' : 'interrupted'; root.end = now(); }
       rootLabel(); paintAll();
+      foldDone();
       // A finished turn folds its tree away, unless the reader chose otherwise.
       if (!root.touched) root.open(false);
+    }
+
+    // Fold the calls that succeeded into one "Done · N" row that quotes each
+    // call's one-line result. Failed, stopped and interrupted calls keep their
+    // own rows and reasons, so the parent header's failed count always has an
+    // explanation underneath it.
+    function foldDone() {
+      const ok = [...tasks.values()].filter(task => task.state === 'ok');
+      if (ok.length < 2) return;
+      const group = item(2, `${uid}-done-${groups.length}`);
+      group.state = 'ok';
+      group.stopButton.remove();
+      group.label.textContent = `Done · ${ok.length}`;
+      group.hint.textContent = 'Result summaries';
+      for (const task of ok) {
+        const line = task.summary ? `${task.label.textContent} — ${task.summary}` : task.label.textContent;
+        group.children.append(node('blockquote', 'agent-tree-result', line));
+        task.element.hidden = true;
+        task.element.setAttribute('tabindex', '-1');
+        task.open(false);
+      }
+      group.paint(now);
+      // The label already says "Done · N"; do not repeat the status chip.
+      group.status.textContent = '';
+      clickable(group);
+      groups.push(group);
+      root.children.insertBefore(group.element, root.children.firstChild);
+      // The reader opens the group for the summaries; the turn still folds.
+      group.open(false);
+      if (!visible().some(entry => entry.element.getAttribute('tabindex') === '0')) {
+        root.element.setAttribute('tabindex', '0');
+      }
     }
     root.id = null;
     return {node: tree, add, update, toolCall, toolResult, finish,

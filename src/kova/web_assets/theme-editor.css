@@ -25,6 +25,12 @@ body:has(> .theme-editor) {
   color: var(--fg-default);
   border-inline-start: var(--space-0-5) solid var(--border-subtle);
 }
+/* A file drag over the panel is the drop target: the same outline focus uses,
+   inset so the fixed panel keeps its own edge while the file is over it. */
+.theme-editor.is-drop-target {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: calc(var(--space-0-5) * -1);
+}
 .theme-editor h2 {
   padding: var(--space-4);
   border-bottom: var(--space-0-5) solid var(--border-subtle);
@@ -57,6 +63,9 @@ body:has(> .theme-editor) {
 }
 .theme-editor-identity {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.theme-editor-sources .theme-editor-hint {
+  grid-column: 1 / -1;
 }
 .theme-editor-field,
 .theme-editor-groups,
