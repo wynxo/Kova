@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from kova.tools import Tool
 
@@ -87,7 +87,8 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
                     limit: int = PARALLEL_LIMIT,
                     clock: Callable[[], float] = time.monotonic,
                     controls: dict[str, Callable[[], bool]] | None = None,
-                    delegated: bool = False) -> AsyncIterator[dict]:
+                    run_child: Callable[[dict, Callable[[str, str], None]], Awaitable[str]] | None = None,
+                    ) -> AsyncIterator[dict]:
     """Run ``calls`` concurrently and yield their task events.
 
     ``calls`` holds ``(index, call, tool, args)`` for each call, in request
@@ -98,34 +99,39 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
     ``controls`` (optional) is filled with one ``stop()`` per call id while the
     group runs, and emptied again at the end. ``controls[id]()`` cancels just
     that call (running or still waiting its turn) and returns whether it did.
+    A delegated group uses ``run_child`` with a callback for its model's text
+    and reasoning. Those deltas go to the client, not to the parent model.
     """
     group = f"group-{calls[0][1]['id']}"
     total = len(calls)
     started = clock()
-    yield {'type': 'task_start', 'id': group, 'parent': None, 'kind': 'delegated' if delegated else 'parallel',
-           'label': (f'Delegated {total} analysis tasks' if delegated and total > 1 else
-                     'Delegated analysis' if delegated else f'{total} tools in parallel'),
-           'model': model, 'total': total}
-    for _, call, _, args in calls:
-        yield {'type': 'task_start', 'id': call['id'], 'parent': group, 'kind': 'tool',
-               'name': call['name'], 'label': call['name'], 'args': args, 'model': model,
-               'status': 'queued'}
-        yield {'type': 'tool_call', 'id': call['id'], 'name': call['name'], 'args': args}
-
     gate = asyncio.Semaphore(max(1, limit))
-    queue: asyncio.Queue = asyncio.Queue()
-
-    stopped: set[str] = set()
+    queue: asyncio.Queue[tuple[dict, tuple[int, str, bool] | None]] = asyncio.Queue()
+    by_id = {call['id']: index for index, call, _, _ in calls}
+    workers: dict[int, asyncio.Task] = {}
+    entered: set[int] = set()
+    stopped: set[int] = set()
 
     async def one(index: int, call: dict, tool: Tool, args: dict) -> None:
+        call_id = call['id']
+        entered.add(index)
         began = clock()
+
+        def emit(step: str, text: str) -> None:
+            queue.put_nowait(({'type': 'task_output', 'id': call_id, 'parent': group,
+                               'step': step, 'text': text}, None))
+
         try:
+            if index in stopped:
+                raise asyncio.CancelledError
             async with gate:
                 began = clock()
-                queue.put_nowait(('running', index, call, None, None, 0))
-                result, ok = str(await call_tool(tool, args)), True
+                queue.put_nowait(({'type': 'task_progress', 'id': call_id, 'parent': group,
+                                   'status': 'running'}, None))
+                output = await run_child(args, emit) if run_child is not None else await call_tool(tool, args)
+                result, ok = str(output), True
         except asyncio.CancelledError:
-            if call['id'] in stopped:
+            if index in stopped:
                 # Only this call was stopped: swallow the cancellation so the
                 # group, and the turn, carry on.
                 asyncio.current_task().uncancel()
@@ -137,46 +143,61 @@ async def run_group(calls: list[tuple[int, dict, Tool, dict]], model: str,
                 result, ok = 'Error: the tool was cancelled', False
         except Exception as exc:  # a tool error is the model's to read, as in a single call
             result, ok = f'Error: {exc}', False
-        queue.put_nowait(('finished', index, call, result, ok, _elapsed(began, clock)))
+        event = {'id': call_id, 'parent': group, 'elapsed_ms': _elapsed(began, clock)}
+        if ok:
+            event.update(type='task_done', ok=True, summary=result[:200])
+        else:
+            event.update(type='task_error', message=result[:200])
+            if index in stopped:
+                event['stopped'] = True
+        queue.put_nowait((event, (index, result, ok)))
 
-    tasks = [asyncio.create_task(one(*entry)) for entry in calls]
-    by_id = {entry[1]['id']: task for entry, task in zip(calls, tasks)}
-
-    def stop_one(call_id: str) -> bool:
-        task = by_id.get(call_id)
-        if task is None or task.done() or call_id in stopped:
+    def stop_one(index: int) -> bool:
+        task = workers.get(index)
+        if index in stopped or (task is not None and task.done()):
             return False
-        stopped.add(call_id)
-        task.cancel()
+        stopped.add(index)
+        # A coroutine cancelled before its first instruction cannot report a
+        # result. An announced but not yet entered call checks the flag itself.
+        if task is not None and index in entered:
+            task.cancel()
         return True
 
     if controls is not None:
-        for call_id in by_id:
-            controls[call_id] = lambda call_id=call_id: stop_one(call_id)
+        for call_id, index in by_id.items():
+            controls[call_id] = lambda index=index: stop_one(index)
     finished = failed = 0
     try:
+        delegated = run_child is not None
+        yield {'type': 'task_start', 'id': group, 'parent': None, 'kind': 'delegated' if delegated else 'parallel',
+               'label': (f'Delegated {total} analysis tasks' if delegated and total > 1 else
+                         'Delegated analysis' if delegated else f'{total} tools in parallel'),
+               'model': model, 'total': total}
+        for _, call, _, args in calls:
+            yield {'type': 'task_start', 'id': call['id'], 'parent': group, 'kind': 'agent' if delegated else 'tool',
+                   'name': call['name'], 'label': call['name'], 'args': args, 'model': model,
+                   'status': 'queued'}
+            yield {'type': 'tool_call', 'id': call['id'], 'name': call['name'], 'args': args}
+        for entry in calls:
+            workers[entry[0]] = asyncio.create_task(one(*entry))
         while finished < total:
-            state, index, call, result, ok, elapsed = await queue.get()
-            if state == 'running':
-                yield {'type': 'task_progress', 'id': call['id'], 'parent': group, 'status': 'running'}
+            event, outcome = await queue.get()
+            if outcome is None:
+                yield event
                 continue
+            index, result, ok = outcome
             results[index] = (result, ok)
             finished += 1
-            if ok:
-                yield {'type': 'task_done', 'id': call['id'], 'parent': group, 'ok': True,
-                       'summary': result[:200], 'elapsed_ms': elapsed}
-            else:
+            if not ok:
                 failed += 1
-                yield {'type': 'task_error', 'id': call['id'], 'parent': group,
-                       'message': result[:200], 'elapsed_ms': elapsed,
-                       **({'stopped': True} if call['id'] in stopped else {})}
+            yield event
             yield {'type': 'task_progress', 'id': group, 'parent': None,
                    'done': finished, 'total': total, 'failed': failed}
     finally:
         if controls is not None:
             for call_id in by_id:
                 controls.pop(call_id, None)
-        pending = [task for task in tasks if not task.done()]
+        pending = [task for task in workers.values() if not task.done()]
         for task in pending:
             task.cancel()
         if pending:

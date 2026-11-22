@@ -48,6 +48,29 @@
 .agent-tree-chevron { flex: none; align-self: center; width: var(--space-3); height: var(--space-3); color: var(--fg-faint); transition: transform var(--motion-fast) var(--motion-ease-standard); }
 .agent-tree-node.open > .agent-tree-row > .agent-tree-chevron { transform: rotate(90deg); }
 .agent-tree-node.failed > .agent-tree-row > .agent-tree-label { color: var(--status-danger); }
+.agent-tree-failures { color: var(--status-danger); font-size: var(--type-size-label); }
+
+/* Keep names, outcomes and controls readable on narrow traces. The latest
+   action gets its own line, and the full request is in the expanded card. */
+.agent-tree[data-kind="delegated"] > .agent-tree-node > .agent-tree-row,
+.agent-tree-delegate > .agent-tree-row { flex-wrap: wrap; row-gap: var(--space-0-5); }
+.agent-tree[data-kind="delegated"] > .agent-tree-node > .agent-tree-row > .agent-tree-label,
+.agent-tree-delegate > .agent-tree-row > .agent-tree-label {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.agent-tree[data-kind="delegated"] > .agent-tree-node > .agent-tree-row > .agent-tree-hint,
+.agent-tree-delegate > .agent-tree-row > .agent-tree-hint {
+  flex: 1 1 100%;
+  order: 1;
+  color: var(--fg-muted);
+  font-family: inherit;
+}
+.agent-tree-delegate > .agent-tree-row > .agent-tree-hint { padding-inline-start: var(--space-4); }
+.agent-tree-delegate > .agent-tree-row > :is(.agent-tree-model, .agent-tree-status, .agent-tree-time) { color: var(--fg-muted); }
 
 .agent-tree-children {
   display: grid;
@@ -67,6 +90,14 @@
   margin: 0;
   padding: var(--space-2);
   border-inline-start: var(--space-0-5) solid var(--border-strong);
+  color: var(--fg-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-tree-transcript:empty { display: none; }
+.agent-tree-transcript { display: grid; gap: var(--space-1); min-width: 0; }
+.agent-tree-answer {
+  padding: var(--space-1) var(--space-2);
   color: var(--fg-default);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
