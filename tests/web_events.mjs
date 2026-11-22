@@ -57,7 +57,7 @@ const sandbox = {
   fetch: async (path, options = {}) => {
     requests.push(path);
     if (unreachable) throw new TypeError('Failed to fetch');
-    if (path === '/chats' && chatsStatus !== 200) return {ok: false, status: chatsStatus, json: async () => ({detail: 'Open kova-web to connect this window.'})};
+    if (path === '/chats' && chatsStatus !== 200) return {ok: false, status: chatsStatus, json: async () => ({detail: 'Open kova web to connect this window.'})};
     const payloads = {
       '/chats': [], '/persona': {name: 'Kova', configured: true},
       '/models': [{name: 'local', model: 'qwen'}], '/health': healthPayload,

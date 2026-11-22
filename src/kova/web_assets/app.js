@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false, comparing: false};
+  const state = {chat: null, chats: [], busy: false, connected: false, events: null, models: [], providers: [], queued: [], turnReady: false, stopRequested: false, searchVersion: 0, navigationVersion: 0, starting: false, persona: {name: 'Kova'}, offered: null, localOnly: false, activity: new Map(), activityStarted: {}, finishedActivity: [], activityOpen: false, comparing: false};
   let defaultModel = '', draftModel = null, pickerSaving = false, capabilitiesVersion = 0;
   let compare = null;  // compare.js (#96), created once the helpers it borrows exist
   const effortLabels = {'': 'Automatic', off: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
@@ -252,7 +252,7 @@
     renderActivity();
     $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
-      : 'Open kova-web on this computer to connect. No token or account needed.'));
+      : 'Open kova web on this computer to connect. No token or account needed.'));
     controls();
   }
   const OFFLINE = 'Cannot reach Kova. Check that it is running, then retry.';
@@ -265,7 +265,7 @@
       let message = `Request failed (${response.status})`;
       try { const body = await response.json(); if (typeof body.detail === 'string') message = body.detail; else if (Array.isArray(body.detail)) message = body.detail.map(item => `${item.loc?.slice(1).join('.') || 'Field'}: ${item.msg}`).join('; '); } catch (_) {}
       if (response.status === 401) disconnected(onPhone() ? 'This phone is no longer paired. On your computer, run kova pair (or choose Connect your phone) and scan the new code.'
-        : 'Your connection expired. Open kova-web again to reconnect.');
+        : 'Your connection expired. Open kova web again to reconnect.');
       throw new Error(message);
     }
     return response;
@@ -589,7 +589,7 @@
       .map(([id, item]) => ({id, ...item}));
   }
   // The desktop tray shows one aggregate: waiting (needs you) beats working beats idle. Only
-  // the Electron shell exposes a bridge; kova-web and the plain browser skip it.
+  // the Electron shell exposes a bridge; kova web and the plain browser skip it.
   function reportTrayState(rows) {
     const next = rows.some(row => row.state === 'blocked-on-approval') ? 'waiting'
       : rows.some(row => row.state === 'working') ? 'working' : 'idle';
@@ -1067,7 +1067,9 @@
     state.chat = chat;
     composerModules.history?.reset();
     composerModules.mentions?.close();
-    draftModel = null;
+    // A chat keeps its own model. The welcome screen remembers the model last
+    // chosen there, so a reload no longer snaps back to the server default.
+    draftModel = chat ? null : restorePickerModel();
     syncComposerModel();
     renderAttachments();
     pageTitle();
@@ -1817,8 +1819,9 @@
       if (!state.chat) state.chat = await createComposerChat();
       const outgoing = sendOptions.queued || sendOptions.action ? [] : pendingAttachments.filter(a => a.chat_id === state.chat.id);
       // Send to the model the chip showed, even if another window just changed
-      // the default or the saved chat settings.
-      const model = sendOptions.model || composerModel().model || null;
+      // the default or the saved chat settings. A placeholder entry with no
+      // model id sends null so the server explains what to set up.
+      const model = sendOptions.model || sendableModel();
       const action = sendOptions.action || 'messages';
       const payload = action === 'retry' ? {model: sendOptions.model || null, expected_reply: sendOptions.messageId || null} : {text, model,
         attachments: outgoing.map(a => a.id), ...(sendOptions.queued ? {queued: sendOptions.queued} : {})};
@@ -2337,7 +2340,7 @@
   // Native menu and tray quick actions (#203). The desktop shell sends an
   // allowlisted action id over its app-action channel; each maps to the same
   // handler the palette and keyboard shortcuts use, so behaviour stays in one
-  // place. kova-web and the plain browser have no bridge, so this is a no-op.
+  // place. kova web and the plain browser have no bridge, so this is a no-op.
   const desktopActions = {
     palette: shortcutActions.palette,
     'new-conversation': shortcutActions['new-conversation'],
@@ -2428,10 +2431,37 @@
     await chatSetting({web}); setWeb(web);
   });
   const modelByName = name => state.models.find(model => model.name === name);
+  const providerList = value => Array.isArray(value) ? value : [];
+  // The welcome-screen choice, kept across reloads. model-picker.js drops a
+  // stored model that has since been removed or lost its reasoning level.
+  const pickerModule = () => globalThis.KovaModelPicker || null;
+  function restorePickerModel() {
+    try {
+      const module = pickerModule();
+      return module ? module.draft(localStorage.getItem(module.DRAFT_KEY), state.models) : null;
+    } catch (_) { return null; }
+  }
+  function rememberPickerModel(selection) {
+    try {
+      const module = pickerModule(); if (!module) return;
+      if (selection) localStorage.setItem(module.DRAFT_KEY, module.serialize(selection));
+      else localStorage.removeItem(module.DRAFT_KEY);
+    } catch (_) { /* storage off: the choice still holds for this window */ }
+  }
   function composerModel() {
     if (state.chat?.model) return {model: state.chat.model, reasoning_effort: state.chat.reasoning_effort ?? null};
-    if (!state.chat && draftModel) return draftModel;
+    if (draftModel && modelByName(draftModel.model)?.model) return draftModel;
     return {model: defaultModel, reasoning_effort: modelByName(defaultModel)?.reasoning_effort ?? null};
+  }
+  // The model name a turn may actually send, or null when nothing usable is
+  // configured. A chat's own saved model is always sent, so a removed one is
+  // reported by the server; the new-chat default is only sent when it is a real
+  // model, never the empty first-run placeholder.
+  function sendableModel() {
+    const {model} = composerModel();
+    if (!model) return null;
+    if (state.chat?.model === model) return model;
+    return modelByName(model)?.model ? model : null;
   }
   function modelForNewChat() {
     const selection = composerModel();
@@ -2478,7 +2508,7 @@
       const next = {model: name, reasoning_effort: effort};
       try {
         if (state.chat) await chatSetting(next);
-        else draftModel = next;
+        else { draftModel = next; rememberPickerModel(next); }
       } finally { await syncComposerModel(); }
     });
   }
@@ -2498,6 +2528,8 @@
     await json('/models/active', write('POST', {name: model, reasoning_effort}));
     entry.reasoning_effort = reasoning_effort;
     defaultModel = model;
+    // The welcome-screen override would otherwise shadow the new default.
+    draftModel = null; rememberPickerModel(null);
     state.modelStatus = '';
     syncMenus();
     toastSuccess('Default saved for new chats.');
@@ -2576,7 +2608,7 @@
     themeButton();
   };
   document.addEventListener('kova:theme', themeButton); themeButton();
-  $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova-web to reconnect.'); });
+  $('disconnect').onclick = () => safe(async () => { await discardIncognito(); await json('/app/logout', {method: 'POST'}); setChat(null); $('chat-list').replaceChildren(); disconnected('Disconnected. Open kova web to reconnect.'); });
   async function setupIdentity() {
     state.persona = await json('/persona');
     if (!state.persona.configured) {
@@ -2660,7 +2692,7 @@
     try { response = await fetch('/chats', {credentials: 'same-origin'}); } catch (_) {}
     if (!state.connected) return;
     // Browser sessions live in server memory, so a restarted server forgot this window.
-    if (response?.status === 401) return disconnected('Kova restarted, so this window was signed out. Open kova-web on this computer to reconnect.');
+    if (response?.status === 401) return disconnected('Kova restarted, so this window was signed out. Open kova web on this computer to reconnect.');
     if (!response?.ok) return streamLost(true);
     connectEvents();
   }
@@ -2695,8 +2727,9 @@
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       renderStarters();
-      const [models, status] = await Promise.all([json('/models'), json('/health')]);
-      state.models = models; defaultModel = status.model || '';
+      const [models, providers, status] = await Promise.all([json('/models'), json('/providers'), json('/health')]);
+      state.models = models; state.providers = providerList(providers); defaultModel = status.model || '';
+      draftModel = restorePickerModel();
       renderModels(models);
       await syncComposerModel();
       await refreshChats(); controls(); await health();
@@ -2711,30 +2744,61 @@
     finally { state.starting = false; }
   }
   function renderModels(models) {
-    const groups = new Map(), pinned = el('optgroup');
-    pinned.label = 'Favourites';
+    // model-picker.js decides the groups: favourites first, then one group per
+    // provider (Local before Cloud), and every connected provider appears even
+    // when no model of it is configured yet.
+    const module = pickerModule();
+    const plan = module
+      ? module.groups(models, {favourites: [...favourites], providers: state.providers})
+      : fallbackPickerGroups(models);
+    const parents = [];
+    if (plan.favourites.length) {
+      const pinned = el('optgroup'); pinned.label = 'Favourites';
+      for (const model of plan.favourites) pinned.append(modelOption(model, true));
+      parents.push(pinned);
+    }
+    for (const group of plan.groups) {
+      const node = el('optgroup');
+      node.label = group.label;
+      node.dataset.location = group.location;
+      node.dataset.provider = group.provider;
+      if (group.empty) {
+        // A connected provider that has no model yet: say where to fix it
+        // instead of leaving it out of the list as if it did not exist.
+        node.label = `${group.label} · no models chosen`;
+        const option = el('option', '', 'No model chosen for this provider yet');
+        option.disabled = true; option.value = '';
+        node.append(option);
+      } else {
+        for (const model of group.models) node.append(modelOption(model, false));
+      }
+      parents.push(node);
+    }
+    $('model').replaceChildren(...parents);
+    $('model').value = sendableModel() || '';
+    syncMenus();
+  }
+  function modelOption(model, favourite) {
+    const option = el('option', '', model.model);
+    option.value = model.name; option.title = model.name; option.dataset.provider = model.provider_name || 'Custom';
+    // The group heading already says Local or Cloud; only a favourite, which
+    // leaves its provider group, carries the label on the row itself.
+    if (favourite) option.dataset.location = model.local ? 'Local' : 'Cloud';
+    return option;
+  }
+  // A tiny fallback so the picker still groups by provider if model-picker.js
+  // ever fails to load; the real ordering lives in that module.
+  function fallbackPickerGroups(models) {
+    const pinned = [];
+    const groups = new Map();
     for (const model of models) {
       if (!model.model) continue;
-      const provider = model.provider_name || 'Custom';
-      const location = model.local ? 'Local' : 'Cloud';
-      const key = `${location}:${model.provider || provider}`;
-      const option = el('option', '', model.model);
-      option.value = model.name; option.title = model.name; option.dataset.provider = provider;
-      if (favourites.has(model.name)) {
-        option.dataset.location = location;
-        pinned.append(option);
-        continue;
-      }
-      if (!groups.has(key)) {
-        const group = el('optgroup');
-        group.label = provider; group.dataset.location = location; groups.set(key, group);
-      }
-      groups.get(key).append(option);
+      if (favourites.has(model.name)) { pinned.push(model); continue; }
+      const key = `${model.local ? 'Local' : 'Cloud'}:${model.provider || model.provider_name}`;
+      if (!groups.has(key)) groups.set(key, {label: model.provider_name || 'Custom', location: model.local ? 'Local' : 'Cloud', models: [], empty: false});
+      groups.get(key).models.push(model);
     }
-    const ordered = [...groups.values()].sort((a, b) => Number(b.dataset.location === 'Local') - Number(a.dataset.location === 'Local'));
-    $('model').replaceChildren(...(pinned.children.length ? [pinned, ...ordered] : ordered));
-    $('model').value = composerModel().model;
-    syncMenus();
+    return {favourites: pinned, groups: [...groups.values()]};
   }
   function modelHint(option) {
     const entry = modelByName(option.value);
@@ -2812,9 +2876,8 @@
     }
   }
   async function refreshLocalSelection() {
-    const [models, status] = await Promise.all([json('/models'), json('/health')]);
-    state.models = models; defaultModel = status.model || '';
-    renderModels(models); await syncComposerModel(); await health();
+    await refreshProviders();
+    await health();
   }
   async function installLocalModel() {
     if (localController || $('local-install').disabled) return;
@@ -2882,12 +2945,21 @@
   function providerCaps() {
     return providerSpec().capabilities || [];
   }
+  // A second OpenAI account is a normal thing to want. Suggest a free name
+  // instead of prefilling one that the server will refuse on save.
+  function uniqueConnectionName(base) {
+    const taken = new Set(providerList(state.providers).map(provider => provider.id));
+    if (!taken.has(base)) return base;
+    let index = 2;
+    while (taken.has(`${base}-${index}`)) index += 1;
+    return `${base}-${index}`;
+  }
   function providerKindChanged() {
     clearProviderSecrets();
     const spec = providerSpec();
     if (!spec.id) return;
     const caps = providerCaps();
-    $('provider-name').value = spec.id;
+    $('provider-name').value = uniqueConnectionName(spec.id);
     // Every field follows the kind's declared capabilities, never its name.
     $('provider-url-row').hidden = !caps.includes('editable_base_url');
     $('provider-url').value = ''; $('provider-url').placeholder = spec.base_url_hint || 'https://example.com/v1';
@@ -2929,12 +3001,19 @@
     for (const choice of providerChoices) choice.label.hidden = !choice.model.toLowerCase().includes(query);
   };
   $('add-provider').onclick = () => safe(async () => {
-    const data = await json('/providers/catalog'); providerSpecs = data.providers;
+    const [data, providers] = await Promise.all([json('/providers/catalog'), json('/providers')]);
+    providerSpecs = data.providers; state.providers = providerList(providers);
+    const connectedKinds = new Set(providers.map(provider => provider.kind));
     $('provider-kind').replaceChildren(...providerSpecs.map(spec => {
-      const option = el('option', '', spec.name + (spec.id === 'codex' && !data.harness_available ? ' (not found)' : ''));
+      const notes = [connectedKinds.has(spec.id) ? 'connected' : '',
+                     spec.id === 'codex' && !data.harness_available ? 'not found' : ''].filter(Boolean);
+      const option = el('option', '', spec.name + (notes.length ? ` (${notes.join(', ')})` : ''));
       option.value = spec.id; return option;
     }));
-    $('provider-kind').value = 'openai'; $('provider-details').hidden = false;
+    // Start from a kind that is not connected yet, so "Add provider" never
+    // opens on the connection the user already has.
+    const next = providerSpecs.find(spec => !connectedKinds.has(spec.id)) || providerSpecs[0];
+    $('provider-kind').value = next?.id || 'openai'; $('provider-details').hidden = false;
     $('provider-local').hidden = false; $('provider-next').hidden = false; $('local-model-step').hidden = true; $('local-cpu').checked = false;
     $('provider-models-step').hidden = true; $('provider-back').hidden = true;
     $('provider-next').disabled = false; lockProvider(false); providerKindChanged(); sidebar(false); $('provider-dialog').showModal();
@@ -2966,7 +3045,7 @@
         await json('/providers', write('POST', {...providerDraft, models: selected, active: $('provider-active').value}));
         if (version !== providerVersion) return;
         providerLogin = null; closeProvider();
-        await refreshLocalSelection();
+        await refreshProviders();
         toastSuccess('Provider connected. Ready when you are.'); return;
       }
       const kind = $('provider-kind').value, caps = providerCaps();
@@ -3008,6 +3087,138 @@
       if (version === providerVersion && !providerDraft && (!signIn || !providerLogin)) { $('provider-next').disabled = false; lockProvider(false); } }
   };
   function clearProviderFieldValues() { $('provider-key').value = ''; $('provider-headers').value = ''; }
+
+  // Settings > Models and providers: every connection, what it holds, and the
+  // two ways to change it. This is the view that answers "which provider am I
+  // on, and how do I choose another one?" without the terminal.
+  function openProvidersSettings() {
+    if (globalThis.KovaSettings?.open) globalThis.KovaSettings.open('models');
+    else $('open-settings').click();
+  }
+  async function refreshProviders() {
+    const [providers, models, status] = await Promise.all([json('/providers'), json('/models'), json('/health')]);
+    state.providers = providerList(providers); state.models = models; defaultModel = status.model || '';
+    renderModels(models);
+    renderProviders();
+    await syncComposerModel();
+  }
+  function renderProviders() {
+    const host = $('providers-panel'); if (!host) return;
+    const configured = state.models.filter(model => model.model);
+    host.replaceChildren();
+    if (!providerList(state.providers).length) {
+      const empty = el('div', 'providers-empty');
+      empty.append(el('p', 'providers-row-help', 'No provider is connected yet. Add one and its models appear in the message box.'));
+      const add = el('button', 'btn small', 'Add provider'); add.type = 'button';
+      add.onclick = () => safe(async () => { closeProvider(); $('add-provider').onclick(); });
+      empty.append(add); host.append(empty); return;
+    }
+    const list = el('ul', 'providers-list');
+    for (const provider of providerList(state.providers)) {
+      const owned = configured.filter(model => model.provider === provider.id);
+      const item = el('li', 'providers-row'), copy = el('div', 'providers-row-copy');
+      const title = el('span', 'providers-row-title', provider.name || provider.id);
+      const count = owned.length === 1 ? '1 model' : `${owned.length} models`;
+      const where = provider.base_url || 'no address';
+      copy.append(title, el('p', 'providers-row-help',
+        `${provider.kind} · ${where} · ${owned.length ? count : 'no models chosen'}`));
+      if (!provider.authenticated) copy.append(el('p', 'providers-row-help', 'No credential is stored. Sign in again from the terminal with kova providers login, or remove it and add it again.'));
+      const actions = el('div', 'providers-row-actions');
+      const choose = el('button', 'btn small quiet', owned.length ? 'Change models' : 'Choose models');
+      choose.type = 'button'; choose.setAttribute('aria-label', `Choose models from ${provider.name || provider.id}`);
+      choose.onclick = () => safe(async () => { choose.disabled = true; try { await openProviderModels(provider); } finally { choose.disabled = false; } });
+      const remove = el('button', 'btn small quiet', 'Remove');
+      remove.type = 'button'; remove.setAttribute('aria-label', `Remove ${provider.name || provider.id}`);
+      remove.onclick = () => safe(async () => {
+        const what = owned.length ? ` and its ${count}` : '';
+        if (!confirm(`Remove ${provider.name || provider.id}${what}? Its key is forgotten; chats that used them fall back to your default model.`)) return;
+        remove.disabled = true;
+        try {
+          await json(`/providers/${encodeURIComponent(provider.id)}`, {method: 'DELETE'});
+          await refreshProviders();
+          toastSuccess(`${provider.name || provider.id} removed.`, 'Providers');
+        } finally { remove.disabled = false; }
+      });
+      actions.append(choose, remove); item.append(copy, actions); list.append(item);
+    }
+    const add = el('button', 'btn small', 'Add provider'); add.type = 'button';
+    add.onclick = () => safe(async () => { closeProvider(); $('add-provider').onclick(); });
+    host.append(list, add);
+  }
+  // Adding models to a connection that already exists: its key is reused, so
+  // this never asks for credentials again. Fetched on open, then filtered.
+  async function openProviderModels(provider) {
+    const name = provider.name || provider.id;
+    const dialog = el('dialog', 'provider-models-dialog');
+    dialog.setAttribute('aria-label', `Models from ${name}`);
+    const form = el('form'); form.method = 'dialog';
+    const head = el('div', 'dialog-head'), title = el('h2', '', `Models from ${name}`);
+    const close = iconButton('x', `Close ${name} models`); close.type = 'button'; close.onclick = () => dialog.close();
+    head.append(title, close);
+    const status = el('p', 'provider-footnote', 'Listing models…'); status.setAttribute('role', 'status');
+    const body = el('div');
+    form.append(head, status, body, el('p', 'provider-footnote', 'Messages go to the provider you choose. A model that is already added keeps its settings.'));
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'btn quiet', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => dialog.close();
+    actions.append(cancel);
+    form.append(actions); dialog.append(form); document.body.append(dialog);
+    dialog.onclose = () => dialog.remove(); dialog.showModal();
+    let models = [];
+    try {
+      const data = await json(`/providers/${encodeURIComponent(provider.id)}/models`);
+      models = data.models || [];
+    } catch (error) {
+      status.textContent = error.message;
+      return;
+    }
+    if (!models.length) { status.textContent = `${name} listed no models. Check the connection and try again.`; return; }
+    const owned = new Set(state.models.filter(model => model.model && model.provider === provider.id).map(model => model.model));
+    status.textContent = `${models.length} available. Choose the ones to keep in the message box.`;
+    const filter = el('input'); filter.type = 'search'; filter.placeholder = 'Search models'; filter.setAttribute('aria-label', 'Search models');
+    const list = el('div', 'provider-models', ''); list.setAttribute('role', 'group'); list.setAttribute('aria-label', `Models from ${name}`);
+    const choices = models.map((model, index) => {
+      const label = el('label', 'provider-check'), input = el('input');
+      input.type = 'checkbox'; input.checked = owned.has(model) || (!owned.size && index === 0);
+      label.append(input, el('span', '', model));
+      return {model, input, label};
+    });
+    for (const choice of choices) list.append(choice.label);
+    const activeRow = el('label', '', 'Default for new chats');
+    const activeSelect = el('select'); activeSelect.setAttribute('aria-label', 'Default for new chats');
+    const refreshActive = () => {
+      const selected = choices.filter(choice => choice.input.checked).map(choice => choice.model);
+      const previous = activeSelect.value;
+      const keep = el('option', '', 'Keep the current default'); keep.value = '';
+      activeSelect.replaceChildren(keep, ...selected.map(model => { const option = el('option', '', model); option.value = model; return option; }));
+      // Adding a model must not quietly change which model a device defaults
+      // to; the default only moves when it is chosen here.
+      activeSelect.value = selected.includes(previous) ? previous : '';
+    };
+    for (const choice of choices) choice.input.onchange = refreshActive;
+    filter.oninput = () => {
+      const query = filter.value.trim().toLowerCase();
+      for (const choice of choices) choice.label.hidden = !choice.model.toLowerCase().includes(query);
+    };
+    const save = el('button', 'btn primary', 'Save models'); save.type = 'button';
+    save.onclick = () => safe(async () => {
+      const selected = choices.filter(choice => choice.input.checked).map(choice => choice.model);
+      if (!selected.length) return toast('Choose at least one model.');
+      save.disabled = true; save.textContent = 'Saving…';
+      try {
+        await json(`/providers/${encodeURIComponent(provider.id)}/models`,
+          write('POST', {models: selected, ...(activeSelect.value ? {active: activeSelect.value} : {})}));
+        dialog.close();
+        await refreshProviders();
+        toastSuccess(`Models from ${name} are ready.`, 'Providers');
+      } finally { save.disabled = false; save.textContent = 'Save models'; }
+    });
+    body.append(filter, list, activeRow);
+    activeRow.append(activeSelect);
+    actions.append(save);
+    refreshActive();
+    filter.focus();
+  }
+  document.addEventListener('kova:settings-open', () => safe(renderProviders));
   // Keep these API-backed panels in the client; credentials never enter storage.
   for (const kind of ['memory', 'reminders']) {
     const launch = $(`open-${kind}`), name = kind === 'memory' ? 'Memory' : 'Reminders';
@@ -3518,14 +3729,16 @@
     if (popup && popup.owner.button.disabled) closeMenu();
     // The chip says which model answers; mode, permission, folder and web sit
     // behind it, and its title spells them out for anyone who hovers or listens.
-    const selection = composerModel(), model = modelByName($('model').value);
+    const selection = composerModel(), model = modelByName(selection.model);
     const effort = $('reasoning-effort').value;
-    const label = model ? (model.model || 'No model') : (selection.model || 'No model');
+    // A placeholder entry (an empty first-run "local") or a model whose
+    // provider was removed is not a model: say so instead of naming it.
+    const label = model?.model ? model.model : 'No model';
     $('chat-options-label').textContent = label;
     $('chat-options-effort').hidden = !effort;
     $('chat-options-effort').textContent = effort ? `· ${effortLabels[effort]}` : '';
     const healthDetail = selection.model && !model ? 'Model unavailable' : selection.model === defaultModel ? state.modelStatus : '';
-    const detail = [label, effort && `Reasoning: ${effortLabels[effort]}`, model?.model ? (model.local ? 'Local' : 'Cloud') : '',
+    const detail = [label, effort && `Reasoning: ${effortLabels[effort]}`, model?.model ? (model.local ? 'Local' : 'Cloud') : 'Add a provider to choose one',
       $('mode').value === 'chat' ? 'Chat mode' : 'Work mode', healthDetail, state.localOnly ? 'Local only' : ''].filter(Boolean).join(', ');
     $('chat-options').title = `Chat options: ${detail}`;
     $('chat-options').setAttribute('aria-label', `Chat options. ${detail}`);
@@ -3554,19 +3767,25 @@
       select.value = value; syncMenus(); select.onchange?.();
     };
     const add = (option, parent) => {
-      const index = items.length, item = el('div', 'option'), text = el('span', 'option-text');
+      const index = items.length, item = el('div', `option${option.disabled ? ' option-note-row' : ''}`), text = el('span', 'option-text');
       item.id = `${select.id}-option-${index}`; item.setAttribute('role', 'option');
-      item.setAttribute('aria-selected', String(option.value === select.value));
+      item.setAttribute('aria-selected', String(!option.disabled && option.value === select.value));
+      if (option.disabled) item.setAttribute('aria-disabled', 'true');
       const title = el('span', 'option-title', option.textContent);
       text.append(title);
       if (option.dataset.location) text.append(el('span', 'model-location', option.dataset.location));
-      const note = owner.describe?.(option);
+      const note = option.disabled ? '' : owner.describe?.(option);
       if (note) text.append(el('span', 'option-note', note));
-      item.append(text, icon('check'));
-      item.onclick = () => choose(option.value);
-      item.onpointermove = () => { if (active !== index) activate(index, false); };
+      item.append(text);
+      if (!option.disabled) item.append(icon('check'));
+      if (!option.disabled) {
+        item.onclick = () => choose(option.value);
+        item.onpointermove = () => { if (active !== index) activate(index, false); };
+      }
       const label = [option.textContent, ...(owner.search ? [option.value, option.dataset.provider, option.dataset.location || parent.dataset.location] : [])];
-      parent.append(item); items.push({item, value: option.value, label: label.join(' ').toLowerCase()});
+      parent.append(item);
+      items.push({item, value: option.disabled ? null : option.value, disabled: Boolean(option.disabled),
+                  label: label.join(' ').toLowerCase()});
     };
     for (const child of select.children) {
       if (child.tagName.toUpperCase() !== 'OPTGROUP') { add(child, list); continue; }
@@ -3578,6 +3797,12 @@
       for (const option of child.children) add(option, group);
       list.append(group);
     }
+    const none = el('div', 'option-empty', owner.empty || 'No matches');
+    // With nothing to pick, the owner's empty state sits above the related
+    // actions, so the list never looks broken (here: add a provider).
+    const selectable = items.filter(entry => entry.value !== null);
+    none.hidden = selectable.length > 0;
+    list.append(none);
     // Related actions close the list: reachable with the same arrows and Enter.
     for (const action of owner.actions || []) {
       if (action.when && !action.when()) continue;
@@ -3588,8 +3813,7 @@
       item.onpointermove = () => { if (active !== index) activate(index, false); };
       list.append(item); items.push({item, value: null, label: action.label.toLowerCase()});
     }
-    const none = el('div', 'option-empty', 'No matches'); none.hidden = true; list.append(none);
-    const search = owner.search || items.length > 7 ? el('input', 'popover-search') : null;
+    const search = (owner.search ? selectable.length > 0 : items.length > 7) ? el('input', 'popover-search') : null;
     const target = search || list;
     if (search) {
       search.type = 'search'; search.placeholder = `Search ${owner.label.toLowerCase()}s`; search.autocomplete = 'off'; search.spellcheck = false;
@@ -3605,7 +3829,7 @@
       node.append(search);
     }
     node.append(list);
-    const visible = () => items.map((entry, index) => entry.item.hidden ? -1 : index).filter(index => index >= 0);
+    const visible = () => items.map((entry, index) => entry.item.hidden || entry.disabled ? -1 : index).filter(index => index >= 0);
     function activate(index, reveal = true) {
       if (items[active]) items[active].item.classList.remove('active');
       active = index;
@@ -3625,7 +3849,7 @@
       else if (event.key === 'ArrowUp') step(-1);
       else if (event.key === 'Home' && !search) activate(order[0]);
       else if (event.key === 'End' && !search) activate(order.at(-1));
-      else if (event.key === 'Enter' || (event.key === ' ' && !search)) { if (items[active] && !items[active].item.hidden) items[active].item.onclick(); }
+      else if (event.key === 'Enter' || (event.key === ' ' && !search)) { if (items[active] && !items[active].item.hidden) items[active].item.onclick?.(); }
       else if (event.key === 'Escape') { event.stopPropagation(); closeMenu(true); }
       else if (event.key === 'Tab') { closeMenu(true); return; }
       else {
@@ -3657,18 +3881,18 @@
       node.style.left = `${Math.max(edge, Math.min(left, innerWidth - width - edge))}px`;
     }
     place();
-    const selected = items.findIndex(entry => entry.value === select.value);
-    activate(selected >= 0 ? selected : 0);
+    const selected = items.findIndex(entry => entry.value !== null && entry.value === select.value);
+    activate(selected >= 0 ? selected : (visible()[0] ?? 0));
     target.focus({preventScroll: true});
   }
-  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby, actions, search} = {}) {
+  function menu(id, label, {describe, glyph, align = 'start', width = 190, placeholder = 'Choose…', labelledby, actions, search, empty} = {}) {
     const select = $(id), button = el('button', 'menu-button'), text = el('span', 'menu-value', placeholder);
     button.type = 'button'; button.id = `${id}-button`;
     button.setAttribute('aria-haspopup', 'listbox'); button.setAttribute('aria-expanded', 'false');
     if (labelledby) button.setAttribute('aria-labelledby', `${labelledby} ${id}-button`); else button.setAttribute('aria-label', label);
     if (glyph) button.append(icon(glyph));
     button.append(text, icon('chevron-down'));
-    const owner = {select, button, text, label, describe, align, width, placeholder, actions, search};
+    const owner = {select, button, text, label, describe, align, width, placeholder, actions, search, empty};
     button.onclick = () => { if (popup?.owner === owner) closeMenu(); else openMenu(owner); };
     button.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (popup?.owner !== owner) openMenu(owner); }
@@ -3678,11 +3902,13 @@
   const permissionNotes = {manual: 'Ask before commands and file changes', auto: 'Ask only before destructive commands', full: 'Never ask. Use with care.'};
   menu('permission', 'Permission', {glyph: 'shield-check', width: 270, describe: option => permissionNotes[option.value],
     actions: [{glyph: 'sliders-horizontal', label: 'Edit permission rules…', run: openRules}]});
-  const modelMenu = menu('model', 'Model', {align: 'end', width: 260, placeholder: 'Choose model', describe: modelHint, search: true,
+  const modelMenu = menu('model', 'Model', {align: 'end', width: 280, placeholder: 'Choose model', describe: modelHint, search: true,
+    empty: 'No model is set up yet. Add a provider, then choose one of its models here.',
     actions: [
       {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
       {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy, run: () => { options(false); compare?.choose(); }},
       {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
+      {glyph: 'settings', label: 'Manage providers…', run: () => { options(false); openProvidersSettings(); }},
     ]});
   menu('reasoning-effort', 'Reasoning effort', {align: 'end'});
   menu('provider-kind', 'Provider', {width: 240, labelledby: 'provider-kind-label'});

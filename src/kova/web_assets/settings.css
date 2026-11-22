@@ -271,3 +271,45 @@ body.settings-open { overflow: hidden; }
 
 /* Export/import controls: buttons in a row, the summary under them. */
 .settings-prefs { display: flex; flex: none; gap: var(--space-2); }
+
+/* Connected providers (Settings > Models and providers). One hairline row per
+   connection: what it is, where it points and how many models it gives you,
+   then the two actions that change it. */
+.providers-panel {
+  display: grid;
+  gap: var(--space-3);
+  width: 100%;
+}
+.providers-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.providers-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.providers-row:first-child { border-top: 0; padding-top: 0; }
+.providers-row-copy { display: grid; gap: var(--space-0-5); min-width: 0; }
+.providers-row-title { color: var(--fg-default); font-size: var(--type-size-body); font-weight: 550; }
+.providers-panel .providers-row-help {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  line-height: var(--type-leading-body);
+  overflow-wrap: anywhere;
+}
+.providers-row-actions { display: flex; flex: none; gap: var(--space-2); }
+.providers-empty { display: grid; justify-items: start; gap: var(--space-2); }
+.providers-panel .btn { margin-left: 0; }
+.providers-panel > .btn { justify-self: start; }
+
+@media (max-width: 640px) {
+  .providers-row { flex-wrap: wrap; }
+  .providers-row-actions { width: 100%; justify-content: flex-start; }
+}

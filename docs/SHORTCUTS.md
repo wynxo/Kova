@@ -1,6 +1,6 @@
 # Kova Terminal Shortcuts
 
-These keys control the interactive chat (`kova` / `./cli`). Press `?` in the chat
+These keys control the interactive chat (`kova` / `uv run kova`). Press `?` in the chat
 to open this same list. The `?` panel and the `/help` command show them; the table
 below lists every key the terminal chat understands.
 

@@ -1470,3 +1470,25 @@ html[data-motion="off"][data-background] main {
 body.zen-mode { grid-template-columns:minmax(0, 1fr); }
 .zen-mode :is(#sidebar, #sidebar-splitter, #backdrop, .topbar, #status-bar) { display:none; }
 #zen-exit { margin-bottom:var(--space-1); }
+
+/* A connected provider with no model chosen is a note, not a choice: it says
+   where to fix it and cannot be selected. */
+.model-picker-popover .option[aria-disabled="true"] { cursor: default; color: var(--fg-faint); }
+.model-picker-popover .option[aria-disabled="true"]:hover { background: none; }
+/* Adding models to a connection that already exists: a small dialog with a
+   filter, the catalog and the default-model choice. */
+dialog.provider-models-dialog { width: min(520px, calc(100vw - 24px)); }
+dialog.provider-models-dialog[open] { display: grid; gap: 12px; }
+dialog.provider-models-dialog .provider-models { max-height: min(260px, 38vh); }
+dialog.provider-models-dialog input[type="search"] {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-base);
+  color: var(--fg-default);
+  font: inherit;
+  font-size: var(--type-size-body);
+}
+dialog.provider-models-dialog > form { display: grid; gap: 12px; }

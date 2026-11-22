@@ -8,7 +8,7 @@ the SVG files and the PNG files, so they can never drift apart.
 
 Outputs:
 
-* ``src/kova/web_assets/icon.svg`` and ``desktop/assets/icon.svg``: the static
+* ``src/kova/web_assets/icon.svg`` and ``src/kova/desktop/assets/icon.svg``: the static
   icon, a near-black tile with a white K (favicon, notifications, anything that
   cannot follow the theme).
 * ``src/kova/web_assets/mark.svg``: an alpha mask, the tile with the K cut out. The
@@ -18,7 +18,7 @@ Outputs:
   plus ``docs/screenshots/app-icon.png`` (the mark from 160px down to 16px on light
   and dark). PNGs are written with IHDR, IDAT and IEND chunks only: no text, time or
   colour-profile chunks, so there is no metadata to strip.
-* ``desktop/assets/tray-working.png`` and ``desktop/assets/tray-waiting.png``: the
+* ``src/kova/desktop/assets/tray-working.png`` and ``src/kova/desktop/assets/tray-waiting.png``: the
   tray icon carrying Kova's status — the mark with a small dot in the lower-right.
   Working adds a white dot, waiting an amber one, and idle shows the mark alone.
   The dot is composited over the mark at build time, so the tray reflects state
@@ -40,7 +40,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "src" / "kova" / "web_assets"
-DESKTOP = ROOT / "desktop" / "assets"
+DESKTOP = ROOT / "src/kova/desktop" / "assets"
 SHOTS = ROOT / "docs" / "screenshots"
 
 # Static icon colours. Not theme tokens: these files are shown by the OS, the

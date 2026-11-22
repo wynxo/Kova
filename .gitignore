@@ -5,8 +5,8 @@ __pycache__/
 *.egg-info/
 .kova-briefs/
 
-desktop/node_modules/
-desktop/dist/
+src/kova/desktop/node_modules/
+src/kova/desktop/dist/
 
 # Never commit local state or secrets
 .env

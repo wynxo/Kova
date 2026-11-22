@@ -475,3 +475,50 @@ async def test_installed_login_health_uses_catalog_query(monkeypatch, tmp_path):
     def handle(request):
         return httpx.Response(200 if request.url.params.get('client_version') else 422, json={'models':[]})
     assert await ModelClient(entry, transport=httpx.MockTransport(handle)).ping()
+
+
+def test_connected_provider_models_are_listed_cached_and_addable(tmp_path, monkeypatch):
+    """A connected provider can offer more models without its key again."""
+    from fastapi.testclient import TestClient
+    from kova import providers
+    from kova.server import create_app
+    calls = []
+
+    def list_models(provider, **kw):
+        calls.append(provider.id)
+        return ['alpha', 'beta', 'gamma']
+
+    monkeypatch.setattr(providers, 'list_models', list_models)
+    cfg = config.load_config(tmp_path)
+    p = providers.make_provider('custom', identifier='mine', name='Mine',
+                                base_url='https://example.test/v1', api_key='private')
+    providers.install_provider(cfg, p, ['alpha'])
+    app = create_app(cfg)
+    headers = {'Authorization': 'Bearer ' + config.ensure_token(tmp_path)}
+    with TestClient(app) as client:
+        assert client.get('/providers/mine/models').status_code == 401
+        assert client.get('/providers/nope/models', headers=headers).status_code == 404
+        listed = client.get('/providers/mine/models', headers=headers)
+        assert listed.status_code == 200 and listed.json()['models'] == ['alpha', 'beta', 'gamma']
+        assert 'private' not in listed.text
+        # One catalog per minute: opening the picker twice is one provider call.
+        client.get('/providers/mine/models', headers=headers)
+        assert calls == ['mine']
+        added = client.post('/providers/mine/models', json={'models': ['beta'], 'active': 'beta'},
+                            headers=headers)
+        assert added.status_code == 200, added.text
+        assert added.json()['added'] == ['mine/beta'] and 'private' not in added.text
+        stored = config.load_config(tmp_path)
+        assert [m.name for m in stored.models if m.provider == 'mine'] == ['mine/alpha', 'mine/beta']
+        assert stored.active == 'mine/beta' and stored.active_model().api_key == 'private'
+        # Adding the same model again is a no-op, not a duplicate row.
+        assert client.post('/providers/mine/models', json={'models': ['beta']},
+                           headers=headers).json()['added'] == []
+        # A model the provider does not list, or an empty choice, is refused.
+        assert client.post('/providers/mine/models', json={'models': ['ghost']},
+                           headers=headers).status_code == 400
+        assert client.post('/providers/mine/models', json={'models': []},
+                           headers=headers).status_code == 400
+        # Changing the connection's models drops its cached catalog.
+        client.get('/providers/mine/models', headers=headers)
+        assert calls == ['mine'] * 6

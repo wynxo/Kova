@@ -104,7 +104,7 @@ def test_update_uses_selected_ref_and_archive_without_git(lifecycle, monkeypatch
     assert args[:4] == ["/test/uv", "tool", "install", "--force"]
     assert args[-1] == ("kova-ai @ git+https://github.com/wynxo/Kova@v0.2.0" if git else
                         "kova-ai @ https://github.com/wynxo/Kova/archive/v0.2.0.tar.gz")
-    assert "--refresh" in args
+    assert args[4:7] == ["--refresh", "--upgrade-package", "kova-ai"]
 
 
 def test_update_uv_failure_is_not_success(lifecycle, monkeypatch):
@@ -237,3 +237,17 @@ def test_windows_cli_uninstall_helper_removes_start_menu_shortcut(lifecycle, mon
     script = base64.b64decode(encoded).decode("utf-16le")
     assert "Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Kova.lnk'" in script
     assert "Remove-Item -LiteralPath" in script
+
+
+def test_update_refreshes_existing_desktop_with_new_launcher(lifecycle, monkeypatch):
+    desktop = lifecycle.kova_home() / "desktop"
+    desktop.mkdir(parents=True)
+    (desktop / "package.json").write_text("{}")
+    run = Mock()
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    install, prepare = run.call_args_list
+    assert install.args[0][:3] == ["/test/uv", "tool", "install"]
+    launcher = "kova-app.exe" if lifecycle.os.name == "nt" else "kova-app"
+    assert prepare.args[0] == [str(lifecycle.Path(prepare.kwargs["env"]["UV_TOOL_BIN_DIR"]) / launcher), "--prepare"]

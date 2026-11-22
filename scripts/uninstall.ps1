@@ -1,4 +1,4 @@
-# powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.ps1 | iex"
+# powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/scripts/uninstall.ps1 | iex"
 function Uninstall-Kova {
     param([string[]]$UninstallArgs)
     $ErrorActionPreference = 'Stop'
@@ -56,7 +56,7 @@ function Uninstall-Kova {
         $Uv = if ($Found) { $Found.Source } else { $null }
     }
     if ($Uv) {
-        Write-Host 'Removing the Kova commands (kova, kova-app, kova-web): uv tool uninstall kova-ai'
+        Write-Host 'Removing Kova: uv tool uninstall kova-ai'
         & $Uv tool uninstall kova-ai
         if ($LASTEXITCODE -ne 0) { throw 'uv uninstall failed; your data was kept.' }
     } else {
