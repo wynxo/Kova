@@ -74,13 +74,17 @@ class ModelClient:
 
     def __init__(self, entry: ModelEntry, transport: httpx.AsyncBaseTransport | None = None,
                  timeout: float = 300, privacy: str = "off", config: Config | None = None,
-                 reasoning_effort: str | None = None, *, fixed_destination: bool = False):
+                 reasoning_effort: str | None = None, *, fixed_destination: bool = False,
+                 max_output_tokens: int | None = None):
         self.entry = entry
         self.transport = transport
         self.timeout = timeout
         self.privacy = privacy
         self.config = config
         self.reasoning_effort = reasoning_effort
+        #: A bot's per-turn output cap, sent as the request's own limit. None
+        #: keeps the provider's default, exactly as before bots existed.
+        self.max_output_tokens = max_output_tokens
         self._approved_url = entry.base_url if fixed_destination else None
         # Native tool continuations can require opaque reasoning blocks. Keep
         # them in this turn's client only, never in saved messages or events.
@@ -156,6 +160,12 @@ class ModelClient:
             build = anthropic_request if adapter == 'anthropic' else responses_request
             path, payload = build(self.entry.model, request_messages, tools, self._reasoning_by_call)
             payload.update(effort)
+            if self.max_output_tokens:
+                if adapter == 'responses':
+                    payload['max_output_tokens'] = int(self.max_output_tokens)
+                else:
+                    payload['max_tokens'] = min(int(payload.get('max_tokens') or self.max_output_tokens),
+                                                int(self.max_output_tokens))
             if adapter == 'responses' and effort.get('reasoning', {}).get('effort') not in (None, 'none'):
                 payload['include'] = ['reasoning.encrypted_content']
             try:
@@ -166,6 +176,8 @@ class ModelClient:
                 raise ModelError('Could not connect to the provider. Check your connection.') from None
             return
         payload = {"model": self.entry.model, "messages": request_messages, "stream": True, **effort}
+        if self.max_output_tokens:
+            payload["max_tokens"] = int(self.max_output_tokens)
         if self.include_usage:
             payload["stream_options"] = {"include_usage": True}
         if tools is not None:

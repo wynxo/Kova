@@ -684,7 +684,8 @@ def test_terminal_preview_keeps_reverts_and_times_out(monkeypatch, keys, keep):
         pipe.send_text(keys)
         monkeypatch.setattr(theme_trial, "Application",
                             lambda **kwargs: Application(input=pipe, output=DummyOutput(), **kwargs))
-        monkeypatch.setattr(theme_trial, "TRY_SECONDS", 0.2)
+        # A key press must beat the timeout even on slow CI runners; only the no-key case waits it out.
+        monkeypatch.setattr(theme_trial, "TRY_SECONDS", 10 if keys else 0.2)
         assert theme_trial.keep_preview(themes.get("kova-dark", ".")) is keep
 
 

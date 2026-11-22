@@ -294,3 +294,142 @@ async def test_scheduled_script_asks_even_with_chat_sandbox(setup, monkeypatch, 
     assert len(approvals) == 1
     assert approvals[0]['tool'] == 'job_add'
     assert store.list_jobs() == []
+
+
+# ------------------------------------------------------------------- bots (1.2)
+@pytest.fixture
+def bot_setup(tmp_path):
+    """Like ``setup``, but with a working folder inside the test's own home."""
+    cfg = load_config(tmp_path)
+    cfg.files_path = tmp_path / "Kova Files"
+    cfg.files_path.mkdir()
+    store = Store(tmp_path / "db.sqlite")
+    memory = Memory(cfg.memory_path)
+    tools = build_tools(ToolContext(cfg, store, memory, lambda: datetime.now().astimezone()))
+    chat = store.create_chat()
+    return cfg, store, memory, tools, chat["id"]
+
+
+def make_bot(**overrides):
+    from kova.bots import BotDefinition, BotModel, BotPermissions
+
+    values = dict(id="researcher", name="Researcher", handle="researcher",
+                  persona="You research questions and cite sources.",
+                  model=BotModel(name=""), permissions=BotPermissions(tools=("web_*", "read_file")))
+    values.update(overrides)
+    return BotDefinition(**values)
+
+
+async def test_a_bot_sees_only_the_tools_its_allowlist_names(bot_setup):
+    from kova.actors import Actor
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    actor = Actor.for_chat(store.get_chat(chat_id), make_bot(), files_path=cfg.files_path)
+    fake = FakeModel([text("Hi")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    events = [event async for event in agent.run_turn(chat_id, "hello", actor=actor)]
+    assert events[-1]["type"] == "done"
+    assert _sent_tools(fake) == ["web_search", "web_fetch", "read_file"]
+    prompt = fake.requests[0]["messages"][0]["content"]
+    assert prompt.startswith("You are Researcher")
+    assert "Your role:\nYou research questions and cite sources." in prompt
+    assert actor.folder.is_dir(), "a bot's own folder is created on first use"
+
+
+async def test_a_bot_cannot_exceed_its_ceiling_even_in_a_full_chat(bot_setup, monkeypatch, no_sandbox):
+    from kova import tools as tools_module
+    from kova.actors import Actor
+    from kova.bots import BotPermissions
+    from kova.tools import commands, core
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    store.update_chat(chat_id, permission="full")
+    ran = []
+
+    async def fake_run(*args, **kwargs):
+        ran.append(args)
+        return {"ok": True, "output": ""}
+
+    monkeypatch.setattr(commands, "run_command", fake_run)
+    monkeypatch.setattr(core, "run_command", fake_run)
+    bot = make_bot(permissions=BotPermissions(ceiling="manual", tools=("run_command",)))
+    actor = Actor.for_chat(store.get_chat(chat_id), bot, files_path=cfg.files_path)
+    assert actor.permission == "manual"
+    fake = FakeModel([tool("run_command", {"command": "echo hi"}), text("Denied")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    approvals = []
+    async for event in agent.run_turn(chat_id, "run it", actor=actor):
+        if event["type"] == "approval":
+            approvals.append(event)
+            agent.approvals.answer(chat_id, event["id"], "deny")
+    assert len(approvals) == 1 and approvals[0]["tool"] == "run_command"
+    assert ran == [], "Full on the chat cannot lift the bot's own Manual ceiling"
+
+
+async def test_a_bot_uses_its_own_model(bot_setup):
+    from kova.actors import Actor
+    from kova.bots import BotModel
+    from kova.config import ModelEntry
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    cfg.models.append(ModelEntry(name="big", base_url="http://big.test/v1", model="big-model"))
+    actor = Actor.for_chat(store.get_chat(chat_id), make_bot(model=BotModel(name="big")),
+                           files_path=cfg.files_path)
+    fake = FakeModel([text("Hi")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    [event async for event in agent.run_turn(chat_id, "hello", actor=actor)]
+    assert fake.requests[0]["model"] == "big-model"
+
+
+async def test_a_removed_bot_model_falls_back_to_the_chats(bot_setup):
+    from kova.actors import Actor
+    from kova.bots import BotModel
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    actor = Actor.for_chat(store.get_chat(chat_id), make_bot(model=BotModel(name="ghost")),
+                           files_path=cfg.files_path)
+    fake = FakeModel([text("Hi")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    [event async for event in agent.run_turn(chat_id, "hello", actor=actor)]
+    assert fake.requests[0]["model"] == "test-model"
+
+
+async def test_a_bot_sends_its_output_limit_with_the_request(bot_setup):
+    from kova.actors import Actor
+    from kova.bots import BotGroup
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    actor = Actor.for_chat(store.get_chat(chat_id), make_bot(group=BotGroup(max_output_tokens=1234)),
+                           files_path=cfg.files_path)
+    fake = FakeModel([text("Hi")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    [event async for event in agent.run_turn(chat_id, "hello", actor=actor)]
+    assert fake.requests[0]["max_tokens"] == 1234
+
+
+async def test_a_bot_max_rounds_caps_model_calls(bot_setup):
+    from kova.actors import Actor
+    from kova.bots import BotGroup
+
+    cfg, store, memory, tools, chat_id = bot_setup
+    actor = Actor.for_chat(store.get_chat(chat_id), make_bot(group=BotGroup(max_rounds=2)),
+                           files_path=cfg.files_path)
+    fake = FakeModel([tool("memory_search", {"query": "x"}), text("done")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    events = [event async for event in agent.run_turn(chat_id, "hello", actor=actor)]
+    assert len(fake.requests) == 2
+    assert "tools" not in fake.requests[1], "the last allowed round answers in text"
+    assert events[-1]["type"] == "done"
+
+
+async def test_actor_none_is_todays_work_mode_prompt_and_tools(bot_setup):
+    """The guarantee this whole layer rests on: no actor, no change."""
+    cfg, store, memory, tools, chat_id = bot_setup
+    fake = FakeModel([text("Hi")])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    [event async for event in agent.run_turn(chat_id, "hello")]
+    prompt = fake.requests[0]["messages"][0]["content"]
+    assert prompt.startswith("You are Kova")
+    assert "Your role:" not in prompt
+    assert "run_command" in _sent_tools(fake), "work mode still offers every tool"
+    assert "max_tokens" not in fake.requests[0]
