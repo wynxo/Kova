@@ -51,6 +51,10 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
         response = client.get(f"/app/assets/{name}")
         assert response.status_code == 200
         assert response.content
+    worker = client.get("/app/sw.js")
+    assert worker.status_code == 200
+    assert worker.headers["Service-Worker-Allowed"] == "/app"
+    assert "'/app/assets/trace.css'" in worker.text
     assert client.get("/app/assets/../../server.py").status_code == 404
     assert client.get("/chats").status_code == 401
 
