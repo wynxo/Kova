@@ -88,7 +88,7 @@ def test_a_theme_only_moves_the_roles_whose_tokens_it_changes(home):
 def test_translucent_tokens_are_composited_over_the_page(home):
     install(home, "veil", {"fg": {"muted": "rgba(255, 255, 255, 0.5)"}})
     veil = theme.terminal_theme("veil")
-    base = themes.base_tokens("kova-dark")["bg.base"]  # #14121c
+    base = themes.base_tokens("kova-dark")["bg.base"]  # #17191c
     expected = "#" + "".join(f"{round((255 * .5 + int(base[i:i + 2], 16) * .5)):02x}" for i in (1, 3, 5))
     assert veil.roles["MUTED"] == expected
     assert veil.roles["ACCENT_SOFT"] != theme.ACCENT_SOFT
@@ -135,7 +135,7 @@ def test_tints_and_the_gradient_are_mixed_in_the_theme(home):
     assert "38;2;255;255;255" not in p.gradient("Kova")
     light = Palette(3, theme_name="light")
     tint = light.pill("x", theme.SUCCESS)
-    assert tint.startswith("\x1b[38;2;31;122;68;48;2;")  # kova-light's status.success
+    assert tint.startswith("\x1b[38;2;26;110;60;48;2;")  # kova-light's status.success
 
 
 def test_rich_cli_output_follows_a_theme_file(home, monkeypatch):

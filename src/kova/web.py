@@ -151,7 +151,9 @@ def install_web(app, require_bearer) -> None:
 
     @app.get("/app/sw.js", include_in_schema=False)
     async def worker():
-        return FileResponse(ASSETS / "sw.js", media_type="application/javascript")
+        # The app is served at /app, not under the worker’s default /app/ scope.
+        return FileResponse(ASSETS / "sw.js", media_type="application/javascript",
+                            headers={"Service-Worker-Allowed": "/app"})
 
     @app.get("/app/gallery", include_in_schema=False)
     async def gallery():

@@ -113,6 +113,8 @@ const KovaAgentTree = (() => {
                    every = (fn, ms) => setInterval(fn, ms), stop = id => clearInterval(id)} = {}) {
     const uid = `agent-tree-${++nextId}`;
     const tree = node('div', 'agent-tree');
+    // The trace colours a delegated group as sub-agents and a parallel group as tools.
+    tree.setAttribute('data-kind', delegated ? 'delegated' : 'parallel');
     tree.setAttribute('role', 'tree');
     tree.setAttribute('aria-label', 'Parallel tasks');
     const root = item(1, `${uid}-root`);

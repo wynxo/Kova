@@ -370,7 +370,7 @@ thinking.value = 'thunderstorm';
 for (const [label, options, read, write, values, fallback] of [
   ['Text size', ['Small', 'Default', 'Large'], 'textSize', 'setTextSize', ['small', 'default', 'large'], 'default'],
   ['Density', ['Compact', 'Default', 'Comfortable'], 'density', 'setDensity', ['compact', 'default', 'comfortable'], 'default'],
-  ['Font', ['Inter', 'System', 'Monospace'], 'font', 'setFont', ['inter', 'system', 'mono'], 'inter']]) {
+  ['Font', ['Geologica', 'System', 'Monospace'], 'font', 'setFont', ['inter', 'system', 'mono'], 'inter']]) {
   const row = byClass(panels[0], 'settings-row').find(item =>
     byClass(item, 'settings-row-title')[0]?.textContent === label);
   assert.ok(row, `the ${label} setting is in General`);
