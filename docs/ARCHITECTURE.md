@@ -123,13 +123,16 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/PATCH/DELETE /bots/{bot_id}` | token or session | read one bot with its persona / change the named fields / remove it, its memory and its routines |
 | `GET/PUT/DELETE /bots/{bot_id}/avatar` | token or session | read / replace / clear the avatar image, type-checked and capped at 256 KB |
 | `GET /group-settings` | token or session | the schema every settings surface renders: each group and member setting with its label, help, type, range, default, Simple flag and hard ceiling, plus the four presets |
-| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` or `bot_id` (a direct bot chat) when creating one |
+| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id`, `bot_id` (direct bot chat), or `members` (group) with optional `preset` and `group` overrides |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, move to a project (`project_id` on its own), delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, edit `group`/apply a `preset`, move to a project (`project_id` on its own), delete |
+| `POST /chats/{chat_id}/members` | token or session | add a bot to a group by `bot_id`; a paired phone needs `settings:write` |
+| `PATCH /chats/{chat_id}/members/{bot_id}` | token or session | reorder, mute or patch group member overrides; a paired phone needs `settings:write` |
+| `DELETE /chats/{chat_id}/members/{bot_id}` | token or session | remove a member without removing their messages; a paired phone needs `settings:write` |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -709,12 +712,21 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
   pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id, kind (`chat`, `bot` or `group`) and, for a direct bot chat,
-  `bot_id`
+  `bot_id`; group chats store only changed values in `group_settings` (JSON)
+- `chat_members` — chat id and bot id, answer order, mute flag, joined time, and
+  per-member settings overrides (JSON); deleting the chat cascades to its members
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, who wrote it
   (`author` and `author_name`; NULL for the user and the default assistant),
   `bot_turn_id` and `hop`, and nullable usage columns (`USAGE_COLUMNS`) set only on
   a turn's final answer
 - `reminders` — reminder_at, text, done
+
+Group chat responses include member identities and the resolved `group` settings,
+alongside the stored overrides and matching `preset` (or `custom`). New groups
+use `[groups] preset` from `config.toml` unless the caller chooses one. Group
+settings can be written during a turn without stopping it or rewriting history.
+The change is published as `group_settings_changed` on `/events` and the live
+chat stream, if one is open. Subsequent messages read the saved settings.
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
 `colour`, `icon`, `project_id`, the chat `kind` and `bot_id`, message `author`,

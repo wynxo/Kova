@@ -223,7 +223,9 @@ def export_archive(
     are stored twice: ``chats/<id>.json`` for a faithful restore and
     ``chats/<id>.md`` so the archive is pleasant to read. Global memory notes
     are copied as-is, and each project's own notes travel under
-    ``project-memory/<project-id>/``. The server token is never read or written.
+    ``project-memory/<project-id>/``. Bots travel as ``bots/<id>/`` (each
+    bot's ``bot.toml``, ``persona.md`` and avatar image) with their private
+    notes under ``bot-memory/<id>/``. The server token is never read or written.
     """
     target = _target_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +250,24 @@ def export_archive(
             project_notes.append(
                 (f'{project["id"]}/{note.relative_to(scope.write_dir).as_posix()}',
                  note.read_bytes()))
+    bot_files = _bot_export_files(cfg.home)
+    bot_ids = sorted({member.split("/")[1] for member, _ in bot_files})
+    bot_notes: list[tuple[str, bytes]] = []
+    try:
+        bot_scope_names = sorted(path.name for path in memory.bot_scopes_dir.iterdir())
+    except OSError:
+        bot_scope_names = []
+    for bot_id in bot_scope_names:
+        if not _BOT_SCOPE_ID.match(bot_id):
+            continue
+        try:
+            scope = memory.bot_scope(bot_id)
+        except ValueError:
+            continue
+        for note in _note_files(scope.write_dir):
+            bot_notes.append(
+                (f'{bot_id}/{note.relative_to(scope.write_dir).as_posix()}',
+                 note.read_bytes()))
 
     created = datetime.now().astimezone().isoformat()
     manifest = {
@@ -259,6 +279,8 @@ def export_archive(
         "chats": len(chats),
         "notes": len(notes),
         "project_notes": len(project_notes),
+        "bots": len(bot_ids),
+        "bot_notes": len(bot_notes),
         "reminders": len(reminders),
         "api_keys": "omitted",
         "token": "omitted",
@@ -266,7 +288,8 @@ def export_archive(
     readme = (
         f"Kova backup — {created}\n\n"
         f"{len(chats)} chats, {len(projects)} projects, {len(notes)} memory notes, "
-        f"{len(project_notes)} project memory notes, {len(reminders)} reminders.\n\n"
+        f"{len(project_notes)} project memory notes, {len(bot_ids)} bots, "
+        f"{len(bot_notes)} bot memory notes, {len(reminders)} reminders.\n\n"
         "config.toml is included without API keys. Re-add a key with:\n"
         "  kova model add NAME URL MODEL --key KEY\n\n"
         "Project folders are written relative to your home folder (~/...).\n"
@@ -299,6 +322,10 @@ def export_archive(
                 archive.writestr(f"memory/{name}", data)
             for name, data in project_notes:
                 archive.writestr(f"project-memory/{name}", data)
+            for member, data in bot_files:
+                archive.writestr(member, data)
+            for name, data in bot_notes:
+                archive.writestr(f"bot-memory/{name}", data)
             archive.writestr(
                 "reminders.json",
                 json.dumps(reminders, indent=2, ensure_ascii=False) + "\n",
@@ -313,6 +340,8 @@ def export_archive(
         "chats": len(chats),
         "notes": len(notes),
         "project_notes": len(project_notes),
+        "bots": len(bot_ids),
+        "bot_notes": len(bot_notes),
         "reminders": len(reminders),
         "created": created,
     }
@@ -358,6 +387,165 @@ def _project_memory_relative(name: str) -> tuple[str, PurePosixPath] | None:
     return parts[1], PurePosixPath(*relative)
 
 
+#: Bot files the archive may carry: the definition, the persona and images.
+_BOT_DIRECT = {"bot.toml", "persona.md"}
+_BOT_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+_BOT_PLAIN = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
+_BOT_SCOPE_ID = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+
+
+def _archive_has_traversal(name: str) -> bool:
+    """Whether a zip member escapes its folder (``..``, absolute or NUL)."""
+    if not isinstance(name, str) or not name or "\0" in name or "\\" in name:
+        return True
+    path = PurePosixPath(name)
+    if path.is_absolute():
+        return True
+    return any(part in ("", ".", "..") for part in path.parts)
+
+
+def _bot_file_relative(name: str) -> tuple[str, str] | None:
+    """A ``bots/<id>/<file>`` entry as (id, file), or None when not carried.
+
+    Only the definition, the persona and plain image names travel. Anything
+    else under ``bots/`` is ignored on import, so a hand-edited archive never
+    smuggles an unexpected file into a bot folder.
+    """
+    parts = PurePosixPath(name).parts
+    if len(parts) != 3 or parts[0] != "bots":
+        return None
+    bot_id, filename = parts[1], parts[2]
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", bot_id):
+        return None
+    if filename in _BOT_DIRECT:
+        return bot_id, filename
+    if not _BOT_PLAIN.match(filename) or filename.startswith("."):
+        return None
+    if filename.lower().endswith(_BOT_IMAGE_SUFFIXES):
+        return bot_id, filename
+    return None
+
+
+def _bot_memory_relative(name: str) -> tuple[str, PurePosixPath] | None:
+    """A ``bot-memory/<bot-id>/<note>`` entry as (id, relative note path)."""
+    parts = PurePosixPath(name).parts
+    if len(parts) < 3 or parts[0] != "bot-memory" or not name.endswith(".md"):
+        return None
+    if not _BOT_SCOPE_ID.match(parts[1]):
+        return None
+    relative = parts[2:]
+    if any(part in ("", ".", "..") or part.startswith(".") for part in relative):
+        return None
+    return parts[1], PurePosixPath(*relative)
+
+
+def _manifest_time(manifest: dict) -> datetime | None:
+    """The backup's creation instant, or None when it cannot be told."""
+    created = manifest.get("created") if isinstance(manifest, dict) else None
+    if not isinstance(created, str) or not created.strip():
+        return None
+    try:
+        stamp = datetime.fromisoformat(created)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp
+
+
+def _archived_handle(data: bytes, fallback: str) -> str:
+    """The handle a backed-up ``bot.toml`` claims, lower-cased."""
+    try:
+        parsed = tomllib.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError):
+        return fallback.casefold()
+    if not isinstance(parsed, dict):
+        return fallback.casefold()
+    handle = parsed.get("handle")
+    if isinstance(handle, str) and handle.strip():
+        return handle.strip().casefold()
+    bot_id = parsed.get("id")
+    if isinstance(bot_id, str) and bot_id.strip():
+        return bot_id.strip().casefold()
+    return fallback.casefold()
+
+
+def _local_bot_handles(home: Path) -> dict[str, str]:
+    """Every local bot id mapped to its handle (the folder name on failure)."""
+    root = Path(home) / "bots"
+    handles: dict[str, str] = {}
+    try:
+        children = sorted(root.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return handles
+    for child in children:
+        if child.name.startswith(".") or not child.is_dir() or child.is_symlink():
+            continue
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", child.name):
+            continue
+        handle = child.name.casefold()
+        definition = child / "bot.toml"
+        if definition.is_file() and not definition.is_symlink():
+            try:
+                parsed = tomllib.loads(definition.read_bytes().decode("utf-8"))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict):
+                raw = parsed.get("handle")
+                if isinstance(raw, str) and raw.strip():
+                    handle = raw.strip().casefold()
+                elif isinstance(parsed.get("id"), str) and parsed["id"].strip():
+                    handle = parsed["id"].strip().casefold()
+        handles[child.name] = handle
+    return handles
+
+
+def _private_chmod(path: Path) -> None:
+    """Restored bot files stay readable only by their owner on POSIX."""
+    if os.name == "nt":
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _bot_export_files(home: Path) -> list[tuple[str, bytes]]:
+    """Every bot file the archive carries as (member name, bytes).
+
+    Only ``bot.toml``, ``persona.md`` and plain image files travel, never a
+    link and never a subfolder, so the archive cannot smuggle one in.
+    """
+    members: list[tuple[str, bytes]] = []
+    root = Path(home) / "bots"
+    try:
+        children = sorted(root.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return members
+    for child in children:
+        if child.name.startswith(".") or not child.is_dir() or child.is_symlink():
+            continue
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", child.name):
+            continue
+        try:
+            files = sorted(child.iterdir(), key=lambda path: path.name)
+        except OSError:
+            continue
+        for path in files:
+            if not path.is_file() or path.is_symlink() or path.name.startswith("."):
+                continue
+            if len(path.parts) != len(child.parts) + 1:
+                continue
+            if path.name in _BOT_DIRECT or (
+                _BOT_PLAIN.match(path.name) and path.name.lower().endswith(_BOT_IMAGE_SUFFIXES)
+            ):
+                try:
+                    members.append((f"bots/{child.name}/{path.name}", path.read_bytes()))
+                except OSError:
+                    continue
+    return members
+
+
 def _reminder_key(when: str, text: str) -> tuple:
     """Compare reminder times by instant, not by their ISO spelling."""
     try:
@@ -373,6 +561,138 @@ def _clear_managed_notes(memory: Memory) -> None:
     """Delete only Kova's own Markdown files, never other vault notes."""
     for note in _note_files(memory.write_dir):
         note.unlink(missing_ok=True)
+
+
+def _clear_bots(home: Path) -> None:
+    """Remove every local bot folder for a replacing restore.
+
+    Links are unlinked, never followed, so a planted link cannot delete
+    outside the bot folder.
+    """
+    root = Path(home) / "bots"
+    try:
+        children = sorted(root.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return
+    for child in children:
+        if child.name.startswith(".") or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", child.name):
+            continue
+        try:
+            if child.is_symlink() or child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                for sub in sorted(child.rglob("*"), key=lambda path: len(path.parts), reverse=True):
+                    try:
+                        if sub.is_symlink() or sub.is_file():
+                            sub.unlink(missing_ok=True)
+                        elif sub.is_dir():
+                            sub.rmdir()
+                    except OSError:
+                        continue
+                child.rmdir()
+        except OSError:
+            continue
+
+
+def _clear_bot_scopes(memory: Memory) -> None:
+    """Delete every bot memory scope, for a replacing backup restore."""
+    root = memory.bot_scopes_dir
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if child.name.startswith(".") or not _BOT_SCOPE_ID.match(child.name):
+            continue
+        try:
+            memory.remove_bot_scope(child.name)
+        except (ValueError, OSError):
+            continue
+
+
+def _restore_bots(
+    home: Path,
+    members: dict[str, dict[str, bytes]],
+    *,
+    merge: bool,
+    backup_time: datetime | None,
+) -> dict[str, int]:
+    """Restore ``bots/<id>/`` definition, persona and avatar files.
+
+    A bot that does not exist here is added. A bot with the same handle is
+    kept as is unless the backup is newer, then replaced. A handle that
+    would collide with a different local bot is never imported, so a restore
+    cannot leave two bots fighting over one ``@mention``. Only the
+    definition, the persona and plain image names are written, through no
+    link, and every restored file is owner-only on POSIX.
+    """
+    root = Path(home) / "bots"
+    if root.is_symlink():
+        raise BackupError("Unsafe bot folder: bots is a link.")
+    local_handles = _local_bot_handles(home)
+    imported = skipped = 0
+    for bot_id in sorted(members):
+        files = members[bot_id]
+        if "bot.toml" not in files:
+            skipped += 1
+            continue
+        archived_handle = _archived_handle(files["bot.toml"], bot_id)
+        local_handle = local_handles.get(bot_id)
+        if local_handle is not None:
+            if local_handle != archived_handle:
+                taken = {handle for other, handle in local_handles.items() if other != bot_id}
+                if archived_handle in taken:
+                    skipped += 1
+                    continue
+            if merge and backup_time is not None:
+                try:
+                    local_time = datetime.fromtimestamp(
+                        (root / bot_id / "bot.toml").stat().st_mtime, tz=timezone.utc)
+                except OSError:
+                    local_time = None
+                if local_time is not None and local_time >= backup_time:
+                    skipped += 1
+                    continue
+            elif merge and backup_time is None:
+                skipped += 1
+                continue
+        else:
+            if archived_handle in set(local_handles.values()):
+                skipped += 1
+                continue
+        folder = root / bot_id
+        try:
+            if folder.is_symlink():
+                folder.unlink()
+            folder.mkdir(parents=True, exist_ok=True)
+            if folder.is_symlink():
+                raise BackupError(f"Unsafe bot path in backup: bots/{bot_id}")
+            base = folder.resolve()
+            # A replacing restore drops files the archive no longer carries
+            # (a stale avatar), but a merge never deletes local files.
+            if not merge:
+                for existing in list(folder.iterdir()):
+                    if existing.is_symlink() or existing.is_file():
+                        if existing.name not in files:
+                            existing.unlink(missing_ok=True)
+            for filename, data in files.items():
+                target = folder / filename
+                if target.is_symlink():
+                    target.unlink()
+                target.write_bytes(data)
+                _private_chmod(target)
+                try:
+                    if target.resolve().parent != base:
+                        raise BackupError(f"Unsafe bot path in backup: bots/{bot_id}/{filename}")
+                except (OSError, RuntimeError) as exc:
+                    raise BackupError(f"Unsafe bot path in backup: bots/{bot_id}/{filename}") from exc
+        except BackupError:
+            raise
+        except OSError as exc:
+            raise BackupError(f"Could not restore bot {bot_id}: {exc}") from exc
+        local_handles[bot_id] = archived_handle
+        imported += 1
+    return {"imported": imported, "skipped": skipped}
 
 
 def _restore_models(cfg: Config, data: dict) -> bool:
@@ -510,9 +830,13 @@ def import_archive(
     """Restore a backup. Merge keeps existing chats/projects/notes/reminders.
 
     Projects are restored before their chats, so membership survives; a chat
-    from an archive without projects imports ungrouped. A replace clears
-    chats, projects, reminders and Kova's own memory notes first; it never
-    touches notes outside ``<vault>/Kova/`` in Obsidian mode.
+    from an archive without projects imports ungrouped. Bots merge by handle:
+    a bot that does not exist here is added, while a bot with the same handle
+    is kept as is unless the backup is newer, then replaced. Nothing is ever
+    restored outside ``bots/`` and ``bot-memory/``: traversal entries and
+    links are refused. A replace clears chats, projects, reminders, bots and
+    Kova's own memory notes first; it never touches notes outside
+    ``<vault>/Kova/`` in Obsidian mode.
     """
     source = Path(path).expanduser()
     if not source.is_file():
@@ -535,7 +859,26 @@ def import_archive(
         project_memory_names = [
             name for name in names if _project_memory_relative(name) is not None
         ]
+        infos = {info.filename: info for info in archive.infolist()}
+        # A traversal or an absolute path is refused outright: the archive
+        # must never write outside the bot folders it claims.
+        for name in names:
+            if name.endswith("/"):
+                continue
+            if name.startswith("bots/") or name.startswith("bot-memory/"):
+                if _archive_has_traversal(name):
+                    raise BackupError(f"Unsafe bot path in backup: {name}")
+                info = infos.get(name)
+                if info is not None and (info.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise BackupError(f"Unsafe bot link in backup: {name}")
+        bot_names = [
+            name for name in names if _bot_file_relative(name) is not None
+        ]
+        bot_memory_names = [
+            name for name in names if _bot_memory_relative(name) is not None
+        ]
         if (not chat_names and not memory_names and not project_memory_names
+                and not bot_names and not bot_memory_names
                 and "reminders.json" not in names and "projects.json" not in names):
             raise BackupError("That zip does not look like a Kova backup.")
 
@@ -579,6 +922,19 @@ def import_archive(
                 project_id, relative = parsed
                 project_notes.append((project_id, relative, archive.read(name)))
 
+        bot_members: dict[str, dict[str, bytes]] = {}
+        for name in bot_names:
+            parsed = _bot_file_relative(name)
+            if parsed is not None:
+                bot_id, filename = parsed
+                bot_members.setdefault(bot_id, {})[filename] = archive.read(name)
+        bot_memory_notes: list[tuple[str, PurePosixPath, bytes]] = []
+        for name in bot_memory_names:
+            parsed = _bot_memory_relative(name)
+            if parsed is not None:
+                bot_id, relative = parsed
+                bot_memory_notes.append((bot_id, relative, archive.read(name)))
+
         config_data = None
         if not merge and "config.toml" in names:
             try:
@@ -591,11 +947,19 @@ def import_archive(
         store.clear_chats()
         store.clear_projects()
         store.clear_reminders()
+        _clear_bots(cfg.home)
 
     # Projects come first: a chat can only join one that exists. Archives from
     # before projects carry a chat's project_id with no definition, and those
     # chats import ungrouped.
     project_ids, project_counts = _restore_projects(store, projects)
+
+    # Bots are files, not database rows: a missing bot is added, a bot with
+    # the same handle is kept unless the backup is newer, then replaced.
+    bot_counts = _restore_bots(
+        cfg.home, bot_members, merge=merge,
+        backup_time=_manifest_time(manifest),
+    )
 
     chat_ids = {chat["id"] for chat in store.list_chats()} if merge else set()
     chats_imported = chats_skipped = 0
@@ -640,6 +1004,39 @@ def import_archive(
 
     if not merge:
         memory.clear_scopes()
+        _clear_bot_scopes(memory)
+    bot_notes_imported = bot_notes_skipped = 0
+    seen_bot_notes: set[tuple[str, str]] = set()
+    for bot_id, relative, data in bot_memory_notes:
+        try:
+            scope = memory.bot_scope(bot_id)
+        except ValueError:
+            bot_notes_skipped += 1
+            continue
+        target = scope.write_dir / relative
+        try:
+            target_resolved = target.resolve()
+            target_resolved.relative_to(scope.write_dir.resolve())
+        except ValueError as exc:
+            raise BackupError(f"Unsafe bot memory path in backup: {relative}") from exc
+        except (OSError, RuntimeError) as exc:
+            raise BackupError(f"Unsafe bot memory path in backup: {relative}") from exc
+        if target.is_symlink():
+            bot_notes_skipped += 1
+            continue
+        key = (bot_id, relative.as_posix())
+        if merge and (key in seen_bot_notes or target.exists()):
+            bot_notes_skipped += 1
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            _private_chmod(target)
+        except OSError as exc:
+            raise BackupError(f"Could not restore bot memory: {exc}") from exc
+        seen_bot_notes.add(key)
+        bot_notes_imported += 1
+
     project_notes_imported = project_notes_skipped = 0
     seen_project_notes: set[tuple[str, str]] = set()
     for source_id, relative, data in project_notes:
@@ -705,6 +1102,10 @@ def import_archive(
         "notes_skipped": notes_skipped,
         "project_notes": project_notes_imported,
         "project_notes_skipped": project_notes_skipped,
+        "bots": bot_counts["imported"],
+        "bots_skipped": bot_counts["skipped"],
+        "bot_notes": bot_notes_imported,
+        "bot_notes_skipped": bot_notes_skipped,
         "reminders": reminders_imported,
         "reminders_skipped": reminders_skipped,
         "config_restored": config_restored,
