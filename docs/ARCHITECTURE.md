@@ -13,7 +13,7 @@ The import package is `kova`; the distribution on GitHub is `kova-ai`.
             ┌──────────────────────────────────────────────────────┐
             │  kova serve · FastAPI · 127.0.0.1:7700               │
             │                                                      │
-  CLI  ────▶│  /health   /chats   /memory   /reminders   /models   │
+  CLI  ────▶│  /health   /chats   /memory   /reminders   /models   /bots    │
  (cli.py)   │  /events (SSE)   /app + /app/assets                  │
             │                                                      │
   TUI  ────▶│   Agent ──▶ ModelClient ──▶ OpenAI-compatible model   │
@@ -78,7 +78,6 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 128 endpoints: 127 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -88,6 +87,7 @@ same commit as the route.
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | public | version, active model name, whether the model answers |
+| `GET /` | public | Redirect to the web UI at `/app`. |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
@@ -119,7 +119,10 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /projects` | token or session | list / create projects, including pinned file references; writes need `host:exec` from a paired phone |
 | `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit (including its pinned references) or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
-| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` when creating a persistent chat |
+| `GET/POST /bots` | token or session | list every bot with its state and live status / create one from a definition (`?validate_only=true` checks a draft) |
+| `GET/PATCH/DELETE /bots/{bot_id}` | token or session | read one bot with its persona / change the named fields / remove it, its memory and its routines |
+| `GET/PUT/DELETE /bots/{bot_id}/avatar` | token or session | read / replace / clear the avatar image, type-checked and capped at 256 KB |
+| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` or `bot_id` (a direct bot chat) when creating one |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
@@ -153,14 +156,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
 | `DELETE /jobs/{jid}` | token or session | delete a job |
-| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id` |
+| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id`, or one bot's with `bot_id` |
 | `POST /memory/consolidate` | token or session | plan one consolidation run, and apply it unless asked to dry-run |
 | `GET /memory/diary` | token or session | what the background memory passes did, oldest first |
 | `POST /memory/location` | token or session | switch memory folder at runtime |
 | `GET /memory/revisions` | token or session | recent background memory writes with their undo state |
 | `GET/PATCH /memory/settings` | token or session | read / change the background passes' switches and gates |
 | `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
-| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global or a `project_id` scope |
+| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global, a `project_id` or a `bot_id` scope |
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
@@ -199,6 +202,8 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
+| `GET /providers/{identifier}/models` | token or session | the models a connected provider offers (cached for a minute) |
+| `POST /providers/{identifier}/models` | token or session | add more models from a provider that is already connected |
 | `DELETE /providers/{identifier}` | token or session | remove a provider connection |
 | `POST /providers/{identifier}/login` | token or session | sign in to a connected provider again |
 | `POST /providers/{identifier}/logout` | token or session | sign out of a provider connection |
@@ -249,6 +254,12 @@ turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
 cancels it server-side.
 
+A turn answered by a bot (a chat created with `bot_id`) carries two additive fields on
+every event it emits: `author` (the bot id) and `bot_turn_id` (one reply's rows inside
+the user turn). The stored rows carry the same `author`, the display name at the time
+and the `hop`; a turn with the default assistant has none of them, so old clients and
+old transcripts are unchanged.
+
 Compare stream (`POST /chats/{chat_id}/compare`, `src/kova/compare.py`): `start`
 with the `compare_id` and model names, then `text`, `reasoning` and `privacy`
 events that each carry their `model`, one `model_done` (text and `usage`) or
@@ -291,7 +302,10 @@ client draws the group with `web_assets/agent-tree.js`, with a Stop button (and
 Delete on the row) for each call still waiting or running; the terminal shows the
 calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
 action, and a quoted excerpt of each finished tool's output or error when its row
-is expanded. Reloaded transcripts still show ordinary tool cards.
+is expanded. When the turn ends, the calls that succeeded fold into one `Done · N`
+row that quotes each call's one-line result; a failed, stopped or interrupted call
+keeps its own row and reason under the header's failed count. Reloaded transcripts
+still show ordinary tool cards.
 
 Parallel reads are calls in the parent model step, not child model tasks.
 In work mode, consecutive independent `delegate_analysis` calls can run
@@ -315,7 +329,7 @@ Payload shapes, and the HTTP round-trip that answers an approval, are in the
 
 ### Browser login
 
-The web launcher never puts the bearer token in a URL. `kova-web`
+The web launcher never puts the bearer token in a URL. `kova web`
 (`src/kova/app.py`) asks the server for a ticket with the token, then opens:
 
 ```
@@ -360,17 +374,22 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `ask`, `compare`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. `./cli` is a small wrapper that runs
-`uv run kova "$@"` from the checkout. Commands talk to the server through
+`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
 the exception: it reads and writes `config.toml` directly, validates every value
 against a small schema, and never starts the server. `config show` redacts
 provider keys, custom headers and OAuth data; [CONFIG.md](CONFIG.md) documents
 every field.
+
+`kova model use` is the one place that switches the active provider and model.
+With a name it resolves a saved entry, `provider/model` or a model id; with no
+argument it opens the picker in `src/kova/model_picker.py`, which the terminal
+chat's `/model` (alias `/provider`) also uses. Both ask the server to save the
+choice, so it applies to the open chat and every later one.
 
 `kova ask` streams a turn without the interactive UI, prints the answer to
 stdout, and can emit `--json`. Its chats are titled with the
@@ -382,8 +401,8 @@ they stay out of the CLI's chat lists.
 `_run_chat` is the interactive loop behind plain `kova`. It picks the latest
 chat (or a new one), prints the header, and uses `prompt_toolkit` for input,
 history and Tab completion (`_CommandCompleter`). Slash commands are listed in
-`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model` and `/new` call
-the same API the desktop app does.
+`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model`, its `/provider`
+alias and `/new` call the same API the desktop app does.
 
 `_render_turn` consumes the SSE stream and repaints at most ten times a second
 with Rich `Live`. When the reply ends, the whole turn is printed to normal
@@ -394,18 +413,16 @@ prints reminder pop-ups while you chat.
 
 ### Desktop and web app
 
-`src/kova/app.py` holds both launchers. `kova-app` runs the Electron app in
-`desktop/` — the checkout it runs from, or the copy the installers stage under
-`KOVA_HOME/desktop`. Installers prepare Electron and register a normal OS launcher
-by default (opt out with `--no-desktop`); those launch the binary directly.
-The developer/terminal launcher can still run `npm ci` while
-`node_modules/.bin/electron` is missing. Without Node.js/npm it says so and opens
-the browser; for any other failure it exits non-zero. The Electron shell starts
-(or reuses) the server itself, reads `~/.kova/token`, and mints its own one-use
-ticket; the bearer token never reaches a command line or a URL. `kova-web` (and
-the older `kova-app --browser`) starts (or reuses) the server, mints the ticket,
-and opens the default browser. In a checkout, `./desktop-app` is a thin wrapper
-over `uv run kova-app`.
+`src/kova/app.py` holds both launchers. The Python package includes the Electron
+source. Installers, `kova update` and `kova app` refresh the staged copy under
+`KOVA_HOME/desktop` and run `npm ci` when dependencies are missing or the
+lockfile changes. OS shortcuts launch the prepared Electron binary directly.
+Installers can skip desktop setup with `--no-desktop`. Electron stores its
+profile separately in `KOVA_HOME/desktop-data`.
+
+The Electron shell starts (or reuses) the server, reads `~/.kova/token`, and
+mints a one-use ticket. The bearer token never reaches a command line or URL.
+`kova web` (also `kova app --browser`) opens the same UI in the default browser.
 
 The Electron shell also owns the Quick ask overlay (#71): a second, frameless
 `BrowserWindow` (`720×220`, always-on-top, `skipTaskbar`) that loads
@@ -498,7 +515,7 @@ conversation and an optional side panel. Both outer panes resize with a keyboard
 splitter whose width each device remembers. The panel holds one tab per thing opened in
 it (`window.KovaPanel.open({title, node, key})`: long code blocks, long tool output,
 diffs), and a tab can pop out into its own same-origin window, which the Electron shell
-allows only for blank `kova-panel-<n>` windows (`desktop/core.js` `panelWindow`). On wide
+allows only for blank `kova-panel-<n>` windows (`src/kova/desktop/core.js` `panelWindow`). On wide
 screens a collapsed sidebar leaves an icon rail (show sidebar, new chat, search,
 settings); on phones the panel is a full-screen sheet. Ctrl/Cmd+Alt+B shows or hides the
 panel and F6 / Shift+F6 move focus between the panes, through the same shortcut
@@ -509,8 +526,14 @@ search field that filters chats, the chat list and a single **Settings** row.
 The message box shows **+** (attach files, slash commands, and an incognito chat
 on the start screen), the text, one chip naming the model, and Send; the chip
 opens one popover with the model, Work/Chat mode, permission mode, working
-folder and web search. The header is the sidebar toggle, the chat title and,
-once a chat is open, its actions menu. A healthy connection shows nothing:
+folder and web search. The model list is every configured model grouped by its
+connection (Local before cloud) with search, favourites and the active model
+marked; a connected provider with no model chosen still appears and says so,
+and **Add provider…** and **Manage providers…** sit at the end of the same list.
+A model chosen on the start screen is remembered for that device, and a model
+chosen inside a chat is saved on the chat, so a reload keeps it. The header is
+the sidebar toggle, the chat title and, once a chat is open, its actions menu. A
+healthy connection shows nothing:
 reconnecting the event stream and polling `/health` are silent, the model's
 state is a detail of the chip, and only an action that actually failed (Kova
 unreachable, signed out, a used pairing code) shows one quiet line above the
@@ -522,7 +545,12 @@ Memory, Reminders, Extensions and MCP, Privacy, Phone, and Install and
 notifications. A section nav and a search box filter individual settings; rows
 activate the existing controls by id (kept, undrawn, in `index.html`'s
 `#settings-actions`) rather than reimplementing them, so every dialog is also
-reachable from the command palette.
+reachable from the command palette. Models and providers opens with the
+connected providers themselves: each connection's name, kind, address and model
+count, with **Change models** (more models from a connection that already has
+its key, without asking for it again) and **Remove**. **Add provider** runs the
+connect flow: a known provider or a custom OpenAI-compatible URL, its key, a
+model-catalog check, then the models to keep and the default for new chats.
 
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
@@ -582,6 +610,51 @@ forwards its events to the client as SSE.
 Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `tool_result`, the `task_*` events of a parallel group, `done`, `error`, `stopped`.
 
+## Bots
+
+A **bot** is a named, saved assistant with its own persona, model, tools,
+permission ceiling, working folder, memory and, later, routines. A direct chat
+with one bot (`POST /chats {bot_id}`) is a `kind = "bot"` chat whose turns run
+with that bot as the actor. Groups and the UI for them are later phases; this
+section is the backend that everything else builds on.
+
+Definitions are **data, never code** — the same rule as themes. `src/kova/bots.py`
+owns the format: one folder per bot under `KOVA_HOME/bots/<id>/` holding
+`bot.toml`, an optional `persona.md` (role prompt, at most 8,000 characters) and
+an optional avatar image (PNG, JPEG or WebP, at most 256 KB). The file names
+only a model *entry*, never a key. Validation refuses a filename-unsafe id that
+does not match its folder, the reserved id `kova`, a duplicate handle (or one
+that addresses `all`, `everyone`, `here`, `you`), unknown keys, a colour or icon
+outside the token tables, anything shaped like a credential, and a working folder
+that is inside or contains the Kova home or is a link. Writes are atomic and
+0600. A file broken by hand is listed with its one-line error and cannot be
+chatted with; a model entry that was removed since is only a warning, so the bot
+falls back to the chat's model.
+
+`src/kova/actors.py` turns a definition into an `Actor`: name, role text, model,
+tool allowlist, effective permission, folder, memory scope and turn limits.
+`Actor.for_chat` is the **one** place that combines a bot with a chat. The
+effective permission is the stricter of the bot's ceiling and the chat's
+permission; the tool allowlist (with `deny` winning) is applied *after* the
+mode, the device capabilities and every bound per-chat tool, so no rule or
+approval can bring a tool back. `Agent.run_turn(actor=…)` uses the bot's model
+(a removed entry falls back as before), answers in the bot's own folder, caps
+model calls at its `max_rounds` (never above the agent's 11) and sends its
+`max_output_tokens` as the request's own limit. `actor=None` is exactly today's
+turn; a bot's events and rows gain `author`, `author_name`, `bot_turn_id` and
+`hop`, which the default assistant never has.
+
+A bot with `memory.own` mounts its own hidden memory scope (see
+[Memory](#memory)); the routes take `bot_id` exactly as they take `project_id`.
+`src/kova/bot_routes.py` serves `/bots` and publishes `bot_changed`
+(`{id, action}`) so a second window refreshes its contacts. Deleting a bot
+removes its definition, its private notes and its routines (when routines land);
+its chats and messages stay, and a chat whose bot is gone answers with the
+default assistant. Read routes need only a chat-capable session; writes need
+`settings:write` from a phone, and a definition that would grant commands, jobs,
+MCP tools, a `full` ceiling or a folder outside Kova Files needs `host:exec`
+(see [remote-access.md](remote-access.md#what-a-paired-phone-may-do)).
+
 ## Store
 
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
@@ -591,13 +664,17 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
   colour, icon and default model, plus `files` (a JSON list of project-relative
   pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
-  optional project_id
-- `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
-  nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
+  optional project_id, kind (`chat`, `bot` or `group`) and, for a direct bot chat,
+  `bot_id`
+- `messages` — role, content, tool_calls (JSON), tool_call_id, created, who wrote it
+  (`author` and `author_name`; NULL for the user and the default assistant),
+  `bot_turn_id` and `hop`, and nullable usage columns (`USAGE_COLUMNS`) set only on
+  a turn's final answer
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`,
+`colour`, `icon`, `project_id`, the chat `kind` and `bot_id`, message `author`,
+`author_name`, `bot_turn_id` and `hop`, and the projects' `colour`, `icon`, `model`,
 `files`) so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
@@ -762,6 +839,17 @@ or delete inside exactly one scope; without it they behave as before. Project
 scope ids are matched against a filename-safe pattern, never joined from raw
 input. Each turn mounts at most the chat's current project, and a chat moved to
 another project stops reading the old scope on its next turn.
+
+A bot with `memory.own` gets the same arrangement at
+`<write dir>/.kova-bots/<bot-id>/` (`Memory.bot_scope`, with the bot's own
+budget): the global store, another bot and a project never list or search it,
+and a bot turn binds its memory tools to that scope, so the bot cannot write
+the user's notes or anyone else's. `memory.user_memory = "read"` adds the
+global index and recalled notes to the prompt as read-only context; `"none"`
+gives the bot nothing about the user beyond the chat. A bot with
+`memory.own = false` keeps recall but loses every memory-write tool. The HTTP
+memory routes take `bot_id` exactly as they take `project_id`, and refuse both
+together.
 
 ## Tools
 
@@ -1048,6 +1136,9 @@ with `KOVA_LIVE=1`.
 | `src/kova/privacy.py` | opt-in outbound scan, redact or block, loopback bypass |
 | `src/kova/secrets.py` | bounded credential detectors and placeholders |
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
+| `src/kova/bots.py` | bot definitions: format, validation, file I/O |
+| `src/kova/actors.py` | who answers: the default assistant or one bot in one chat |
+| `src/kova/bot_routes.py` | the `/bots` router, avatars and the phone capability guard |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
 | `src/kova/mcp.py` | MCP client: stdio/HTTP servers become tools |
@@ -1165,7 +1256,7 @@ accounts and are covered by mocked HTTP/JWT tests, not automatic paid calls.
 
 ### Packaged Electron shell
 
-`desktop/main.js` owns a single-instance Electron window and tray around the
+`src/kova/desktop/main.js` owns a single-instance Electron window and tray around the
 unchanged /app client. It reads the configured KOVA_HOME and port, reuses an
 authenticated server or spawns the installed CLI (uv from source as fallback),
 then mints /app/session tickets for the existing fragment/login flow.
@@ -1176,7 +1267,7 @@ permissions keep the shell local. Startup/error pages are bundled files.
 Window bounds and Electron storage stay inside KOVA_HOME. Closing hides to
 tray; Quit terminates only the shell's own server child. Logs use server.log.
 electron-builder targets AppImage/deb, NSIS and DMG; the Python runtime/CLI
-remains a separately installed prerequisite. See desktop/README.md.
+remains a separately installed prerequisite. See src/kova/desktop/README.md.
 
 ### Local chat attachments
 

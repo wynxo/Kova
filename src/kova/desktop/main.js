@@ -16,11 +16,22 @@ const TRAY_ASSETS = {
   working: path.join(__dirname, 'assets/tray-working.png'),
   waiting: path.join(__dirname, 'assets/tray-waiting.png'),
 };
-if (!app.requestSingleInstanceLock()) app.quit();
-else {
+async function initialize() {
+  const desktopSettings = settings();
+  ({home, origin} = desktopSettings);
+  // Set the profile before Electron takes its instance lock or opens Chromium.
+  const profile = path.join(home, 'desktop-data');
+  fs.mkdirSync(profile, {recursive: true, mode: 0o700});
+  app.setPath('userData', profile);
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
   app.on('second-instance', () => show());
-  app.whenReady().then(create).catch(e => { console.error(e.message); app.quit(); });
+  await app.whenReady();
+  await create(desktopSettings.config);
 }
+initialize().catch(e => { console.error(e.message); app.quit(); });
 function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
 // Quick ask (#71): a small, always-on-top window over /app?quick=1, toggled by a
 // global shortcut. The selection chip reads the clipboard in this process and
@@ -155,14 +166,8 @@ function saveBounds() {
 // Moving or resizing is saved as it happens, so even a crash or a kill keeps
 // the window where the reader put it, once it has stopped moving for a moment.
 function scheduleBounds() { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 400); }
-async function create() {
-  const desktopSettings = settings();
-  const {config} = desktopSettings;
-  ({home, origin} = desktopSettings);
+async function create(config) {
   chrome = titleBar(config);
-  fs.mkdirSync(home, {recursive: true, mode: 0o700});
-  // Isolate Electron caches/cookies as well as Python data under KOVA_HOME.
-  app.setPath('userData', path.join(home, 'desktop'));
   const restored = windowState(savedWindow(), screen.getAllDisplays());
   // Native is the default. The themed bar keeps the OS window controls: macOS
   // keeps its traffic lights with `hiddenInset`, Windows/Linux get Electron's
@@ -276,7 +281,7 @@ async function ticket() {
 }
 function launchServer() {
   if (child) return;
-  const backend = serverCommand(path.resolve(__dirname, '..'), home);
+  const backend = serverCommand(path.resolve(__dirname, '../../..'), home);
   const log = fs.openSync(path.join(home, 'server.log'), 'a', 0o600);
   try {
     child = spawn(backend.command, backend.args, {
@@ -295,7 +300,7 @@ async function start() {
     // Authentication, not model health, determines whether this is our server.
     try { value = await ticket(); } catch { launchServer(); }
     const deadline = Date.now() + 30000;
-    while (!value && Date.now() < deadline && !quitting) {
+    while (!value && child && Date.now() < deadline && !quitting) {
       await new Promise(resolve => setTimeout(resolve, 400));
       try { value = await ticket(); } catch {}
     }
@@ -303,7 +308,8 @@ async function start() {
     if (!quitting) {
       try {
         const token = fs.readFileSync(path.join(home, 'token'), 'utf8').trim();
-        const response = await fetch(origin + '/persona', {headers: {Authorization: 'Bearer ' + token}});
+        const response = await fetch(origin + '/persona', {
+          headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(2500)});
         if (response.ok) {
           const persona = await response.json();
           if (typeof persona.name === 'string' && persona.name) {
@@ -316,7 +322,10 @@ async function start() {
     if (!quitting) await win.loadURL(origin + '/app' + (chrome === 'themed' ? '?titlebar=themed' : '') + '#ticket=' + encodeURIComponent(value));
   } catch (e) {
     console.error(e.message);
-    if (!quitting) await status(true);
+    if (!quitting) {
+      await status(true);
+      show();
+    }
   } finally { starting = false; }
 }
 process.on('SIGINT', () => app.quit());

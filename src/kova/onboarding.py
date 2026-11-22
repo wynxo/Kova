@@ -81,7 +81,7 @@ def _running_client(cfg: Config) -> KovaClient | None:
     base = f'http://127.0.0.1:{cfg.port}'
     client = KovaClient(base, ensure_token(cfg.home), http=httpx.Client(base_url=base, timeout=2, trust_env=False))
     try:
-        client.health()
+        client.health(probe=False)
         return client
     except KovaError:
         client.http.close()
@@ -105,8 +105,9 @@ def _save_provider(cfg, provider, selected, active=None, *, legacy_name=None):
             cfg.active_model().name = legacy_name
             cfg.active = legacy_name
             save_config(cfg)
-    console.print(Text(f'✓ Connected {provider.name}. Active model: {active or selected[0]}.', style='green'))
-    console.print('Run kova to chat. Add another provider any time with kova providers add.')
+    console.print(Text(f'✓ Connected {provider.name}. Now using {active or selected[0]} on {provider.name}.',
+                       style='green'))
+    console.print('Run kova to chat. Switch models any time with kova model use.')
 
 
 def _pick_models(models: list[str]) -> tuple[list[str], str]:
@@ -175,9 +176,18 @@ def _setup_persona(cfg: Config) -> None:
             console.print(str(exc))
     tones = list(TONES)
     tone = tones[_select('Choose a tone', [t.title() for t in tones])]
-    current = load_config(cfg.home)
-    current.persona_name, current.persona_tone, current.persona_configured = name, tone, True
-    save_config(current)
+    client = _running_client(cfg)
+    if client is not None:
+        try:
+            client.set_persona(name, tone)
+        except KovaError as exc:
+            raise SetupError(f'Could not save the assistant identity: {exc}') from None
+        finally:
+            client.http.close()
+    else:
+        current = load_config(cfg.home)
+        current.persona_name, current.persona_tone, current.persona_configured = name, tone, True
+        save_config(current)
     cfg.persona_name, cfg.persona_tone, cfg.persona_configured = name, tone, True
     console.print(Text(f'✓ {name} it is.', style='green'))
 
@@ -257,7 +267,13 @@ def _setup_local_model(cfg: Config, *, transport=None) -> None:
 
 def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
               name: str | None = None, api_key: str | None = None, yes: bool = False,
-              provider_kind: str | None = None, transport=None, timeout: float = 10, **kwargs) -> None:
+              provider_kind: str | None = None, persona: bool = True,
+              transport=None, timeout: float = 10, **kwargs) -> None:
+    """Connect a provider, never scanning the network or sending a test chat.
+
+    ``persona`` is False for ``kova providers add``: adding a second provider
+    should not repeat the first-run name-and-tone questions.
+    """
     try:
         if yes and not url:
             raise SetupError("Scripted setup requires --url. Run kova setup --yes --url URL, or omit --yes to choose a provider interactively.")
@@ -277,7 +293,7 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
             if not chosen:
                 raise SetupError("The provider didn't list any models. Load a model first.")
             _save_provider(cfg, provider, [chosen], legacy_name=identifier)
-            if not yes and sys.stdin.isatty():
+            if persona and not yes and sys.stdin.isatty():
                 try:
                     _setup_persona(cfg)
                 except SetupError:  # the provider is saved; only the name is skipped
@@ -363,7 +379,7 @@ def run_setup(cfg: Config, *, url: str | None = None, model: str | None = None,
                     provider.api_key = _secret('API key:')
         selected, active = _pick_models(models)
         _save_provider(cfg, provider, selected, active)
-        if sys.stdin.isatty():
+        if persona and sys.stdin.isatty():
             try:
                 _setup_persona(cfg)
             except SetupError:  # the provider is saved; only the name is skipped

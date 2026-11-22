@@ -21,12 +21,14 @@ function executable(name) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
   dirs.push(path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.cargo', 'bin'));
   for (const dir of dirs) {
+    if (!path.isAbsolute(dir)) continue;
     const file = path.join(dir, name + (process.platform === 'win32' ? '.exe' : ''));
     try { fs.accessSync(file, fs.constants.X_OK); return file; } catch {}
   }
 }
 function serverCommand(source, home, find = executable) {
-  const cli = find('kova');
+  const installed = process.env.KOVA_DESKTOP_CLI;
+  const cli = installed && path.isAbsolute(installed) ? installed : find('kova');
   if (cli) return {command: cli, args: ['serve'], cwd: home};
   const uv = find('uv');
   if (uv && fs.existsSync(path.join(source, 'pyproject.toml'))) {

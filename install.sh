@@ -66,15 +66,15 @@ main() {
     # Future PyPI switch: replace source above with source='kova-ai==VERSION'.
     say "Installing/updating Kova: $source"
     if [ "$dev" -eq 1 ]; then
-        "$uv" tool install --force --refresh --python 3.12 --editable "$source"
+        "$uv" tool install --force --refresh --upgrade-package kova-ai --python 3.12 --editable "$source"
     else
-        "$uv" tool install --force --refresh --python 3.12 "$source"
+        "$uv" tool install --force --refresh --upgrade-package kova-ai --python 3.12 "$source"
     fi
 
     # The desktop app is optional: if it cannot be prepared, finish the CLI
     # install anyway and say how to add the app later.
     skip_desktop() {
-        say "Note: $* Kova itself is installed; open it in your browser with kova-web."
+        say "Note: $* Kova itself is installed; open it in your browser with kova web."
         if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
         register_desktop=0
     }
@@ -83,40 +83,50 @@ main() {
            ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
             skip_desktop 'The desktop app needs Node.js 22+ (including npm). Install it from https://nodejs.org and rerun this installer to add Kova to your app menu.'; return
         fi
-        # Keep desktop/ outside the Python wheel, with Electron ready before registration.
+        # Prepare Electron from the installed revision before registering the launcher.
         data=${KOVA_HOME:-$HOME/.kova}
         dest=$data/desktop
-        desktop_src=''
-        if [ -n "${KOVA_SOURCE-}" ] && [ -f "$KOVA_SOURCE/desktop/package.json" ]; then
-            desktop_src=$KOVA_SOURCE/desktop
-        elif [ -n "$here" ] && [ -f "$here/desktop/package.json" ]; then
-            desktop_src=$here/desktop
-        elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 &&
-             command -v mktemp >/dev/null 2>&1; then
-            tree=$(mktemp -d "${TMPDIR:-/tmp}/kova-desktop.XXXXXX")
-            trap 'rm -rf -- "$tree"' 0
-            url="https://github.com/wynxo/Kova/archive/$ref.tar.gz"
-            say "Downloading the desktop app from $url ..."
-            if curl -fsSL "$url" -o "$tree/kova.tar.gz" && mkdir -p "$tree/tree" &&
-               tar -xzf "$tree/kova.tar.gz" -C "$tree/tree"; then
-                for candidate in "$tree/tree"/Kova-*/desktop; do
-                    if [ -f "$candidate/package.json" ]; then desktop_src=$candidate; break; fi
-                done
+        if [ -x "$UV_TOOL_BIN_DIR/kova" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
+            'from kova.app import refresh_desktop' 2>/dev/null; then
+            "$UV_TOOL_BIN_DIR/kova" app --prepare ||
+                { skip_desktop 'Preparing the desktop app failed.'; return; }
+            desktop_src=$dest
+        else
+            # Compatibility with refs that predate packaged desktop assets.
+            desktop_src=''
+            if [ -n "${KOVA_SOURCE-}" ] && [ -f "$KOVA_SOURCE/src/kova/desktop/package.json" ]; then
+                desktop_src=$KOVA_SOURCE/src/kova/desktop
+            elif [ -n "$here" ] && [ -f "$here/src/kova/desktop/package.json" ]; then
+                desktop_src=$here/src/kova/desktop
+            elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 &&
+                 command -v mktemp >/dev/null 2>&1; then
+                tree=$(mktemp -d "${TMPDIR:-/tmp}/kova-desktop.XXXXXX")
+                trap 'rm -rf -- "$tree"' 0
+                url="https://github.com/wynxo/Kova/archive/$ref.tar.gz"
+                say "Downloading the desktop app from $url ..."
+                if curl -fsSL "$url" -o "$tree/kova.tar.gz" && mkdir -p "$tree/tree" &&
+                   tar -xzf "$tree/kova.tar.gz" -C "$tree/tree"; then
+                    for candidate in "$tree/tree"/Kova-*/desktop; do
+                        if [ -f "$candidate/package.json" ]; then desktop_src=$candidate; break; fi
+                    done
+                fi
             fi
         fi
         if [ -n "$desktop_src" ]; then
-            mkdir -p "$dest"
-            for item in "$desktop_src"/*; do
-                [ -e "$item" ] || continue
-                name=$(basename -- "$item")
-                # Install dependencies here, never copy checkout build artifacts.
-                case $name in node_modules|dist) continue ;; esac
-                rm -rf -- "${dest:?}/${name:?}"
-                cp -R -- "$item" "$dest/$name"
-            done
-            say 'Preparing Electron (this may take a few minutes) ...'
-            (cd -- "$dest" && npm ci --include=dev) ||
-                { skip_desktop 'Preparing the desktop app (npm ci) failed. Check your connection and rerun this installer.'; return; }
+            if [ "$desktop_src" != "$dest" ]; then
+                mkdir -p "$dest"
+                for item in "$desktop_src"/*; do
+                    [ -e "$item" ] || continue
+                    name=$(basename -- "$item")
+                    # Install dependencies here, never copy checkout build artifacts.
+                    case $name in node_modules|dist) continue ;; esac
+                    rm -rf -- "${dest:?}/${name:?}"
+                    cp -R -- "$item" "$dest/$name"
+                done
+                say 'Preparing Electron (this may take a few minutes) ...'
+                (cd -- "$dest" && npm ci --include=dev) ||
+                    { skip_desktop 'Preparing the desktop app (npm ci) failed. Check your connection and rerun this installer.'; return; }
+            fi
             if [ "$(uname -s)" = Darwin ]; then
                 electron="$dest/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
             else
@@ -192,7 +202,7 @@ PLIST
         if [ -x "$lsregister" ]; then "$lsregister" -f "$HOME/Applications/Kova.app" || :; fi
         say 'Registered Kova in Applications and Spotlight.'
         ;;
-        *) say 'Note: this platform has no app-menu integration; use kova-app or kova-web.'; register_desktop=0 ;;
+        *) say 'Note: this platform has no app-menu integration; use kova app or kova web.'; register_desktop=0 ;;
         esac
     fi
     if [ "$register_desktop" -eq 1 ]; then
@@ -201,6 +211,6 @@ PLIST
         say 'Done (without the desktop app). Run: kova setup'
     fi
     say 'Terminal chat: kova setup, then kova'
-    say 'Desktop app: kova-app    Web UI in your browser: kova-web'
+    say 'Desktop app: kova app    Web UI in your browser: kova web'
 }
 main "$@"

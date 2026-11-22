@@ -33,8 +33,6 @@ attachments = ["pypdf>=5", "openpyxl>=3.1", "python-pptx>=1"]
 
 [project.scripts]
 kova = "kova.cli:app"
-kova-app = "kova.app:main"
-kova-web = "kova.app:web_main"
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]
@@ -47,6 +45,7 @@ testpaths = ["tests"]
 markers = [
     "live: needs a real model server (set KOVA_LIVE=1)",
     "visual: compares screenshots using optional Playwright Chromium",
+    "e2e: installs and exercises the real clients with a loopback model stub",
 ]
 
 [dependency-groups]
@@ -59,3 +58,4 @@ visual = ["playwright==1.64.1", "pillow>=13.0"]
 
 [tool.uv.build-backend]
 module-name = "kova"
+source-exclude = ["/src/kova/desktop/node_modules/**", "/src/kova/desktop/dist/**"]

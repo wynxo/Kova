@@ -36,80 +36,17 @@ benchmark. See the [capture notes](docs/screenshots/README.md).
 
 ## Install
 
-Linux / macOS (as your normal user, no sudo):
+- **Linux / macOS:** `curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh`
+- **Windows (PowerShell):** `powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/install.ps1 | iex"`
+- **Cloned the repo?** Run `./install` (Windows: `.\install.ps1 --dev`).
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh
-```
+Install as a normal user. Node.js 22+ with npm enables the desktop app and app-menu shortcut; use `--no-desktop` for a CLI-only install.
 
-Windows (PowerShell, not Administrator):
+**Launch:** Open **Kova** from your app menu, run `kova app`, or use `kova web` in your browser. For terminal chat, run `kova setup`, then `kova`. If the commands aren’t on your PATH, follow the installer’s PATH instructions.
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/install.ps1 | iex"
-```
+**Update:** `kova update` (preview with `kova update --check`). **Uninstall:** `kova uninstall` (use `--keep-data` to keep chats and settings).
 
-Then open **Kova** from your application menu / Super search (Linux), **Start**
-(Windows), or **Applications / Spotlight** (macOS). Choose **Settings → Models and
-providers → Connect** in the app to connect a model and start chatting. No terminal is needed to launch it.
-
-The installer sets up [uv](https://docs.astral.sh/uv/), Python 3.12, the Kova
-backend and Electron dependencies **during installation**, and registers the
-launcher automatically. Source installs need **Node.js 22+ including npm** from
-[nodejs.org](https://nodejs.org); if missing, the installer explains how to add
-it and rerun. Everything is per-user, without sudo or shell-profile changes.
-On Windows it also adds Kova to Settings → Apps. No clone needed; the Python
-distribution is **kova-ai**, installed from GitHub, not PyPI.
-
-### Download the desktop app
-
-Version-tagged builds are published to [GitHub Releases](https://github.com/wynxo/Kova/releases):
-**.deb / AppImage** for Linux, **Setup .exe** for Windows, **.dmg** for macOS
-(arm64 for Apple Silicon, x64 for Intel). Assets appear when a maintainer pushes
-a version tag; not every source revision has a download. These builds include
-Electron and **do not need Node/npm**, but **Python, the Kova backend and a model
-are not bundled**. Install the backend once with the CLI-only installer:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/install.sh | sh -s -- --no-desktop
-```
-
-Windows: download `install.ps1` from this repository and run
-`powershell -ExecutionPolicy Bypass -File .\install.ps1 --no-desktop`.
-The installer supplies uv and Python automatically. Then install the .deb or
-.exe, or open the .dmg and drag **Kova** to **Applications**, and launch Kova
-from the app menu. For AppImage, mark it executable in your file manager and
-double-click; choose .deb or the one-line installer for menu integration.
-Builds are currently unsigned / not notarized; Windows and macOS may show an
-unverified-publisher prompt. See [desktop build notes](desktop/README.md).
-
-For terminal users, `kova setup` and `kova` remain available. On Linux/macOS,
-follow the installer's printed PATH line if your shell cannot find `kova`;
-the menu launcher does not need that PATH change. `--no-desktop` skips desktop
-files, dependencies and registration for headless/CLI-only installations.
-
-Update: `kova update` (or rerun the installer). Check first: `kova update --check`. Pin a tag/commit with `kova update --ref v0.2.0`, or `KOVA_REF=v0.2.0` for the installer (`$env:KOVA_REF='v0.2.0'` on Windows). Tags shown here are examples, not published releases.
-
-Uninstall: `kova uninstall` (asks before deleting data), `kova uninstall --keep-data`, or `kova uninstall --purge`. Without the command:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.sh | sh
-```
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/wynxo/Kova/main/uninstall.ps1 | iex"
-```
-
-Piped/noninteractive uninstalls keep data by default; to purge, use `sh -s -- --purge` on the shell pipeline, or download `uninstall.ps1` and run it with `--purge` on Windows. uv and external memory folders/files are kept.
-
-## Update, reinstall, uninstall
-
-| Do this | Installed command | From a checkout |
-| --- | --- | --- |
-| Update | `kova update` | `./update` (`update.bat`) pulls, refreshes dependencies, and reinstalls the installed command from the checkout |
-| Reinstall | | `./reinstall` (`reinstall.bat`) removes the installed command and installs again from the checkout; chats, memory, and settings are kept |
-| Uninstall | `kova uninstall` | `./uninstall` (`uninstall.bat`); add `--keep-data` or `--purge` |
-
-`./install` (`install.bat`) installs the `kova`, `kova-app` and `kova-web` commands from the checkout.
+For standalone desktop installers, see [GitHub Releases](https://github.com/wynxo/Kova/releases) and the [desktop setup notes](src/kova/desktop/README.md).
 
 ## Features
 
@@ -132,8 +69,8 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 
 Open **Kova** from the app menu to use the Electron window over the same local
 server as the CLI. The installer prepares Electron before adding the launcher,
-so the first click does not run npm. `kova-app` remains a terminal shortcut;
-`kova-web` opens the same chats in your browser. No chats, settings, provider
+so the first click does not run npm. `kova app` remains a terminal shortcut;
+`kova web` opens the same chats in your browser. No chats, settings, provider
 credentials or models are duplicated between clients.
 
 The one-line installers stage the shell in `~/.kova/desktop` (or `KOVA_HOME`).
@@ -147,7 +84,7 @@ exchanges it for a one-use ticket; its caches and remembered window bounds live
 under `KOVA_HOME`. The page may request the **Notification** permission for OS
 notifications; every other permission request is denied. Closing the window hides
 it to the tray. Packaged builds (AppImage/deb, NSIS, DMG) are published by the version-tag workflow in
-[desktop/README.md](desktop/README.md); they are built per platform and need the
+[desktop/README.md](src/kova/desktop/README.md); they are built per platform and need the
 Kova Python CLI installed separately.
 
 The responsive UI has streaming Markdown, code highlighting, collapsible thinking,
@@ -191,7 +128,7 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 
 | Connection | What it does |
 | --- | --- |
-| **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
+| **API key** | OpenAI, Anthropic, Google Gemini, OpenRouter, OpenCode (or OpenCode Go), DeepSeek, Groq, Mistral or xAI. Setup links to the provider's key page and asks for a hidden key. Keys are checked with model listing; OpenRouter also needs a read-only key-info check because its catalog is public. |
 | **ChatGPT subscription** | Continue with ChatGPT in your browser using OAuth with PKCE. Kova verifies the account token, obtains your explicit ChatGPT-plan permission, and uses the public Responses endpoint. Availability and limits depend on your account and the sign-in preview. This is separate from an OpenAI API key. |
 | **Installed Codex login** | With your consent, read this machine's `~/.codex/auth.json` on each request. Kova never copies, changes, refreshes or revokes that login. If it expires, sign in again in the installed CLI. Only ChatGPT-token logins are supported, not API-key-only logins. |
 | **Local server** | Type an address such as `homelab:8080`, `192.168.1.20:11434` or `http://localhost:1234/v1`. Only that address is contacted. Loose hostnames can try common ports on that named host; there is no discovery scan. |
@@ -199,7 +136,11 @@ existing ones. Memory keeps its current location; `kova memory use` changes it.
 
 The desktop app's **Settings → Models and providers** has provider setup with key/custom/local options, browser
 sign-in and consented installed-login reuse. Its model menu groups choices by
-provider. Terminal chat's `/model` picker has the same groups and type-to-filter.
+provider, keeps every connection visible, and offers **Add provider** and
+**Manage providers** from the same list; Settings lists each connection and can
+add more of its models later without asking for the key again. Terminal chat's
+`/model` picker has the same groups and type-to-filter;
+`/provider` is an alias for it.
 
 ```sh
 kova providers                     # connected providers, never credentials
@@ -209,6 +150,7 @@ kova providers login CONNECTION    # sign in again / replace a key
 kova providers logout CONNECTION   # forget credentials; keep selected models
 kova providers remove CONNECTION   # remove connection and its selected models
 kova model list                    # selected models, grouped by provider
+kova model use                     # pick a provider and model
 kova model use CONNECTION/MODEL_ID
 ```
 
@@ -310,7 +252,8 @@ Models:
 
 - `kova model list` — selected models grouped by provider
 - `kova model add NAME URL MODEL [--key KEY]` — add one
-- `kova model use NAME` — set the active one
+- `kova model use` — pick one from every connected provider and its models
+- `kova model use CONNECTION/MODEL_ID` — set the active one without a prompt
 
 Reminders:
 
@@ -364,7 +307,7 @@ $ kova doctor
 ✓ Memory directory is writable (or can be created).
 ✓ Port is owned by this KOVA_HOME.
 ✓ landlock abi 6
-✓ Node.js 22.11.0 and npm found for kova-app.
+✓ Node.js 22.11.0 and npm found for kova app.
 ✓ Token file permissions are 0600.
 ✓ 32.0 GB free in KOVA_HOME.
 ✓ Config schema version 2; no unknown keys.
@@ -385,8 +328,8 @@ What each line means:
   different Kova on the same port would reject this home's requests.
 - **Sandbox** — Linux Landlock is available, shown as its ABI version. Without
   it, every `run_command` asks for approval, even in Auto mode.
-- **Node** — Node.js 22+ and npm are present for `kova-app`. If they are
-  missing, `kova-app` opens the web UI instead, which is not a failure.
+- **Node** — Node.js 22+ and npm are present for `kova app`. If they are
+  missing, `kova app` opens the web UI instead, which is not a failure.
 - **Token** — the local API token is readable only by you (mode 0600).
 - **Disk** — `KOVA_HOME` has at least 100 MB free for chats, notes and logs.
 - **Schema** — the config schema is current and has no keys this version
@@ -545,7 +488,7 @@ By default the server only listens on `127.0.0.1`, so nothing outside your machi
 
 ## Development
 
-From a checkout, `./cli` starts chat and `./cli status` checks the server (`cli.bat` on Windows). For an editable `kova` command, use `./install.sh --dev` (`install.bat --dev` on Windows), or `uv tool install --force --editable .`. The import package stays `kova`; the distribution is `kova-ai`.
+From a checkout, `uv run kova` starts chat and `uv run kova status` checks the server. For an editable install, run `./install` (Windows: `.\install.ps1 --dev`). The import package stays `kova`; the distribution is `kova-ai`.
 
 Installer smoke tests can set `KOVA_SOURCE=/absolute/path/to/checkout` to avoid fetching GitHub. Use a disposable HOME and unset KOVA_HOME so no real install/data is touched.
 
@@ -565,9 +508,9 @@ Built for GenHacks 2026. Every AI tool and model used to build Kova is listed in
 
 ### Electron desktop app
 
-Developer-only: `./desktop-app` (`desktop-app.bat` on Windows) runs the checkout
+Developer-only: `uv run kova app` runs the checkout
 through uv. It needs Node.js 22+/npm and can run `npm ci` on first use; this is
-not the normal user's launcher. `./desktop-app --browser` opens the web UI.
+not the normal user's launcher. `uv run kova app --browser` opens the web UI.
 For build commands and the version-tagged release workflow, see
-[desktop/README.md](desktop/README.md). Packaged shells still use the same
+[desktop/README.md](src/kova/desktop/README.md). Packaged shells still use the same
 separately installed Python backend.

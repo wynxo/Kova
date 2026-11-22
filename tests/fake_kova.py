@@ -258,7 +258,7 @@ class Terminal:
     """``kova`` running in a pseudo-terminal, read through a VT100 screen."""
 
     def __init__(self, home: Path, cwd: Path, *args: str, columns: int = 100, rows: int = 40,
-                 env: dict | None = None):
+                 env: dict | None = None, executable: Path | None = None):
         import codecs
         import fcntl
         import pty
@@ -275,12 +275,16 @@ class Terminal:
                            COLUMNS=str(columns), LINES=str(rows), PYTHONPATH=os.pathsep.join(
                                [str(Path(__file__).resolve().parents[1] / "src"),
                                 environment.get("PYTHONPATH", "")]))
+        if executable is not None:
+            # Installed-client tests supply their entire disposable environment.
+            environment = {"TERM": "xterm-256color", "COLUMNS": str(columns), "LINES": str(rows)}
         environment.update(env or {})
         # A pty pair and Popen rather than pty.fork(): this process runs the
         # fake server's threads, and forking a threaded process is unsafe.
         self.fd, child = pty.openpty()
         fcntl.ioctl(child, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-        self.process = subprocess.Popen([sys.executable, "-m", "kova", *args], cwd=cwd,
+        command = [str(executable)] if executable else [sys.executable, "-m", "kova"]
+        self.process = subprocess.Popen([*command, *args], cwd=cwd,
                                         env=environment, stdin=child, stdout=child, stderr=child,
                                         start_new_session=True)
         os.close(child)

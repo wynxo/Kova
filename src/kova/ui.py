@@ -28,7 +28,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from kova import compare_cli, theme
+from kova import compare_cli, model_picker, theme
 from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
@@ -436,6 +436,48 @@ def _models(client: KovaClient, console: Console) -> None:
     console.print()
 
 
+def _switch_model(client: KovaClient, console: Console, state: dict, args: str) -> None:
+    """``/model`` and ``/provider``: the same picker the CLI uses, then save it.
+
+    The choice is a server call, so it applies to this chat and to every chat
+    opened afterwards, exactly like ``kova model use``.
+    """
+    rows = model_picker.choices(client.models_list())
+    active = state.get("model") or ""
+    if not rows:
+        console.print("No models configured. Run kova providers add to connect one.",
+                      style=colour('MUTED'))
+        return
+    wanted = " ".join(args.split())
+    if wanted:
+        chosen = model_picker.resolve(rows, wanted)
+        if chosen is None:
+            console.print(f'No model named "{wanted}". Type /model to see them.',
+                          style=colour('ERROR'))
+            return
+    else:
+        from kova.tui import prompts
+
+        try:
+            chosen = model_picker.pick(rows, active=active)
+        except prompts.Unavailable:
+            _models(client, console)
+            console.print("Type /model <provider>/<model> to switch.", style=colour('MUTED'))
+            return
+        if chosen is None:
+            console.print("Nothing changed.", style=colour('MUTED'))
+            return
+    try:
+        client.model_use(chosen.name)
+    except KovaError as exc:
+        console.print(f"Could not switch: {exc.message}", style=colour('ERROR'))
+        return
+    state["model"] = chosen.name
+    console.print(Text(f"Now using {chosen.shown} on {chosen.provider}. "
+                       "This and every new chat use it.", style=colour('MUTED')))
+    console.print()
+
+
 def _compare(client: KovaClient, console: Console, ensure_chat, active: str, rest: str,
              *, interactive: bool) -> None:
     """``/compare``: ask several models at once, print each answer, offer to keep one."""
@@ -773,19 +815,8 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                                   style=colour('MUTED'))
                 else:
                     console.print("Use /web on or /web off.", style=colour('ERROR'))
-            elif command == "/model":
-                if not args:
-                    _models(client, console)
-                else:
-                    try:
-                        client.model_use(args[0])
-                        toolbar_state["model"] = args[0]
-                        console.print(Text(f"Now using {args[0]}.", style=colour('MUTED')))
-                    except KovaError as exc:
-                        if exc.status != 404:
-                            raise
-                        console.print(Text(f'No model named "{args[0]}". Type /model to see them.',
-                                           style=colour('ERROR')))
+            elif command in ("/model", "/provider"):
+                _switch_model(client, console, toolbar_state, args[0] if args else "")
             elif command == "/permissions":
                 if not args:
                     current_level = pending["permission"]

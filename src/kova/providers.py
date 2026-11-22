@@ -82,6 +82,10 @@ CATALOG = (
     ProviderSpec('groq', 'Groq', 'https://api.groq.com/openai/v1', 'https://console.groq.com/keys'),
     ProviderSpec('mistral', 'Mistral', 'https://api.mistral.ai/v1', 'https://console.mistral.ai/api-keys'),
     ProviderSpec('xai', 'xAI', 'https://api.x.ai/v1', 'https://console.x.ai'),
+    # OpenCode serves every model behind one OpenAI-compatible gateway; the two
+    # plans use different base URLs, so each is its own catalog entry.
+    ProviderSpec('opencode', 'OpenCode', 'https://opencode.ai/inference/openai/v1', 'https://opencode.ai/console'),
+    ProviderSpec('opencode-go', 'OpenCode Go', 'https://opencode.ai/inference/go/openai/v1', 'https://opencode.ai/console'),
     ProviderSpec('chatgpt', 'ChatGPT subscription', 'https://api.openai.com/v1', adapter='responses', auth_style='oauth',
                  capabilities=frozenset({'browser_login', 'reasoning'})),
     ProviderSpec('codex', 'Installed Codex login', 'https://chatgpt.com/backend-api/codex', adapter='responses', auth_style='harness',
@@ -243,6 +247,47 @@ def install_provider(cfg: Config, provider: ProviderEntry, selected: list[str], 
         cfg.models.append(ModelEntry(name, provider.base_url, model, provider=provider.id, context=context))
     cfg.active = f'{provider.id}/{active or selected[0]}'
     save_config(cfg)
+
+
+def add_models(cfg: Config, identifier: str, selected: list[str], active: str | None = None,
+               *, context: int = 131072) -> list[str]:
+    """Add more models from a provider that is already connected.
+
+    The connection keeps its key, headers and sign-in, so choosing a second
+    model never asks for the credentials again. Existing entries are kept as
+    they are; ``active`` (a model id from the same provider) makes one the
+    default. Returns the model names that were new.
+    """
+    provider = next((p for p in cfg.providers if p.id == identifier), None)
+    if provider is None:
+        raise ProviderError('No provider with that name.')
+    chosen = [m.strip() for m in selected if isinstance(m, str) and m.strip()]
+    if not chosen:
+        raise ProviderError('Choose at least one model.')
+    cfg.bind_providers()
+    wanted = None
+    if active:
+        wanted = active if active.startswith(f'{provider.id}/') else f'{provider.id}/{active}'
+        known = {f'{provider.id}/{m}' for m in chosen}
+        known |= {m.name for m in cfg.models if m.provider == provider.id}
+        if wanted not in known:
+            raise ProviderError('Choose the active model from this provider catalog.')
+    added: list[str] = []
+    for model in dict.fromkeys(chosen):
+        name = f'{provider.id}/{model}'
+        current = next((m for m in cfg.models if m.name == name), None)
+        if current is not None:
+            if current.provider != provider.id:
+                raise ProviderError(f'A model named {name} already exists. Choose another model.')
+            continue
+        cfg.models.append(ModelEntry(name, provider.base_url, model, provider=provider.id, context=context))
+        added.append(name)
+    # Discard an empty first-run placeholder, never configured entries.
+    cfg.models[:] = [m for m in cfg.models if m.model]
+    if wanted:
+        cfg.active = wanted
+    save_config(cfg)
+    return added
 
 
 def remove_provider(cfg: Config, identifier: str) -> None:

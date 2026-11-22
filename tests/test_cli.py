@@ -829,3 +829,14 @@ def test_projects_commands(runner, tmp_path):
     assert run("rm", project_id, "--yes").exit_code == 0
     missing = run("show", project_id)
     assert missing.exit_code == 1 and "No project" in missing.output
+
+
+@pytest.mark.parametrize(("command", "description"), [
+    ("app", "Open the Kova desktop app."),
+    ("web", "Open Kova's web UI in your default browser."),
+])
+def test_launcher_help(command, description):
+    result = CliRunner().invoke(cli.app, [command, "--help"], prog_name="kova")
+    assert result.exit_code == 0, result.output
+    assert f"kova {command}" in result.output
+    assert description in result.output
