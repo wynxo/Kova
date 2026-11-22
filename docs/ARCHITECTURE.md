@@ -389,7 +389,9 @@ writes need `memory:write`. The matrix is in
 A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`, `restart`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
+`chats`, `bots`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart`
+hold their subcommands; `kova chat` (the hidden back-compat alias of plain `kova`) is the
+one place a chat is opened as a bot, with `--bot <handle>`. Use `uv run kova` from a checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
 the exception: it reads and writes `config.toml` directly, validates every value
@@ -411,7 +413,9 @@ they stay out of the CLI's chat lists.
 ### Terminal chat (`src/kova/ui.py`)
 
 `_run_chat` is the interactive loop behind plain `kova`. It picks the latest
-chat (or a new one), prints the header, and uses `prompt_toolkit` for input,
+chat of the same speaker (or a new one): with `--bot` that means the latest chat
+with that bot, and plain `kova` only resumes chats with the default assistant,
+so bots never change it. It prints the header, and uses `prompt_toolkit` for input,
 history and Tab completion (`_CommandCompleter`). Slash commands are listed in
 `_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model`, its `/provider`
 alias and `/new` call the same API the desktop app does.
@@ -675,6 +679,25 @@ default assistant. Read routes need only a chat-capable session; writes need
 `settings:write` from a phone, and a definition that would grant commands, jobs,
 MCP tools, a `full` ceiling or a folder outside Kova Files needs `host:exec`
 (see [remote-access.md](remote-access.md#what-a-paired-phone-may-do)).
+
+`src/kova/bot_templates.py` holds four starter bots — Researcher, Coder, Writer
+and Buddy — as data: a name, one-line description, persona, tool allowlist,
+ceiling, memory budget and group defaults. `kova bots templates` lists them and
+`kova bots create --from <name>` writes one to disk. A starter names no model, so
+it uses the active one; each returns a fresh definition, so the CLI can change
+one before sending it. `tests/test_bot_templates.py` validates every starter with
+the same function the server runs and checks each literal tool name against the
+live registry.
+
+The CLI manages bots through the same routes: `kova bots list|show|create|edit|set|rm`
+and `templates`. `set` changes one value, named either by its short name (`model`,
+`permission`, `tools`, `folder`, `budget`, `persona`, …) or by its dotted path in
+`bot.toml` (`model.name`, `permissions.ceiling`); `create` and `edit` take the same
+fields as options. `kova chat --bot <handle>` opens that bot's latest direct chat
+and starts one on the first message; the full-screen terminal takes the same path
+(`ChatApp(bot_id=…)`). Plain `kova` resumes only chats with the default assistant,
+so adding a bot never changes what it opens, and `/incognito` is refused in a bot
+chat because incognito is conversation-only.
 
 ### Group settings and who answers
 

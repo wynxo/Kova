@@ -881,3 +881,258 @@ def test_launcher_help(command, description):
     assert result.exit_code == 0, result.output
     assert f"kova {command}" in result.output
     assert description in result.output
+
+
+# ---------------------------------------------------------------------- bots
+
+def _make_bot(client, name="Researcher", handle="researcher",
+              persona="You are the Researcher. Cite your sources.",
+              description="Finds sources and checks them.", **fields):
+    """A saved bot, as the CLI would create it."""
+    definition = {"schema": 1, "id": handle, "name": name, "handle": handle,
+                  "description": description, **fields}
+    return client.bot_create(definition, persona=persona)
+
+
+def test_bots_create_list_show_set_edit_and_rm(runner, tmp_path):
+    cli_runner, client, _, _ = runner
+
+    def run(*args, **kwargs):
+        return cli_runner.invoke(cli.app, ["bots", *args], **kwargs)
+
+    empty = run("list")
+    assert empty.exit_code == 0 and "No bots yet" in empty.output
+
+    persona = tmp_path / "researcher.md"
+    persona.write_text("You are the Researcher. Cite your sources.", encoding="utf-8")
+    created = run("create", "Researcher", "--handle", "researcher",
+                  "--description", "Finds sources and checks them.",
+                  "--persona-file", str(persona))
+    assert created.exit_code == 0, created.output
+    assert "@researcher" in created.output and "kova chat --bot researcher" in created.output
+    [bot] = client.bots_list()
+    assert bot["handle"] == "researcher" and bot["state"] == "ok"
+    assert bot["description"] == "Finds sources and checks them."
+
+    listed = run("list")
+    assert listed.exit_code == 0, listed.output
+    assert "@researcher" in listed.output and "Researcher" in listed.output
+    assert "Finds sources" in listed.output
+
+    as_json = run("list", "--json")
+    assert as_json.exit_code == 0
+    [listed_bot] = json.loads(as_json.stdout)
+    assert listed_bot["id"] == "researcher" and listed_bot["state"] == "ok"
+
+    shown = run("show", "@researcher")
+    assert shown.exit_code == 0, shown.output
+    assert "Cite your sources" in shown.output
+    assert "manual" in shown.output and "memory" in shown.output
+    assert run("show", "resea").exit_code == 0  # a unique part of the handle
+
+    stored = client.bot_get("researcher")
+    assert stored["persona"].startswith("You are the Researcher.")
+
+    model = run("set", "researcher", "model", "local")
+    assert model.exit_code == 0, model.output
+    assert client.bot_get("researcher")["definition"]["model"]["name"] == "local"
+
+    tools = run("set", "researcher", "permissions.tools", "web_*, read_file")
+    assert tools.exit_code == 0, tools.output
+    assert client.bot_get("researcher")["definition"]["permissions"]["tools"] == \
+        ["web_*", "read_file"]
+
+    role = run("set", "researcher", "persona", "You are a careful researcher.")
+    assert role.exit_code == 0, role.output
+    assert "careful researcher" in client.bot_get("researcher")["persona"]
+
+    budget = run("set", "researcher", "budget", "8000")
+    assert budget.exit_code == 0, budget.output
+    assert client.bot_get("researcher")["definition"]["memory"]["budget"] == 8000
+
+    edited = run("edit", "researcher", "--description", "Reads papers closely.",
+                 "--no-web", "--colour", "info")
+    assert edited.exit_code == 0, edited.output
+    definition = client.bot_get("researcher")["definition"]
+    assert definition["description"] == "Reads papers closely."
+    assert definition["model"]["web"] is False
+    assert definition["avatar"]["colour"] == "info"
+
+    cancelled = run("rm", "researcher", input="n\n")
+    assert cancelled.exit_code == 0 and "Cancelled" in cancelled.output
+    assert len(client.bots_list()) == 1
+
+    removed = run("rm", "researcher", "--yes")
+    assert removed.exit_code == 0, removed.output
+    assert "Removed" in removed.output
+    assert client.bots_list() == []
+
+
+def test_bots_create_from_a_starter_and_list_templates(runner):
+    cli_runner, client, _, _ = runner
+
+    def run(*args, **kwargs):
+        return cli_runner.invoke(cli.app, ["bots", *args], **kwargs)
+
+    templates = run("templates")
+    assert templates.exit_code == 0, templates.output
+    for handle in ("researcher", "coder", "writer", "buddy"):
+        assert f"@{handle}" in templates.output
+
+    created = run("create", "--from", "researcher")
+    assert created.exit_code == 0, created.output
+    assert "@researcher" in created.output
+    bot = client.bot_get("researcher")
+    assert bot["name"] == "Researcher"
+    assert "sources" in bot["persona"]  # the role prompt came with it
+    assert bot["definition"]["permissions"]["tools"]
+
+    # The same starter again gets a free handle rather than a conflict.
+    again = run("create", "--from", "research")  # a friendly alias
+    assert again.exit_code == 0, again.output
+    assert "@researcher-2" in again.output
+
+    renamed = run("create", "Pair Coder", "--from", "coder", "--handle", "pair")
+    assert renamed.exit_code == 0, renamed.output
+    pair = client.bot_get("pair")
+    assert pair["name"] == "Pair Coder"
+    assert pair["definition"]["permissions"]["ceiling"] == "auto"
+
+
+def test_bots_refusals_are_one_clear_line(runner, tmp_path):
+    cli_runner, client, _, _ = runner
+    _make_bot(client)
+
+    def run(*args, **kwargs):
+        return cli_runner.invoke(cli.app, ["bots", *args], **kwargs)
+
+    assert run("set", "researcher", "nonsense", "x").exit_code == 1
+    assert "Unknown bot field" in run("set", "researcher", "nonsense", "x").output
+    bad_number = run("set", "researcher", "budget", "many")
+    assert bad_number.exit_code == 1 and "whole number" in bad_number.output
+    bad_flag = run("set", "researcher", "web", "sometimes")
+    assert bad_flag.exit_code == 1 and "on or off" in bad_flag.output
+    missing = run("show", "nobody")
+    assert missing.exit_code == 1 and "No bot" in missing.output
+    no_starter = run("create", "--from", "wizard")
+    assert no_starter.exit_code == 1 and "No starter bot" in no_starter.output
+    reserved = run("create", "Kova", "--handle", "kova")
+    assert reserved.exit_code == 1 and "reserved" in reserved.output
+    duplicate = run("create", "Second", "--handle", "researcher")
+    assert duplicate.exit_code == 1 and "already used" in duplicate.output
+    nothing = run("edit", "researcher")
+    assert nothing.exit_code == 1 and "Nothing to change" in nothing.output
+
+    no_tools = run("create", "Blank", "--tools", "none")
+    assert no_tools.exit_code == 0, no_tools.output
+    assert client.bot_get("blank")["definition"]["permissions"]["tools"] == []
+
+    # The server still owns validation; its one line reaches the terminal.
+    server_says = run("set", "researcher", "permission", "whenever")
+    assert server_says.exit_code == 1 and "permissions.ceiling" in server_says.output
+
+
+def test_bots_broken_file_is_listed_and_can_be_removed(runner, tmp_path):
+    cli_runner, client, _, _ = runner
+    folder = tmp_path / "bots" / "broken"
+    folder.mkdir(parents=True)
+    (folder / "bot.toml").write_text('schema = 1\nid = "broken"\n', encoding="utf-8")
+
+    listed = cli_runner.invoke(cli.app, ["bots", "list"])
+    assert listed.exit_code == 0, listed.output
+    assert "@broken" in listed.output and "broken" in listed.output.lower()
+    assert "Name must be" in listed.output
+
+    shown = cli_runner.invoke(cli.app, ["bots", "show", "broken"])
+    assert shown.exit_code == 1 and "broken" in shown.output
+
+    removed = cli_runner.invoke(cli.app, ["bots", "rm", "broken", "--yes"])
+    assert removed.exit_code == 0, removed.output
+    assert not folder.exists()
+
+
+def test_chat_bot_starts_its_own_chat_and_uses_its_tools(runner):
+    cli_runner, client, _, fake = runner
+    fake.scripts = [text("Hello from the bot!")] * 4
+    _make_bot(client, model={"name": "local"},
+              permissions={"tools": ["read_file", "list_files"]})
+
+    result = cli_runner.invoke(cli.app, ["chat", "--bot", "researcher", "--new"],
+                               input="hi\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "Hello from the bot!" in result.output
+    assert "@researcher" in result.output and "Finds sources" in result.output
+
+    bot_chats = [chat for chat in client.list_chats() if chat.get("kind") == "bot"]
+    assert len(bot_chats) == 1
+    assert bot_chats[0]["bot_id"] == "researcher"
+    assert bot_chats[0]["title"] == "Researcher"
+    # A bot only ever sees the tools its file allows.
+    assert sorted(_ask_tools(fake)) == ["list_files", "read_file"]
+    # Its persona is part of the prompt it answers with.
+    assert "Cite your sources" in fake.requests[0]["messages"][0]["content"]
+
+    # Running it again continues that bot's chat; it does not make another one.
+    resumed = cli_runner.invoke(cli.app, ["chat", "--bot", "@researcher"],
+                                input="/exit\n")
+    assert resumed.exit_code == 0, resumed.output
+    assert len([chat for chat in client.list_chats() if chat.get("kind") == "bot"]) == 1
+
+
+def test_plain_kova_still_resumes_plain_chats_only(runner):
+    cli_runner, client, _, fake = runner
+    fake.scripts = [text("Plain reply")] * 6
+    bot_id = _make_bot(client)["id"]
+    bot_chat = client.create_chat(title="Researcher", bot_id=bot_id)["id"]
+    plain = client.create_chat("Everyday")["id"]
+    list(client.stream_message(plain, "plain question"))
+    list(client.stream_message(bot_chat, "bot question"))
+
+    result = cli_runner.invoke(cli.app, [], input="another question\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "Plain reply" in result.output
+    plain_users = [message["content"] for message in client.get_chat(plain)["messages"]
+                   if message["role"] == "user"]
+    bot_users = [message["content"] for message in client.get_chat(bot_chat)["messages"]
+                 if message["role"] == "user"]
+    assert plain_users == ["plain question", "another question"]
+    assert bot_users == ["bot question"]
+
+
+def test_chat_bot_refusals(runner):
+    cli_runner, client, _, _ = runner
+    bot_id = _make_bot(client)["id"]
+    _make_bot(client, name="Coder", handle="coder")
+
+    unknown = cli_runner.invoke(cli.app, ["chat", "--bot", "nobody", "--new"], input="/exit\n")
+    assert unknown.exit_code == 1 and "No bot" in unknown.output
+
+    ambiguous = cli_runner.invoke(cli.app, ["chat", "--bot", "e", "--new"], input="/exit\n")
+    assert ambiguous.exit_code == 1 and "more than one bot" in ambiguous.output
+
+    incognito = cli_runner.invoke(cli.app, ["chat", "--bot", "researcher", "--incognito"])
+    assert incognito.exit_code == 1 and "Incognito" in incognito.output
+
+    plain = client.create_chat("Not a bot chat")["id"]
+    wrong = cli_runner.invoke(cli.app, ["chat", "--bot", "researcher", "--chat", plain],
+                              input="/exit\n")
+    assert wrong.exit_code == 1 and "not with" in wrong.output
+    assert client.get_chat(plain)["messages"] == []
+
+    refused = cli_runner.invoke(cli.app, ["chat", "--bot", "researcher", "--new"],
+                                input="/incognito\n/exit\n")
+    assert refused.exit_code == 0, refused.output
+    assert "cannot be used with a bot" in refused.output
+    assert [chat for chat in client.list_chats() if chat.get("kind") == "bot"] == []
+
+
+def test_chats_show_names_the_bot_who_answered(runner):
+    cli_runner, client, _, fake = runner
+    fake.scripts = [text("A cited answer")] * 3
+    bot_id = _make_bot(client)["id"]
+    chat_id = client.create_chat(title="Researcher", bot_id=bot_id)["id"]
+    list(client.stream_message(chat_id, "where from?"))
+
+    shown = cli_runner.invoke(cli.app, ["chats", "show", chat_id])
+    assert shown.exit_code == 0, shown.output
+    assert "Researcher" in shown.output and "A cited answer" in shown.output

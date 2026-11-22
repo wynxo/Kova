@@ -553,10 +553,12 @@ class StubClient:
     def get_chat(self, _chat_id):
         return self.chat
 
-    def create_chat(self, title=None, mode=None, web=None, permission=None, cwd=None):
+    def create_chat(self, title=None, mode=None, web=None, permission=None, cwd=None,
+                    bot_id=None):
         chat = {"id": f"c{len(self.created) + 2}", "title": title or "",
                 "mode": mode or "work", "web": True if web is None else web,
                 "permission": permission or "manual", "cwd": cwd or os.getcwd(),
+                "kind": "bot" if bot_id else "chat", "bot_id": bot_id,
                 "messages": []}
         self.created.append(chat)
         self.chat = chat
