@@ -202,7 +202,6 @@ app = typer.Typer(
 def desktop_app(
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
     prepare: bool = typer.Option(False, "--prepare", hidden=True),
-    check_server: bool = typer.Option(False, "--check-server", hidden=True),
 ) -> None:
     """Open the Kova desktop app."""
     from .app import launch_desktop
@@ -210,11 +209,6 @@ def desktop_app(
 
     if prepare:
         app_main(["--prepare"])
-        return
-    if check_server:
-        from .update_runtime import restart_stale_server
-        if restart_stale_server():
-            _ok("Restarted the server on the installed build.")
         return
     if browser:
         web_app()
@@ -679,6 +673,15 @@ def restart():
     except (lifecycle.LifecycleError, lifecycle.psutil.Error, KovaError, OSError) as exc:
         _fail(str(exc))
     _ok("Server is healthy on the installed build.")
+
+
+@app.command("app-reconcile", hidden=True)
+def app_reconcile() -> None:
+    """Let the desktop shell reconcile an idle server before connecting."""
+    from kova.update_runtime import restart_stale_server
+
+    if restart_stale_server():
+        _ok("Restarted the server on the installed build.")
 
 
 @app.command()

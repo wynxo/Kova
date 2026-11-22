@@ -99,6 +99,35 @@ def _install(uv, source, target, launcher, env, verbose) -> build.Build:
             shutil.rmtree(backup, ignore_errors=True)
 
 
+def stage_desktop(home: Path) -> None:
+    """Build and download Electron in a separate directory before swapping it in."""
+    home.mkdir(parents=True, exist_ok=True)
+    project = home / "desktop"
+    with FileLock(home / ".desktop-install.lock", timeout=300):
+        staging = Path(tempfile.mkdtemp(dir=home, prefix=".desktop-update-"))
+        previous = staging / "previous"
+        preserve = False
+        try:
+            candidate = refresh_desktop(staging)
+            if (project / "launch").is_file():
+                shutil.copy2(project / "launch", candidate / "launch")
+            if project.exists():
+                project.rename(previous)
+            try:
+                candidate.rename(project)
+            except BaseException:
+                if previous.exists():
+                    try:
+                        previous.rename(project)
+                    except OSError as exc:
+                        preserve = True
+                        raise DesktopError(f"Could not restore the old desktop; recovery files: {previous}") from exc
+                raise
+        finally:
+            if not preserve:
+                shutil.rmtree(staging, ignore_errors=True)
+
+
 def _migrate(home: Path) -> None:
     """Run the installed config/store migrations without starting a server."""
     path = home / "config.toml"
@@ -367,7 +396,7 @@ def main() -> None:
         if action == "migrate":
             _migrate(home)
         elif action == "stage":
-            refresh_desktop(home, fresh=True)
+            stage_desktop(home)
         elif action in ("register", "login"):
             refresh_desktop_integration(home, launcher, login=action == "login")
         elif action == "verify-desktop":

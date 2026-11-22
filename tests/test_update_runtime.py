@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from kova import build, desktop_integration as integration, server, update_runtime as runtime, updater
-from kova.app import DesktopError, refresh_desktop
+from kova.app import DesktopError
 from kova.config import load_config
 
 
@@ -30,11 +30,12 @@ def test_fresh_desktop_rolls_back_failed_npm_and_replaces_stale_tree(tmp_path, m
     (old / "launch").write_text("legacy launcher")
     (home / "desktop-data").mkdir()
     monkeypatch.setattr(app, "_bundled_desktop", lambda: source)
+    monkeypatch.setattr(app.shutil, "which", lambda name: f"/test/{name}")
     install = Mock(return_value=1)
     monkeypatch.setattr(app, "_run", install)
 
     with pytest.raises(DesktopError, match="npm ci failed"):
-        refresh_desktop(home, "/test/npm", fresh=True)
+        updater.stage_desktop(home)
     assert (old / "main.js").read_text() == "stale"
     assert (old / "launch").read_text() == "legacy launcher"
 
@@ -47,7 +48,7 @@ def test_fresh_desktop_rolls_back_failed_npm_and_replaces_stale_tree(tmp_path, m
         return 0
 
     install.side_effect = npm_ci
-    assert refresh_desktop(home, "/test/npm", fresh=True) == old
+    updater.stage_desktop(home)
     assert not (old / "main.js").exists()
     assert (old / "package.json").read_text() == "new manifest"
     assert app._electron_binary(old).read_text() == "new dependency"

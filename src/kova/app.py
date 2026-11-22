@@ -48,7 +48,7 @@ def desktop_dir(home: Path | None = None) -> Path | None:
     return next((path for path in candidates if (path / "package.json").is_file()), None)
 
 
-def refresh_desktop(home: Path, npm: str | None = None, *, fresh: bool = False) -> Path:
+def refresh_desktop(home: Path, npm: str | None = None) -> Path:
     """Update app files in place, retaining legacy launchers and profile files."""
     source = _bundled_desktop()
     project = home / DESKTOP_NAME
@@ -57,81 +57,48 @@ def refresh_desktop(home: Path, npm: str | None = None, *, fresh: bool = False) 
         raise DesktopError("The desktop app files are missing. Reinstall Kova or use kova web.")
     if npm is None:
         npm = shutil.which("npm")
-    home.mkdir(parents=True, exist_ok=True)
+    project.mkdir(parents=True, exist_ok=True)
     with FileLock(home / ".desktop-install.lock", timeout=300):
-        if fresh:
-            # Build in a sibling directory. A failed npm/binary download must
-            # leave the previous launcher, files and dependencies usable.
-            staging = Path(tempfile.mkdtemp(dir=home, prefix=".desktop-update-"))
-            candidate, previous = staging / "candidate", staging / "previous"
-            preserve = False
-            try:
-                candidate.mkdir()
-                _populate_desktop(source, candidate, npm)
-                if (project / "launch").is_file():
-                    shutil.copy2(project / "launch", candidate / "launch")
-                if project.exists():
-                    project.rename(previous)
+        pending = project / ".npm-ci-pending"
+        installed_lock = project / lockfile.name
+        if not installed_lock.is_file() or installed_lock.read_bytes() != lockfile.read_bytes():
+            pending.touch()
+        for entry in source.iterdir():
+            if entry.is_dir() and entry.name != "assets":
+                continue
+            files = entry.rglob("*") if entry.is_dir() else (entry,)
+            for file in files:
+                if not file.is_file():
+                    continue
+                target = project / file.relative_to(source)
+                content = file.read_bytes()
+                if target.is_file() and target.read_bytes() == content:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
+                    temporary = Path(temp.name)
+                    temp.write(content)
                 try:
-                    candidate.rename(project)
-                except BaseException:
-                    if previous.exists():
-                        try:
-                            previous.rename(project)
-                        except OSError as exc:
-                            preserve = True
-                            raise DesktopError(f"Could not restore the old desktop; recovery files: {previous}") from exc
-                    raise
-            finally:
-                if not preserve:
-                    shutil.rmtree(staging, ignore_errors=True)
-        else:
-            project.mkdir(exist_ok=True)
-            _populate_desktop(source, project, npm)
-    return project
-
-
-def _populate_desktop(source: Path, project: Path, npm: str | None) -> None:
-    lockfile = source / "package-lock.json"
-    pending = project / ".npm-ci-pending"
-    installed_lock = project / lockfile.name
-    if not installed_lock.is_file() or installed_lock.read_bytes() != lockfile.read_bytes():
-        pending.touch()
-    for entry in source.iterdir():
-        if entry.is_dir() and entry.name != "assets":
-            continue
-        files = entry.rglob("*") if entry.is_dir() else (entry,)
-        for file in files:
-            if not file.is_file():
-                continue
-            target = project / file.relative_to(source)
-            content = file.read_bytes()
-            if target.is_file() and target.read_bytes() == content:
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
-                temporary = Path(temp.name)
-                temp.write(content)
-            try:
-                temporary.replace(target)
-            finally:
-                temporary.unlink(missing_ok=True)
-    if pending.exists() or not _electron_installed(project):
-        if npm is None:
-            raise DesktopError("Install Node.js 22+ with npm and run kova app to finish updating Electron.")
-        pending.touch()
-        print("Kova: preparing Electron ...", flush=True)
-        if _run(npm_command(npm, "ci", "--include=dev"), project) != 0:
-            raise DesktopError("npm ci failed. Check your connection and run kova app again, or use kova web.")
-    # Electron 45 downloads its native binary on demand, not during npm ci.
-    # App-menu launchers call that binary directly, so fetch it now.
-    if not _electron_binary(project).is_file():
-        node = shutil.which("node")
-        if node is None or _run([node, "node_modules/electron/install.js"], project) != 0:
-            raise DesktopError("Electron could not be downloaded. Check your connection and run kova app again.")
+                    temporary.replace(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        if pending.exists() or not _electron_installed(project):
+            if npm is None:
+                raise DesktopError("Install Node.js 22+ with npm and run kova app to finish updating Electron.")
+            pending.touch()
+            print("Kova: preparing Electron ...", flush=True)
+            if _run(npm_command(npm, "ci", "--include=dev"), project) != 0:
+                raise DesktopError("npm ci failed. Check your connection and run kova app again, or use kova web.")
+        # Electron 45 downloads its native binary on demand, not during npm ci.
+        # App-menu launchers call that binary directly, so fetch it now.
         if not _electron_binary(project).is_file():
-            raise DesktopError("Electron is missing. Enable Electron downloads and run kova app again.")
-    pending.unlink(missing_ok=True)
+            node = shutil.which("node")
+            if node is None or _run([node, "node_modules/electron/install.js"], project) != 0:
+                raise DesktopError("Electron could not be downloaded. Check your connection and run kova app again.")
+            if not _electron_binary(project).is_file():
+                raise DesktopError("Electron is missing. Enable Electron downloads and run kova app again.")
+        pending.unlink(missing_ok=True)
+    return project
 
 
 def npm_command(npm: str, *args: str) -> list[str]:

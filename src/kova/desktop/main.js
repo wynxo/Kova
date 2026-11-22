@@ -299,7 +299,7 @@ async function start() {
     // A standalone package install may have left an older idle server alive.
     // Only the backend CLI can authenticate, identify and restart that process.
     const backend = serverCommand(path.resolve(__dirname, '../../..'), home);
-    const args = backend.args.slice(0, -1).concat('app', '--check-server');
+    const args = backend.args.slice(0, -1).concat('app-reconcile');
     await new Promise(resolve => execFile(backend.command, args, {
       cwd: backend.cwd, env: {...process.env, KOVA_HOME: home}, windowsHide: true, timeout: 25000,
     }, () => resolve()));
