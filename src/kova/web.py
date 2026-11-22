@@ -151,7 +151,11 @@ def install_web(app, require_bearer) -> None:
 
     @app.get("/app/sw.js", include_in_schema=False)
     async def worker():
-        return FileResponse(ASSETS / "sw.js", media_type="application/javascript")
+        # A worker at /app/sw.js may only claim /app/ by default, so registering
+        # it with scope "/app" (the page itself, and the manifest's scope) was
+        # refused by the browser and the app never gained its offline shell.
+        return FileResponse(ASSETS / "sw.js", media_type="application/javascript",
+                            headers={"Service-Worker-Allowed": "/app"})
 
     @app.get("/app/gallery", include_in_schema=False)
     async def gallery():
