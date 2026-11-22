@@ -70,8 +70,10 @@ functions). The tests are the gate.
 The optional `visual` group uses Python Playwright and Chromium, with no Node
 setup or running model. It captures the component gallery, token sheet and empty
 start screen at 390 px and 1280 px in Dark, Light and the installed Forest
-example theme. A throwaway `KOVA_HOME`, offline model stub and fresh browser
-contexts keep the captures separate from your chats and settings.
+example theme. It also captures the expanded reasoning and tool trace with
+keyboard focus at 390 px in Dark and Light. A throwaway `KOVA_HOME`, offline
+model stub and fresh browser contexts keep the captures separate from your
+chats and settings.
 
 The gallery's Markdown reference uses the real reply renderer. Fences can name
 a file with `language:path` or `language title="file name"`. Math accepts

@@ -140,6 +140,14 @@
      line per action, and the touch target the platform expects. */
   .compose-menu-item { min-height:var(--touch-target); border-radius:var(--radius-md); }
   .option { min-height:var(--touch-target); }
+  .reasoning > summary,
+  .tool-card-summary,
+  .tool-card-title,
+  .tool-card-all,
+  .approval-arguments summary,
+  .approval-actions .btn { min-block-size:var(--touch-target); }
+  .tool-card-title { align-items:center; }
+  .approval-arguments summary { align-content:center; }
   /* Rows that are the target for a field or box: the whole row is thumb size,
      the same as the buttons around it. */
   .search, .settings-search { height:auto; min-height:var(--touch-target); }

@@ -202,6 +202,9 @@
 
 @media (max-width:720px) {
   .message.assistant { --trace-gutter:var(--space-6); }
+  .message.assistant > .message-body > :is(.reasoning, .tool-card) {
+    --node-top:calc(var(--touch-target) / 2);
+  }
   .trace-legend { margin-top:var(--space-6); padding-left:var(--space-6); }
   .trace-legend li { grid-template-columns:minmax(0, 1fr); gap:0; }
   .trace-legend li::before { left:calc(var(--space-5) / 2 - var(--space-6) - var(--space-3) / 2); }

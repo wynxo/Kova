@@ -844,7 +844,7 @@ label:has(> input[type="checkbox"]) {
 .risk-badge::first-letter { text-transform:uppercase; }
 .risk-destructive { color:var(--status-danger); font-weight:620; }
 .approval-card pre { margin:0; max-height:220px; padding:var(--space-3) var(--space-4); overflow:auto; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-base); color:var(--fg-default); font:var(--type-size-body)/1.55 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
-.approval-arguments summary { color:var(--fg-muted); font-size:var(--type-size-label); cursor:pointer; }
+.approval-arguments summary { padding-block:var(--space-1); color:var(--fg-muted); font-size:var(--type-size-label); cursor:pointer; }
 .approval-arguments pre { margin-top:var(--space-2); }
 .approval-folder { display:flex; align-items:center; gap:var(--space-2); color:var(--fg-muted); font:var(--type-size-label) var(--mono); }
 .approval-folder .icon { width:var(--space-3); height:var(--space-3); }

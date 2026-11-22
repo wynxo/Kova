@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import socket
+from io import BytesIO
 from pathlib import Path
 from threading import Thread
 from time import monotonic, sleep
@@ -91,8 +92,33 @@ def kova(chromium, tmp_path_factory):
     def model_stub(request):
         if request.method == "GET":
             return httpx.Response(200, json={"data": [{"id": "demo-model"}]})
-        delta = json.dumps({"choices": [{"delta": {"content": DEMO_REPLY}}]})
-        return httpx.Response(200, text=f"data: {delta}\n\ndata: [DONE]\n\n",
+        body = json.loads(request.content)
+        if not body.get("stream"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "Example"}}]})
+        tools = {tool["function"]["name"] for tool in body.get("tools", [])}
+        has_result = any(message["role"] == "tool" for message in body["messages"])
+        if "job_add" in tools and not has_result and any(
+            message["role"] == "user" and message["content"] == "Review the sample job"
+            for message in body["messages"]
+        ):
+            call = {"name": "job_add", "arguments": json.dumps({
+                "text": "Example", "schedule": "every 1h", "command": "echo example",
+            })}
+            deltas = [{"tool_calls": [{"index": 0, "id": "call_demo", "function": call}]}]
+            finish = "tool_calls"
+        elif "reminder_list" in tools and not has_result:
+            call = {"name": "reminder_list", "arguments": "{}"}
+            deltas = [{"reasoning_content": "Check the reminders first."},
+                      {"tool_calls": [{"index": 0, "id": "call_demo", "function": call}]}]
+            finish = "tool_calls"
+        else:
+            deltas = [{"content": DEMO_REPLY}]
+            finish = "stop"
+        frames = [{"choices": [{"delta": delta}]} for delta in deltas]
+        frames.append({"choices": [{"delta": {}, "finish_reason": finish}]})
+        frames.append({"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 20}})
+        events = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+        return httpx.Response(200, text=events + "data: [DONE]\n\n",
                               headers={"content-type": "text/event-stream"})
 
     listener = socket.socket()
@@ -153,11 +179,14 @@ SCAN = r"""
     // An invisible hit area is a positioned pseudo-element of the target.
     const hit = name => {
       const pseudo = getComputedStyle(target, name);
-      if (pseudo.position !== 'absolute' && pseudo.position !== 'fixed') return 0;
-      return Math.max(parseFloat(pseudo.width) || 0, parseFloat(pseudo.height) || 0);
+      if (pseudo.content === 'none' || pseudo.pointerEvents === 'none' ||
+          !['absolute', 'fixed'].includes(pseudo.position)) return [0, 0];
+      return [parseFloat(pseudo.width) || 0, parseFloat(pseudo.height) || 0];
     };
-    const width = Math.max(rect.width, hit('::after'), hit('::before'));
-    const height = Math.max(rect.height, hit('::after'), hit('::before'));
+    const [beforeW, beforeH] = hit('::before');
+    const [afterW, afterH] = hit('::after');
+    const width = Math.max(rect.width, beforeW, afterW);
+    const height = Math.max(rect.height, beforeH, afterH);
     if (width < minimum || height < minimum) {
       small.push({
         tag: el.tagName.toLowerCase(),
@@ -205,8 +234,13 @@ def walk_surfaces(page, minimum):
     page.locator("#prompt").fill("Show the example")
     page.locator("#prompt").press("Enter")
     expect(page.locator("#messages .assistant .message-actions")).to_be_visible(timeout=10_000)
+    expect(page.locator(".message.assistant > .message-body > .reasoning")).to_be_visible()
+    expect(page.locator(".message.assistant > .message-body > .tool-card")).to_be_visible()
     page.wait_for_timeout(300)
     problems += scan(page, minimum, "reply")
+    page.locator(".tool-card-summary").click()
+    expect(page.locator(".tool-card-title").first).to_be_visible()
+    problems += scan(page, minimum, "expanded tool")
 
     page.locator("#chat-options").click()
     expect(page.locator("#chat-options-panel")).to_be_visible()
@@ -519,6 +553,135 @@ def test_keyboard_focus_on_measured_surfaces(chromium, kova, width, height, mini
                 f"{name}: F6 left the conversation on a phone"
     finally:
         context.close()
+
+
+def assert_visible_focus(locator):
+    from playwright.sync_api import expect
+
+    expect(locator).to_be_focused()
+    assert locator.evaluate("""el => {
+        const style = getComputedStyle(el);
+        return el.matches(':focus-visible') && style.outlineStyle !== 'none'
+            && parseFloat(style.outlineWidth) >= 2;
+    }"""), f"Missing focus ring on {locator}"
+
+
+def test_phone_drawer_focus_enters_wraps_and_returns(chromium, kova):
+    with chromium.new_context(viewport={"width": 390, "height": 844},
+                              reduced_motion="reduce", service_workers="block") as context:
+        page = context.new_page()
+        open_app(page, kova)
+        menu = page.locator("#menu")
+        close = page.locator("#sidebar-close")
+        settings = page.locator("#open-settings")
+        menu.press("Enter")
+        assert_visible_focus(close)
+        settings.focus()
+        page.keyboard.press("Tab")
+        assert_visible_focus(page.locator("#sidebar .brand"))
+        page.keyboard.press("Shift+Tab")
+        assert_visible_focus(settings)
+        page.keyboard.press("Escape")
+        assert_visible_focus(menu)
+
+
+@pytest.mark.parametrize("width,height,minimum,name", MINIMUMS, ids=[m[3] for m in MINIMUMS])
+def test_trace_disclosures_follow_reading_order_with_visible_focus(chromium, kova, width, height, minimum, name):
+    from playwright.sync_api import expect
+
+    with chromium.new_context(viewport={"width": width, "height": height},
+                              reduced_motion="reduce", service_workers="block") as context:
+        page = context.new_page()
+        open_app(page, kova)
+        prompt = page.locator("#prompt")
+        prompt.fill("Show the example")
+        prompt.press("Enter")
+        thinking = page.locator(".reasoning > summary")
+        tools = page.locator(".tool-card-summary")
+        result = page.locator(".tool-card-title").first
+        expect(tools).to_be_visible()
+        thinking.focus()
+        page.keyboard.press("Enter")
+        expect(page.locator(".reasoning-text")).to_be_visible()
+        assert_visible_focus(thinking)
+        page.keyboard.press("Tab")
+        assert_visible_focus(tools)
+        page.keyboard.press("Space")
+        page.keyboard.press("Tab")
+        assert_visible_focus(result)
+        page.keyboard.press("Shift+Tab")
+        assert_visible_focus(tools)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_phone_trace_snapshot(chromium, kova, theme):
+    from PIL import Image
+    from playwright.sync_api import expect
+    from test_snapshots import compare_snapshot
+
+    previous = kova.preferences()["theme"]
+    kova.set_preferences({"theme": theme})
+    try:
+        with chromium.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1,
+                                  locale="en-US", timezone_id="UTC", reduced_motion="reduce",
+                                  service_workers="block") as context:
+            page = context.new_page()
+            open_app(page, kova)
+            prompt = page.locator("#prompt")
+            prompt.fill("Show the example")
+            prompt.press("Enter")
+            answer = page.locator(".message.assistant .markdown")
+            expect(answer).to_contain_text("A short reply")
+            thinking = page.locator(".reasoning > summary")
+            tools = page.locator(".tool-card-summary")
+            thinking.press("Enter")
+            page.keyboard.press("Tab")
+            page.keyboard.press("Space")
+            assert_visible_focus(tools)
+            # Wall-clock timings are not part of the rendering contract.
+            page.locator("#messages").evaluate("""el => {
+                el.querySelector('.reasoning > summary').textContent = 'Thought for 1s';
+                el.querySelector('.tool-card-summary-text').textContent = 'Ran 1 tool · 0.0s';
+                el.querySelector('.tool-card-time').textContent = '0.0s';
+                document.querySelector('#scroll-area').scrollTop = 0;
+            }""")
+            screenshot = page.screenshot(animations="disabled", caret="hide")
+        with Image.open(BytesIO(screenshot)) as png:
+            image = png.convert("RGB")
+        image.info.clear()
+        compare_snapshot(image, f"trace-{theme}-390", max_changed=40)
+    finally:
+        kova.set_preferences({"theme": previous})
+
+
+@pytest.mark.parametrize("width,height,minimum,name", MINIMUMS, ids=[m[3] for m in MINIMUMS])
+def test_approval_trace_targets_and_keyboard_deny(chromium, kova, width, height, minimum, name):
+    from playwright.sync_api import expect
+
+    with chromium.new_context(viewport={"width": width, "height": height},
+                              reduced_motion="reduce", service_workers="block") as context:
+        page = context.new_page()
+        open_app(page, kova)
+        prompt = page.locator("#prompt")
+        prompt.fill("Review the sample job")
+        prompt.press("Enter")
+        card = page.get_by_role("group", name="Tool approval")
+        details = card.locator("summary")
+        deny = card.get_by_role("button", name="Deny", exact=True)
+        expect(deny).to_be_visible()
+        problems = scan(page, minimum, f"{name} approval")
+        assert not problems, "\n".join(problems)
+        details.focus()
+        page.keyboard.press("Enter")
+        assert_visible_focus(details)
+        page.keyboard.press("Tab")
+        expect(card.locator("input")).to_be_focused()
+        for label in ("Allow once", "Allow for session", "Always allow this", "Deny"):
+            page.keyboard.press("Tab")
+            assert_visible_focus(card.get_by_role("button", name=label, exact=True))
+        page.keyboard.press("Enter")
+        expect(card.locator(".approval-status")).to_have_text("Denied")
+        expect(prompt).to_be_focused()
 
 
 def test_splitter_drag_target_reaches_into_the_conversation(chromium, kova):
