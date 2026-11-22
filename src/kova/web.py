@@ -128,6 +128,10 @@ def install_web(app, require_bearer) -> None:
             response.headers["X-Frame-Options"] = "DENY"
         return response
 
+    @app.get("/", include_in_schema=False)
+    async def app_root():
+        return RedirectResponse("/app")
+
     @app.get("/app", include_in_schema=False)
     async def page():
         return FileResponse(ASSETS / "index.html")

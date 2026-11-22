@@ -154,6 +154,11 @@ def launch_desktop() -> int:
     env = dict(os.environ)
     # `npm start` must launch the real Electron binary, not Node.
     env.pop("ELECTRON_RUN_AS_NODE", None)
+    # Match the running launcher's installation, even when it was invoked by
+    # absolute path or another version of kova comes first on PATH.
+    cli = Path(sys.executable).with_name("kova.exe" if os.name == "nt" else "kova")
+    if cli.is_file():
+        env["KOVA_DESKTOP_CLI"] = str(cli)
     return _run(npm_command(npm, "start"), project, env=env)
 
 

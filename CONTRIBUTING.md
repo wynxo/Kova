@@ -271,15 +271,19 @@ by hand. Components use roles such as `--bg-base`, `--fg-muted` and
 Any OpenAI-compatible server works. The normal path is:
 
 ```sh
-uv run kova setup                                                # wizard
-uv run kova model add lab http://192.168.1.20:8080/v1 MODEL      # or by hand
-uv run kova model use lab
+uv run kova providers add                                  # pick a provider, paste its key
+uv run kova model use                                      # pick a provider and model
+uv run kova model use lab/model                            # or name one directly
 ```
 
-Add `--key KEY` if the server needs a bearer token. `base_url` is the prefix
-Kova appends `/chat/completions` and `/models` to, so it usually ends in `/v1`.
+`kova model use` with no argument lists every connected provider and its
+models in one picker (arrow keys or a number) and saves the choice; a name
+works too, as a saved entry, `<provider>/<model>`, or a model id. Adding a
+server by hand still works: `uv run kova model add lab http://192.168.1.20:8080/v1 MODEL`
+(plus `--key` when it needs a bearer token). `base_url` is the prefix Kova
+appends `/chat/completions` and `/models` to, so it usually ends in `/v1`.
 `uv run kova model list` shows what is configured and which entry is active; inside a
-chat, `/model` lists and switches them.
+chat, `/model` or `/provider` opens the same picker.
 
 The same entries live in `~/.kova/config.toml`:
 

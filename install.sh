@@ -86,9 +86,9 @@ main() {
         # Prepare Electron from the installed revision before registering the launcher.
         data=${KOVA_HOME:-$HOME/.kova}
         dest=$data/desktop
-        if [ -x "$UV_TOOL_BIN_DIR/kova-app" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
+        if [ -x "$UV_TOOL_BIN_DIR/kova" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
             'from kova.app import refresh_desktop' 2>/dev/null; then
-            "$UV_TOOL_BIN_DIR/kova-app" --prepare ||
+            "$UV_TOOL_BIN_DIR/kova" app --prepare ||
                 { skip_desktop 'Preparing the desktop app failed.'; return; }
             desktop_src=$dest
         else

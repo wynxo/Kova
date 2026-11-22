@@ -88,6 +88,7 @@ same commit as the route.
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | public | version, active model name, whether the model answers |
+| `GET /` | public | Redirect to the web UI at `/app`. |
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
@@ -293,7 +294,10 @@ client draws the group with `web_assets/agent-tree.js`, with a Stop button (and
 Delete on the row) for each call still waiting or running; the terminal shows the
 calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
 action, and a quoted excerpt of each finished tool's output or error when its row
-is expanded. Reloaded transcripts still show ordinary tool cards.
+is expanded. When the turn ends, the calls that succeeded fold into one `Done · N`
+row that quotes each call's one-line result; a failed, stopped or interrupted call
+keeps its own row and reason under the header's failed count. Reloaded transcripts
+still show ordinary tool cards.
 
 Parallel reads are calls in the parent model step, not child model tasks.
 In work mode, consecutive independent `delegate_analysis` calls can run
@@ -373,6 +377,12 @@ against a small schema, and never starts the server. `config show` redacts
 provider keys, custom headers and OAuth data; [CONFIG.md](CONFIG.md) documents
 every field.
 
+`kova model use` is the one place that switches the active provider and model.
+With a name it resolves a saved entry, `provider/model` or a model id; with no
+argument it opens the picker in `src/kova/model_picker.py`, which the terminal
+chat's `/model` (alias `/provider`) also uses. Both ask the server to save the
+choice, so it applies to the open chat and every later one.
+
 `kova ask` streams a turn without the interactive UI, prints the answer to
 stdout, and can emit `--json`. Its chats are titled with the
 `ASK_TITLE_PREFIX` (`[ask] `), which `KovaClient.list_chats` filters out so
@@ -383,8 +393,8 @@ they stay out of the CLI's chat lists.
 `_run_chat` is the interactive loop behind plain `kova`. It picks the latest
 chat (or a new one), prints the header, and uses `prompt_toolkit` for input,
 history and Tab completion (`_CommandCompleter`). Slash commands are listed in
-`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model` and `/new` call
-the same API the desktop app does.
+`_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model`, its `/provider`
+alias and `/new` call the same API the desktop app does.
 
 `_render_turn` consumes the SSE stream and repaints at most ten times a second
 with Rich `Live`. When the reply ends, the whole turn is printed to normal
