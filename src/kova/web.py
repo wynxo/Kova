@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -163,8 +164,10 @@ def install_web(app, require_bearer) -> None:
                     digest.update(hashlib.sha256(path.read_bytes()).digest())
             fingerprint = digest.hexdigest()
         script = (ASSETS / "sw.js").read_text(encoding="utf-8")
-        return Response(script.replace("kova-shell-v29", f"kova-shell-{fingerprint[:24]}", 1),
-                        media_type="application/javascript")
+        script = re.sub(r"kova-shell-v\d+", f"kova-shell-{fingerprint[:24]}", script, count=1)
+        # The app is served at /app, not under the worker's default /app/ scope.
+        return Response(script, media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/app"})
 
     @app.get("/app/gallery", include_in_schema=False)
     async def gallery():

@@ -46,11 +46,15 @@ def test_app_and_offline_assets_need_no_model_or_token(desktop):
                  "theme-preview.js", "theme-preview.css",
                  "focus-trap.js",
                  "vendor/marked.js", "vendor/purify.js", "vendor/highlight.js",
-                 "fonts/InterVariable.woff2", "fonts/InterVariable-Italic.woff2",
-                 "fonts/JetBrainsMonoVariable.woff2"):
+                 "fonts/Geologica-latin.woff2", "fonts/Geologica-cyrillic.woff2",
+                 "fonts/MartianMono-latin.woff2"):
         response = client.get(f"/app/assets/{name}")
         assert response.status_code == 200
         assert response.content
+    worker = client.get("/app/sw.js")
+    assert worker.status_code == 200
+    assert worker.headers["Service-Worker-Allowed"] == "/app"
+    assert "'/app/assets/trace.css'" in worker.text
     assert client.get("/app/assets/../../server.py").status_code == 404
     assert client.get("/chats").status_code == 401
 
