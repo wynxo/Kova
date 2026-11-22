@@ -727,6 +727,23 @@ def test_ask_json_output(runner):
     assert client.get_chat(data["chat_id"]) is not None
 
 
+@pytest.mark.real_default
+def test_ask_json_reports_a_missing_model_as_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("KOVA_HOME", str(tmp_path))
+    cfg = load_config()
+    assert not any(entry.model for entry in cfg.models)
+    testapp = create_app(cfg, transport=FakeModel([]).transport)
+    with TestClient(testapp) as http:
+        kova_client = KovaClient("http://127.0.0.1:7700", ensure_token(cfg.home), http=http)
+        monkeypatch.setattr(cli, "get_client", lambda: kova_client)
+        result = CliRunner().invoke(cli.app, ["ask", "hi", "--json"])
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.stdout)
+    assert data["error"] == "No model is set up yet. Run: kova setup"
+    assert data["hint"] == "Run: kova setup"
+    assert result.stderr == ""
+
+
 def test_ask_marks_its_chat_and_continues_existing_ones(runner):
     cli_runner, client, cfg, fake = runner
     first = cli_runner.invoke(cli.app, ["ask", "remember 42", "--json"])

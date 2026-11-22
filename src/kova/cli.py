@@ -75,6 +75,8 @@ def _hint_for(message: str) -> str | None:
         return "Run: kova jobs list"
     if "no model named" in text:
         return "Run: kova model list"
+    if "no model is set up" in text:
+        return "Run: kova setup"
     if "no chat" in text:
         return "Run: kova chats"
     if "either --md or --json" in text:
@@ -417,8 +419,13 @@ def _ask_prompt(question: str | None, piped: str | None, files: list[tuple[str, 
     return "\n\n".join(parts)
 
 
-def _ask_error(message: str) -> None:
-    print(f"Error: {' '.join(message.splitlines())}", file=sys.stderr)
+def _ask_error(message: str, *, as_json: bool = False) -> None:
+    """One ask/compare failure; JSON for scripts when ``--json`` was asked for."""
+    text = " ".join(message.splitlines())
+    if as_json:
+        print(json.dumps({"error": text, "hint": _hint_for(text)}, ensure_ascii=False))
+    else:
+        print(f"Error: {text}", file=sys.stderr)
     raise typer.Exit(1)
 
 
@@ -459,14 +466,15 @@ def ask(
     """
     _check_mode(mode)
     if incognito and chat_id:
-        _ask_error("Use --incognito without --chat to start a private one-off question.")
+        _ask_error("Use --incognito without --chat to start a private one-off question.",
+                   as_json=as_json)
     if incognito:
         _stderr.print("Incognito: not saved on this PC. Your provider still receives messages.", markup=False)
     cleanup_id = None
     if think:
         reason = _reasoning_error(model)
         if reason:
-            _ask_error(f"{reason}. Use a reasoning model, or drop --think.")
+            _ask_error(f"{reason}. Use a reasoning model, or drop --think.", as_json=as_json)
     attached = []
     for path in files:
         with path.open("rb") as handle:
@@ -517,13 +525,13 @@ def ask(
             elif kind == "error":
                 if pieces and not as_json:
                     print()
-                _ask_error(event["message"])
+                _ask_error(event["message"], as_json=as_json)
             elif kind == "done":
                 used_model = event.get("model", used_model)
                 usage = event.get("usage")
                 break
     except KovaError as exc:
-        _ask_error(str(exc))
+        _ask_error(str(exc), as_json=as_json)
     finally:
         if cleanup_id is not None:
             client.delete_chat(cleanup_id)
