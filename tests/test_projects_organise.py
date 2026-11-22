@@ -303,4 +303,13 @@ def test_cli_moves_chats_and_edits_projects(runner):
     assert out.exit_code == 0 and "out of its project" in out.output
     assert kova.get_chat(chat["id"])["project_id"] is None
     missing = cli_runner.invoke(cli.app, ["chats", "move", chat["id"], "nope"])
-    assert missing.exit_code == 1 and 'No project "nope"' in missing.output
+    assert missing.exit_code == 1 and 'No project named "nope"' in missing.output
+
+
+def test_cli_project_show_names_the_missing_project(runner):
+    cli_runner, kova = runner
+    for missing_id in ("", "nope"):
+        shown = cli_runner.invoke(cli.app, ["projects", "show", missing_id])
+        assert shown.exit_code == 1, shown.output
+        assert "No project named" in shown.output
+        assert "Cannot read configuration" not in shown.output

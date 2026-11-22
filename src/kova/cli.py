@@ -2711,10 +2711,20 @@ def projects_edit(
 
 
 def _find_project(client: KovaClient, project_id: str) -> dict:
+    """A project by ID, or a clear exit that names what was asked for."""
+    wanted = project_id.strip()
+    if not wanted:
+        _fail('No project named "".', hint="See the IDs with: kova projects list")
     try:
-        return client.get_project(project_id)
+        project = client.get_project(wanted)
     except KovaError as exc:
-        _fail(f'No project "{project_id}".' if exc.status == 404 else str(exc))
+        if exc.status == 404:
+            _fail(f'No project named "{wanted}".', hint="See the IDs with: kova projects list")
+        _fail(str(exc))
+    if not isinstance(project, dict):
+        # An empty ID can be redirected to the /projects list; never treat that as one.
+        _fail(f'No project named "{wanted}".', hint="See the IDs with: kova projects list")
+    return project
 
 
 @_projects.command("show")
@@ -2753,7 +2763,7 @@ def projects_rm(project_id: str, yes: bool = typer.Option(False, "--yes", "-y", 
     except KovaError as exc:
         _fail(str(exc))
     if not removed:
-        _fail(f'No project "{project_id}".')
+        _fail(f'No project named "{project_id}".', hint="See the IDs with: kova projects list")
     _ok(f'Removed project "{name}".')
 
 
