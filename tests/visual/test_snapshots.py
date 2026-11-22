@@ -19,6 +19,7 @@ import uvicorn
 from kova.client import KovaClient
 from kova.config import Config, ModelEntry, save_config
 from kova.server import create_app
+from kova.theme_contrast import contrast_ratio
 from kova.themes import theme_dir
 
 pytestmark = pytest.mark.visual
@@ -93,6 +94,17 @@ def kova(chromium, tmp_path_factory):
             assert request.url.path == "/v1/models"
             return httpx.Response(200, json={"data": [{"id": "demo-model"}]})
         assert request.url.path == "/v1/chat/completions"
+        if json.loads(request.content)["model"] == "demo-research":
+            chunks = [
+                {"reasoning_content": "Separate the observed behavior from assumptions."},
+                {"content": "**Start with a small, repeatable check.**\n\n"
+                            "Run the same example twice and note what changes. "
+                            "Then compare it against a known good result."},
+            ]
+            stream = "".join(f"data: {json.dumps({'choices': [{'delta': chunk}]})}\n\n"
+                             for chunk in chunks)
+            return httpx.Response(200, text=stream + "data: [DONE]\n\n",
+                                  headers={"content-type": "text/event-stream"})
         delta = json.dumps({"choices": [{"delta": {"content": DEMO_REPLY}}]})
         return httpx.Response(200, text=f"data: {delta}\n\ndata: [DONE]\n\n",
                               headers={"content-type": "text/event-stream"})
@@ -104,7 +116,8 @@ def kova(chromium, tmp_path_factory):
         port = listener.getsockname()[1]
         config = Config(home=home, memory_path=home / "memory", files_path=home / "files",
                         port=port, active="demo", persona_configured=True,
-                        models=[ModelEntry("demo", "http://localhost/v1", "demo-model")])
+                        models=[ModelEntry("demo", "http://localhost/v1", "demo-model"),
+                                ModelEntry("research", "http://localhost/v1", "demo-research")])
         save_config(config)
         app = create_app(config, transport=httpx.MockTransport(model_stub))
         server = uvicorn.Server(uvicorn.Config(app, log_level="error", timeout_graceful_shutdown=5))
@@ -240,6 +253,136 @@ def test_visual_snapshot(chromium, kova, screen, theme, width, height):
         image = png.convert("RGB")
     image.info.clear()  # Never carry capture metadata into baselines or artifacts.
     compare_snapshot(image, f"{screen}-{theme}-{width}", max_changed=0 if screen == "tokens" else 40)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("width,height", [(390, 844), (1280, 900)], ids=["phone", "desktop"])
+def test_bot_contact_snapshots(chromium, kova, theme, width, height):
+    from PIL import Image, ImageDraw
+    from playwright.sync_api import expect
+
+    def snapshot(page, name):
+        page.mouse.move(-1, -1)
+        page.evaluate("""async () => {
+            document.activeElement.blur();
+            await document.fonts.ready;
+            await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
+        }""")
+        with Image.open(BytesIO(page.screenshot(animations="disabled", caret="hide"))) as capture:
+            image = capture.convert("RGB")
+        image.info.clear()
+        compare_snapshot(image, f"bot-{name}-{theme}-{width}", max_changed=40)
+
+    kova.bot_create({"id": "scribe", "name": "Scribe", "avatar": {"icon": "message-square"}})
+    try:
+        with chromium.new_context(viewport={"width": width, "height": height}, device_scale_factor=1,
+                                  locale="en-US", timezone_id="UTC", color_scheme=theme,
+                                  reduced_motion="reduce", service_workers="block") as context:
+            page = context.new_page()
+            page.set_default_timeout(8_000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(error.message))
+            open_screen(page, kova, "start", theme)
+            menu = page.get_by_role("button", name="Toggle sidebar")
+            contacts = page.locator(".bot-contacts")
+            if width == 390:
+                menu.click()
+            contacts.get_by_role("button", name="New bot", exact=True).click()
+            editor = page.get_by_role("region", name="New bot")
+            expect(editor.get_by_role("heading", name="New bot")).to_be_focused()
+            editor.get_by_label("Name", exact=True).fill("Atlas")
+            expect(editor.get_by_label("Handle")).to_have_value("atlas")
+            editor.get_by_role("textbox", name="Persona", exact=True).fill(
+                "Help plan small experiments. State assumptions, suggest one check, and keep replies short.")
+            editor.get_by_label("Model", exact=True).select_option("research")
+            expect(editor.get_by_label("Enable tools")).to_be_checked()
+            expect(editor.get_by_label("Approval limit")).to_have_value("manual")
+            expect(editor.get_by_label("Approval limit")).to_be_in_viewport()
+            # Measure the rendered roles, including the small avatar initial
+            # and the input boundary against the actual page it sits on.
+            pairs = editor.evaluate("""editor => {
+                const styles = selector => getComputedStyle(editor.querySelector(selector));
+                const input = styles('#bot-name'), mark = styles('#bot-preview .bot-avatar');
+                const page = getComputedStyle(editor.parentElement).backgroundColor;
+                return [
+                    [input.color, input.backgroundColor, 4.5],
+                    [mark.color, mark.backgroundColor, 4.5],
+                    [styles('.bot-photo-actions .bot-note').color, page, 4.5],
+                    [input.borderColor, page, 3],
+                ];
+            }""")
+            for foreground, background, minimum in pairs:
+                assert contrast_ratio(foreground, background) >= minimum
+            snapshot(page, "editor")
+
+            photo = BytesIO()
+            tile = Image.new("RGB", (64, 64), "#405b71")
+            line = ImageDraw.Draw(tile)
+            line.line([(10, 44), (27, 25), (38, 38), (46, 30), (55, 44)], fill="#e6e9ec", width=4)
+            line.ellipse((41, 15, 49, 23), fill="#e6e9ec")
+            tile.save(photo, "PNG")
+            page.locator("#bot-image").set_input_files(
+                {"name": "atlas.png", "mimeType": "image/png", "buffer": photo.getvalue()})
+            expect(editor.get_by_role("button", name="Remove image")).to_be_visible()
+            editor.get_by_role("button", name="Create bot").click()
+            expect(editor).to_be_hidden()
+            header = page.locator("#bot-chat-header")
+            expect(header.locator(".bot-chat-name")).to_have_text("Atlas")
+            expect(header.locator(".bot-chat-model")).to_have_text("demo-research")
+            expect(header.locator("img")).to_be_visible()
+            page.wait_for_function("document.querySelector('#bot-chat-header img')?.naturalWidth > 0")
+
+            prompt = page.get_by_role("textbox", name="Message Atlas")
+            prompt.fill("How should I check a new idea?")
+            prompt.press("Enter")
+            reply = page.locator(".message.assistant")
+            expect(reply.locator(".bot-author-name")).to_have_text("Atlas")
+            expect(reply.locator(".reasoning")).to_be_visible()
+            expect(reply.get_by_text("Start with a small, repeatable check.")).to_be_visible()
+            expect(page.get_by_role("button", name="Stop the reply")).to_be_hidden()
+            [chat] = [chat for chat in kova.list_chats() if chat["bot_id"] == "atlas"]
+            saved = kova.get_chat(chat["id"])
+            assert any(message.get("author") == "atlas" for message in saved["messages"])
+            if width == 390:
+                snapshot(page, "trace")
+                menu.click()
+            expect(contacts.get_by_role("button", name="Atlas", exact=True)).to_be_visible()
+            snapshot(page, "contacts")
+
+            # An API-side edit reaches the open header without a reload. The
+            # existing reply keeps the speaker name stored with its messages.
+            kova.bot_update("atlas", {"name": "Field notes"})
+            expect(header.locator(".bot-chat-name")).to_have_text("Field notes")
+            contacts.get_by_role("button", name="Field notes", exact=True).click()
+            expect(reply.locator(".bot-author-name")).to_have_text("Atlas")
+            assert len([chat for chat in kova.list_chats() if chat["bot_id"] == "atlas"]) == 1
+
+            header.get_by_role("button", name="Edit bot").click()
+            editor = page.get_by_role("region", name="Edit bot")
+            expect(editor.get_by_label("Name", exact=True)).to_have_value("Field notes")
+            editor.get_by_label("Enable tools").uncheck()
+            editor.get_by_label("Approval limit").select_option("auto")
+            editor.get_by_role("button", name="Remove image").click()
+            editor.get_by_role("button", name="Save changes").click()
+            expect(editor).to_be_hidden()
+            expect(header.locator("img")).to_have_count(0)
+            bot = kova.bot_get("atlas")
+            assert bot["ceiling"] == "auto"
+            assert "*" in bot["definition"]["permissions"]["deny"]
+            assert bot["image"] is None
+            if width == 390:
+                menu.click()
+            contacts.get_by_label("Actions for Field notes").click()
+            contacts.get_by_role("button", name="New chat", exact=True).click()
+            expect(page.get_by_role("heading", name="Chat with Field notes")).to_be_visible()
+            assert len([chat for chat in kova.list_chats() if chat["bot_id"] == "atlas"]) == 2
+            assert not errors, errors
+    finally:
+        for chat in kova.list_chats():
+            if chat["bot_id"] == "atlas":
+                kova.delete_chat(chat["id"])
+        kova.bot_delete("atlas")
+        kova.bot_delete("scribe")
 
 
 def test_chat_layouts_reply_outline_and_zen_shortcut(chromium, kova):
