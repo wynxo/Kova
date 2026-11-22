@@ -404,3 +404,36 @@ def test_search_results_say_who_wrote_the_matching_message(store):
     assert result["author"] == "researcher"
     store.add_message(chat["id"], "user", "a plain note about researchers")
     assert all("author" in result for result in store.search_chats("researcher"))
+
+
+def test_pre_group_database_preserves_bot_chat_and_adds_membership(tmp_path):
+    path = tmp_path / "kova.db"
+    store = Store(path)
+    direct = store.create_chat("Direct", kind="bot", bot_id="coder")
+    store.add_message(direct["id"], "assistant", "Old reply", author="coder")
+    with store._conn:
+        store._conn.execute("DROP TABLE IF EXISTS chat_members")
+        if "group_settings" in {row["name"] for row in store._conn.execute("PRAGMA table_info(chats)")}:
+            store._conn.execute("ALTER TABLE chats DROP COLUMN group_settings")
+    store._conn.close()
+
+    store = Store(path)
+    saved = store.get_chat(direct["id"], include_message_meta=True)
+    assert (saved["kind"], saved["bot_id"]) == ("bot", "coder")
+    assert saved["messages"][0]["content"] == "Old reply"
+    assert saved["messages"][0]["author"] == "coder"
+    group = store.create_chat("Group", kind="group", members=["coder", "kova"],
+                              group_settings={"share_work": "tools"})
+    cid = group["id"]
+    store.update_chat_member(cid, "coder", muted=True, settings={"max_rounds": 2})
+    store._conn.close()
+
+    reopened = Store(path)
+    saved = reopened.get_chat(cid)
+    assert saved["group_settings"] == {"share_work": "tools"}
+    assert [(m["bot_id"], m["muted"], m["settings"]) for m in saved["members"]] == [
+        ("coder", True, {"max_rounds": 2}), ("kova", False, {})]
+    fork = reopened.fork_chat(cid)
+    assert fork["group_settings"] == saved["group_settings"] and fork["members"] == saved["members"]
+    assert reopened.delete_chat(cid)
+    assert not reopened._conn.execute("SELECT 1 FROM chat_members WHERE chat_id = ?", (cid,)).fetchone()

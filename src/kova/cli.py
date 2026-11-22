@@ -27,7 +27,9 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
-from kova import __version__, autostart, backup, lifecycle, model_picker, onboarding, providers, themes, egress, ui_prefs
+from kova import (__version__, autostart, backup, bot_templates, lifecycle, model_picker,
+                  onboarding, providers, themes, egress, ui_prefs)
+from kova.bots import RESERVED_HANDLES
 from kova.client import KovaClient, KovaError, ensure_server
 from kova.config import (
     CONFIG_SCHEMA,
@@ -346,6 +348,9 @@ app.add_typer(_skills, name="skills")
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
 app.add_typer(_chats, name="chats")
 
+_bots = typer.Typer(no_args_is_help=False, help="Add and manage bots, and chat with one.")
+app.add_typer(_bots, name="bots")
+
 _projects = typer.Typer(no_args_is_help=True, help="Manage projects and shared chat instructions.")
 app.add_typer(_projects, name="projects")
 
@@ -361,6 +366,12 @@ def chats_root(ctx: typer.Context):
     """List chats, newest first."""
     if ctx.invoked_subcommand is None:
         chats_list(as_json=False)
+
+@_bots.callback(invoke_without_command=True)
+def bots_root(ctx: typer.Context):
+    """List your bots. Add one with ``kova bots create``, chat with ``kova chat --bot <handle>``."""
+    if ctx.invoked_subcommand is None:
+        bots_list()
 
 
 def get_client() -> KovaClient:
@@ -594,6 +605,7 @@ def compare(
 
 @app.command(hidden=True)
 def chat(
+    bot: str | None = typer.Option(None, "--bot", help="Start this chat as a bot, by handle or id."),
     new: bool = typer.Option(False, "--new", help="Start a fresh chat instead of the latest."),
     chat: str | None = typer.Option(None, "--chat", help="Continue an existing chat by ID."),
     resume: str | None = typer.Option(None, "--resume", help="Continue a chat by its number from: kova chats"),
@@ -603,14 +615,18 @@ def chat(
     incognito: bool = typer.Option(False, "--incognito", help="Keep this chat in memory only; no tools or memories."),
 ):
     """Old name for plain ``kova``; kept so existing habits and scripts still work."""
-    _start_chat(new, chat, resume, no_think, mode, no_web, **({"incognito": True} if incognito else {}))
+    _start_chat(new, chat, resume, no_think, mode, no_web, bot, **({"incognito": True} if incognito else {}))
 
 
 def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
-                mode: str | None, no_web: bool, incognito: bool = False) -> None:
+                mode: str | None, no_web: bool, bot: str | None = None,
+                incognito: bool = False) -> None:
     _check_mode(mode)
     if incognito and (chat or resume):
         _fail("Use --incognito for a new chat, without --chat or --resume.")
+    if incognito and bot:
+        _fail("Incognito chats cannot have bots.",
+              hint="Drop --incognito, or leave out --bot.")
     cfg = load_config()
     if sys.stdin.isatty() and onboarding.needs_setup(cfg):
         console.print()
@@ -623,10 +639,22 @@ def _start_chat(new: bool, chat: str | None, resume: str | None, no_think: bool,
         if typer.confirm(question, default=not configured):
             onboarding.run_setup(cfg)
     client = get_client()
+    bot_id = _resolve_bot_id(client, bot) if bot else None
     if resume:
         chat = _resolve_chat_id(client, resume)
+    if bot_id is not None and chat is not None:
+        try:
+            existing = client.get_chat(chat)
+        except KovaError as exc:
+            if exc.status == 404:
+                _fail(f'No chat "{chat}".')
+            _fail(str(exc))
+        if existing.get("kind") != "bot" or existing.get("bot_id") != bot_id:
+            _fail(f'That chat is not with "@{bot}".',
+                  hint=f"Start a new one with: kova chat --bot {bot_id} --new")
     _run_chat(client, chat_id=chat, new=new, no_think=no_think, mode=mode,
               web=False if no_web else None, console=console,
+              bot_id=bot_id,
               **({"incognito": True} if incognito else {}))
 
 
@@ -2513,6 +2541,530 @@ def _resolve_chat_id(client: KovaClient, ref: str) -> str:
     return _resolve_chat(client, ref)["id"]
 
 
+_CEILINGS = {"manual": "asks before each tool call",
+             "auto": "runs tools without asking when the chat allows it",
+             "full": "no sandbox; every tool, no questions"}
+
+#: A bot's colour key is a semantic token; the terminal paints each one with the
+#: role that carries the same meaning (``info`` is ``--status-info``).
+_BOT_ROLES = {"accent": "ACCENT", "success": "SUCCESS", "warning": "WARNING",
+              "danger": "ERROR", "info": "MEMORY", "keyword": "CODE",
+              "string": "SUCCESS", "function": "CODE"}
+
+#: Every field ``kova bots set`` and ``kova bots edit`` can change, with its path
+#: in ``bot.toml`` and how its value is read from the command line. ``id`` is
+#: absent on purpose: it is the folder name, so a bot is recreated, never moved.
+_BOT_FIELDS: dict[str, tuple[tuple[str, ...], str]] = {
+    "name": (("name",), "text"),
+    "handle": (("handle",), "text"),
+    "description": (("description",), "text"),
+    "colour": (("avatar", "colour"), "text"),
+    "icon": (("avatar", "icon"), "text"),
+    "model": (("model", "name"), "text"),
+    "mode": (("model", "mode"), "text"),
+    "effort": (("model", "reasoning_effort"), "text"),
+    "web": (("model", "web"), "bool"),
+    "permission": (("permissions", "ceiling"), "text"),
+    "ceiling": (("permissions", "ceiling"), "text"),
+    "tools": (("permissions", "tools"), "list"),
+    "deny": (("permissions", "deny"), "list"),
+    "folder": (("permissions", "folder"), "text"),
+    "inherit-rules": (("permissions", "inherit_rules"), "bool"),
+    "memory": (("memory", "own"), "bool"),
+    "budget": (("memory", "budget"), "int"),
+    "user-memory": (("memory", "user_memory"), "text"),
+    "answers": (("group", "answers"), "text"),
+    "max-rounds": (("group", "max_rounds"), "int"),
+    "max-output-tokens": (("group", "max_output_tokens"), "int"),
+}
+_BOT_PATHS = {".".join(path): (path, kind) for path, kind in _BOT_FIELDS.values()}
+
+
+def _bot_role(bot: dict) -> str:
+    """The terminal role a bot's colour key paints with."""
+    return _BOT_ROLES.get(str(bot.get("colour") or ""), "MUTED")
+
+
+def _slug(name: str) -> str:
+    """A handle from a display name: lowercase words joined by dashes."""
+    return re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")[:32].strip("-")
+
+
+def _bot_handle(bot: dict) -> str:
+    return str(bot.get("handle") or bot.get("id") or "")
+
+
+def _resolve_bot_id(client: KovaClient, ref: str) -> str:
+    """A bot's id from its id, its @handle, or a unique part of either or its name."""
+    needle = ref[1:] if ref.startswith("@") else ref
+    needle = needle.strip().casefold()
+    bots = client.bots_list()
+    exact = [bot for bot in bots
+             if needle in (str(bot.get("id") or "").casefold(),
+                           str(bot.get("handle") or "").casefold())]
+    found = exact or [bot for bot in bots
+                      if needle in str(bot.get("id") or "").casefold()
+                      or needle in str(bot.get("handle") or "").casefold()
+                      or needle in str(bot.get("name") or "").casefold()]
+    if len(found) == 1:
+        return str(found[0]["id"])
+    if not found:
+        _fail(f'No bot "{ref}".', hint="Run 'kova bots list' to see them.")
+    names = ", ".join(f"@{_bot_handle(bot)}" for bot in found[:6])
+    _fail(f'"{ref}" matches more than one bot.', hint=f"Pick one of: {names}")
+    return ""  # unreachable
+
+
+def _unique_handle(client: KovaClient, wanted: str) -> str:
+    """A free handle close to ``wanted``: the name itself, else ``name-2``, ``name-3``."""
+    existing = client.bots_list()
+    taken = {str(bot.get("handle") or "").casefold() for bot in existing}
+    taken |= {str(bot.get("id") or "").casefold() for bot in existing}
+    if wanted not in taken and wanted not in RESERVED_HANDLES:
+        return wanted
+    number = 2
+    while f"{wanted}-{number}" in taken or f"{wanted}-{number}" in RESERVED_HANDLES:
+        number += 1
+    return f"{wanted}-{number}"
+
+
+def _tools_from(text: str) -> list[str]:
+    """A comma-separated tool allowlist; ``none`` (or nothing) means no tools."""
+    cleaned = text.strip()
+    if cleaned.casefold() in ("", "none", "-"):
+        return []
+    return [part.strip() for part in cleaned.split(",") if part.strip()]
+
+
+def _bot_value(kind: str, value: str, field: str):
+    """Read one command-line value as the field's type, or fail in one line."""
+    if kind == "list":
+        return _tools_from(value)
+    if kind == "bool":
+        lowered = value.strip().casefold()
+        if lowered in ("on", "true", "yes", "1"):
+            return True
+        if lowered in ("off", "false", "no", "0"):
+            return False
+        _fail(f'"{field}" takes on or off, not "{value}".')
+    if kind == "int":
+        try:
+            return int(value.strip())
+        except ValueError:
+            _fail(f'"{field}" takes a whole number, not "{value}".')
+    return value.strip()
+
+
+def _nested(path: tuple[str, ...], value) -> dict:
+    """One changed field as the nested table ``PATCH /bots`` expects."""
+    for key in reversed(path):
+        value = {key: value}
+    return value
+
+
+def _bot_field(field: str) -> tuple[tuple[str, ...], str]:
+    key = field.strip().casefold().replace("_", "-")
+    if key in _BOT_FIELDS:
+        return _BOT_FIELDS[key]
+    if key in _BOT_PATHS:
+        return _BOT_PATHS[key]
+    _fail(f'Unknown bot field "{field}".',
+          hint="Use " + ", ".join(sorted(_BOT_FIELDS)) + " (or a dotted path like model.name).")
+
+
+def _read_persona(path: Path) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        _fail(f'Cannot read "{path}": {exc}')
+
+
+def _first_line(text: str, limit: int = 80) -> str:
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[:limit - 1] + "…"
+
+
+def _tools_summary(patterns) -> str:
+    """A short human summary of a tool allowlist, for tables."""
+    parts: list[str] = []
+    for pattern in patterns or ():
+        lowered = str(pattern).casefold()
+        label = ("web" if lowered.startswith("web") else
+                 "memory" if lowered.startswith("memory") else
+                 "commands" if lowered in ("run_command", "bash") else
+                 "files" if lowered.endswith("_file") or lowered in
+                 ("list_files", "search_files") else
+                 "jobs" if lowered.startswith("job") else
+                 "skills" if lowered.startswith("skill") else None)
+        if label is None:
+            label = str(pattern)
+        if label not in parts:
+            parts.append(label)
+    return ", ".join(parts) or "no tools"
+
+
+@_bots.command("list")
+def bots_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
+    """List your bots. Add one with ``kova bots create``, chat with ``kova chat --bot``."""
+    bots = get_client().bots_list()
+    if as_json:
+        print(json.dumps(bots, indent=2, ensure_ascii=False))
+        return
+    if not bots:
+        _empty("No bots yet.", "Add a starter bot with: kova bots create --from researcher")
+        return
+    busy = any(bot.get("status") in ("working", "blocked-on-approval")
+               for bot in bots if bot.get("state") == "ok")
+    caption = ("● answering  ◌ waiting for you  ·  " if busy else "") + \
+        "Chat with one: kova chat --bot <handle>"
+    table = _table(title="Bots", caption=caption)
+    table.add_column("", no_wrap=True)
+    table.add_column("Handle", no_wrap=True)
+    table.add_column("Name", no_wrap=True)
+    table.add_column("Model", style=colour('MUTED'), no_wrap=True)
+    table.add_column("Permission", style=colour('MUTED'), no_wrap=True)
+    table.add_column("What it does", style=colour('MUTED'))
+    for bot in bots:
+        handle = f"@{_bot_handle(bot)}"
+        if bot.get("state") != "ok":
+            table.add_row(Text(SYMBOL_ERROR, style=f"bold {colour('ERROR')}"),
+                          Text(handle, style=colour('ERROR')),
+                          Text("file is broken", style=colour('ERROR')),
+                          "", "", _first_line(str(bot.get("error") or ""), 70))
+            continue
+        status = bot.get("status") or "idle"
+        marker = (Text("●", style=f"bold {colour('ACCENT')}") if status == "working"
+                  else Text("◌", style=colour('WARNING'))
+                  if status == "blocked-on-approval" else Text(" "))
+        table.add_row(marker, handle,
+                      Text(str(bot.get("name") or ""), style=f"bold {colour(_bot_role(bot))}"),
+                      Text(str(bot.get("model") or "active"), style=colour('MUTED')),
+                      Text(str(bot.get("ceiling") or "manual"), style=colour('MUTED')),
+                      _first_line(str(bot.get("description") or ""), 60))
+    console.print(table)
+
+
+@_bots.command("show")
+def bots_show(ref: str = typer.Argument(..., help="The bot: its handle or id.")):
+    """Show one bot: its model, permissions, tools, memory and role prompt."""
+    client = get_client()
+    bot_id = _resolve_bot_id(client, ref)
+    try:
+        bot = client.bot_get(bot_id)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No bot "{ref}".', hint="Run 'kova bots list'.")
+        _fail(f'"{bot_id}" is broken: {exc}',
+              hint="Fix bots/" + bot_id + "/bot.toml by hand, or remove it with: kova bots rm " + bot_id)
+    if bot.get("state") != "ok":
+        _fail(f'"{bot_id}" is broken: {bot.get("error")}',
+              hint="Fix bots/" + bot_id + "/bot.toml by hand, or remove it with: kova bots rm " + bot_id)
+    definition = bot.get("definition") or {}
+    permissions = definition.get("permissions") or {}
+    model = definition.get("model") or {}
+    memory = definition.get("memory") or {}
+    group = definition.get("group") or {}
+
+    head = Text(f"{bot.get('name')} ", style=f"bold {colour(_bot_role(bot))}")
+    head.append(f"@{_bot_handle(bot)}", style=colour('MUTED'))
+    console.print(head)
+    if bot.get("description"):
+        console.print(Text(str(bot["description"]), style=colour('MUTED')))
+    console.print()
+
+    def row(label: str, value: Text | str) -> None:
+        line = Text("  ")
+        line.append(label.ljust(11), style=colour('FAINT'))
+        line.append_text(value if isinstance(value, Text) else Text(str(value)))
+        console.print(line)
+
+    ceiling = str(permissions.get("ceiling") or "manual")
+    model_text = Text(str(model.get("name") or "the active model"), style="bold")
+    model_text.append(f"  {model.get('mode') or 'work'}", style=colour('MUTED'))
+    model_text.append(f"  web {'on' if model.get('web', True) else 'off'}", style=colour('MUTED'))
+    if model.get("reasoning_effort"):
+        model_text.append(f"  effort {model['reasoning_effort']}", style=colour('MUTED'))
+    row("model", model_text)
+    permission_text = Text(ceiling, style="bold")
+    permission_text.append(f"  {_CEILINGS.get(ceiling, '')}", style=colour('MUTED'))
+    row("permission", permission_text)
+    row("tools", Text(", ".join(permissions.get("tools") or []) or "no tools",
+                      style=colour('MUTED')))
+    if permissions.get("deny"):
+        row("never", Text(", ".join(permissions["deny"]), style=colour('MUTED')))
+    row("folder", Text(str(permissions.get("folder") or f"Kova Files/bots/{bot_id}"),
+                       style=colour('MUTED')))
+    budget = int(memory.get("budget") or 0)
+    memory_text = Text(f"{budget:,} characters" if budget else "unlimited",
+                       style=colour('MUTED'))
+    memory_text.append("  " + ("reads your notes" if memory.get("user_memory", "read") == "read"
+                               else "your notes are private"), style=colour('MUTED'))
+    row("memory", memory_text)
+    row("in groups", Text(f"answers {'every message' if group.get('answers') == 'always' else 'when chosen'}"
+                          f"  ·  {group.get('max_rounds')} model calls"
+                          f"  ·  {int(group.get('max_output_tokens') or 0):,} output tokens",
+                          style=colour('MUTED')))
+    row("id", Text(bot_id, style=colour('MUTED')))
+    for warning in bot.get("warnings") or []:
+        console.print(Text(f"  {warning}", style=colour('WARNING')))
+    if bot.get("persona"):
+        console.print()
+        console.print(Markdown(bot["persona"]))
+    console.print()
+    _muted(f"Change it with: kova bots set {bot_id} <field> <value>  ·  "
+           f"chat with it: kova chat --bot {_bot_handle(bot)}")
+
+
+@_bots.command("templates")
+def bots_templates():
+    """List the starter bots ``kova bots create --from`` can add."""
+    table = _table(title="Starter bots", caption="Add one: kova bots create --from <handle>")
+    table.add_column("Handle", no_wrap=True)
+    table.add_column("Name", no_wrap=True)
+    table.add_column("Tools", style=colour('MUTED'))
+    table.add_column("What it does", style=colour('MUTED'))
+    for template in bot_templates.list_templates():
+        tools = template.definition()["permissions"]["tools"]
+        table.add_row(f"@{template.handle}", Text(template.name, style="bold"),
+                      _tools_summary(tools), template.description)
+    console.print(table)
+
+
+@_bots.command("create")
+def bots_create(
+    name: str | None = typer.Argument(None, help="The bot's name. Defaults to the starter's name."),
+    from_template: str | None = typer.Option(None, "--from",
+                                             help="Start from a starter bot: kova bots templates."),
+    handle: str | None = typer.Option(None, "--handle",
+                                      help="Its @handle, also its folder name. Defaults to the name."),
+    description: str | None = typer.Option(None, "--description",
+                                           help="One line about what it does."),
+    model: str | None = typer.Option(None, "--model",
+                                     help="Its model (see: kova model list). Default: the active one."),
+    colour: str | None = typer.Option(None, "--colour",
+                                      help=f"Its colour: {', '.join(CHAT_COLOURS)}."),
+    icon: str | None = typer.Option(None, "--icon", help=f"Its icon: {', '.join(CHAT_ICONS)}."),
+    tools: str | None = typer.Option(None, "--tools",
+                                     help='Tools it may use, comma-separated; "none" for no tools.'),
+    deny: str | None = typer.Option(None, "--deny",
+                                    help="Tools it may never use, applied after --tools."),
+    permission: str | None = typer.Option(None, "--permission",
+                                          help="Its ceiling: manual, auto or full."),
+    folder: str | None = typer.Option(None, "--folder",
+                                      help="Its working folder. Default: the bot's own folder in Kova Files."),
+    persona_file: Path | None = typer.Option(None, "--persona-file", exists=True, dir_okay=False,
+                                             resolve_path=True,
+                                             help="A Markdown file with its role prompt."),
+):
+    """Add a bot, either from a starter or from scratch.
+
+    ``kova bots create --from researcher`` adds the starter as it is.
+    """
+    client = get_client()
+    template = None
+    if from_template is not None:
+        template = bot_templates.get_template(from_template)
+        if template is None:
+            names = ", ".join(item.handle for item in bot_templates.list_templates())
+            _fail(f'No starter bot "{from_template}".', hint=f"Available: {names}")
+
+    label = name or (template.name if template else None)
+    wanted = handle or ((_slug(label) if label else "") or (template.handle if template else ""))
+    if not wanted:
+        _fail("Give the bot a name or a handle.",
+              hint="For example: kova bots create Researcher")
+    wanted = wanted.strip().casefold()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", wanted):
+        _fail(f'"{wanted}" cannot be a handle.',
+              hint="Use lowercase letters, digits and dashes (1-32).")
+    if wanted in RESERVED_HANDLES:
+        _fail(f'The handle @{wanted} is reserved.',
+              hint="Pick another name, or pass --handle with a different one.")
+    if handle is not None and any(
+            str(bot.get("handle") or bot.get("id") or "").casefold() == wanted
+            for bot in client.bots_list()):
+        _fail(f'The handle @{wanted} is already used by another bot.',
+              hint="Pick another --handle.")
+    defined = _unique_handle(client, wanted)
+    label = label or defined.replace("-", " ").title()
+
+    payload: dict = {"schema": 1, "id": defined, "name": label, "handle": defined,
+                     "description": (description if description is not None
+                                     else (template.description if template else ""))}
+    if template:
+        for table_name in ("avatar", "model", "permissions", "memory", "group"):
+            table = template.definition().get(table_name)
+            if table:
+                payload[table_name] = dict(table)
+    if colour is not None or icon is not None:
+        avatar = payload.setdefault("avatar", {})
+        if colour is not None:
+            avatar["colour"] = colour
+        if icon is not None:
+            avatar["icon"] = icon or None
+    if model is not None:
+        payload.setdefault("model", {})["name"] = model
+    if tools is not None:
+        payload.setdefault("permissions", {})["tools"] = _tools_from(tools)
+    if deny is not None:
+        payload.setdefault("permissions", {})["deny"] = _tools_from(deny)
+    if permission is not None:
+        payload.setdefault("permissions", {})["ceiling"] = permission
+    if folder is not None:
+        payload.setdefault("permissions", {})["folder"] = folder
+
+    if persona_file is not None:
+        persona = _read_persona(persona_file)
+    elif template is not None:
+        persona = template.persona
+    else:
+        summary = payload["description"] or "Help the user with their work."
+        persona = (f"You are {label}.\n\n{summary}\n\n"
+                   "Be direct and concrete: give the answer first, then the reason. "
+                   "Say plainly when you are unsure, and ask one clear question when it "
+                   "would change what you do.\n")
+    try:
+        created = client.bot_create(payload, persona=persona)
+    except KovaError as exc:
+        _fail(str(exc))
+    _ok(f'Added bot "@{_bot_handle(created)}" ({created.get("name")}).')
+    _muted(f"Chat with it: kova chat --bot {_bot_handle(created)}")
+
+
+@_bots.command("edit")
+def bots_edit(
+    ref: str = typer.Argument(..., help="The bot to change: its handle or id."),
+    name: str | None = typer.Option(None, "--name", help="A new name."),
+    handle: str | None = typer.Option(None, "--handle", help="A new @handle."),
+    description: str | None = typer.Option(None, "--description",
+                                           help="One line about what it does."),
+    model: str | None = typer.Option(None, "--model", help="Its model (see: kova model list)."),
+    colour: str | None = typer.Option(None, "--colour", help=f"Its colour: {', '.join(CHAT_COLOURS)}."),
+    icon: str | None = typer.Option(None, "--icon", help=f"Its icon: {', '.join(CHAT_ICONS)}."),
+    tools: str | None = typer.Option(None, "--tools", help='Tools it may use, comma-separated; "none" for none.'),
+    deny: str | None = typer.Option(None, "--deny", help="Tools it may never use."),
+    permission: str | None = typer.Option(None, "--permission",
+                                           help="Its ceiling: manual, auto or full."),
+    folder: str | None = typer.Option(None, "--folder", help="Its working folder."),
+    web: bool | None = typer.Option(None, "--web/--no-web", help="Whether it may search the web."),
+    persona_file: Path | None = typer.Option(None, "--persona-file", exists=True, dir_okay=False,
+                                             resolve_path=True,
+                                             help="A Markdown file with its new role prompt."),
+):
+    """Change several parts of a bot at once. For one value: ``kova bots set``."""
+    client = get_client()
+    changes: dict = {}
+    if name is not None:
+        changes["name"] = name
+    if handle is not None:
+        changes["handle"] = handle.strip().casefold()
+    if description is not None:
+        changes["description"] = description
+    if model is not None:
+        changes.setdefault("model", {})["name"] = model
+    if web is not None:
+        changes.setdefault("model", {})["web"] = web
+    if colour is not None or icon is not None:
+        avatar = changes.setdefault("avatar", {})
+        if colour is not None:
+            avatar["colour"] = colour
+        if icon is not None:
+            avatar["icon"] = icon or None
+    if tools is not None:
+        changes.setdefault("permissions", {})["tools"] = _tools_from(tools)
+    if deny is not None:
+        changes.setdefault("permissions", {})["deny"] = _tools_from(deny)
+    if permission is not None:
+        changes.setdefault("permissions", {})["ceiling"] = permission
+    if folder is not None:
+        changes.setdefault("permissions", {})["folder"] = folder
+    if not changes and persona_file is None:
+        _fail("Nothing to change.",
+              hint="Name at least one option, e.g. --model, --tools or --persona-file.")
+    try:
+        bot_id = _resolve_bot_id(client, ref)
+        persona = _read_persona(persona_file) if persona_file is not None else None
+        updated = client.bot_update(bot_id, changes, persona=persona)
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No bot "{ref}".', hint="Run 'kova bots list'.")
+        _fail(str(exc))
+    _ok(f'Updated bot "@{_bot_handle(updated)}" ({updated.get("name")}).')
+
+
+@_bots.command("set")
+def bots_set(
+    ref: str = typer.Argument(..., help="The bot to change: its handle or id."),
+    field: str = typer.Argument(..., help="What to change, e.g. model, permission, tools, persona."),
+    value: str | None = typer.Argument(None, help="The new value (not needed with --file for persona)."),
+    file: Path | None = typer.Option(None, "--file", exists=True, dir_okay=False, resolve_path=True,
+                                     help="Read the value from this file, e.g. a persona's Markdown."),
+):
+    """Change one value on a bot.
+
+    Fields: name, handle, description, colour, icon, model, mode, effort, web,
+    permission, tools, deny, folder, inherit-rules, memory, budget, user-memory,
+    answers, max-rounds, max-output-tokens, persona. Dotted paths such as
+    ``model.name`` or ``permissions.ceiling`` work too.
+    """
+    client = get_client()
+    bot_id = _resolve_bot_id(client, ref)
+    key = field.strip().casefold().replace("_", "-")
+    if key == "persona":
+        if file is not None:
+            persona_text = _read_persona(file)
+        elif value is not None:
+            persona_text = value
+        else:
+            _fail("Give the persona text, or a file with --file.")
+        try:
+            updated = client.bot_update(bot_id, {}, persona=persona_text)
+        except KovaError as exc:
+            _fail(str(exc))
+        _ok(f'Updated the role prompt of "@{_bot_handle(updated)}".')
+        return
+    if value is None:
+        _fail(f'Give a value for "{field}".',
+              hint=f"For example: kova bots set {bot_id} {field} <value>")
+    path, kind = _bot_field(field)
+    parsed = _bot_value(kind, value, field)
+    try:
+        updated = client.bot_update(bot_id, _nested(path, parsed))
+    except KovaError as exc:
+        if exc.status == 404:
+            _fail(f'No bot "{ref}".', hint="Run 'kova bots list'.")
+        _fail(str(exc))
+    shown = ", ".join(parsed) if isinstance(parsed, list) else (
+        "on" if parsed is True else "off" if parsed is False else str(parsed) or "(empty)")
+    _ok(f'@{_bot_handle(updated)}: {".".join(path)} = {shown}')
+
+
+@_bots.command("rm")
+def bots_rm(
+    ref: str = typer.Argument(..., help="The bot to remove: its handle or id."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation."),
+):
+    """Remove a bot. Its folder and private notes go; its chats stay."""
+    client = get_client()
+    bot_id = _resolve_bot_id(client, ref)
+    handle = bot_id
+    try:
+        handle = _bot_handle(client.bot_get(bot_id)) or bot_id
+    except KovaError:
+        pass
+    if not yes and not typer.confirm(
+            f'Remove "@{handle}"? Its files and private notes go; its chats stay.',
+            default=False):
+        _muted("Cancelled.")
+        return
+    if client.bot_delete(bot_id):
+        _ok(f'Removed bot "@{handle}".')
+    else:
+        _fail(f'No bot "{ref}".')
+
+
 @_chats.command("list")
 def chats_list(
     as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
@@ -2631,7 +3183,8 @@ def chats_show(ref: str):
             console.print(content, markup=False, soft_wrap=True)
         elif role == "assistant":
             console.print()
-            console.print(Text("Kova", style=f"bold {colour('ACCENT')}"))
+            console.print(Text(message.get("author_name") or "Kova",
+                               style=f"bold {colour('ACCENT')}"))
             console.print(Markdown(content))
 
 

@@ -212,7 +212,8 @@ class ChatApp:
 
     def __init__(self, client: KovaClient, chat_id: str | None, *, no_think: bool = False,
                  out=None, color: bool | None = None, clear: bool = True,
-                 history_path: Path | None = None, memory_path: str = "", incognito: bool = False):
+                 history_path: Path | None = None, memory_path: str = "", incognito: bool = False,
+                 bot_id: str | None = None, bot_name: str | None = None):
         self.client = client
         self.chat_id = chat_id
         self.out = out or sys.stdout
@@ -222,7 +223,11 @@ class ChatApp:
         self.renderer = Renderer(self.screen, color=color)
         self.renderer.no_think = no_think
         cfg = load_config(history_path.parent) if history_path else None
-        self.renderer.name = cfg.persona_name if cfg else "Kova"
+        self.renderer.name = bot_name or (cfg.persona_name if cfg else "Kova")
+        #: The bot this chat is with (``None`` for the default assistant); every
+        #: chat started here is that bot's, so /new keeps it.
+        self.bot_id = bot_id
+        self.bot_name = bot_name
         self.renderer.p.theme_name = active_theme(cfg.tui_theme if cfg else None)
         try:
             self.keys = Keymap(cfg.tui_keys if cfg else {})
@@ -391,8 +396,9 @@ class ChatApp:
         if self.chat_id is not None:
             return self.chat_id
         try:
-            chat = self.client.create_chat(mode=self.mode, web=self.web,
+            chat = self.client.create_chat(title=self.bot_name, mode=self.mode, web=self.web,
                                            permission=self.permission, cwd=self.cwd,
+                                           bot_id=self.bot_id,
                                            **({"ephemeral": True} if self.incognito else {}))
         except KovaError as exc:
             self.renderer.error(exc.message)
@@ -1453,6 +1459,9 @@ class ChatApp:
         self.incognito = False
 
     def _cmd_incognito(self, _rest: str) -> None:
+        if self.bot_id is not None:
+            self.renderer.error("Incognito is conversation-only, so it cannot be used with a bot.")
+            return
         self._drop_incognito()
         self.chat_id = None
         self.incognito = True
@@ -1648,8 +1657,16 @@ class ChatApp:
                    "the copy keeps this chat unchanged.")
         self.replay()
 
+    def _speaks(self, chat: dict) -> bool:
+        """Whether a chat has the same speaker as this one: the bot, or Kova."""
+        kind = chat.get("kind") or "chat"
+        if self.bot_id is None:
+            return kind == "chat"
+        return kind == "bot" and chat.get("bot_id") == self.bot_id
+
     def _cmd_resume(self, rest: str) -> None:
-        chats = [c for c in self.client.list_chats() if not c.get("ephemeral")][:30]
+        chats = [c for c in self.client.list_chats()
+                 if not c.get("ephemeral") and self._speaks(c)][:30]
         self._chats = chats
         if not rest:
             if not chats:

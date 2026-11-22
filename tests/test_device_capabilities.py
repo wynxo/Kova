@@ -116,6 +116,9 @@ EXPECTED = {
     ("DELETE", "/bots/{bot_id}"): "settings:write",
     ("PUT", "/bots/{bot_id}/avatar"): "settings:write",
     ("DELETE", "/bots/{bot_id}/avatar"): "settings:write",
+    ("POST", "/chats/{chat_id}/members"): "settings:write",
+    ("PATCH", "/chats/{chat_id}/members/{bot_id}"): "settings:write",
+    ("DELETE", "/chats/{chat_id}/members/{bot_id}"): "settings:write",
 }
 
 
@@ -155,6 +158,20 @@ def test_the_matrix_is_documented():
         assert f"`{capability}`" in doc, capability
     for method, path in EXPECTED:
         assert f"{method} {path.split('{')[0].rstrip('/')}" in doc, (method, path)
+
+
+def test_phone_group_settings_and_always_allow_require_capabilities(kova):
+    client, app, local, phone, record = kova
+    group = client.post("/chats", json={"members": ["kova"]}, headers=local).json()
+    path = f"/chats/{group['id']}"
+    assert client.patch(path, json={"preset": "panel"}, headers=phone).status_code == 403
+    assert client.patch(f"{path}/members/kova", json={"muted": True}, headers=phone).status_code == 403
+    app.state.devices.set_capabilities(record["id"], ["settings:write"])
+    assert client.patch(path, json={"preset": "panel"}, headers=phone).status_code == 200
+    assert client.patch(path, json={"group": {"approvals": "allow"}}, headers=phone).status_code == 403
+    assert client.patch(f"{path}/members/kova", json={"settings": {"approvals": "allow"}},
+                        headers=phone).status_code == 403
+    assert client.get(path, headers=local).json()["group"]["approvals"] == "ask"
 
 
 # ------------------------------------------------------------ enforcement

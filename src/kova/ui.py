@@ -355,7 +355,8 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
 
 
 def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
-            mode: str | None = None, web: bool | None = None) -> None:
+            mode: str | None = None, web: bool | None = None,
+            bot: dict | None = None) -> None:
     health = client.health()
     cfg = load_config()
     notes = len(client.memory_list())
@@ -367,7 +368,7 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
     from kova.tui.brand import assistant_name
     from kova.tui.widgets import MODE_HINTS
 
-    name = assistant_name()
+    name = str(bot.get("name")) if bot else assistant_name()
     console.print()
 
     def header(label: str, value: Text) -> None:
@@ -380,6 +381,11 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
     head.append(" " + name, style="bold")
     head.append(f"  v{__version__}", style=colour('FAINT'))
     console.print(head)
+    if bot:
+        who = Text(f"@{bot.get('handle') or bot.get('id')}", style="bold")
+        if bot.get("description"):
+            who.append("  " + str(bot["description"]), style=colour('MUTED'))
+        header("bot", who)
     model = Text(str(health["model"]), style="bold")
     model.append("  offline" if not health["model_ok"] else "  ready",
                  style=f"bold {colour('WARNING')}" if not health["model_ok"] else colour('SUCCESS'))
@@ -677,13 +683,35 @@ def _full_screen(console: Console) -> bool:
             and not os.environ.get("KOVA_SIMPLE"))
 
 
+def _chat_speaker(chat: dict) -> str | None:
+    """The bot a chat is with, or ``None`` for a chat with the default assistant."""
+    if chat.get("kind") == "bot" and chat.get("bot_id"):
+        return str(chat["bot_id"])
+    return None
+
+
+def _bot_record(client: KovaClient, bot_id: str) -> dict | None:
+    """A bot's definition for a chat header; a deleted bot still chats as Kova."""
+    try:
+        return client.bot_get(bot_id)
+    except KovaError:
+        return None
+
+
 def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = False,
               *, new: bool = False, mode: str | None = None, web: bool | None = None,
-              console: Console, incognito: bool = False) -> None:
+              console: Console, incognito: bool = False, bot_id: str | None = None) -> None:
     if incognito:
         new = True
+    bot = _bot_record(client, bot_id) if bot_id is not None else None
     if chat_id is None:
         chats = [c for c in client.list_chats() if not c.get("ephemeral")] if not new else []
+        # A bot chat and a plain chat never resume each other: plain ``kova`` is
+        # unchanged by bots existing, and ``--bot`` continues that bot's chat.
+        if bot_id is not None:
+            chats = [chat for chat in chats if _chat_speaker(chat) == bot_id]
+        else:
+            chats = [chat for chat in chats if (chat.get("kind") or "chat") == "chat"]
         if chats:
             chat_id = chats[0]["id"]
             if mode is not None or web is not None:  # explicit flags win over stored settings
@@ -696,7 +724,8 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         cfg = load_config()
         app = ChatApp(client, chat_id, no_think=no_think,
                       history_path=cfg.home / "chat_history.jsonl", incognito=incognito,
-                      memory_path=str(cfg.memory_path))
+                      memory_path=str(cfg.memory_path), bot_id=bot_id,
+                      bot_name=str(bot.get("name") or "") if bot else None)
         if mode is not None:
             app.mode = mode
         if web is not None:
@@ -710,16 +739,20 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
     toolbar_state = {"mode": mode or current.get("mode") or "work",
                      "web": current.get("web", True) if web is None else web,
                      "model": str(client.health()["model"])}
-    _header(client, console, chat_id, mode=toolbar_state["mode"], web=toolbar_state["web"])
+    _header(client, console, chat_id, mode=toolbar_state["mode"], web=toolbar_state["web"],
+            bot=bot)
     pending = {"cwd": current.get("cwd") or os.getcwd(),
                "permission": current.get("permission")}
 
     def ensure_chat() -> str:
         nonlocal chat_id
         if chat_id is None:
+            title = str(bot.get("name") or "") if bot else ""
             chat_id = client.create_chat(
+                title=title or None,
                 mode=toolbar_state["mode"], web=toolbar_state["web"],
                 permission=pending["permission"], cwd=pending["cwd"],
+                bot_id=bot_id,
                 **({"ephemeral": True} if incognito else {}))["id"]
         return chat_id
 
@@ -766,6 +799,10 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
             if command in ("/exit", "/quit") and not args:
                 break
             if command == "/incognito" and not args:
+                if bot_id is not None:
+                    console.print("Incognito is conversation-only, so it cannot be used with a bot.",
+                                  style=colour('ERROR'))
+                    continue
                 close_incognito()
                 chat_id = None
                 incognito = True
@@ -783,7 +820,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 if console.is_terminal:
                     console.clear()
                 _header(client, console, chat_id, mode=toolbar_state["mode"],
-                        web=toolbar_state["web"])
+                        web=toolbar_state["web"], bot=bot)
             elif command == "/think" and not args:
                 show_thinking = not show_thinking
                 no_think = False

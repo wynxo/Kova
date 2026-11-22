@@ -122,13 +122,16 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET/POST /bots` | token or session | list every bot with its state and live status / create one from a definition (`?validate_only=true` checks a draft) |
 | `GET/PATCH/DELETE /bots/{bot_id}` | token or session | read one bot with its persona / change the named fields / remove it, its memory and its routines |
 | `GET/PUT/DELETE /bots/{bot_id}/avatar` | token or session | read / replace / clear the avatar image, type-checked and capped at 256 KB |
-| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` or `bot_id` (a direct bot chat) when creating one |
+| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id`, `bot_id` (direct bot chat), or `members` (group) with optional `preset` and `group` overrides |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
 | `GET /chats/search` | token or session | full-text chat search (`?q=`) |
-| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, move to a project (`project_id` on its own), delete |
+| `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, edit `group`/apply a `preset`, move to a project (`project_id` on its own), delete |
+| `POST /chats/{chat_id}/members` | token or session | add a bot to a group by `bot_id`; a paired phone needs `settings:write` |
+| `PATCH /chats/{chat_id}/members/{bot_id}` | token or session | reorder, mute or patch group member overrides; a paired phone needs `settings:write` |
+| `DELETE /chats/{chat_id}/members/{bot_id}` | token or session | remove a member without removing their messages; a paired phone needs `settings:write` |
 | `GET /chats/{chat_id}/approvals` | token or session | approvals and questions still waiting in this chat |
 | `POST /chats/{chat_id}/approvals/{approval_id}` | token or session | answer a waiting approval or question |
 | `GET /chats/{chat_id}/checkpoints` | token or session | this chat's change sets, newest first |
@@ -385,7 +388,9 @@ writes need `memory:write`. The matrix is in
 A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`, `restart`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
-`chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
+`chats`, `bots`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart`
+hold their subcommands; `kova chat` (the hidden back-compat alias of plain `kova`) is the
+one place a chat is opened as a bot, with `--bot <handle>`. Use `uv run kova` from a checkout. Commands talk to the server through
 `KovaClient` (`src/kova/client.py`), a synchronous `httpx` client; errors
 become `KovaError` and are rendered as one red line by `_fail`. `kova config` is
 the exception: it reads and writes `config.toml` directly, validates every value
@@ -407,7 +412,9 @@ they stay out of the CLI's chat lists.
 ### Terminal chat (`src/kova/ui.py`)
 
 `_run_chat` is the interactive loop behind plain `kova`. It picks the latest
-chat (or a new one), prints the header, and uses `prompt_toolkit` for input,
+chat of the same speaker (or a new one): with `--bot` that means the latest chat
+with that bot, and plain `kova` only resumes chats with the default assistant,
+so bots never change it. It prints the header, and uses `prompt_toolkit` for input,
 history and Tab completion (`_CommandCompleter`). Slash commands are listed in
 `_COMMANDS` and handled in the loop; `/mode`, `/web`, `/model`, its `/provider`
 alias and `/new` call the same API the desktop app does.
@@ -672,6 +679,25 @@ default assistant. Read routes need only a chat-capable session; writes need
 MCP tools, a `full` ceiling or a folder outside Kova Files needs `host:exec`
 (see [remote-access.md](remote-access.md#what-a-paired-phone-may-do)).
 
+`src/kova/bot_templates.py` holds four starter bots — Researcher, Coder, Writer
+and Buddy — as data: a name, one-line description, persona, tool allowlist,
+ceiling, memory budget and group defaults. `kova bots templates` lists them and
+`kova bots create --from <name>` writes one to disk. A starter names no model, so
+it uses the active one; each returns a fresh definition, so the CLI can change
+one before sending it. `tests/test_bot_templates.py` validates every starter with
+the same function the server runs and checks each literal tool name against the
+live registry.
+
+The CLI manages bots through the same routes: `kova bots list|show|create|edit|set|rm`
+and `templates`. `set` changes one value, named either by its short name (`model`,
+`permission`, `tools`, `folder`, `budget`, `persona`, …) or by its dotted path in
+`bot.toml` (`model.name`, `permissions.ceiling`); `create` and `edit` take the same
+fields as options. `kova chat --bot <handle>` opens that bot's latest direct chat
+and starts one on the first message; the full-screen terminal takes the same path
+(`ChatApp(bot_id=…)`). Plain `kova` resumes only chats with the default assistant,
+so adding a bot never changes what it opens, and `/incognito` is refused in a bot
+chat because incognito is conversation-only.
+
 ## Store
 
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
@@ -682,12 +708,21 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
   pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
   optional project_id, kind (`chat`, `bot` or `group`) and, for a direct bot chat,
-  `bot_id`
+  `bot_id`; group chats store only changed values in `group_settings` (JSON)
+- `chat_members` — chat id and bot id, answer order, mute flag, joined time, and
+  per-member settings overrides (JSON); deleting the chat cascades to its members
 - `messages` — role, content, tool_calls (JSON), tool_call_id, created, who wrote it
   (`author` and `author_name`; NULL for the user and the default assistant),
   `bot_turn_id` and `hop`, and nullable usage columns (`USAGE_COLUMNS`) set only on
   a turn's final answer
 - `reminders` — reminder_at, text, done
+
+Group chat responses include member identities and the resolved `group` settings,
+alongside the stored overrides and matching `preset` (or `custom`). New groups
+use `[groups] preset` from `config.toml` unless the caller chooses one. Group
+settings can be written during a turn without stopping it or rewriting history.
+The change is published as `group_settings_changed` on `/events` and the live
+chat stream, if one is open. Subsequent messages read the saved settings.
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
 `colour`, `icon`, `project_id`, the chat `kind` and `bot_id`, message `author`,
