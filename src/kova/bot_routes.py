@@ -233,6 +233,7 @@ def install_bot_routes(app, config: Config, require_token) -> None:
         await asyncio.to_thread(app.state.memory.remove_bot_scope, bot_id)
         # Its chats and messages stay, with the author name they were written
         # under; a chat whose bot is gone answers with the default assistant.
+        app.state.store.remove_bot_from_groups(bot_id)
         publish(bot_id, "deleted")
         return {"ok": True}
 
