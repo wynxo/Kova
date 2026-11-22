@@ -3,6 +3,7 @@
 import plistlib
 import sqlite3
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -58,6 +59,8 @@ def test_fresh_desktop_rolls_back_failed_npm_and_replaces_stale_tree(tmp_path, m
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
 def test_refresh_desktop_registration_updates_native_icons_and_launcher(tmp_path, monkeypatch, platform):
+    if platform != "win32" and sys.platform == "win32":
+        pytest.skip("Linux/macOS launchers need POSIX paths; a Windows tmp path is escaped differently")
     monkeypatch.setattr(integration, "sys", SimpleNamespace(platform=platform))
     monkeypatch.setattr(integration.Path, "home", lambda: tmp_path)
     monkeypatch.setenv("APPDATA", str(tmp_path / "app-data"))
