@@ -27,6 +27,10 @@ from kova.permissions import PERMISSIONS
 #: an appearance field, so it cannot double as "absent").
 _UNSET: object = object()
 
+#: The three chat kinds (design 2.3): today's chat, a direct chat with one bot,
+#: and a group. A direct bot chat names exactly one bot; the others name none.
+CHAT_KINDS = ("chat", "bot", "group")
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -261,7 +265,9 @@ class Store:
                 pinned INTEGER NOT NULL DEFAULT 0,
                 model TEXT,
                 reasoning_effort TEXT,
-                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                kind TEXT NOT NULL DEFAULT 'chat',
+                bot_id TEXT
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,7 +280,11 @@ class Store:
                 turn_model TEXT,
                 turn_id TEXT,
                 variant INTEGER NOT NULL DEFAULT 1,
-                active INTEGER NOT NULL DEFAULT 1
+                active INTEGER NOT NULL DEFAULT 1,
+                author TEXT,
+                author_name TEXT,
+                bot_turn_id TEXT,
+                hop INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS message_attachments (
                 message_id INTEGER NOT NULL,
@@ -366,6 +376,16 @@ class Store:
         for name, definition in USAGE_COLUMNS.items():
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
+        # Who wrote a row (design 2.4). NULL is the user and the default
+        # assistant, so every row written before bots existed is already right.
+        for name, definition in (
+            ("author", "TEXT"),
+            ("author_name", "TEXT"),
+            ("bot_turn_id", "TEXT"),
+            ("hop", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
         # Same for chat modes and the web-search toggle; existing chats keep
         # today's behaviour (work mode, web on).
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(chats)")}
@@ -412,6 +432,12 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE chats ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL"
             )
+        # Three chat kinds (design 2.3): today's chat, a direct chat with one
+        # bot, and a group. Every existing chat is exactly today's kind.
+        if "kind" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'")
+        if "bot_id" not in columns:
+            self._conn.execute("ALTER TABLE chats ADD COLUMN bot_id TEXT")
         # A project's colour, icon and default model (#196) are nullable, so an
         # older database keeps its projects with the default look and model.
         project_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(projects)")}
@@ -706,10 +732,15 @@ class Store:
                     web: bool = True, permission: str = "manual", cwd: str | None = None, *,
                     ephemeral: bool = False, colour: str | None = None,
                     icon: str | None = None, model: str | None = None,
-                    reasoning_effort: str | None = None, project_id: str | None = None) -> dict:
+                    reasoning_effort: str | None = None, project_id: str | None = None,
+                    kind: str = "chat", bot_id: str | None = None) -> dict:
         if project_id is not None and (ephemeral or self._memory_only):
             raise ValueError("Incognito chats cannot belong to a project.")
         if ephemeral and not self._memory_only:
+            # Incognito stays conversation-only with the default assistant: a
+            # bot chat or a group is never created in RAM (design 2.3).
+            if kind != "chat" or bot_id is not None:
+                raise ValueError("Incognito chats cannot have bots or groups.")
             return self._temporary_store().create_chat(
                 title or "Incognito", "chat", False, "manual", cwd, model=model,
                 reasoning_effort=reasoning_effort)
@@ -717,6 +748,13 @@ class Store:
             raise ValueError(f"unknown mode '{mode}'")
         if permission not in PERMISSIONS:
             raise ValueError(f"unknown permission '{permission}'")
+        if kind not in CHAT_KINDS:
+            raise ValueError(f"unknown chat kind '{kind}'")
+        bot_id = (bot_id or "").strip() or None
+        if kind == "bot" and bot_id is None:
+            raise ValueError("a bot chat needs a bot_id")
+        if kind != "bot" and bot_id is not None:
+            raise ValueError("only a bot chat may name a bot")
         colour = normalize_colour(colour)
         icon = normalize_icon(icon)
         with self._lock, self._conn:
@@ -730,13 +768,16 @@ class Store:
             created = _utc_now_iso()
             self._conn.execute(
                 "INSERT INTO chats (id, title, created, mode, web, permission, cwd, colour, icon, "
-                "model, reasoning_effort, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (cid, title, created, mode, web, permission, cwd, colour, icon, model, reasoning_effort, project_id),
+                "model, reasoning_effort, project_id, kind, bot_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, title, created, mode, web, permission, cwd, colour, icon, model,
+                 reasoning_effort, project_id, kind, bot_id),
             )
             return {"id": cid, "title": title, "created": created, "mode": mode, "web": web,
                     "permission": permission, "cwd": cwd, "colour": colour, "icon": icon,
                     "model": model, "reasoning_effort": reasoning_effort, "plan": [], "pinned": False,
-                    "project_id": project_id, **({"ephemeral": True} if self._memory_only else {})}
+                    "project_id": project_id, "kind": kind, "bot_id": bot_id,
+                    **({"ephemeral": True} if self._memory_only else {})}
 
     def fork_chat(self, chat_id: str, *, through: int | None = None) -> dict | None:
         """Clone a conversation, optionally ending at a particular reply."""
@@ -748,7 +789,8 @@ class Store:
                 return None
             rows = self._conn.execute(
                 "SELECT id, role, content, tool_calls, tool_call_id, created, "
-                "COALESCE(turn_model, usage_model) AS turn_model, turn_id, variant FROM messages "
+                "COALESCE(turn_model, usage_model) AS turn_model, turn_id, variant, "
+                "author, author_name, bot_turn_id, hop FROM messages "
                 "WHERE chat_id = ? AND active = 1 AND (? IS NULL OR id <= ?) ORDER BY id",
                 (chat_id, through, through)).fetchall()
             if through is not None:
@@ -803,21 +845,25 @@ class Store:
 
                 self._conn.execute(
                     "INSERT INTO chats (id, title, created, mode, web, permission, cwd, plan, capabilities, "
-                    "colour, icon, model, reasoning_effort, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "colour, icon, model, reasoning_effort, project_id, kind, bot_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (cid, (source['title'] or 'Untitled') + ' (fork)', created, source['mode'],
                      source['web'], source['permission'], source['cwd'],
                      remap(source['plan']) if through is None else '[]',
                      source['capabilities'], source['colour'], source['icon'], source['model'],
-                     source['reasoning_effort'], source['project_id']))
+                     source['reasoning_effort'], source['project_id'], source['kind'],
+                     source['bot_id']))
                 ids = {}
                 for row in rows:
                     cur = self._conn.execute(
                         "INSERT INTO messages (chat_id, role, content, tool_calls, tool_call_id, "
-                        "created, turn_model, turn_id, variant, active) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                        "created, turn_model, turn_id, variant, active, author, author_name, "
+                        "bot_turn_id, hop) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
                         (cid, row['role'], remap(row['content']), remap(row['tool_calls']),
                          row['tool_call_id'], row['created'], row['turn_model'],
-                         row['turn_id'], row['variant']))
+                         row['turn_id'], row['variant'], row['author'], row['author_name'],
+                         row['bot_turn_id'], row['hop']))
                     ids[row['id']] = cur.lastrowid
                 for link in links:
                     if link['message_id'] in ids:
@@ -840,7 +886,8 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
-                "c.colour, c.icon, c.pinned, c.project_id, COUNT(m.id) AS message_count, "
+                "c.colour, c.icon, c.pinned, c.project_id, c.kind, c.bot_id, "
+                "COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id AND m.active = 1 "
                 "GROUP BY c.id "
@@ -857,6 +904,8 @@ class Store:
                 "permission": r["permission"],
                 "cwd": r["cwd"],
                 "project_id": r["project_id"],
+                "kind": r["kind"],
+                "bot_id": r["bot_id"],
                 "colour": r["colour"],
                 "icon": r["icon"],
                 "pinned": bool(r["pinned"]),
@@ -879,7 +928,8 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, created, mode, web, permission, cwd, plan, capabilities, "
-                "colour, icon, pinned, model, reasoning_effort, project_id FROM chats WHERE id = ?", (chat_id,)
+                "colour, icon, pinned, model, reasoning_effort, project_id, kind, bot_id "
+                "FROM chats WHERE id = ?", (chat_id,)
             ).fetchone()
         if row is None:
             return None
@@ -894,6 +944,8 @@ class Store:
             "permission": row["permission"],
             "cwd": row["cwd"],
             "project_id": row["project_id"],
+            "kind": row["kind"],
+            "bot_id": row["bot_id"],
             "colour": row["colour"],
             "icon": row["icon"],
             "pinned": bool(row["pinned"]),
@@ -1162,15 +1214,22 @@ class Store:
                 project_id = chat.get("project_id")
                 if not isinstance(project_id, str) or self.get_project(project_id) is None:
                     project_id = None
+                # A bot chat keeps its author attribution and bot link, but a
+                # hand-edited backup cannot invent a kind or a bot id: an
+                # unknown shape imports as today's plain chat.
+                kind = chat.get("kind") if chat.get("kind") in CHAT_KINDS else "chat"
+                bot_id = chat.get("bot_id")
+                if kind != "bot" or not isinstance(bot_id, str) or not bot_id.strip():
+                    kind, bot_id = "chat", None
                 self._conn.execute(
-                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort, project_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO chats (id, title, created, mode, web, cwd, capabilities, colour, icon, pinned, model, reasoning_effort, project_id, kind, bot_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chat_id, chat.get("title"), created, mode, web,
                      chat.get("cwd") or self.default_cwd or str(Path.home() / "Kova Files"), limit,
                      colour, icon, 1 if chat.get("pinned") else 0,
                      chat["model"] if isinstance(chat.get("model"), str) else None,
                      chat["reasoning_effort"] if isinstance(chat.get("reasoning_effort"), str) else None,
-                     project_id),
+                     project_id, kind, bot_id),
                 )
                 for message in chat.get("messages", []):
                     if not isinstance(message, dict):
@@ -1182,10 +1241,12 @@ class Store:
                     if tool_calls is not None and not isinstance(tool_calls, str):
                         tool_calls = json.dumps(tool_calls)
                     variant = message.get("variant")
+                    hop = message.get("hop")
                     cur = self._conn.execute(
                         "INSERT INTO messages "
                         "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model, "
-                        "turn_id, variant, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "turn_id, variant, active, author, author_name, bot_turn_id, hop) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             chat_id,
                             role,
@@ -1197,6 +1258,10 @@ class Store:
                             message["turn_id"] if isinstance(message.get("turn_id"), str) else None,
                             int(variant) if isinstance(variant, int) and variant >= 1 else 1,
                             0 if message.get("active") is False else 1,
+                            message["author"] if isinstance(message.get("author"), str) else None,
+                            message["author_name"] if isinstance(message.get("author_name"), str) else None,
+                            message["bot_turn_id"] if isinstance(message.get("bot_turn_id"), str) else None,
+                            int(hop) if isinstance(hop, int) and hop >= 0 else 0,
                         ),
                     )
                     rows = message.get("attachments")
@@ -1231,6 +1296,7 @@ class Store:
                     SELECT m.chat_id AS chat_id,
                            m.id AS message_id,
                            messages_fts.role AS role,
+                           m.author AS author,
                            snippet(messages_fts, 0, '', '', '…', 12) AS snippet
                     FROM messages_fts
                     JOIN messages m ON m.id = messages_fts.rowid
@@ -1243,9 +1309,9 @@ class Store:
             else:
                 where = " OR ".join("m.content LIKE ? ESCAPE '\\'" for _ in terms)
                 rows = self._conn.execute(
-                    f"SELECT chat_id, message_id, role, content AS snippet FROM ("
+                    f"SELECT chat_id, message_id, role, author, content AS snippet FROM ("
                     "  SELECT m.chat_id AS chat_id, m.id AS message_id, m.role AS role,"
-                    "         m.content AS content,"
+                    "         m.author AS author, m.content AS content,"
                     "         ROW_NUMBER() OVER (PARTITION BY m.chat_id ORDER BY m.id DESC) AS rank"
                     "  FROM messages m"
                     "  WHERE m.role IN ('user', 'assistant') AND m.content IS NOT NULL"
@@ -1276,6 +1342,7 @@ class Store:
                     "pinned": chat["pinned"],
                     "message_id": row["message_id"],
                     "role": row["role"],
+                    "author": row["author"],
                     "snippet": _clean_snippet(snippet),
                 }
             )
@@ -1312,12 +1379,22 @@ class Store:
         created: str | None = None,
         turn_id: str | None = None,
         variant: int | None = None,
+        author: str | None = None,
+        author_name: str | None = None,
+        bot_turn_id: str | None = None,
+        hop: int = 0,
     ) -> int:
         """Store one message under a turn and variant.
 
         A user message without ``turn_id`` starts a new turn. Later rows follow
         the active turn unless a caller names one, so a retry or edit can write
         its new variant while the old one stays on disk.
+
+        ``author`` names the bot that wrote an assistant or tool row; ``None``
+        is the user and the default assistant, which is every row written
+        before bots existed. ``author_name`` keeps the display name *at the
+        time*, and ``bot_turn_id`` groups one bot reply's rows inside the user
+        turn (``hop`` 0 for an answer to the user, 1+ for a hand-off).
         """
         with self._lock:
             if turn_id is None:
@@ -1331,7 +1408,8 @@ class Store:
             cur = self._conn.execute(
                 "INSERT INTO messages "
                 "(chat_id, role, content, tool_calls, tool_call_id, created, turn_model, "
-                "turn_id, variant, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                "turn_id, variant, active, author, author_name, bot_turn_id, hop) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
                 (
                     chat_id,
                     role,
@@ -1342,6 +1420,10 @@ class Store:
                     turn_model,
                     turn_id,
                     variant,
+                    author,
+                    author_name,
+                    bot_turn_id,
+                    max(0, int(hop or 0)),
                 ),
             )
             if role == "user" and variant > 1:
@@ -1552,7 +1634,8 @@ class Store:
             where = "chat_id = ?" + ("" if include_inactive else " AND active = 1")
             rows = self._conn.execute(
                 "SELECT id, role, content, tool_calls, tool_call_id, created, turn_model, "
-                "turn_id, variant, active, " + ", ".join(USAGE_COLUMNS) +
+                "turn_id, variant, active, author, author_name, bot_turn_id, hop, "
+                + ", ".join(USAGE_COLUMNS) +
                 f" FROM messages WHERE {where} ORDER BY id",
                 (chat_id,),
             ).fetchall()
@@ -1585,6 +1668,17 @@ class Store:
                 message["active"] = bool(row["active"])
                 message["turn_id"] = row["turn_id"]
                 message["variant"] = row["variant"]
+            if include_message_meta:
+                # Who wrote it, only when it is not the user or the default
+                # assistant, so every older transcript keeps its exact shape.
+                if row["author"] is not None:
+                    message["author"] = row["author"]
+                    if row["author_name"]:
+                        message["author_name"] = row["author_name"]
+                if row["bot_turn_id"] is not None:
+                    message["bot_turn_id"] = row["bot_turn_id"]
+                if row["hop"]:
+                    message["hop"] = row["hop"]
             if include_usage and row["prompt_tokens"] is not None:
                 message["usage"] = _usage_dict(row)
             used_model = row["turn_model"] or row["usage_model"]

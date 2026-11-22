@@ -111,6 +111,11 @@ EXPECTED = {
     ("PATCH", "/memory/{slug}"): "memory:write",
     ("POST", "/memory/undo"): "memory:write",
     ("POST", "/memory/consolidate"): "memory:write",
+    ("POST", "/bots"): "settings:write",
+    ("PATCH", "/bots/{bot_id}"): "settings:write",
+    ("DELETE", "/bots/{bot_id}"): "settings:write",
+    ("PUT", "/bots/{bot_id}/avatar"): "settings:write",
+    ("DELETE", "/bots/{bot_id}/avatar"): "settings:write",
 }
 
 
@@ -884,3 +889,58 @@ def test_phone_cannot_edit_shared_project_guidance_or_inherit_unshared_folder(ko
     })
     assert result.status_code == 200, result.text
     assert app.state.store.chat_capabilities(result.json()["id"]) == {"chat", "models:read"}
+
+
+# ----------------------------------------------------------------- bots (1.5)
+def test_a_phone_reads_bots_but_cannot_create_or_change_one(kova):
+    client, app, local, phone, record = kova
+    assert client.get("/bots", headers=phone).status_code == 200
+    body = {"id": "researcher", "name": "Researcher"}
+    refused = client.post("/bots", json=body, headers=phone)
+    assert refused.status_code == 403 and "settings:write" in refused.json()["detail"]
+    assert client.post("/bots", json=body, headers=local).status_code == 200
+    assert client.patch("/bots/researcher", json={"name": "Other"}, headers=phone).status_code == 403
+    assert client.delete("/bots/researcher", headers=phone).status_code == 403
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+    avatar = client.put("/bots/researcher/avatar", headers=phone,
+                        files={"file": ("me.png", png, "image/png")})
+    assert avatar.status_code == 403
+    # A read is a chat client's business, and the computer writes freely.
+    assert client.get("/bots/researcher", headers=phone).status_code == 200
+
+
+def test_a_phone_cannot_raise_a_bots_ceiling(kova, tmp_path):
+    client, app, local, phone, record = kova
+    client.patch(f"/devices/{record['id']}", json={"capabilities": ["settings:write"]},
+                 headers=local)
+    web_only = {"id": "researcher", "name": "Researcher",
+                "permissions": {"ceiling": "manual", "tools": ["web_*"]}}
+    assert client.post("/bots", json=web_only, headers=phone).status_code == 200
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    for change in ({"permissions": {"ceiling": "full"}},
+                   {"permissions": {"tools": ["run_command"]}},
+                   {"permissions": {"tools": ["*"]}},
+                   {"permissions": {"tools": ["github__*"]}},
+                   {"permissions": {"folder": str(outside)}}):
+        refused = client.patch("/bots/researcher", json=change, headers=phone)
+        assert refused.status_code == 403, change
+        assert "host:exec" in refused.json()["detail"]
+    # Lowering or an ordinary change is still a settings:write action.
+    assert client.patch("/bots/researcher", json={"name": "Sources"},
+                        headers=phone).status_code == 200
+    assert client.patch("/bots/researcher", json={"permissions": {"ceiling": "auto"}},
+                        headers=phone).status_code == 200
+    # With host:exec the same raise is allowed.
+    client.patch(f"/devices/{record['id']}",
+                 json={"capabilities": ["settings:write", "host:exec"]}, headers=local)
+    raised = client.patch("/bots/researcher", json={"permissions": {"ceiling": "full"}},
+                          headers=phone)
+    assert raised.status_code == 200 and raised.json()["ceiling"] == "full"
+    # Creating a privileged bot straight away is refused for the weak phone too.
+    client.patch(f"/devices/{record['id']}", json={"capabilities": ["settings:write"]},
+                 headers=local)
+    strong = {"id": "coder", "name": "Coder",
+              "permissions": {"ceiling": "full", "tools": ["run_command"]}}
+    assert client.post("/bots", json=strong, headers=phone).status_code == 403
+    assert client.post("/bots", json=strong, headers=local).status_code == 200

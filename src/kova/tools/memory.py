@@ -43,7 +43,9 @@ def _tools(memory_of: Callable[[], Memory]) -> list[Tool]:
     single project scope, which is fixed for that turn.
     """
     project = bool(memory_of().scope_id)
-    where = "for this project" if project else "about the user"
+    kind = memory_of().scope_kind if project else ""
+    where = ("for this bot" if kind == "bot"
+             else "for this project" if project else "about the user")
 
     def add(args: dict) -> str:
         note = memory_of().add(args["title"], args["body"], args.get("tags"))
