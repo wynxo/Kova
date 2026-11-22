@@ -108,3 +108,12 @@ def test_existing_allow_cannot_bypass_destructive_approval(tmp_path):
     assert fresh.policy('c', 'run_command', args, tmp_path)[0] != 'allow'
     fresh.rules.append(Rule('deny', 'run_command', '*', message='No deletion'))
     assert fresh.policy('c', 'run_command', args, tmp_path) == ('deny', 'No deletion')
+
+
+@pytest.mark.asyncio
+async def test_edit_change_summary_reads_the_schema_argument_names():
+    # edit_file's schema names its arguments old_text/new_text; the summary must count them.
+    a = Approvals()
+    event = a.create('c', 'edit_file', {'path': 'a.py', 'old_text': 'one\ntwo\n', 'new_text': 'x\n'})
+    assert event['change_summary'] == 'Replace 2 lines (8 chars) with 1 lines (2 chars)'
+    a.answer('c', event['id'], 'deny')
