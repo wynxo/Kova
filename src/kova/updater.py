@@ -45,8 +45,8 @@ def _target(ref: str, source: str) -> build.Build | None:
 
 def _command(args, env, verbose, *, label, timeout=300) -> str:
     try:
-        result = subprocess.run(args, env=env, check=True, text=True, timeout=timeout,
-                                stdin=subprocess.DEVNULL, capture_output=not verbose)
+        result = subprocess.run(args, env=env, check=True, encoding="utf-8", errors="replace",
+                                timeout=timeout, stdin=subprocess.DEVNULL, capture_output=not verbose)
     except subprocess.CalledProcessError as exc:
         lines = (exc.stderr or exc.stdout or "").strip().splitlines()
         detail = f": {lines[-1][:240]}" if lines else ""
@@ -133,6 +133,9 @@ def _details(exc: Exception) -> str:
 
 
 def update_installation(ref: str, emit=print, *, verbose=False, progress=None, worker=False) -> None:
+    # Fail before looking up GitHub, invoking any helpers, or changing files.
+    with egress.scope(config_loader=lambda: load_config(read_only=True), audit=False):
+        egress.check_external_process()
     if sys.platform == "win32" and build.managed() and not worker:
         _defer_windows(ref, verbose)
         emit("→ Update started in a separate console so Windows can replace the running CLI.")
@@ -142,6 +145,7 @@ def update_installation(ref: str, emit=print, *, verbose=False, progress=None, w
     home = kova_home().resolve()
     env = lifecycle.tool_env()
     env["KOVA_HOME"] = str(home)
+    env.pop("PYTHONPATH", None)
     launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova.exe" if os.name == "nt" else "kova")
     tool_root = build.tool_dir().parent
     tool_root.mkdir(parents=True, exist_ok=True)
@@ -216,9 +220,6 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
             stopped[kind] = bool(step(f"Stop old {kind}", lambda: runtime.stop(process)))
 
     def install():
-        # Respect local-only before uv or npm can make an external connection.
-        with egress.scope(config_loader=lambda: load_config(home, read_only=True), audit=False):
-            egress.check_external_process()
         uv = lifecycle.find_uv()
         if sys.platform == "win32":
             stop_running("server", server)
@@ -228,8 +229,7 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
             _check_windows_tool_idle()
         return _install(uv, source, target, launcher, env, verbose)
 
-    # LocalOnlyError is reported as a failed install, not an unfinished summary.
-    installed = step("Install CLI, terminal UI and packaged web assets", install)
+    installed = step("Install and verify CLI, terminal UI and web assets", install)
     if installed:
         emit(f"✓ Installed Kova {current.label()} → {installed.label()}")
         if sys.platform != "win32":
@@ -241,7 +241,7 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
                      env, verbose, label=detail, timeout=timeout)
 
         if not server or stopped.get("server"):
-            step("Migrate config and data", lambda: new_python("migrate", detail="Config/data migration"), "kova doctor")
+            step("Migrate config and data", lambda: new_python("migrate", detail="Config/data migration"))
         else:
             skipped("Migrate config and data", "old server is still active")
 
@@ -333,11 +333,13 @@ def _defer_windows(ref, verbose):
             parents.append(str(parent.pid))
         def quote(value):
             return "'" + str(value).replace("'", "''") + "'"
-        script = (f"$env:PYTHONPATH = {quote(packages)}; $env:PYTHONNOUSERSITE = '1'; "
-                  f"try {{ & {quote(sys._base_executable)} -m kova.updater worker "
-                  f"{quote(ref)} {quote(','.join(parents))} {int(verbose)}; $code = $LASTEXITCODE }} "
+        bootstrap = ("import runpy, site, sys; site.addsitedir(sys.argv.pop(1)); "
+                     "runpy.run_module('kova.updater', run_name='__main__')")
+        script = (f"try {{ & {quote(sys._base_executable)} -I -c {quote(bootstrap)} "
+                  f"{quote(packages)} worker {quote(ref)} {quote(','.join(parents))} {int(verbose)}; "
+                  "$code = $LASTEXITCODE } "
                   f"finally {{ Remove-Item -LiteralPath {quote(worker)} -Recurse -Force }}; "
-                  "if ($code -ne 0) { Read-Host 'Press Enter to close'; }; exit $code")
+                  "$null = Read-Host 'Update finished. Press Enter to close'; exit $code")
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         subprocess.Popen(["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
                          creationflags=subprocess.CREATE_NEW_CONSOLE)

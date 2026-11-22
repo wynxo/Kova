@@ -166,6 +166,7 @@ def test_update_preview_shows_short_commit_subjects(lifecycle, monkeypatch):
 
 
 def test_update_uv_failure_rolls_back_tool_and_does_not_interrupt_old_server(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="linux"))
     dist = write_tool("0.1.0")
     bin_dir = updater.Path(lifecycle.tool_env()["UV_TOOL_BIN_DIR"])
     bin_dir.mkdir(parents=True)
@@ -185,6 +186,44 @@ def test_update_uv_failure_rolls_back_tool_and_does_not_interrupt_old_server(lif
     assert build.tool_build().version == "0.1.0"
     assert launcher.read_text() == "old launcher"
     stop.assert_not_called()
+
+
+def test_windows_worker_recovers_the_running_install_when_uv_fails(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(updater, "_check_windows_tool_idle", lambda: None)
+    monkeypatch.setattr(build, "managed", lambda: False)
+    old = write_tool("0.1.0")
+    server, desktop = object(), object()
+    monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: server)
+    monkeypatch.setattr(updater.runtime, "running_desktop", lambda home: desktop)
+    stop, start_server, start_desktop = Mock(), Mock(), Mock()
+    monkeypatch.setattr(updater.runtime, "stop", stop)
+    monkeypatch.setattr(updater.runtime, "start_server", start_server)
+    monkeypatch.setattr(updater.runtime, "start_desktop", start_desktop)
+
+    def fail(*args, **kwargs):
+        (old / "METADATA").unlink()
+        raise subprocess.CalledProcessError(1, "uv", stderr="replacement failed")
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", fail)
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 1, result.output
+    assert "replacement failed" in result.output
+    assert [call.args[0] for call in stop.call_args_list] == [server, desktop]
+    assert start_server.call_args.args[1].version == "0.1.0"
+    start_desktop.assert_called_once()
+    assert build.tool_build().version == "0.1.0"
+
+
+def test_windows_installed_cli_defers_update_until_launcher_exits(lifecycle, monkeypatch):
+    monkeypatch.setattr(updater, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(build, "managed", lambda: True)
+    defer = Mock()
+    monkeypatch.setattr(updater, "_defer_windows", defer)
+    result = CliRunner().invoke(app, ["update", "--verbose"])
+    assert result.exit_code == 0, result.output
+    defer.assert_called_once_with("main", True)
+    assert "separate console" in result.output
 
 
 @pytest.mark.parametrize("args,answer,deleted", [

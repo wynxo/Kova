@@ -366,7 +366,7 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`, `restart`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
