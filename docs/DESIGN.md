@@ -33,7 +33,8 @@ closer to an instrument than to a messenger: a quiet panel, and a live signal on
 6. **Motion explains change.** The live node breathes while it runs; everything else moves
    only in answer to what you did. Motion can always be turned off.
 7. **One product, four surfaces.** Web, desktop, phone and the TUI share the same semantic
-   tokens. The terminal is a renderer, not a separate design.
+   tokens. The terminal is a renderer, not a separate design: how it draws the
+   conversation, step by step, is in [TERMINAL-DESIGN.md](TERMINAL-DESIGN.md).
 8. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is
    not shipped, including themes from the gallery.
 

@@ -28,7 +28,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from kova import __version__, compare_cli, theme
+from kova import __version__, compare_cli
 from kova.checkpoints import summarize
 from kova.client import KovaClient, KovaError
 from kova.config import load_config
@@ -36,23 +36,25 @@ from kova.modes import MODES
 
 from .editor import Editor, FileIndex, expand_mentions, load_history, rank, save_history, suggest
 from .keymap import Keymap
-from .markdown import ACCENT, BASH, MEMORY, MarkdownStream, clean, display_width
+from .glyphs import glyphs
+from .markdown import ACCENT, BASH, MEMORY, USER, WARNING, MarkdownStream, clean, display_width
 from .render import Renderer, compact_number, duration, shorten
-from .style import ACCENT_SOFT, FAINT, active_theme, colour_level
+from .style import ACCENT_SOFT, FAINT, MUTED as MUTED_ROLE, active_theme, colour_level
 from .terminal import KeyReader, RawMode, Screen
 from .widgets import (
-    MODE_COLOURS,
     Choice,
     CommandPalette,
     Picker,
-    box,
     fit,
+    gate,
     input_box,
+    keys,
     menu,
     pick_placeholder,
-    reduced_motion,
     shortcuts,
     status_bar,
+    tile,
+    visible,
     welcome,
 )
 
@@ -137,14 +139,14 @@ class TextPrompt:
         self.placeholder, self.note = placeholder, note
 
     def render(self, width: int, p) -> list[str]:
-        room = width - 10
-        line = p.paint("1;" + ACCENT, "❯ ") + self.value[-room:] + p.paint(ACCENT, "▏")
+        g = glyphs()
+        room = width - 6
+        line = p.paint("1;" + USER, g.user) + " " + self.value[-room:] + p.paint(ACCENT, g.caret)
         if not self.value and self.placeholder:
             line += p.paint(f"3;{FAINT}" if p.level >= 2 else "2;3", fit(self.placeholder, room - 1))
-        footer = " · ".join(part for part in (self.note, "enter to send · esc to skip")
-                                if part)
-        return box(["", line, ""], width, p, ACCENT, title=p.bold(fit(self.prompt, width - 8)),
-                   footer=p.faint(fit(footer, width - 10)))
+        body = [p.dim(fit(self.note, room))] if self.note else []
+        return gate([*body, line], width, p, WARNING, title=self.prompt,
+                    footer=keys(p, [("enter", "send"), ("esc", "skip")]))
 
 
 def run_shell(command: str, cwd: str, cancel: threading.Event,
@@ -306,10 +308,7 @@ class ChatApp:
             with self.raw:
                 if self.clear_on_start:
                     self.screen.clear()
-                if reduced_motion():
-                    self._commit_welcome()
-                else:
-                    self.welcome_started = time.monotonic()
+                self._commit_welcome()  # nothing animates on load
                 while not self.quit:
                     animating = self.job is not None or self.welcome_started is not None
                     for key in reader.read(FRAME / 2 if animating else 0.25):
@@ -334,7 +333,7 @@ class ChatApp:
         if self.welcome_started is not None:
             self._commit_welcome()
         self.screen.close()
-        self.out.write(self.p.paint("1;" + ACCENT, "◆ ") + self.p.dim("Until next time.") + "\n")
+        self.out.write(tile(self.p, self.renderer.name) + " " + self.p.dim("Until next time.") + "\n")
         self.out.flush()
 
     def _suspend(self) -> None:
@@ -718,9 +717,9 @@ class ChatApp:
             detail = str(entry.get("model") or "")
             provider = str(entry.get("provider_name") or "")
             if provider:
-                detail = f"{detail} \u00b7 {provider}" if detail else provider
+                detail = f"{detail}  {provider}" if detail else provider
             if name == self.model:
-                detail = f"{detail} \u00b7 current" if detail else "current"
+                detail = f"{detail}  current" if detail else "current"
             items.append((name, detail, value))
             groups[value] = "Models"
         for chat in self._chats[:20]:
@@ -728,9 +727,9 @@ class ChatApp:
             if not chat_id:
                 continue
             value = ("chat", chat_id)
-            detail = f"{chat.get('mode') or 'work'} \u00b7 {chat.get('message_count', 0)} messages"
+            detail = f"{chat.get('mode') or 'work'}  {chat.get('message_count', 0)} messages"
             if chat_id == self.chat_id:
-                detail += " \u00b7 current"
+                detail += "  current"
             items.append((str(chat.get("title") or "Untitled"), detail, value))
             groups[value] = "Chats"
         return items, groups
@@ -815,8 +814,8 @@ class ChatApp:
         self.renderer.user(text)
         message, attached = expand_mentions(text, self.cwd)
         for path, lines in attached:
-            self.renderer.line(self.p.faint("  ⎿  ") + self.p.dim("Read ") + self.p.bold(path)
-                               + self.p.dim(f" ({lines} lines)"))
+            self.renderer.line("  " + self.p.dim("attached ") + self.p.bold(path)
+                               + self.p.dim(f"  {lines} lines"))
         if attached:
             self.renderer.line()
         if self.context_notes:
@@ -838,7 +837,7 @@ class ChatApp:
         if self.welcome_started is not None:
             self._commit_welcome()
         self.renderer.user(row["text"])
-        self.renderer.line(self.p.faint("  ⎿  queued from a paired phone"))
+        self.renderer.line("  " + self.p.faint("queued from a paired phone"))
         self._stream_turn(self.chat_id, row["text"], label=row["text"], queued=row["id"])
 
     def _stream_turn(self, chat_id: str, message: str, *, label: str, queued: int | None = None) -> None:
@@ -886,9 +885,8 @@ class ChatApp:
         except KovaError as exc:
             self.renderer.error(f"Could not remember that: {exc.message}")
             return
-        self.renderer.line("  " + self.p.green("✓") + " " + self.p.pill("Remember", theme.USER)
-                           + " " + self.p.dim(fit(note, 60)))
-        self._done("Saved to memory")
+        self.renderer.notice("saved", fit(note, 60), "change")
+        self.renderer.line()
 
     # ================================================================ jobs
     def _pump(self) -> None:
@@ -1039,7 +1037,7 @@ class ChatApp:
         if options:
             self.overlay = Choice(str(args.get("question", "Question")), [],
                                   [(option, ("answer", option), "") for option in options],
-                                  footer="enter to answer · esc to skip")
+                                  footer=keys(self.p, [("enter", "answer"), ("esc", "skip")]))
         else:
             self.overlay = TextPrompt(str(args.get("question", "Question")),
                                       lambda answer: self._send_question(event, answer),
@@ -1068,14 +1066,16 @@ class ChatApp:
             for line in clean(summary).splitlines():
                 r.line(line)
             summary = "Review the model and task above before approving."
-        title, body, colour = r.permission_card(tool, args, risk, summary)
-        options = [("Allow once", "allow", "y")]
+        title, body, colour = r.permission_card(tool, args, risk, summary,
+                                                  where=_home_short(self.cwd))
+        options = [("allow once", "allow", "y")]
         if tool != "delegate_analysis":
-            options.append(("Allow this exact action for this session", "allow_session", "a"))
-            options.append(("Always allow this exact action", "allow_always", "w"))
-        options.append(("No, and tell Kova what to do differently", "deny", "n"))
+            options.append(("allow this exact action for this session", "allow_session", "a"))
+            options.append(("always allow this exact action", "allow_always", "w"))
+        options.append((f"no, and tell {r.name} what to do instead", "deny", "n"))
         self.overlay = Choice(title, body, options, colour=colour,
-                              footer="enter to choose · esc to decline")
+                              footer=keys(self.p, [("y a w n", "answer"), ("enter", "choose"),
+                                                   ("esc", "decline")]))
         self.approval = event
         r.asking = True
         r.activity = "Waiting for your answer"
@@ -1091,8 +1091,8 @@ class ChatApp:
         if decision == "deny" and ask_why:
             def send(message):
                 self._send_approval(event, "deny", message)
-            self.overlay = TextPrompt("What should Kova do instead?", send,
-                                      placeholder="optional — leave empty to just decline")
+            self.overlay = TextPrompt(f"What should {self.renderer.name} do instead?", send,
+                                      placeholder="optional, leave empty to just decline")
             return
         self._send_approval(event, decision)
 
@@ -1107,17 +1107,9 @@ class ChatApp:
         except KovaError as exc:
             self.renderer.error(f"Could not answer the approval: {exc.message}")
             return
-        r, tool = self.renderer, str(event.get("tool", "") or "the action")
-        r.reply_header()
-        if decision == "allow":
-            r.line(self.p.dim("  ⎿  ") + f"Allowed {tool}")
-        elif decision in {"allow_session", "allow_always"}:
-            scope = "this session" if decision == "allow_session" else "always"
-            r.line(self.p.dim("  ⎿  ") + f"Allowed {tool} "
-                   + self.p.dim(f"· this exact action, {scope}"))
-        else:
-            r.line(self.p.dim("  ⎿  ") + self.p.red(f"Declined {tool}")
-                   + (self.p.dim(f" · {fit(message, 60)}") if message else ""))
+        tool = str(event.get("tool", "") or "the action")
+        args = event.get("args") if isinstance(event.get("args"), dict) else {}
+        self.renderer.approval_row(tool, args, decision, fit(message, 60) if message else None)
 
     # ================================================================ commands
     def _plugin_commands(self) -> dict:
@@ -1167,7 +1159,7 @@ class ChatApp:
 
     def _done(self, text: str, *, dim: bool = False) -> None:
         """A command's one-line result under its echo."""
-        self.renderer.line(self.p.faint("  ⎿  ") + (self.p.dim(text) if dim else text))
+        self.renderer.line("  " + (self.p.dim(text) if dim else text))
         self.renderer.line()
 
     def _choose(self, title: str, items: list[tuple[str, str, object]], on_pick, *,
@@ -1313,15 +1305,15 @@ class ChatApp:
         if not checkpoints:
             self._done("No changes recorded yet. Kova checkpoints the files it edits.")
             return
-        r.line("  " + p.paint("1;" + ACCENT, "\u25c6") + " " + p.bold("Changes")
-               + p.dim(f" \u00b7 {len(checkpoints)} change set{'' if len(checkpoints) == 1 else 's'}"))
+        r.line("  " + p.bold("Changes") + "  "
+               + p.dim(f"{len(checkpoints)} change set{'' if len(checkpoints) == 1 else 's'}"))
         for checkpoint in checkpoints:
             totals = summarize(checkpoint.get("files") or {})
             r.line("    " + p.paint(ACCENT_SOFT, f"{checkpoint['id']:>3}") + "  "
                    + fit(checkpoint.get("label") or "change set", 34) + "  "
                    + p.green(f"+{totals['additions']}") + " " + p.red(f"\u2212{totals['deletions']}")
                    + "  " + p.dim(f"{totals['files']} file{'' if totals['files'] == 1 else 's'}"))
-        r.line("    " + p.faint("/diff <n> shows one \u00b7 /restore <n> puts the files back"))
+        r.line("    " + p.faint("/diff <n> shows one, /restore <n> puts the files back"))
         r.line()
 
     def _cmd_diff(self, rest: str) -> None:
@@ -1334,8 +1326,7 @@ class ChatApp:
         if not files:
             self._done("That change set recorded no files.")
             return
-        r.line("  " + p.paint("1;" + ACCENT, "\u25c6") + " "
-               + p.bold(f"Change set {checkpoint['id']}") + "  "
+        r.line("  " + p.bold(f"Change set {checkpoint['id']}") + "  "
                + p.dim(fit(checkpoint.get("label") or "", 40)))
         for path, entry in files:
             try:
@@ -1343,8 +1334,8 @@ class ChatApp:
             except KovaError as exc:
                 r.error(f"{path}: {exc.message}")
                 continue
-            r.line("  " + p.pill(str(entry.get("status") or "modified").capitalize(), theme.ACCENT)
-                   + " " + p.bold(_clip(path, max(20, r.width - 30)))
+            r.line("  " + p.dim(str(entry.get("status") or "modified").ljust(9))
+                   + p.bold(_clip(path, max(20, r.width - 30)))
                    + p.dim(f"  +{entry.get('additions', 0)} \u2212{entry.get('deletions', 0)}"))
             lines = (preview.get("diff") or "").splitlines()
             for line in lines[:DIFF_LINES]:
@@ -1408,8 +1399,7 @@ class ChatApp:
         except KovaError as exc:
             r.error(f"Could not restore: {exc.message}")
             return
-        r.line("  " + p.green("\u2713") + " " + p.pill("Restore", theme.ACCENT) + " "
-               + p.bold(f"change set {checkpoint['id']}"))
+        r.line("  " + p.green(glyphs().done) + " " + p.bold(f"Restored change set {checkpoint['id']}"))
         for path in result.get("restored") or []:
             r.line("    " + p.dim(f"put back {path}"))
         for path in result.get("deleted") or []:
@@ -1423,24 +1413,24 @@ class ChatApp:
         commands = self._commands()
         width = max(len(usage) for usage, _ in commands.values()) + 3
         room = max(10, r.width - width - 4)
-        r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Commands"))
+        r.line("  " + p.bold("Commands"))
         for name, (usage, text) in commands.items():
             if name == "quit":
                 continue
             r.line("    " + p.paint(ACCENT_SOFT, usage.ljust(width)) + p.dim(fit(text, room)))
         r.line()
-        r.line("  " + p.paint("1;" + ACCENT, "◆") + " " + p.bold("Keys"))
-        keys = [("esc", "stop the reply · close a menu · twice to clear the input"),
+        r.line("  " + p.bold("Keys"))
+        bindings = [("esc", "stop the reply, close a menu, twice to clear the input"),
                 ("ctrl+p", "command palette: commands, models and chats"),
-                ("ctrl+c", "stop · clear the input · twice to exit"),
-                ("ctrl+t", "toggle reasoning"), ("ctrl+o", "toggle tool details"),
+                ("ctrl+c", "stop, clear the input, twice to exit"),
+                ("ctrl+t", "show or fold the full reasoning"), ("ctrl+o", "open or close every step's details"),
                 ("ctrl+d", "exit"), ("shift+tab", "cycle permission modes"),
                 ("\\⏎  shift+⏎  ctrl+j", "new line"), ("tab", "complete"),
                 ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
-                ("! # @ /", "shell command · remember · attach a file · command")]
+                ("! # @ /", "shell command, remember, attach a file, command")]
         withheld = {key for key, capability in (("ctrl+t", "reasoning"), ("shift+tab", "approvals"))
                     if not self.offers(capability)}
-        for key, text in keys:
+        for key, text in bindings:
             if key in withheld:
                 continue
             key = self.keys.format_help(key)
@@ -1581,7 +1571,7 @@ class ChatApp:
                          subtitle="When Kova asks before acting in this chat")
             return
         if self._set_permission(level):
-            self._done(f"Permissions: {self.p.bold(level)} · {PERMISSIONS[level]}")
+            self._done(f"Permissions: {self.p.bold(level)}, {PERMISSIONS[level]}")
 
     def _set_permission(self, level: str) -> bool:
         if self.chat_id is None and self._ensure_chat() is None:
@@ -1619,7 +1609,7 @@ class ChatApp:
         chat = self.client.update_chat(self.chat_id, cwd=folder) if self.chat_id else {}
         self.cwd = folder
         self.files = FileIndex(folder)
-        note = "" if "cwd" in chat else self.p.dim(" · for @ files and ! commands")
+        note = "" if "cwd" in chat else self.p.dim(" for @ files and ! commands")
         self._done(f"Folder: {self.p.bold(_home_short(folder))}" + note)
 
     def _cmd_fork(self, rest: str) -> None:
@@ -1666,7 +1656,7 @@ class ChatApp:
                 self._done("No saved chats yet.")
                 return
             items = [(chat.get("title") or "Untitled",
-                      f"{chat.get('mode') or 'work'} · {chat.get('message_count', 0)} messages",
+                      f"{chat.get('mode') or 'work'}  {chat.get('message_count', 0)} messages",
                       chat["id"]) for chat in chats]
             self._choose("Resume a chat", items, self._cmd_resume, current=self.chat_id,
                          actions={"ctrl-s": ("fork", self._fork_chat)})
@@ -1708,9 +1698,9 @@ class ChatApp:
                 tags = ", ".join(note.get("tags") or [])
                 detail = self._memory_origin(note)
                 if note.get("source"):
-                    detail += f" · {note['source']}"
+                    detail += f"  {note['source']}"
                 if tags:
-                    detail += f" · {tags}"
+                    detail += f"  {tags}"
                 r.line("  " + p.bold(fit(title, 48)) + " " + p.dim(fit(detail, 48)))
                 r.line("    " + p.dim(fit(note.get('body') or "", 76)))
             if len(notes) > 30:
@@ -1765,8 +1755,10 @@ class ChatApp:
                 self.renderer.begin_turn()
                 self.renderer.handle({"type": "text", "text": message["content"]})
                 self.renderer.end_text()
+                self.renderer.line()
                 self.renderer.spinner = ""
                 self.renderer.in_turn = False
+                self.renderer.after_prose = False
 
     # ================================================================ drawing
     def _flash(self, text: str, seconds: float = 1.5) -> None:
@@ -1792,17 +1784,19 @@ class ChatApp:
                        title="Incognito" if self.incognito else self.title, permission=self.permission,
                        assistant_name=self.renderer.name)
         if tips:
-            tips_list = [f"{self.keys.pretty('palette')}: find commands and chats",
-                         "/resume: switch conversations · /fork: branch this chat",
-                         "@ attaches files · ! runs a shell command",
-                         "# saves a memory · /help lists commands"]
+            tips_list = [f"{self.keys.pretty('palette')} finds commands, models and chats",
+                         "/resume switches conversations, /fork branches this one",
+                         "@ attaches a file, ! runs a shell command",
+                         "# saves a memory, /help lists every command"]
             try:
                 index = int((self.history_path.parent / 'tui-tip').read_text()) if self.history_path else 0
             except (OSError, ValueError):
                 index = 0
-            lines += ["", "  " + self.p.dim(fit("Tip: " + tips_list[index % len(tips_list)], width - 3))]
+            lines.append("    " + self.p.faint("tip".ljust(9))
+                         + self.p.dim(fit(tips_list[index % len(tips_list)], width - 14)))
         if self.incognito:
-            lines += ["", "  " + self.p.dim("Incognito: not saved on this PC. Your provider still receives messages.")]
+            lines += ["", "    " + self.p.yellow(fit("Incognito: not saved on this PC. "
+                                                       "Your provider still receives messages.", width - 5))]
         return lines
 
     def _commit_welcome(self, tips: bool = True) -> None:
@@ -1826,18 +1820,19 @@ class ChatApp:
             self.screen.dirty = True
         width = self.screen.size()[0] - 1
         p = self.p
+        self.renderer.model = self.model
         lines: list[str] = []
         if self.welcome_started is not None:
             lines += [*self._welcome_lines(animate=True), ""]
-        if self.plan:
-            marks = {"done": "✓", "in_progress": "●", "pending": "○"}
-            lines += box([f"{marks.get(item.get('status'), '○')} {item.get('text', '')}" for item in self.plan], width, p, ACCENT, title="Plan")
         lines += self.renderer.detail_lines()
         if self.job is not None:
             lines += self.renderer.live_lines(self.frame)
+            if self.plan:
+                lines.append(self._pinned_plan(width))
+        g = glyphs()
         for text in self.queued[-3:]:
-            lines.append(p.faint("  ❯ " + fit(text.replace("\n", " ⏎ "), width - 14))
-                         + p.faint("  (queued)"))
+            lines.append(p.faint(g.user + " " + fit(text.replace("\n", f" {g.enter} "), width - 12)
+                                 + "  queued"))
         if lines and lines[-1] != "":
             lines.append("")
         if not self.screen.ends_blank:
@@ -1849,8 +1844,9 @@ class ChatApp:
         else:
             busy = self.job is not None
             box_lines, (row, col) = input_box(self.editor.text, self.editor.cursor, width, p,
-                                              placeholder="" if busy else self.placeholder,
-                                              footer=self._hint(), busy=busy and not self.editor.text)
+                                              placeholder=("Type to queue a message, or /steer to redirect"
+                                                           if busy else self.placeholder),
+                                              footer=self._hint(width - 8), busy=busy and not self.editor.text)
             caret = (len(lines) + row, col)
             lines += box_lines
             if self.menu is not None:
@@ -1861,27 +1857,44 @@ class ChatApp:
         self.screen.set_live(lines, caret)
         self.screen.render()
 
-    def _hint(self) -> str:
-        """The input box's footer: what the keys do right now."""
+    def _pinned_plan(self, width: int) -> str:
+        """The plan while a turn runs: one row, the current step and a progress bar."""
+        p, g = self.p, glyphs()
+        done = sum(item.get("status") == "done" for item in self.plan)
+        total = len(self.plan)
+        current = next((str(item.get("text") or "") for item in self.plan
+                        if item.get("status") == "in_progress"), "")
+        bar = p.paint(ACCENT, g.bar_full * done) + p.faint(g.bar_empty * (total - done)) \
+            if total <= 12 else ""
+        head = p.paint("1;" + MUTED_ROLE, g.plan) + " " + p.dim(f"{done} of {total}") + "  "
+        room = width - visible(head) - visible(bar) - 4
+        return (head + p.bold(fit(current, max(4, room))) + "  " + bar if current
+                else head + bar).rstrip()
+
+    def _hint(self, room: int | None = None) -> str:
+        """The input's lower rule: the keys that do something right now."""
         p, text = self.p, self.editor.text
         key = self.keys.pretty
         if self.flash_text and time.monotonic() < self.flash_until:
             return p.yellow(self.flash_text)
         if text.startswith("!"):
-            return p.paint(BASH, "! shell command") + p.faint(" · runs in "
-                                                              + fit(_home_short(self.cwd), 30))
+            return p.paint(BASH, "shell command") + p.faint("  runs in "
+                                                            + fit(_home_short(self.cwd), 30))
         if text.startswith("#"):
-            return p.paint(MEMORY, "# save a memory note")
-        thinking = " · ctrl+t thinking" if self.offers("reasoning") else ""
+            return p.paint(MEMORY, "saves a memory note")
         if self.job is not None:
-            return p.faint(f"⏎ queue · /steer joins · {key('cancel')} stop" + thinking + f" · {key('tools')} tools")
-        if self.permission in PERMISSIONS and self.permission != "manual" and self.offers("approvals"):
-            return (p.paint(MODE_COLOURS.get(self.permission, ACCENT),
-                            f"⏵⏵ {self.permission} permissions")
-                    + p.faint(f" · {key('permissions')} to cycle"))
+            pairs = [(key("cancel"), "stop"), (key("tools"), "steps")]
+            if self.offers("reasoning"):
+                pairs.append((key("thinking"), "thinking"))
+            pairs.append((key("submit"), "queue") if text else ("/steer", "redirect"))
+            return keys(p, pairs, room=room)
         if text:
-            return p.faint(f"{key('submit')} send · {key('newline')} new line · {key('palette')} palette")
-        return p.faint(f"{key('palette')} palette" + thinking + f" · {key('shortcuts')} help")
+            return keys(p, [(key("submit"), "send"), (key("newline"), "new line")], room=room)
+        pairs = [(key("palette"), "commands")]
+        if self.permission in PERMISSIONS and self.offers("approvals"):
+            pairs.append((key("permissions"), "when to ask"))
+        pairs.insert(1, (key("shortcuts"), "keys"))
+        return keys(p, pairs, room=room)
 
     def _turn_stats(self) -> str:
         """Tokens, context fill and turn time for the right of the status line.
@@ -1904,7 +1917,7 @@ class ChatApp:
             parts.append(f"ctx {percent}")
         if elapsed:
             parts.append(duration(elapsed))
-        return " \u00b7 ".join(parts)
+        return "  ".join(parts)
 
     def _status(self, width: int) -> str:
         plan = ""

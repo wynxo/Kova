@@ -954,7 +954,7 @@ which is what the clients read (see *The capability contract* below).
 ## Theme
 
 `src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`, `THINK`,
 `BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
 blocks. The constants are `kova-dark`'s values; every other theme maps onto them
 from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->

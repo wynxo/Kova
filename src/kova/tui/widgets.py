@@ -4,8 +4,10 @@ Everything here is pure: given state and a width it returns lines (and, for
 the input box, where the caret goes). The TUI loop decides which widgets are
 on screen and the ``Screen`` draws them.
 
-Ported and adapted from Kaine's ``kaine/cli_widgets.py``; colours and wording
-match Kova.
+The look (docs/TERMINAL-DESIGN.md): surfaces you type into sit between two
+rules, the keys that work right now in the lower one; something waiting on
+you (an approval, a question) has a coloured bar down its left edge; nothing
+is boxed in. Words are lower case and separated by space, not by dots.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import random
 
 from kova import theme
 
+from .glyphs import glyphs
 from .markdown import (
     ACCENT,
     BASH,
@@ -26,27 +29,29 @@ from .markdown import (
     display_width,
     strip_ansi,
 )
-from .style import ACCENT_SOFT, BORDER, FAINT, SUCCESS, blend, downgrade, fg, rgb
+from .style import ACCENT_SOFT, BORDER, FAINT, downgrade, fg, rgb
 
-SPINNER = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"   # braille dots
-GLYPHS = SPINNER
-VERBS = ("Thinking", "Pondering", "Mulling", "Working", "Brewing", "Crafting", "Tinkering",
-         "Reckoning", "Percolating", "Conjuring", "Synthesizing", "Untangling", "Sketching",
-         "Considering", "Noodling", "Cooking", "Musing", "Assembling", "Weaving", "Distilling")
-PLACEHOLDERS = ('Try "what can you do?"', 'Try "remind me to stretch in an hour"',
-                'Try "summarize @README.md"', 'Try "search the web for today\'s news"',
+PLACEHOLDERS = ('Try "what can you do?"',
+                'Try "remind me to stretch in an hour"', 'Try "summarize @README.md"',
                 'Try "what do you remember about me?"')
 # (keys, what they do), in the order the ? panel lists them.
-SHORTCUTS = (("ctrl+p", "command palette"), ("pgup/pgdn", "scroll expanded details"), ("ctrl+t", "toggle full reasoning"), ("ctrl+o", "toggle tool details"), ("!", "run a shell command"), ("/", "commands"), ("@", "attach a file"),
-             ("#", "remember a note"), ("esc", "interrupt Kova"), ("esc esc", "clear the input"),
-             ("shift+\u23ce", "new line (or \\\u23ce)"), ("shift+tab", "cycle permissions"),
-             ("tab", "complete"), ("\u2191 \u2193", "earlier messages"),
-             ("ctrl+l", "clear the screen"), ("ctrl+d", "exit (or ctrl+c twice)"))
-LOGO = ("\u2588\u2584\u2580 \u2588\u2580\u2588 \u2588 \u2588 \u2584\u2580\u2588",
-        "\u2588 \u2588 \u2588\u2584\u2588 \u2580\u2584\u2580 \u2588\u2580\u2588")
+SHORTCUTS = (("ctrl+p", "command palette"), ("esc", "stop Kova"),
+             ("ctrl+o", "open every step's details"), ("ctrl+t", "show the full reasoning"),
+             ("pgup/pgdn", "scroll those details"), ("shift+tab", "change when Kova asks"),
+             ("/", "commands"), ("@", "attach a file"), ("!", "run a shell command"),
+             ("#", "remember a note"), ("esc esc", "clear the input"),
+             ("shift+⏎", "new line (or \\⏎)"), ("tab", "complete"),
+             ("↑ ↓", "earlier messages"), ("ctrl+l", "clear the screen"),
+             ("ctrl+d", "exit (or ctrl+c twice)"))
+# The half-block wordmark; the CLI's --help and setup banner still draw it.
+LOGO = ("█▄▀ █▀█ █ █ ▄▀█",
+        "█ █ █▄█ ▀▄▀ █▀█")
 
-MODE_COLOURS = {"manual": fg(theme.MEMORY), "auto": fg(theme.WARNING), "full": fg(theme.ERROR)}
 MODE_CHIPS = {"work": theme.ACCENT, "chat": theme.USER}
+# When Kova asks before acting, in words.
+PERMISSION_WORDS = {"manual": "asks before acting", "auto": "asks before risky steps",
+                    "full": "never asks"}
+MODE_HINTS = {"work": "files, commands, web, memory", "chat": "conversation, web at most"}
 _REDUCED = bool(os.environ.get("KOVA_REDUCED_MOTION"))
 
 
@@ -59,9 +64,16 @@ def pad(text: str, width: int) -> str:
     it (escapes kept) if it is wider."""
     size = visible(text)
     if size > width:
-        from .terminal import _clip
-        return _clip(text, width) + ("\x1b[0m" if "\x1b[" in text else "")
+        return clip(text, width)
     return text + " " * (width - size)
+
+
+def clip(text: str, width: int) -> str:
+    """Cut a styled string to ``width`` visible columns, keeping its escapes."""
+    if visible(text) <= width:
+        return text
+    from .terminal import _clip
+    return _clip(text, width) + ("\x1b[0m" if "\x1b[" in text else "")
 
 
 def visible(text: str) -> int:
@@ -74,13 +86,15 @@ def fit(text: str, width: int) -> str:
     text = " ".join(str(text).split()) if "\n" not in str(text) else str(text)
     if display_width(text) <= width:
         return text
+    tail = glyphs().ellipsis
     out, used = "", 0
+    limit = max(0, width - display_width(tail))
     for char in text:
         step = display_width(char)
-        if used + step > max(0, width - 1):
+        if used + step > limit:
             break
         out, used = out + char, used + step
-    return out + "\u2026"
+    return out + tail
 
 
 def fit_path(path: str, width: int) -> str:
@@ -92,7 +106,8 @@ def fit_path(path: str, width: int) -> str:
     keep = width - display_width(tail) - 1
     if keep < 4:
         return fit(path, width)
-    return fit(head, keep + 1)[:-1] + "\u2026" + tail
+    head = fit(head, keep + display_width(glyphs().ellipsis))
+    return head[:-len(glyphs().ellipsis)] + glyphs().ellipsis + tail
 
 
 def wrap(text: str, width: int) -> list[str]:
@@ -110,11 +125,21 @@ def wrap(text: str, width: int) -> list[str]:
     return rows
 
 
+def keys(p: Palette, pairs, gap: str = "   ", room: int | None = None) -> str:
+    """Key hints: each key in bold, what it does in muted text, spaced apart.
+    With ``room``, hints drop from the end until the rest fits."""
+    pairs = list(pairs)
+    while True:
+        text = gap.join(p.paint("1;" + ACCENT_SOFT, key) + " " + p.faint(what) for key, what in pairs)
+        if room is None or visible(text) <= room or len(pairs) <= 1:
+            return text if room is None or visible(text) <= room else ""
+        pairs.pop()
+
+
 # ------------------------------------------------------------------- effects
 def shimmer(text: str, phase: float, p: Palette, base=None, light=None) -> str:
     """Text with a soft highlight sweeping across it; ``phase`` is the highlight's
-    position in characters (it may run past either end). The sweep runs from the
-    theme's soft accent up to its accent."""
+    position in characters (it may run past either end)."""
     if not p.color:
         return text
     if _REDUCED or p.level == 1:
@@ -130,37 +155,9 @@ def shimmer(text: str, phase: float, p: Palette, base=None, light=None) -> str:
 
 
 def glyph(frame: int) -> str:
-    return "\u25cf" if _REDUCED else SPINNER[frame % len(SPINNER)]
-
-
-def spinner_glyph(p: Palette, frame: int) -> str:
-    """The spinner, its colour drifting slowly along Kova's gradient."""
-    if _REDUCED or p.level < 2:
-        return p.paint(ACCENT, glyph(frame))
-    cycle = (frame % 40) / 20
-    position = cycle if cycle <= 1 else 2 - cycle
-    return p.paint_resolved("1;" + fg(blend(p.terminal.gradient, position)), glyph(frame))
-
-
-def spinner_line(p: Palette, *, verb: str, frame: int, elapsed: float, tokens: int,
-                 stopping: bool, thinking: bool = False) -> str:
-    from .render import compact_number, duration
-    label = "Stopping" if stopping else verb
-    phase = (frame * 0.9) % (len(label) + 8) - 4
-    parts = [duration(elapsed)]
-    if tokens:
-        parts.append(f"\u2193 {compact_number(tokens)} tokens")
-    if thinking and not stopping:
-        parts.append("thinking")
-    if not stopping:
-        parts.append("esc to interrupt")
-    return (spinner_glyph(p, frame) + " " + shimmer(label + "\u2026", phase, p)
-            + "  " + p.faint(" \u00b7 ".join(parts)))
-
-
-def pulse(p: Palette, frame: int, colour: str = ACCENT) -> str:
-    """The spinner beside a tool that is running."""
-    return p.paint(colour, glyph(frame))
+    """The live node at ``frame``; still when motion is reduced."""
+    g = glyphs()
+    return g.spin(0) if _REDUCED else g.spin(frame)
 
 
 # ------------------------------------------------------------------- frames
@@ -204,19 +201,54 @@ def box(lines: list[str], width: int, p: Palette, colour: str = BORDER, *,
     return rows
 
 
+def rule(width: int, p: Palette, colour: str = FAINT, *, title: str = "", right: str = "") -> str:
+    """A horizontal rule ``width`` columns wide, with an optional title at the
+    left and text (key hints) at the right. Hints give way first: the rule
+    itself never wraps."""
+    line = glyphs().rule
+    if right:
+        right = clip(right, max(0, width - 12))
+    left = (line * 2 + " " + title + " ") if title else ""
+    tail = (" " + right + " " + line) if right else ""
+    fill = max(2, width - visible(left) - visible(tail))
+    if title:
+        left = p.paint(colour, line * 2 + " ") + title + " "
+    tail_text = (" " + right + " " + p.paint(colour, line)) if right else ""
+    return left + p.paint(colour, line * fill) + tail_text
+
+
+def panel(lines: list[str], width: int, p: Palette, colour: str = FAINT, *, title: str = "",
+          footer: str = "") -> list[str]:
+    """Lines between two rules: the title in the upper one, keys in the lower."""
+    return [rule(width, p, colour, title=title), *lines, rule(width, p, colour, right=footer)]
+
+
+def gate(lines: list[str], width: int, p: Palette, colour: str = WARNING, *, title: str = "",
+         footer: str = "") -> list[str]:
+    """Something waiting on you: a coloured bar down the left, keys underneath."""
+    g = glyphs()
+    bar = p.paint("1;" + colour, g.gate)
+    rows = [p.paint("1;" + colour, g.ask) + " " + p.bold(fit(strip_ansi(title), width - 3))] if title else []
+    rows += [bar + (" " + pad(line, width - 2) if line else "") for line in lines]
+    if footer:
+        rows.append(rule(width, p, colour, right=footer))
+    return [row.rstrip() for row in rows]
+
+
 def input_box(text: str, cursor: int, width: int, p: Palette, *, placeholder: str = "",
               max_rows: int = 10, dim: bool = False, footer: str = "",
               busy: bool = False) -> tuple[list[str], tuple[int, int]]:
-    """The prompt box. A leading ``!`` or ``#`` becomes the prompt glyph and
-    tints the frame (shell and memory modes); otherwise the frame lights up in
-    Kova's accent while there is text in it. Returns lines and the caret."""
+    """The prompt, between two rules. A leading ``!`` or ``#`` becomes the
+    prompt mark and tints the rules (shell and memory modes); otherwise the
+    mark is the user's own bar. Returns lines and the caret."""
+    g = glyphs()
     mode = text[:1] if text[:1] in ("!", "#") else ""
-    colour = {"!": BASH, "#": MEMORY}.get(mode) or (ACCENT if text and not busy else FAINT)
+    colour = {"!": BASH, "#": MEMORY}.get(mode) or FAINT
     shown, caret = (text[1:], max(0, cursor - 1)) if mode else (text, cursor)
     if mode and shown.startswith(" "):  # "# note" reads as "#" then the note
         shown, caret = shown[1:], max(0, caret - 1)
-    prompt = mode or "\u276f"
-    inner = max(8, width - 6)
+    prompt = mode or g.user
+    inner = max(8, width - 3)
     rows: list[tuple[str, int, bool]] = []  # (text, offset in ``shown``, ends its line)
     offset = 0
     for line in shown.split("\n"):
@@ -237,23 +269,24 @@ def input_box(text: str, cursor: int, width: int, p: Palette, *, placeholder: st
     rows = [row[0] for row in rows]
     first = max(0, min(caret_row - max_rows + 1, len(rows) - max_rows))
     visible_rows = rows[first:first + max_rows]
-    glyph_style = {"!": "1;" + BASH, "#": "1;" + MEMORY}.get(mode) or \
-        ("1;" + (FAINT if busy else ACCENT))
+    mark_style = {"!": "1;" + BASH, "#": "1;" + MEMORY}.get(mode) or \
+        ("1;" + (FAINT if busy or not text else USER))
     body = []
     for index, row in enumerate(visible_rows):
-        lead = p.paint(glyph_style, prompt) + " " if index + first == 0 else "  "
+        lead = p.paint(mark_style, prompt) + " " if index + first == 0 else "  "
         content = p.dim(row) if dim else row
         if not text and index == 0 and placeholder:
             content = p.paint(f"3;{FAINT}" if p.level >= 2 else "2;3", fit(placeholder, inner))
         body.append(lead + content)
-    lines = box(body, width, p, colour, footer=fit(footer, max(0, width - 8)) if footer else "")
-    return lines, (1 + caret_row - first, 4 + caret_col)
+    lines = panel(body, width, p, colour, footer=footer if footer and visible(footer) < width - 8 else "")
+    return lines, (1 + caret_row - first, 2 + caret_col)
 
 
 def menu(items, selected: int, width: int, p: Palette, rows: int = 8) -> list[str]:
     """Suggestions under the input box, the selected one marked and lit."""
     if not items:
         return []
+    g = glyphs()
     start = max(0, min(selected - rows // 2, len(items) - rows))
     shown = items[start:start + rows]
     label_width = min(32, max(display_width(item.label) for item in shown) + 2)
@@ -262,12 +295,12 @@ def menu(items, selected: int, width: int, p: Palette, rows: int = 8) -> list[st
         label = fit(item.label, label_width - 1).ljust(label_width)
         detail = fit(item.detail, max(0, width - label_width - 6))
         if index == selected:
-            lines.append("  " + p.paint("1;" + ACCENT, "\u276f ") + p.paint("1;" + SELECT, label)
+            lines.append("  " + p.paint("1;" + ACCENT, g.pointer + " ") + p.paint("1;" + SELECT, label)
                          + p.paint(SELECT, detail))
         else:
             lines.append("    " + label + p.dim(detail))
     if len(items) > rows:
-        lines.append(p.faint(f"    {selected + 1}/{len(items)}"))
+        lines.append(p.faint(f"    {selected + 1} of {len(items)}"))
     return [line.rstrip() for line in lines]
 
 
@@ -281,34 +314,35 @@ def hint_line(left: str, right: str, width: int) -> str:
 def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = "",
                permission: str | None = None, web: bool = True, plan: str = "",
                stats: str = "", offline: bool = False, cwd: str = "", state: str = "") -> str:
-    """The bottom line: a mode chip, the model, the chat, and the last turn's
-    numbers on the right. Parts drop off from the least useful end as the
-    terminal narrows, so it never wraps."""
-    chip = p.pill(mode.upper(), MODE_CHIPS.get(mode, theme.ACCENT), solid=True) if p.color \
-        else f"[{mode}]"
-    dot = p.paint(WARNING if offline else SUCCESS, "\u25cf")
+    """The bottom line, in plain words: mode, model, when Kova asks, the chat;
+    the numbers and the folder on the right. Parts drop off from the least
+    useful end as the terminal narrows, so it never wraps."""
 
     def model_part(room: int) -> str:
-        return (dot + " " + p.bold(fit(model or "no model", max(1, room)))
-                + (p.yellow(" offline") if offline else ""))
+        name = p.bold(fit(model or "no model", max(1, room)))
+        return name + (" " + p.yellow("offline") if offline else "")
+    mode_part = p.paint(MUTED, mode) if mode else ""
     parts: list[tuple[int, str]] = [(0, model_part(60))]
-    if state and state != "done":
-        parts.append((0, p.dim(state.replace("-", " "))))
-    if title:
-        parts.append((2, p.dim(fit(title, 28))))
+    if state == "blocked-on-approval":
+        parts.append((0, p.yellow("waiting for you")))
+    elif state and state not in ("done", "working"):
+        parts.append((1, p.dim(state.replace("-", " "))))
     if permission:
-        colour = MODE_COLOURS.get(permission, MUTED)
-        parts.append((3, p.paint(colour, "\u23f5\u23f5 " + permission)
-                      if permission != "manual" else p.dim(permission)))
+        words = PERMISSION_WORDS.get(permission, permission)
+        paint = {"auto": p.yellow, "full": p.red}.get(permission, p.dim)
+        parts.append((3, paint(words)))
     if not web:
         parts.append((4, p.dim("web off")))
     if plan:
         parts.append((1, p.dim("plan " + plan)))
+    if title:
+        parts.append((5, p.faint(fit(title, 28))))
     right_parts = [part for part in (stats, cwd) if part]
-    separator = p.faint(" \u00b7 ")
+    separator = "   "
 
     def render(keep: list[tuple[int, str]], right: list[str]) -> str:
-        left = " " + chip + " " + separator.join(text for _rank, text in keep)
+        left = " " + (mode_part + separator if mode_part else "") \
+            + separator.join(text for _rank, text in keep)
         tail = separator.join(p.faint(part) for part in right)
         gap = width - visible(left) - visible(tail) - 1
         return left + " " * max(1, gap) + tail if tail else left
@@ -328,12 +362,12 @@ def status_bar(p: Palette, width: int, *, mode: str, model: str, title: str = ""
             return render([(0, model_part(room))], [])
 
 
-def shortcuts(width: int, p: Palette, keys=None) -> list[str]:
-    bindings = [(keys.format_help(key) if keys else key, text) for key, text in SHORTCUTS]
-    columns = 3 if width >= 100 else 2 if width >= 64 else 1
+def shortcuts(width: int, p: Palette, keys_map=None) -> list[str]:
+    bindings = [(keys_map.format_help(key) if keys_map else key, text) for key, text in SHORTCUTS]
+    columns = 3 if width >= 110 else 2 if width >= 64 else 1
     per = -(-len(bindings) // columns)
     groups = [bindings[i * per:(i + 1) * per] for i in range(columns)]
-    column_width = (width - 4) // columns
+    column_width = (width - 2) // columns
     key_width = max(display_width(key) for key, _ in bindings) + 2
     lines = []
     for row in range(per):
@@ -354,72 +388,64 @@ def logo(p: Palette) -> list[str]:
     return [p.gradient(row, bold=True) for row in LOGO]
 
 
+def tile(p: Palette, name: str, colour: str = theme.ACCENT) -> str:
+    """A speaker's tile: their initial on their colour (the app mark, in a terminal)."""
+    initial = (str(name).strip()[:1] or "?").upper()
+    return p.pill(initial, colour, solid=True) if p.color else initial
+
+
 def welcome(p: Palette, width: int, *, version: str, model: str, mode: str, cwd: str,
             memory: str = "", notes: int | None = None, web: bool = True, offline: bool = False,
             phase: float | None = None, title: str = "",
             permission: str | None = None, assistant_name: str = "Kova") -> list[str]:
-    """The start-up card: the wordmark, then model, mode, folder and memory,
-    in a frame drawn in Kova's gradient. ``phase`` sweeps a highlight across
-    the tagline while the card animates in. ``assistant_name`` replaces the
-    wordmark when the user has named their assistant; key tips are shown
-    progressively by the chat, not here."""
-    size = max(30, min(width, 72))
-    inner = size - 4
-    tagline = "your private AI"
-    if phase is not None:
-        tagline = shimmer(tagline, phase, p)
-    else:
-        tagline = p.dim(tagline)
-    tagline += p.faint(f"  v{version}")
-    content = [""]
-    if assistant_name != "Kova":
-        content.append("  " + p.gradient(fit(assistant_name, inner - 4), bold=True) + "  " + tagline)
-    elif inner >= 40:
-        mark = logo(p)
-        content += ["  " + mark[0], "  " + mark[1] + "   " + tagline]
-    else:
-        content.append("  " + p.paint("1;" + ACCENT, "\u25c6") + " "
-                       + p.gradient(assistant_name, bold=True)
-                       + ("  " + tagline if inner >= 36 else ""))
-    content.append("")
+    """The start: who you are talking to, what it can reach, and how to steer
+    it. Left-aligned, no frame; ``phase`` is accepted for compatibility and
+    ignored, because nothing animates on load."""
+    size = max(30, min(width, 80))
     label_width = 9
-    room = max(8, inner - label_width - 4)
+    room = max(8, size - label_width - 6)
+    name = p.bold(fit(assistant_name, max(4, size - 20)))
+    version_text = p.faint(f"v{version}")
+    head = tile(p, assistant_name) + "  " + name
+    gap = size - visible(head) - visible(version_text)
+    lines = [head + " " * max(2, gap) + version_text]
+    intro = "Every step shows up here as it happens. Esc stops, ctrl+o opens details."
+    from .render import wrap_words
+    lines += ["    " + p.dim(row) for row in wrap_words(intro, size - 4)]
+    lines.append("")
 
     def row(label: str, value: str) -> str:
-        return "  " + p.faint(label.ljust(label_width)) + value
+        return "    " + p.faint(label.ljust(label_width)) + value
 
-    state = p.yellow("\u25cf offline") if offline else p.green("\u25cf") + p.dim(" ready")
-    name = fit(model, max(6, room - 12))
-    content.append(row("model", p.bold(name) + " " * max(2, room - display_width(name)
-                                                           - visible(state)) + state))
-    detail = [MODE_HINTS.get(mode, "")] if MODE_HINTS.get(mode) else []
-    if not web:
-        detail.insert(0, "web off")
-    hint = fit(" \u00b7 ".join(detail), room - len(mode) - 2) if room - len(mode) > 8 else ""
-    content.append(row("mode", p.paint("1;" + fg(MODE_CHIPS.get(mode, theme.ACCENT)), mode)
-                       + (p.dim("  " + hint) if hint else "")))
-    content.append(row("folder", fit_path(cwd, room)))
+    state = p.yellow("offline") if offline else p.green("ready")
+    lines.append(row("model", p.bold(fit(model, max(6, room - 8))) + "  " + state))
+    hint = MODE_HINTS.get(mode, "")
+    if not web and hint:
+        hint = hint.replace("web, ", "").replace(", web at most", "") + ", web off"
+    lines.append(row("mode", p.paint("1;" + fg(MODE_CHIPS.get(mode, theme.ACCENT)), mode)
+                     + (p.dim("  " + fit(hint, room - len(mode) - 2)) if hint else "")))
+    lines.append(row("folder", fit_path(cwd, room)))
+    if permission:
+        when = {"manual": "before acting", "auto": "before risky steps", "full": "never"}
+        lines.append(row("asks", p.dim(when.get(permission, permission))
+                         + p.faint("   shift+tab changes it")))
     if memory or notes is not None:
         count = "" if notes is None else f"{notes} {'note' if notes == 1 else 'notes'}"
-        where = fit_path(memory, max(6, room - len(count) - 3)) if memory else ""
-        content.append(row("memory", count + (p.faint("  " + where) if where else "")))
-    content.append("")
-    lines = box(content, size, p, ACCENT, gradient=True)
+        where = fit_path(memory, max(4, room - len(count) - 5)) if memory else ""
+        lines.append(row("memory", count + (p.faint(("  in " if count else "") + where) if where else "")))
     if offline:
-        lines += ["", "  " + p.yellow("The model is unreachable \u2014 replies may fail. "
-                                      "Run kova setup or /model.")]
-    lines += ["", "  " + p.bold("Ask anything.") + p.dim(f" {assistant_name} can search the web, "
-                                                        "work with files and set reminders.")
-              if width >= 80 else "  " + p.bold("Ask anything.")]
+        lines += ["", "    " + p.yellow(fit("The model is not answering. Start it, or pick another "
+                                              "with /model.", size - 4))]
     return lines
-
-
-MODE_HINTS = {"work": "web, files, memory, reminders", "chat": "conversation, web at most"}
 
 
 # ------------------------------------------------------------------- dialogs
 class Choice:
-    """A framed question answered with \u2191\u2193 and Enter, number keys, or letters."""
+    """A question answered with one key, with ↑↓ and Enter, or a number.
+
+    Drawn as a gate: a bar down the left in ``colour``, the body, then one row
+    per answer with its key in front of it.
+    """
 
     def __init__(self, title: str, body: list[str], options: list[tuple[str, object, str]], *,
                  colour: str = ACCENT, footer: str = ""):
@@ -444,15 +470,21 @@ class Choice:
         return self.options[self.selected][1]
 
     def render(self, width: int, p: Palette) -> list[str]:
+        g = glyphs()
         inner = width - 4
-        lines = [*(line for line in self.body), ""]
-        for index, (label, _value, _hotkey) in enumerate(self.options):
-            text = fit(f"{index + 1}. {label}", inner - 2)
-            lines.append(p.paint("1;" + self.colour, "\u276f ") + p.paint("1;" + SELECT, text)
-                         if index == self.selected else "  " + p.dim(text))
-        lines.append("")
-        return box(lines, width, p, self.colour, title=p.bold(fit(self.title, width - 8)),
-                   footer=p.faint(fit(self.footer, width - 10)) if self.footer else "")
+        colour = WARNING if self.colour == ACCENT else self.colour
+        lines = [*self.body]
+        if lines:
+            lines.append("")
+        for index, (label, _value, hotkey) in enumerate(self.options):
+            key = hotkey or str(index + 1)
+            text = fit(label, inner - 6)
+            if index == self.selected:
+                lines.append(p.paint("1;" + colour, g.pointer) + " " + p.paint("1;" + colour, key)
+                             + "  " + p.bold(text))
+            else:
+                lines.append("  " + p.paint("1;" + ACCENT_SOFT, key) + "  " + p.dim(text))
+        return gate(lines, width, p, colour, title=self.title, footer=self.footer)
 
 
 class Picker:
@@ -497,13 +529,36 @@ class Picker:
         shown = self.shown
         return shown[self.selected][2] if shown else None
 
+    def _filter_line(self, p: Palette, inner: int, prompt: str = "filter  ") -> str:
+        g = glyphs()
+        if self.query:
+            room = max(1, inner - display_width(prompt) - 2)
+            typed = self.query if display_width(self.query) <= room else self.query[-room:]
+            return p.faint(prompt) + typed + p.paint(ACCENT, g.caret)
+        return p.faint(fit(prompt + "type to narrow the list", inner))
+
+    def _row(self, p: Palette, index: int, label: str, detail: str, value, label_width: int,
+             inner: int, *, numbered: bool) -> str:
+        g = glyphs()
+        current = value == self.current and self.current is not None
+        tick = p.green("  current") if current else ""
+        number = f"{index + 1}".rjust(2) + " " if numbered else ""
+        title = fit(label, max(1, label_width - 1))
+        if index == self.selected:
+            row = p.paint("1;" + ACCENT, g.pointer + " ") + p.faint(number) + p.paint("1;" + SELECT, title)
+        else:
+            row = "  " + p.faint(number) + title
+        room = inner - 2 - len(number) - label_width - visible(tick)
+        if detail and room > 3:
+            row += " " * max(2, label_width - display_width(title)) + p.dim(fit(detail, room))
+        return row + tick
+
     def render(self, width: int, p: Palette) -> list[str]:
-        inner = width - 4
+        inner = width - 2
         lines = []
         if self.subtitle:
-            lines.append(p.dim(fit(self.subtitle, inner)))
-        lines.append(p.faint("Filter: ") + self.query + p.paint(ACCENT, "\u258f")
-                     if self.query else p.faint("Type to filter"))
+            lines.append("  " + p.dim(fit(self.subtitle, inner - 2)))
+        lines.append("  " + self._filter_line(p, inner - 2))
         lines.append("")
         shown = self.shown
         start = max(0, min(self.selected - self.ROWS // 2, len(shown) - self.ROWS))
@@ -512,26 +567,22 @@ class Picker:
         for index, (label, detail, value) in enumerate(shown[start:start + self.ROWS], start):
             group = self.groups.get(value)
             if group and group != previous_group:
-                lines.append(p.paint("1;" + MUTED, fit(group, inner)))
+                lines.append("  " + p.paint(MUTED, fit(group, inner - 2)))
                 previous_group = group
-            current = value == self.current and self.current is not None
-            text = fit(f"{index + 1}. {label}", label_width + 3).ljust(label_width + 4)
-            rest = fit(detail, max(0, inner - label_width - 10))
-            tick = p.green(" \u2714") if current else ""
-            if index == self.selected:
-                lines.append(p.paint("1;" + ACCENT, "\u276f ") + p.paint("1;" + SELECT, text)
-                             + p.paint(SELECT, rest) + tick)
-            else:
-                lines.append("  " + text + p.dim(rest) + tick)
+            lines.append(self._row(p, index, label, detail, value, label_width, inner, numbered=True))
         if not shown:
-            lines.append(p.dim("  Nothing matches"))
-        lines.append("")
-        footer = "\u2191\u2193 move \u00b7 enter select"
-        for hotkey, (label, _callback) in self.actions.items():
-            footer += f" \u00b7 {hotkey.replace('ctrl-', 'ctrl+')} {label}"
-        footer += " \u00b7 esc cancel"
-        return box(lines, width, p, ACCENT, title=p.bold(fit(self.title, width - 8)),
-                   footer=p.faint(fit(footer, width - 10)))
+            lines.append("  " + p.dim(f'Nothing matches "{fit(self.query, 30)}". '
+                                      "Backspace widens the search."))
+        g = glyphs()
+        pairs = [(g.updown, "move"), ("enter", "choose")]
+        pairs += [(hotkey.replace("ctrl-", "ctrl+"), label) for hotkey, (label, _cb) in self.actions.items()]
+        pairs.append(("esc", "cancel"))
+        footer = keys(p, pairs)
+        if visible(footer) > width - 8:
+            footer = keys(p, pairs[:2] + pairs[-1:])
+        if visible(footer) > width - 8:
+            footer = ""
+        return panel(lines, width, p, FAINT, title=p.bold(fit(self.title, width - 8)), footer=footer)
 
 
 class CommandPalette(Picker):
@@ -547,7 +598,7 @@ class CommandPalette(Picker):
 
     def __init__(self, items: list[tuple[str, str, object]], on_pick, *,
                  groups: dict | None = None,
-                 subtitle: str = "Slash commands, models and recent chats"):
+                 subtitle: str = "Commands, models and recent chats"):
         super().__init__("Command palette", items, on_pick, subtitle=subtitle, groups=groups)
 
     @property
@@ -558,60 +609,42 @@ class CommandPalette(Picker):
         return rank(self.items, self.query, key=lambda item: f"{item[0]} {item[1]}")
 
     def render(self, width: int, p: Palette) -> list[str]:
-        inner = max(8, width - 4)
+        inner = max(8, width - 2)
         compact = width < 44
         lines = []
         if self.subtitle and not compact:
-            lines.append(p.dim(fit(self.subtitle, inner)))
-        prompt = "Search: "
-        if self.query:
-            room = max(1, inner - display_width(prompt) - 2)
-            typed = self.query if display_width(self.query) <= room else self.query[-room:]
-            lines.append(p.faint(prompt) + typed + p.paint(ACCENT, "\u258f"))
-        else:
-            lines.append(p.faint(fit(prompt + "type to filter", inner)))
+            lines.append("  " + p.dim(fit(self.subtitle, inner - 2)))
+        lines.append("  " + self._filter_line(p, inner - 2, "search  "))
         lines.append("")
         shown = self.shown
         rows = self.ROWS if width >= 40 else max(4, self.ROWS - 3)
         start = max(0, min(self.selected - rows // 2, len(shown) - rows))
-        label_width = inner if compact else min(
+        label_width = inner - 2 if compact else min(
             26, max([display_width(item[0]) for item in shown] + [8]) + 2)
         previous = None
         for index, (label, detail, value) in enumerate(shown[start:start + rows], start):
             group = self.groups.get(value)
             if group and group != previous and not compact and not self.query:
-                lines.append(p.paint("1;" + MUTED, fit(group.upper(), inner)))
+                lines.append("  " + p.paint(MUTED, fit(group, inner - 2)))
             previous = group
-            current = value == self.current and self.current is not None
-            tick = p.green(" \u2714") if current else ""
-            title = fit(label, max(1, label_width - 2))
-            row = (p.paint("1;" + ACCENT, "\u276f ") + p.paint("1;" + SELECT, title)
-                   if index == self.selected else "  " + title)
-            if not compact and detail:
-                room = inner - label_width - 4 - visible(tick)
-                if room > 3:
-                    row += " " * max(2, label_width - visible(title)) + p.dim(fit(detail, room))
-            lines.append(row + tick)
+            lines.append(self._row(p, index, label, "" if compact else detail, value,
+                                   label_width, inner, numbered=False))
         if not shown:
-            lines.append(p.dim("  Nothing matches"))
-        lines.append("")
-        footer = "\u2191\u2193 move \u00b7 enter select \u00b7 esc cancel" if width >= 52 \
-            else "\u2191\u2193 \u00b7 enter \u00b7 esc" if width >= 30 else "esc"
-        return box(lines, width, p, ACCENT, title=p.bold(fit("Command palette", width - 8)),
-                   footer=p.faint(fit(footer, width - 10)))
-
-
-def pick_verb(rng: random.Random | None = None) -> str:
-    return (rng or random).choice(VERBS)
+            lines.append("  " + p.dim(fit(f'Nothing matches "{self.query}". Backspace widens it.', inner - 2)))
+        g = glyphs()
+        footer = keys(p, [(g.updown, "move"), ("enter", "choose"), ("esc", "cancel")]) if width >= 52 \
+            else keys(p, [("esc", "cancel")]) if width >= 30 else ""
+        return panel(lines, width, p, FAINT, title=p.bold(fit("Command palette", width - 8)),
+                     footer=footer)
 
 
 def pick_placeholder(rng: random.Random | None = None) -> str:
     return (rng or random).choice(PLACEHOLDERS)
 
 
-__all__ = ['ACCENT', 'BASH', 'GLYPHS', 'LOGO', 'MEMORY', 'MODE_CHIPS', 'MODE_COLOURS', 'MUTED',
-           'PLACEHOLDERS', 'SELECT', 'SHORTCUTS', 'SPINNER', 'USER', 'VERBS', 'Choice',
-           'CommandPalette', 'Picker',
-           'box', 'fit', 'fit_path', 'glyph', 'hint_line', 'input_box', 'logo', 'menu', 'pad',
-           'pick_placeholder', 'pick_verb', 'pulse', 'reduced_motion', 'shimmer', 'shortcuts',
-           'spinner_glyph', 'spinner_line', 'status_bar', 'visible', 'welcome', 'wrap']
+__all__ = ['ACCENT', 'BASH', 'LOGO', 'MEMORY', 'MODE_CHIPS', 'MODE_HINTS',
+           'MUTED', 'PERMISSION_WORDS', 'PLACEHOLDERS', 'SELECT', 'SHORTCUTS', 'USER', 'Choice',
+           'CommandPalette', 'Picker', 'box', 'clip', 'fit', 'fit_path', 'gate', 'glyph', 'hint_line',
+           'input_box', 'keys', 'logo', 'menu', 'pad', 'panel', 'pick_placeholder',
+           'reduced_motion', 'rule', 'shimmer', 'shortcuts', 'status_bar', 'tile', 'visible',
+           'welcome', 'wrap']

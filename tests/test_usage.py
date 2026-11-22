@@ -416,4 +416,4 @@ def test_terminal_chat_shows_the_servers_numbers_after_a_reply():
     r.handle({"type": "done", "usage": {"prompt_tokens": 1500, "completion_tokens": 40,
                                          "tokens_per_second": 25.5, "local": True}})
     r.finish_turn()
-    assert "1.5k in · 40 out · $0.00 local · 25.5 tok/s" in r.out.getvalue()
+    assert "1.5k in   40 out   $0.00 local   25.5 tok/s" in r.out.getvalue()
