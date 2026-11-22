@@ -34,6 +34,7 @@ class _Context:
     model: str = ''
     kind: str = 'network'
     items: list | None = None
+    audit: bool = True
 
 
 _current: ContextVar[_Context | None] = ContextVar('kova_egress', default=None)
@@ -149,7 +150,7 @@ class _Observation:
         self.finished = True
         self.buffer = b''
         ctx = self.context
-        if ctx is None:
+        if ctx is None or not ctx.audit:
             return
         item = dict(chat_id=ctx.chat_id, kind=ctx.kind, host=self.host,
                     provider=ctx.provider, model=ctx.model,

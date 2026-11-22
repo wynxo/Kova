@@ -604,20 +604,21 @@ class KovaClient:
         return self._request("POST", "/mcp/reload", timeout=90).json()
 
 
-def _spawn_server(cfg: Config) -> int:
-    """Start ``kova serve`` detached and record its pid; return the pid."""
+def _spawn_server(cfg: Config, *, python: str | Path | None = None) -> int:
+    """Start ``kova serve`` detached; the server records its own pid."""
     log = cfg.home / "server.log"
     cfg.home.mkdir(parents=True, exist_ok=True)
+    detach = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+              if os.name == "nt" else {"start_new_session": True})
     with open(log, "w") as handle:
         process = subprocess.Popen(
-            [sys.executable, "-m", "kova", "serve"],
+            [python or sys.executable, "-m", "kova", "serve"],
+            stdin=subprocess.DEVNULL,
             stdout=handle,
             stderr=handle,
-            start_new_session=True,
             env={**os.environ, "KOVA_HOME": str(cfg.home)},
+            **detach,
         )
-    cfg.home.mkdir(parents=True, exist_ok=True)
-    (cfg.home / "server.pid").write_text(str(process.pid))
     return process.pid
 
 

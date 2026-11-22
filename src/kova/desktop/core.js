@@ -27,7 +27,8 @@ function executable(name) {
   }
 }
 function serverCommand(source, home, find = executable) {
-  const installed = process.env.KOVA_DESKTOP_CLI;
+  const shortcutCli = process.argv.find(arg => arg.startsWith('--kova-cli='));
+  const installed = process.env.KOVA_DESKTOP_CLI || shortcutCli?.slice('--kova-cli='.length);
   const cli = installed && path.isAbsolute(installed) ? installed : find('kova');
   if (cli) return {command: cli, args: ['serve'], cwd: home};
   const uv = find('uv');

@@ -19,7 +19,13 @@ class Element {
   }
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
-  append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+  append(...nodes) {
+    for (const node of nodes) {
+      if (node.parent) node.remove();
+      node.parent = this;
+      this.children.push(node);
+    }
+  }
   insertBefore(node, before) {
     node.parent = this;
     const index = this.children.indexOf(before);
@@ -50,9 +56,11 @@ const context = {
   setInterval: fn => { timers.push(fn); return timers.length; },
   clearInterval: id => { timers[id - 1] = null; },
 };
+context.window = context;
 vm.createContext(context);
 const source = name => readFileSync(new URL(`../src/kova/web_assets/${name}`, import.meta.url), 'utf8');
-vm.runInContext(source('tool-cards.js') + '\n' + source('agent-tree.js') + '\nglobalThis.tree = KovaAgentTree;', context);
+vm.runInContext(['tool-cards.js', 'reasoning.js', 'agent-tree.js'].map(source).join('\n'), context);
+context.tree = context.KovaAgentTree;
 
 // ---------------------------------------------------------------- the router
 const inserted = [];
@@ -113,6 +121,8 @@ const bCard = byClass(b, 'tool-card')[0];
 assert.ok(bCard, 'the task expands to the same tool card component');
 assert.match(bCard.textContent, /3 matches/);
 assert.doesNotMatch(byClass(a, 'tool-card')[0].textContent, /3 matches/, 'a result never lands on another call');
+assert.equal(turn.accept({type: 'tool_call', id: 'b', name: 'run_command'}), false,
+  'a later model round may reuse a finished group call’s id');
 
 // ---------------------------------------------------------------- keyboard
 assert.equal(key(tree, root, 'ArrowDown'), true);
@@ -246,9 +256,7 @@ assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stay
   closing.accept({type: 'task_done', id: 'd1', parent: 'dg', ok: true, summary: 'First answer', elapsed_ms: 10});
   closing.accept({type: 'task_done', id: 'd2', parent: 'dg', ok: true, summary: 'Second answer', elapsed_ms: 20});
   closing.accept({type: 'task_error', id: 'd3', parent: 'dg', message: 'Error: child model timed out', elapsed_ms: 30});
-  // The child's returned analysis is a real tool result on its own row, the same
-  // card every tool call expands to; nesting a full child transcript is not part
-  // of this slice.
+  // The child keeps its result card even after the summary is folded.
   for (const [id, ok, output] of [['d1', true, 'First answer'], ['d3', false, 'Error: child model timed out']]) {
     closing.accept({type: 'tool_call', id, name: 'delegate_analysis', args: {task: id}});
     closing.accept({type: 'tool_result', id, name: 'delegate_analysis', ok, output});
@@ -271,8 +279,8 @@ assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stay
   assert.deepEqual(byClass(doneRow, 'agent-tree-result').map(node => node.textContent),
     ['L:delegate_analysis — First answer', 'L:delegate_analysis — Second answer'],
     'each folded summary is quoted once');
-  const foldedRows = rows.filter(row => row.hidden);
-  assert.equal(foldedRows.length, 2, 'the quoted calls leave the tree');
+  const foldedRows = byRole(doneRow, 'treeitem').slice(1);
+  assert.equal(foldedRows.length, 2, 'the quoted calls remain expandable under Done');
   assert.match(byClass(foldedRows[0], 'tool-card')[0].textContent, /First answer/,
     'a folded child keeps its own expanded result card');
   assert.match(byClass(failedRow, 'tool-card')[0].textContent, /child model timed out/,
@@ -291,6 +299,11 @@ assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stay
   assert.equal(key(treeNode, doneRow, 'ArrowRight'), true);
   assert.equal(doneRow.attrs['aria-expanded'], 'true', 'Right opens the summaries');
   assert.equal(doneRow.children[1].hidden, false);
+  assert.equal(key(treeNode, doneRow, 'ArrowRight'), true);
+  assert.equal(focused, foldedRows[0], 'Right steps into an expanded Done group');
+  assert.equal(foldedRows[0].attrs['aria-level'], '3');
+  assert.equal(key(treeNode, foldedRows[0], 'ArrowLeft'), true);
+  assert.equal(focused, doneRow, 'Left steps back to the Done group, not the root');
   assert.equal(key(treeNode, doneRow, 'ArrowLeft'), true);
   assert.equal(doneRow.attrs['aria-expanded'], 'false', 'Left closes them');
   assert.equal(key(treeNode, doneRow, 'ArrowLeft'), true);
@@ -330,5 +343,41 @@ assert.equal(root.attrs['aria-expanded'], 'true', 'a tree the reader opened stay
   assert.match(first.textContent, /Running/);
   assert.match(second.textContent, /Running/);
   delegated.finish();
+}
+
+// Actual child output drives only that task's trace and latest action. A stopped
+// child stays distinct from a failed child in the turn summary.
+{
+  const made = [], failures = [], stops = [];
+  const run = context.tree.turn({insert: node => made.push(node), onFailure: () => failures.push(1),
+    stopTask: id => { stops.push(id); return Promise.resolve({stopped: true}); }});
+  run.accept({type: 'task_start', id: 'batch', parent: null, kind: 'delegated', model: 'demo'});
+  for (const id of ['a1', 'a2', 'a3']) {
+    run.accept({type: 'task_start', id, parent: 'batch', kind: 'agent', name: 'delegate_analysis',
+      args: {task: `Analyze ${id}`}, status: 'queued'});
+    run.accept({type: 'task_progress', id, parent: 'batch', status: 'running'});
+  }
+  const [head, first, second, third] = byRole(made[0], 'treeitem');
+  assert.equal(byClass(first, 'agent-tree-label')[0].textContent, 'Analyze a1');
+  assert.equal(byClass(first, 'agent-tree-hint')[0].textContent, 'Waiting for the model');
+  assert.equal(run.accept({type: 'task_output', id: 'a1', parent: 'batch', step: 'reasoning', text: 'Checking tradeoffs.'}), true);
+  assert.equal(byClass(first, 'agent-tree-hint')[0].textContent, 'Thinking');
+  run.accept({type: 'task_output', id: 'a1', parent: 'batch', step: 'text', text: '<script>literal</script>'});
+  run.accept({type: 'task_output', id: 'a1', parent: 'batch', step: 'text', text: ' More.'});
+  assert.equal(byClass(first, 'agent-tree-hint')[0].textContent, 'Writing analysis');
+  assert.equal(byClass(first, 'reasoning-text')[0].textContent, 'Checking tradeoffs.');
+  assert.equal(byClass(first, 'agent-tree-answer')[0].textContent, '<script>literal</script> More.');
+  assert.equal(byClass(second, 'agent-tree-answer').length, 0, 'one child never sees a sibling’s output');
+  context.KovaReasoning.setMode('hidden');
+  run.accept({type: 'task_output', id: 'a2', parent: 'batch', step: 'reasoning', text: 'Not shown.'});
+  key(made[0], third, 'Delete');
+  assert.deepEqual(stops, ['a3']);
+  run.accept({type: 'task_error', id: 'a3', parent: 'batch', stopped: true, message: 'stopped'});
+  run.accept({type: 'task_error', id: 'a2', parent: 'batch', message: 'model failed'});
+  assert.equal(byClass(second, 'reasoning-text').length, 0, 'child traces follow the reasoning setting');
+  context.KovaReasoning.setMode('collapsed');
+  assert.deepEqual(failures, [1]);
+  assert.match(byClass(head, 'agent-tree-label')[0].textContent, /1 failed.*1 stopped/);
+  run.finish();
 }
 console.log('agent tree ok');

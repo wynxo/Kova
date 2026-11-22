@@ -180,9 +180,14 @@ class _Stdio:
                         self._dispatch(item)
         code = self.process.wait()
         self._stderr_done.wait(_STDERR_GRACE)
-        detail = f" (exit code {code})" if code is not None else ""
         tail = " ".join(line for line in self.stderr if line)[-300:]
-        self.dead = f"{self.server.name} stopped{detail}" + (f": {tail}" if tail else "")
+        if code == 0:
+            # A zero exit is a normal end, not a crash: say so without "stopped".
+            outcome = f"{self.server.name} exited cleanly (exit code 0)"
+        else:
+            detail = f" (exit code {code})" if code is not None else ""
+            outcome = f"{self.server.name} stopped{detail}"
+        self.dead = outcome + (f": {tail}" if tail else "")
         self._exited.set()
         with self.lock:
             waiters = list(self.waiters.values())

@@ -64,15 +64,17 @@ def test_status_bar_fits_any_width_and_drops_the_least_useful_parts():
     p = Palette(3)
     wide = status_bar(p, 120, mode="work", model="local", title="Trip plans", permission="auto",
                       web=False, plan="1/3", stats="141 tokens · 5.0s", cwd="~/code")
-    for part in ("WORK", "local", "Trip plans", "auto", "web off", "plan 1/3", "141 tokens", "~/code"):
+    for part in ("work", "local", "Trip plans", "asks before risky steps", "web off", "plan 1/3",
+                 "141 tokens", "~/code"):
         assert part in plain(wide), part
+    assert "WORK" not in plain(wide) and "\u00b7 local" not in plain(wide)   # words, not chips
     for width in (60, 40, 24):
         line = status_bar(p, width, mode="chat", model="a-very-long-model-name", title="Trip plans",
                           permission="auto", web=False, plan="1/3", stats="141 tokens · 5.0s",
                           cwd="~/code/projects/kova")
-        assert visible(line) <= width - 1 and "CHAT" in plain(line)
+        assert visible(line) <= width - 1 and plain(line).startswith(" chat")
     bare = status_bar(Palette(False), 80, mode="work", model="local")
-    assert bare.startswith(" [work]") and "\x1b" not in bare
+    assert bare.startswith(" work   local") and "\x1b" not in bare
 
 
 def test_frames_carry_titles_and_footers_and_never_overflow():
@@ -81,7 +83,8 @@ def test_frames_carry_titles_and_footers_and_never_overflow():
     assert lines[0].startswith("╭─ Title ") and lines[-1].endswith(" hint ─╯")
     assert all(len(line) == 20 for line in lines)
     framed, _caret = input_box("", 0, 40, p, footer="? for shortcuts")
-    assert framed[-1].endswith("? for shortcuts ─╯") and len(framed[-1]) == 40
+    assert framed[-1].endswith("? for shortcuts ─") and len(framed[-1]) == 40
+    assert framed[0] == "─" * 40 and "│" not in "\n".join(framed)        # rules, not a box
     for width in (30, 59, 60, 80, 140):
         for line in welcome(p, width, version="1", model="m" * 40, mode="work",
                             cwd="/very/long/path/" * 6, memory="/mem/" * 10, notes=3):
@@ -104,7 +107,7 @@ def test_user_turns_sit_on_a_tint_and_code_on_a_panel():
     out = Out()
     r = Renderer(out, color=3)
     r.user("hello there")
-    assert "\x1b[1;" in out.text and "48;2;" in out.text and "❯" in plain(out.text)
+    assert "\x1b[1;" in out.text and "48;2;" in out.text and plain(out.text).startswith("▌ hello")
     chunks = []
     stream = MarkdownStream(chunks.append, 40, Palette(3))
     stream.feed("```python\nprint('hi')\n```\n")
@@ -152,8 +155,8 @@ def test_light_palette_changes_foreground_and_background_before_downscaling():
 
 @pytest.mark.parametrize("level, foreground, chip", [
     (1, "30", "1;97;40"),
-    (2, "38;5;233", "1;38;5;231;48;5;233"),
-    (3, "38;2;13;12;19", "1;38;2;255;255;255;48;2;13;12;19"),
+    (2, "38;5;234", "1;38;5;231;48;5;234"),
+    (3, "38;2;21;24;27", "1;38;2;255;255;255;48;2;21;24;27"),
 ])
 def test_light_palette_uses_dark_accent_and_reverses_text_on_solid_chips(level, foreground, chip):
     p = Palette(level, theme_name="light")

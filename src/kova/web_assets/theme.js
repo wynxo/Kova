@@ -23,7 +23,7 @@
   const FIXED = ['system', 'dark', 'light'];
   const BUILTIN = {'kova-dark': 'dark', 'kova-light': 'light'};
   const ID = /^[a-z0-9][a-z0-9-]{1,39}$/;
-  const TOKEN = /^(bg|fg|border|accent|status|syntax)\.[a-z0-9-]+$/;
+  const TOKEN = /^(bg|fg|border|accent|status|step|syntax)\.[a-z0-9-]+$/;
   const COLOUR = /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$/;
   const BACKGROUND_FILE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$/;
   const CHAT_TOKENS = {
@@ -391,7 +391,16 @@
     });
   }
 
+  // A window opened from `kova web` (or a pairing URL) reaches this script
+  // before app.js has exchanged its one-use token for a session cookie, so the
+  // shared document is not readable yet. Keep the cached copy for this first
+  // frame; app.js calls sync() once the window is signed in.
+  const loginPending = () => typeof location === 'object' &&
+    /(^|[#&])(ticket|pair)=/.test(location.hash || '');
+
   window.KovaTheme = {KEY, appearance, choice: () => choice, choices, clearPalettePreview, detailUrl, endPreview, label, preview, previewPalette, refresh, set, sync, toggle};
-  sync();
-  refresh();
+  if (!loginPending()) {
+    sync();
+    refresh();
+  }
 })();

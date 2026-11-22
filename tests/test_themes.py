@@ -212,6 +212,16 @@ def test_the_cli_lists_themes_and_shows_one(runner, home):
     assert "accent.default" in shown.output
 
 
+def test_the_cli_themes_list_json(runner, home):
+    write_theme(home.home)
+
+    result = runner.invoke(cli.app, ["themes", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.stdout)
+    assert any(row["id"] == "midnight-teal" and row["name"] == "Midnight Teal" for row in rows)
+    assert all("id" in row and "appearance" in row for row in rows)
+
+
 def test_the_cli_says_what_is_wrong_with_a_broken_file(runner, home):
     directory = themes.theme_dir(home.home)
     directory.mkdir(parents=True, exist_ok=True)
@@ -394,7 +404,7 @@ def test_save_refuses_invalid_documents_without_writing(http, home, editable_the
 
 
 def test_contrast_failure_names_the_pair_on_preview_and_save(http, home, editable_theme):
-    editable_theme["tokens"]["fg"] = {"default": "#14121c"}
+    editable_theme["tokens"]["fg"] = {"default": "#17191c"}
     for suffix in ("?validate_only=true", ""):
         response = http.post(f"/themes{suffix}", json=editable_theme)
         assert response.status_code == 422

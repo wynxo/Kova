@@ -155,6 +155,7 @@ BASH = fg(theme.BASH)
 MEMORY = fg(theme.MEMORY)
 SELECT = fg(theme.ACCENT_SOFT)
 CODE = fg(theme.CODE)
+THINK = fg(theme.THINK)
 HEADING = "1;" + ACCENT
 
 # The 16 basic colours as most terminals draw them, for picking the closest.
@@ -192,7 +193,7 @@ def _nearest_16(r: int, g: int, b: int, background: bool) -> int:
 # Where the nearest basic colour would lose a role's meaning, pin it by hand. At 16
 # colours the terminal's own palette draws these, so they name a meaning, not a hue.
 _PINS = {"ACCENT": 97, "ON_ACCENT": 30, "USER": 36, "MUTED": 90, "FAINT": 90, "BORDER": 90,
-         "CODE": 33, "MEMORY": 94, "BASH": 35, "WARNING": 33, "ERROR": 91, "SUCCESS": 32}
+         "CODE": 33, "MEMORY": 94, "BASH": 35, "THINK": 35, "WARNING": 33, "ERROR": 91, "SUCCESS": 32}
 _BASIC_ROLES = {rgb(getattr(theme, role)): pin for role, pin in _PINS.items()}
 
 
@@ -427,6 +428,6 @@ def gradient(text: str, p: Palette, stops=None, *, bold: bool = False) -> str:
 
 
 __all__ = ["ACCENT", "ACCENT_END", "ACCENT_SOFT", "BASH", "BORDER", "CODE", "ERROR", "FAINT",
-           "HEADING", "MEMORY", "MUTED", "SELECT", "SUCCESS", "USER", "WARNING", "Palette", "bg",
+           "HEADING", "MEMORY", "MUTED", "SELECT", "SUCCESS", "THINK", "USER", "WARNING", "Palette", "bg",
            "active_theme", "basic_pins", "blend", "colour", "colour_level", "downgrade", "fg",
            "gradient", "gradient_stops", "mix", "resolve", "rgb", "terminal_theme"]

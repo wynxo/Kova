@@ -93,9 +93,9 @@
     // turned back on after "Turn off".
     if (edit) edit.hidden = false;
   }
-  function renderGreeting() {
-    const line = $('welcome-greeting');
-    if (line) line.textContent = state.persona?.name ? `Hi, I’m ${state.persona.name}.` : '';
+  function renderWelcome() {
+    const title = $('welcome-title');
+    if (title && state.persona?.name) title.textContent = `${state.persona.name} shows its work.`;
   }
   $('starters-edit')?.addEventListener('click', () => safe(async () => {
     const module = starterComponent(); if (!module) return;
@@ -765,6 +765,8 @@
     input.addEventListener('blur', () => finish(true));
   }
   let historyClick;
+  // What a sidebar row says while its chat needs attention, in plain words.
+  const CHAT_STATE = {'working': 'Working', 'blocked-on-approval': 'Waiting for your OK'};
   function history(chats, focusChatId = null) {
     const list = $('chat-list');
     list.replaceChildren();
@@ -798,7 +800,10 @@
         button.append(titleRow); button.title = title;
         // A row is its title. A second line appears only while the chat needs
         // attention (working, or waiting on an approval); the date groups say when.
-        if (chat.state && chat.state !== 'done') button.append(el('span', 'history-date', chat.state.replaceAll('-', ' ')));
+        if (chat.state && chat.state !== 'done' && chat.state !== 'idle') {
+          row.dataset.state = chat.state;
+          button.append(el('span', 'history-date', CHAT_STATE[chat.state] || chat.state.replaceAll('-', ' ')));
+        }
         button.onclick = event => {
           clearTimeout(historyClick);
           const version = state.navigationVersion;
@@ -956,16 +961,48 @@
     const shown = wide?.matches ? !document.body.classList.contains('sidebar-collapsed') : document.body.classList.contains('sidebar-open');
     $('menu').setAttribute('aria-expanded', String(shown));
   }
-  function sidebar(open) {
-    document.body.classList.toggle('sidebar-open', open); $('backdrop').hidden = !open;
+  function sidebar(open, focus = $('sidebar-close')) {
+    const drawer = $('sidebar'), backdrop = $('backdrop');
+    const wasOpen = document.body.classList.contains('sidebar-open');
+    const active = document.activeElement;
+    document.body.classList.toggle('sidebar-open', open); backdrop.hidden = !open;
+    if (open) {
+      drawer.setAttribute('role', 'dialog');
+      drawer.setAttribute('aria-modal', 'true');
+      drawer.setAttribute('data-focus-trap', '');
+      if (!wasOpen || focus !== $('sidebar-close')) {
+        const enter = () => {
+          focus.focus({preventScroll: true});
+          if (focus === $('search')) focus.select();
+        };
+        enter();
+        // Visibility can still be transitioning the first time the drawer opens.
+        if (document.activeElement !== focus) Promise.allSettled(
+          (drawer.getAnimations?.() || []).map(animation => animation.finished)
+        ).then(() => {
+          if (document.body.classList.contains('sidebar-open') && document.activeElement === active) {
+            enter();
+          }
+        });
+      }
+    } else if (wasOpen) {
+      drawer.removeAttribute('role');
+      drawer.removeAttribute('aria-modal');
+      drawer.removeAttribute('data-focus-trap');
+      if (active === backdrop || drawer.contains(active)) $('menu').focus({preventScroll: true});
+    }
     menuState();
   }
-  function toggleSidebar(show) {
+  function toggleSidebar(show, focus) {
     if (inZen()) toggleZen(false);
-    if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'));
+    if (!wide?.matches) return sidebar(show ?? !document.body.classList.contains('sidebar-open'), focus);
     const collapsed = !(show ?? document.body.classList.contains('sidebar-collapsed'));
     document.body.classList.toggle('sidebar-collapsed', collapsed); menuState();
     try { localStorage.setItem('kova-sidebar', collapsed ? 'collapsed' : 'open'); } catch (_) {}
+    focus?.focus(); focus?.select?.();
+  }
+  function searchConversations() {
+    toggleSidebar(true, $('search'));
   }
   const inZen = () => document.body.classList.contains('zen-mode');
   let zenOverride = false;
@@ -1270,6 +1307,7 @@
     if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
     return `${Math.round(seconds / 3600)} h ago`;
   }
+  let restartNoticeShown = false;
   async function health() {
     try {
       const status = await json('/health');
@@ -1281,6 +1319,10 @@
       controls();
       if (!state.connected) return;
       clearNotice('offline');
+      if (status.restart_available && !restartNoticeShown) {
+        restartNoticeShown = true;
+        toast('A newer Kova is installed. Run kova restart when you are done working.', 'Kova update');
+      }
       // The model's state is a detail of the model chip, not a header badge: a
       // turn that fails because the model is down says so in the conversation.
       const configured = Boolean(state.models.find(model => model.name === status.model)?.model);
@@ -1439,12 +1481,22 @@
     }
     section.append(list); return section;
   }
+  // The approval names the action it is asking about, so the question can be
+  // answered without reading the arguments first.
+  function approvalQuestion(tool) {
+    if (tool === 'run_command') return 'Run this command?';
+    if (tool === 'write_file') return 'Write this file?';
+    if (tool === 'edit_file') return 'Edit this file?';
+    if (tool === 'delegate_analysis') return 'Send these tasks to the model?';
+    if (tool === 'job_add') return 'Schedule this job?';
+    return `Allow ${String(tool || 'this tool').replaceAll('_', ' ')}?`;
+  }
   function approvalCard(event) {
     const card = el('section', 'approval-card');
     card.setAttribute('aria-label', 'Tool approval');
     card.setAttribute('role', 'group'); card.setAttribute('tabindex', '-1');
     const heading = el('div', 'approval-heading');
-    heading.append(icon('shield-check'), el('strong', '', 'Kova needs your approval'), el('span', `risk-badge risk-${event.risk}`, event.risk));
+    heading.append(icon('shield-check'), el('strong', '', approvalQuestion(event.tool)), el('span', `risk-badge risk-${event.risk}`, event.risk));
     card.append(heading, el('small', '', event.tool), el('pre', '', event.args?.command || event.args?.path || event.summary));
     if (event.change_summary) card.append(el('small', '', event.change_summary));
     if (event.args && !['run_command', 'delegate_analysis'].includes(event.tool)) {
@@ -1521,9 +1573,18 @@
     const blocks = [], approvals = new Map(), toolGroups = [];
     let toolGroup = null;
     let plan = null;
-    // Parallel tool calls draw as a live tree (agent-tree.js, #192).
+    // Parallel tools and delegated analyses draw as live trees (#192).
     const chatId = state.chat?.id;
+    let failedChildren = 0, failureSummary = null;
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint,
+      onFailure: () => {
+        failedChildren += 1;
+        if (!failureSummary) {
+          failureSummary = el('span', 'agent-tree-failures');
+          body.parentNode?.querySelector('.message-label')?.append(failureSummary);
+        }
+        failureSummary.textContent = `${failedChildren} delegated task${failedChildren === 1 ? '' : 's'} failed`;
+      },
       stopTask: id => json(`/chats/${chatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with one small movement (#171): still "working", never a
@@ -1538,6 +1599,8 @@
       el('span', 'thinking-fill thinking-anim'));
     window.KovaThinking?.apply(activityMark);
     const activity = el('div', 'activity'); activity.append(activityMark, activityText); body.append(activity);
+    // The live node at the end of the trace takes the channel of what runs now.
+    activity.dataset.step = 'think';
     function paint() {
       scheduled = false;
       for (const block of blocks) {
@@ -1565,7 +1628,7 @@
         if (tasks?.accept(event)) {
           current = null; toolGroup = null;
           if (kind === 'tool_call') toolCount += 1;
-          activity.hidden = kind !== 'tool_result'; activityText.textContent = 'Working…';
+          activity.hidden = kind !== 'tool_result'; activityText.textContent = 'Working…'; activity.dataset.step = 'tool';
           schedule(); return;
         }
         if (kind === 'text' || kind === 'reasoning') {
@@ -1576,7 +1639,7 @@
             // The reasoning text waits until the burst ends; until then the
             // thinking row is the whole visible state.
             activity.hidden = false;
-            activityText.textContent = 'Thinking…';
+            activityText.textContent = 'Thinking…'; activity.dataset.step = 'think';
             if (!current || current.kind !== kind) current = {kind, text: '', start: performance.now(), end: 0};
             current.text += event.text || '';
           } else {
@@ -1654,7 +1717,7 @@
           }
         } else if (kind === 'tool_result') {
           toolGroup?.result(event);
-          current = null; activity.hidden = false; activityText.textContent = 'Working…';
+          current = null; activity.hidden = false; activityText.textContent = 'Working…'; activity.dataset.step = 'tool';
         } else if (kind === 'error') {
           // One announcement for a failure: the live region, not a second alert.
           const error = el('div', 'turn-error'); error.append(icon('triangle-alert'), el('span', '', event.message));
@@ -2075,6 +2138,13 @@
   try { if (localStorage.getItem('kova-sidebar') === 'collapsed') document.body.classList.toggle('sidebar-collapsed', true); } catch (_) {}
   menuState(); wide?.addEventListener?.('change', () => { sidebar(false); });
   $('backdrop').onclick = () => sidebar(false); $('sidebar-close').onclick = () => sidebar(false);
+  $('sidebar').addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented ||
+        !document.body.classList.contains('sidebar-open')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    sidebar(false);
+  });
   $('open-shortcuts').onclick = () => { sidebar(false); $('shortcuts-dialog').showModal(); };
   $('shortcuts-close').onclick = () => $('shortcuts-dialog').close();
   // Command palette (#183). palette.js owns the dialog; this is only the registry,
@@ -2097,7 +2167,7 @@
     add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
     if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
-    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:() => { toggleSidebar(true); $('search').focus(); $('search').select?.(); }});
+    add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:searchConversations});
     add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
     add('Actions', {title:'Next conversation', hint:'Move down the conversation list', keywords:'chat history navigate down next newer', shortcut:shortcutKeys('next-conversation'), run:() => stepConversation(1)});
     add('Actions', {title:'Keyboard shortcuts', hint:'Every key this window understands', keywords:'keys help cheat sheet', shortcut:shortcutKeys('shortcuts'), run:() => $('shortcuts-dialog').showModal()});
@@ -2298,7 +2368,7 @@
     palette: () => safe(openPalette),
     'new-conversation': () => { if (state.connected) safe(newChat); },
     'new-incognito': () => safe(newIncognito),
-    'search-conversations': () => { toggleSidebar(true); $('search').focus(); $('search').select?.(); },
+    'search-conversations': searchConversations,
     'previous-conversation': () => stepConversation(-1),
     'next-conversation': () => stepConversation(1),
     'toggle-sidebar': () => toggleSidebar(),
@@ -2619,7 +2689,7 @@
       });
       dialog.remove();
     }
-    pageTitle(); renderGreeting();
+    pageTitle(); renderWelcome();
   }
 
   // The /events stream carries reminders and chat states. A non-200 reply (a 401
@@ -2706,6 +2776,11 @@
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
       globalThis.KovaTypography?.sync?.();
       globalThis.KovaCustomCss?.sync?.();
+      // These read the same document; their first-load read waited for this
+      // session instead of asking while the window was still signed out.
+      globalThis.KovaMotion?.sync?.(); globalThis.KovaReasoning?.sync?.();
+      globalThis.KovaThinking?.sync?.(); globalThis.KovaStarters?.sync?.();
+      globalThis.KovaShortcuts?.current?.sync?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       renderStarters();

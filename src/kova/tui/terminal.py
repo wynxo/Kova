@@ -195,6 +195,7 @@ class Screen:
         self.drawn = False
         self.rest = 0            # rows between the insertion row and the resting cursor
         self.frame: list[str] = []
+        self.drawn_rows = 0      # rows the live region covered, counting the insertion row
         self.dirty = False
         self.style = ""            # the transcript's text style at the insertion point
         self.written = False       # anything in the transcript since the last clear
@@ -296,8 +297,17 @@ class Screen:
         if not self.drawn:
             return
         move = f"\x1b[{self.rest}A" if self.rest else ""
-        move += "\r" + (f"\x1b[{self.column}C" if self.column else "")
-        self.frame.append(move + "\x1b[J" + self.style)
+        back = "\r" + (f"\x1b[{self.column}C" if self.column else "")
+        # Clear the insertion row, then everything below it, then come back.
+        # One erase-to-end from the top-left corner would read as "clear the
+        # screen" to tmux, which copies the whole screen into its scrollback
+        # (scroll-on-clear) on every frame. The live region is always below
+        # the insertion row when it spans two rows or more, so the step down
+        # never hits the bottom margin; a one-row region erases plainly.
+        if self.drawn_rows > 1:
+            self.frame.append(move + back + "\x1b[K\x1b[B\r\x1b[J\x1b[A" + back + self.style)
+        else:
+            self.frame.append(move + back + "\x1b[J" + self.style)
         self.drawn = False
         self.dirty = True
 
@@ -309,6 +319,7 @@ class Screen:
         columns = self.size()[0]
         out = ["\r\n" if self.column else ""]
         top = 1 if self.column else 0
+        self.drawn_rows = top + len(self.live)
         for index, line in enumerate(self.live):
             if index:
                 out.append("\r\n")

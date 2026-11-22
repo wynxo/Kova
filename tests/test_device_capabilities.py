@@ -811,6 +811,14 @@ def test_kova_devices_allow_and_deny(monkeypatch):
     assert listing.exit_code == 0 and "chat" in listing.output
 
 
+def test_kova_devices_list_json(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(cli, "get_client", lambda: fake)
+    result = CliRunner().invoke(cli.app, ["devices", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == [fake.device]
+
+
 def test_a_phone_undoes_hunks_only_inside_kova_files(kova, tmp_path):
     client, app, local, phone, record = kova
     blobs = app.state.agent.blobs

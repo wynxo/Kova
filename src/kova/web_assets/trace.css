@@ -1,0 +1,229 @@
+/* The live step trace (docs/DESIGN.md, "The signature").
+
+   Every reply hangs from a spine that drops from the speaker's mark. Each step
+   in the reply is a node on that spine, shaped and coloured by what kind of
+   step it is:
+
+     thinking      lilac diamond     --step-think
+     tool call     cyan ring         --step-tool
+     needs you     amber triangle    --step-ask
+     sub-agents    magenta square    --step-agent
+     the answer    ink dot           --fg-default
+     a plan        hollow ink square --fg-muted
+
+   The node of a running step pulses without moving. A step that waits for
+   your answer turns its stretch of the spine
+   amber. This file only adds the spine and the nodes: each step keeps its own
+   stylesheet (reasoning.css, tool-cards.css, agent-tree.css, app.css). The
+   nodes are ::before boxes on the steps, so the DOM is unchanged and a screen
+   reader hears the steps exactly as before.
+
+   Geometry: the spine runs through the centre of the speaker's mark
+   (--trace-mark wide), and every step is indented by --trace-gutter. */
+
+.message.assistant {
+  --trace-mark:var(--space-5);
+  --trace-gutter:var(--space-8);
+  --trace-node:var(--space-3);
+  --trace-line:var(--space-0-5);
+  /* Each speaker can carry its own colour; Kova's is the ink. Group chats set
+     --speaker on the message to tint the mark and the spine head. */
+  --speaker:var(--fg-default);
+  /* The x position of the spine, measured from the left edge of a step. */
+  --trace-x:calc(var(--trace-mark) / 2 - var(--trace-gutter));
+}
+
+/* The head of the trace: the speaker's mark and name. */
+.message.assistant > .message-label { gap:var(--space-3); margin-bottom:var(--space-1); color:var(--fg-default); font-size:var(--type-size-body); font-weight:620; }
+.message.assistant > .message-label .avatar { width:var(--trace-mark); height:var(--trace-mark); background:var(--speaker); }
+
+.message.assistant > .message-body {
+  position:relative;
+  gap:var(--space-2);
+  padding-left:var(--trace-gutter);
+  padding-top:var(--space-2);
+}
+/* The spine. */
+.message.assistant > .message-body::before {
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:var(--space-2);
+  left:calc(var(--trace-mark) / 2 - var(--trace-line) / 2);
+  width:var(--trace-line);
+  border-radius:var(--radius-pill);
+  background:linear-gradient(var(--speaker), var(--border-subtle) var(--space-6));
+  opacity:.9;
+}
+.message.assistant > .message-body:empty::before { display:none; }
+
+/* Every step sits on the spine and gets a node. The node is centred on the
+   step's first line: --node-top is that line's centre. */
+.message.assistant > .message-body > :is(.reasoning, .tool-card, .agent-tree, .plan-view, .markdown, .approval-card, .turn-status, .turn-error, .activity, .changes-card, .model-switch, .tool) {
+  --node-top:calc(var(--space-3) + var(--space-0-5));
+  --node-colour:var(--fg-muted);
+  position:relative;
+  margin-block:0;
+}
+.message.assistant > .message-body > :is(.reasoning, .tool-card, .agent-tree, .plan-view, .markdown, .approval-card, .turn-status, .turn-error, .activity, .changes-card, .tool)::before {
+  content:"";
+  position:absolute;
+  z-index:1;
+  top:calc(var(--node-top) - var(--trace-node) / 2);
+  left:calc(var(--trace-x) - var(--trace-node) / 2);
+  width:var(--trace-node);
+  height:var(--trace-node);
+  box-sizing:border-box;
+  border:var(--trace-line) solid var(--node-colour);
+  border-radius:var(--radius-pill);
+  background:var(--bg-base);
+}
+
+/* In the trace the node carries the status, so the row's own mark steps aside. */
+.message.assistant > .message-body > .tool-card > .tool-card-summary > .tool-card-mark,
+.message.assistant > .message-body > .agent-tree > .agent-tree-node[aria-level="1"] > .agent-tree-row > .tool-card-mark { display:none; }
+.message.assistant > .message-body > :is(.tool-card, .agent-tree) { color:var(--fg-default); }
+
+/* Thinking: a lilac diamond. */
+.message.assistant > .message-body > .reasoning { --node-colour:var(--step-think); --node-top:calc(var(--space-3)); }
+.message.assistant > .message-body > .reasoning::before { border-radius:var(--space-0-5); transform:rotate(45deg) scale(.86); }
+
+/* A tool call: a cyan ring, filled while it runs. */
+.message.assistant > .message-body > :is(.tool-card, .tool) { --node-colour:var(--step-tool); --node-top:calc(var(--space-4)); }
+.message.assistant > .message-body > .tool-card:has(> .tool-card-summary > .tool-card-mark.running)::before { background:var(--step-tool); animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .tool-card:has(> .tool-card-summary > .tool-card-mark.failed)::before { border-color:var(--status-danger); }
+
+/* Sub-agents and parallel groups: a square, magenta for delegated work. */
+.message.assistant > .message-body > .agent-tree { --node-colour:var(--step-tool); --node-top:calc(var(--space-5)); }
+.message.assistant > .message-body > .agent-tree[data-kind="delegated"] { --node-colour:var(--step-agent); }
+.message.assistant > .message-body > .agent-tree::before { border-radius:var(--space-0-5); background:var(--node-colour); }
+.message.assistant > .message-body > .agent-tree:has(> .agent-tree-node[aria-level="1"] > .agent-tree-row > .tool-card-mark.running)::before { animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
+
+/* A plan: a hollow square in ink. */
+.message.assistant > .message-body > .plan-view { --node-colour:var(--fg-muted); --node-top:calc(var(--space-3) + var(--space-2)); }
+.message.assistant > .message-body > .plan-view::before { border-radius:var(--space-0-5); }
+
+/* The answer: a solid ink dot on its first line. */
+.message.assistant > .message-body > .markdown { --node-colour:var(--speaker); --node-top:calc(var(--type-size-body-comfortable) * .8); }
+.message.assistant > .message-body > .markdown::before { background:var(--node-colour); transform:scale(.72); }
+
+/* Needs you: an amber triangle, and the spine beside the card turns amber
+   until it is answered. */
+.message.assistant > .message-body > .approval-card { --node-colour:var(--step-ask); --node-top:calc(var(--space-6) + var(--space-0-5)); margin-block:var(--space-2); }
+.message.assistant > .message-body > .approval-card::before {
+  border:0; border-radius:0; background:var(--step-ask);
+  clip-path:polygon(50% 4%, 98% 92%, 2% 92%);
+  width:calc(var(--trace-node) + var(--space-1)); height:calc(var(--trace-node) + var(--space-1));
+  left:calc(var(--trace-x) - (var(--trace-node) + var(--space-1)) / 2);
+  top:calc(var(--node-top) - (var(--trace-node) + var(--space-1)) / 2);
+}
+.message.assistant > .message-body > .approval-card::after {
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:calc(var(--trace-x) - var(--trace-line) / 2);
+  width:var(--trace-line);
+  background:var(--step-ask);
+}
+.message.assistant > .message-body > .approval-card:has(> .approval-status:empty)::before { animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .approval-card:has(> .approval-status:not(:empty))::after { background:var(--border-strong); }
+
+/* Small facts about the turn (privacy, network, stopped): a faint pin. */
+.message.assistant > .message-body > .turn-status { --node-colour:var(--border-strong); --node-top:calc(var(--type-size-label) * .75); }
+.message.assistant > .message-body > .turn-status::before { transform:scale(.6); background:var(--node-colour); }
+.message.assistant > .message-body > .turn-error { --node-colour:var(--status-danger); --node-top:calc(var(--space-5)); }
+.message.assistant > .message-body > .changes-card { --node-colour:var(--step-tool); --node-top:calc(var(--space-5)); }
+.message.assistant > .message-body > .changes-card::before { border-radius:var(--space-0-5); }
+
+/* The live end of the trace: while a reply runs, the last node breathes in the
+   channel of what Kova is doing. app.js sets data-step on the activity row. */
+.message.assistant > .message-body > .activity { --node-colour:var(--step-think); --node-top:calc(var(--space-3) - var(--space-0-5)); min-height:var(--space-6); padding-block:var(--space-0-5); }
+.message.assistant > .message-body > .activity[data-step="tool"] { --node-colour:var(--step-tool); }
+.message.assistant > .message-body > .activity::before { background:var(--node-colour); animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .activity .shimmer { color:var(--node-colour); }
+
+/* An approval card takes focus when it arrives; its ring is in its channel. */
+.message.assistant > .message-body > .approval-card:focus-visible { outline:var(--space-0-5) solid var(--step-ask); outline-offset:var(--space-1); }
+
+@keyframes trace-breathe { 50% { opacity:.35; } }
+
+/* The start screen teaches the channels once: a short legend on its own spine. */
+.trace-legend {
+  position:relative;
+  display:grid;
+  gap:var(--space-3);
+  max-width:var(--type-measure-prose);
+  margin:var(--space-8) 0 0;
+  padding:var(--space-1) 0 var(--space-1) var(--space-8);
+  list-style:none;
+}
+.trace-legend::before {
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:calc(var(--space-5) / 2 - var(--space-0-5) / 2);
+  width:var(--space-0-5);
+  border-radius:var(--radius-pill);
+  background:var(--border-subtle);
+}
+.trace-legend li {
+  --node-colour:var(--fg-muted);
+  position:relative;
+  display:grid;
+  grid-template-columns:calc(var(--space-12) * 3) minmax(0, 1fr);
+  gap:var(--space-1) var(--space-4);
+  align-items:baseline;
+  font-size:var(--type-size-body);
+  line-height:var(--type-leading-body);
+}
+.trace-legend li::before {
+  content:"";
+  position:absolute;
+  top:calc(var(--type-size-body) * var(--type-leading-body) / 2 - var(--space-3) / 2);
+  left:calc(var(--space-5) / 2 - var(--space-8) - var(--space-3) / 2);
+  width:var(--space-3);
+  height:var(--space-3);
+  box-sizing:border-box;
+  border:var(--space-0-5) solid var(--node-colour);
+  border-radius:var(--radius-pill);
+  background:var(--bg-base);
+}
+.trace-legend strong { color:var(--node-colour); font-weight:620; }
+.trace-legend span { color:var(--fg-muted); }
+.trace-legend [data-step="think"] { --node-colour:var(--step-think); }
+.trace-legend [data-step="think"]::before { border-radius:var(--space-0-5); transform:rotate(45deg) scale(.86); }
+.trace-legend [data-step="tool"] { --node-colour:var(--step-tool); }
+.trace-legend [data-step="ask"] { --node-colour:var(--step-ask); }
+.trace-legend [data-step="ask"]::before { border:0; border-radius:0; background:var(--step-ask); clip-path:polygon(50% 4%, 98% 92%, 2% 92%); }
+.trace-legend [data-step="agent"] { --node-colour:var(--step-agent); }
+.trace-legend [data-step="agent"]::before { border-radius:var(--space-0-5); background:var(--step-agent); }
+
+@media (max-width:720px) {
+  .message.assistant { --trace-gutter:var(--space-6); }
+  .message.assistant > .message-body > :is(.reasoning, .tool-card) {
+    --node-top:calc(var(--touch-target) / 2);
+  }
+  .trace-legend { margin-top:var(--space-6); padding-left:var(--space-6); }
+  .trace-legend li { grid-template-columns:minmax(0, 1fr); gap:0; }
+  .trace-legend li::before { left:calc(var(--space-5) / 2 - var(--space-6) - var(--space-3) / 2); }
+}
+
+/* Motion is optional: the breathing node holds still at full strength. */
+@media (prefers-reduced-motion: reduce) {
+  .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before { animation:none !important; }
+}
+[data-motion="reduced"] .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before,
+[data-motion="off"] .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before { animation:none !important; opacity:1; }
+
+/* Forced colours: the nodes keep a shape in system colours; the spine stays. */
+@media (forced-colors: active) {
+  .message.assistant > .message-body::before,
+  .trace-legend::before { forced-color-adjust:none; background:CanvasText; }
+  .message.assistant > .message-body > :is(.reasoning, .tool-card, .agent-tree, .plan-view, .markdown, .approval-card, .turn-status, .turn-error, .activity, .changes-card, .tool)::before,
+  .trace-legend li::before { forced-color-adjust:none; border-color:CanvasText; background:Canvas; }
+  .message.assistant > .message-body > :is(.agent-tree, .markdown, .approval-card, .turn-status, .activity)::before,
+  .trace-legend li:is([data-step="ask"], [data-step="agent"])::before { background:CanvasText; }
+  .message.assistant > .message-body > .approval-card::after { forced-color-adjust:none; background:Highlight; }
+}

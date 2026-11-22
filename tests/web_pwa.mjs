@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 const listeners = {};
 const oldShell = 'kova-shell-v1';
 const stores = new Map([[oldShell, new Map()], ['kova-share-v1', new Map()]]);
-let online = true, focused = false, notices = [];
+let online = true, focused = false, notices = [], activated = false;
 const keyFor = (name, entry) => {
   const raw = typeof entry === 'string' ? entry : entry.url;
   const url = new URL(raw, 'https://kova.test');
@@ -30,12 +30,13 @@ const caches = {
     ?.get(new URL(request.url).pathname),
 };
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/sw.js', import.meta.url), 'utf8'), {
-  self: {location: {origin: 'https://kova.test'}, addEventListener: (name, fn) => {listeners[name] = fn;}, registration: {showNotification: async (...args) => notices.push(args)}, clients: {claim: async () => {}, matchAll: async () => [{focused}]}},
+  self: {skipWaiting: async () => {activated = true;}, location: {origin: 'https://kova.test'}, addEventListener: (name, fn) => {listeners[name] = fn;}, registration: {showNotification: async (...args) => notices.push(args)}, clients: {claim: async () => {}, matchAll: async () => [{focused}]}},
   caches, URL, Response, FormData, crypto: globalThis.crypto,
   fetch: async request => { if (!online) throw Error('offline'); return {url: request.url}; },
 });
 let pending;
 listeners.install({waitUntil: promise => {pending = promise;}}); await pending;
+assert.ok(activated, 'an old tab does not block activation');
 listeners.activate({waitUntil: promise => {pending = promise;}}); await pending;
 assert.ok(!stores.has(oldShell), 'a previously cached shell is removed on upgrade');
 const shell = [...stores.entries()].find(([name]) => name.startsWith('kova-shell-'))[1];

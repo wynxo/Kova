@@ -13,10 +13,19 @@ class El {
     this.children = [];
     this.disabled = false;
     this.hidden = false;
+    this.tabIndex = 0;
     this.focused = false;
   }
-  append(...kids) { this.children.push(...kids); }
-  getAttribute(name) { return name === 'hidden' && this.hidden ? '' : null; }
+  append(...kids) {
+    this.children.push(...kids);
+    for (const child of kids) child.parent = this;
+  }
+  closest(selector) {
+    if (selector === '[data-focus-trap]' && this.trap) return this;
+    return this.parent?.closest(selector) ?? null;
+  }
+  getClientRects() { return this.hidden || this.parent?.hidden ? [] : [{}]; }
+  matches(selector) { return selector === ':disabled' && this.disabled; }
   contains(node) { return this === node || this.children.some(child => child.contains(node)); }
   focus() { document.activeElement = this; }
   querySelectorAll() {
@@ -39,7 +48,7 @@ const document = {
     return [];
   },
 };
-vm.runInNewContext(source, {document, Array});
+vm.runInNewContext(source, {document, getComputedStyle: () => ({visibility: 'visible'})});
 
 function tab(opts = {}) {
   let prevented = false;
@@ -51,7 +60,10 @@ const dialog = new El('dialog');
 const first = new El('button');
 const middle = new El('button');
 const last = new El('button');
-dialog.append(first, middle, last);
+const hiddenGroup = new El('div');
+hiddenGroup.hidden = true;
+hiddenGroup.append(new El('button'));
+dialog.append(first, middle, last, hiddenGroup);
 openDialogs.push(dialog);
 
 // Forward at the last element wraps to the first.
@@ -86,5 +98,10 @@ openDialogs.push(new El('dialog'));
 document.activeElement = outside;
 assert.equal(tab(), true, 'an empty dialog still traps focus');
 openDialogs.length = 0;
+
+dialog.trap = true;
+document.activeElement = last;
+assert.equal(tab(), true, 'a responsive drawer can use the same trap');
+assert.equal(document.activeElement, first);
 
 console.log('Focus trap: modal dialogs keep Tab inside and still allow free movement passed');

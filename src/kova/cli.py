@@ -75,6 +75,8 @@ def _hint_for(message: str) -> str | None:
         return "Run: kova jobs list"
     if "no model named" in text:
         return "Run: kova model list"
+    if "no model is set up" in text:
+        return "Run: kova setup"
     if "no chat" in text:
         return "Run: kova chats"
     if "either --md or --json" in text:
@@ -198,21 +200,27 @@ app = typer.Typer(
 )
 
 
-@app.command("app")
+@app.command("app", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def desktop_app(
+    ctx: typer.Context,
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
     prepare: bool = typer.Option(False, "--prepare", hidden=True),
+    register: bool = typer.Option(False, "--register", hidden=True),
+    data_home: str | None = typer.Option(None, "--data-home", hidden=True),
 ) -> None:
     """Open the Kova desktop app."""
-    from .app import launch_desktop
     from .app import main as app_main
 
+    args = []
     if prepare:
-        app_main(["--prepare"])
-        return
+        args.append("--prepare")
+    if register:
+        args.append("--register")
+    if data_home is not None:
+        args += ["--data-home", data_home]
     if browser:
-        web_app()
-    raise typer.Exit(launch_desktop())
+        args.append("--browser")
+    app_main(args + list(ctx.args))
 
 
 @app.command("web")
@@ -258,6 +266,8 @@ def _lifecycle_line(message: str) -> Text:
     text = message.strip()
     if text.startswith(f"{SYMBOL_OK} "):
         return Text.assemble((f"{SYMBOL_OK} ", f"bold {colour('SUCCESS')}"), (text[2:], ""))
+    if text.startswith("✗ "):
+        return Text.assemble(("✗ ", f"bold {colour('ERROR')}"), (text[2:], ""))
     if text.startswith(f"{SYMBOL_ARROW} "):
         return Text.assemble((f"{SYMBOL_ARROW} ", colour('ACCENT_SOFT')), (text[2:], colour('MUTED')))
     return Text(text, style=colour('MUTED'))
@@ -282,16 +292,20 @@ def _print_update_check(message: str) -> None:
 def update(
     ref: str | None = typer.Option(None, "--ref", help="GitHub branch, tag, or commit (default: KOVA_REF or main)."),
     check: bool = typer.Option(False, "--check", help="Only compare installed and remote versions/commits."),
+    verbose: bool = typer.Option(False, "--verbose", help="Show full uv and desktop preparation output."),
 ):
-    """Check for updates or reinstall the latest Kova with uv."""
+    """Update Kova and its desktop app, or check without changing anything."""
     try:
         target = lifecycle.selected_ref(ref)
         if check:
             _print_update_check(lifecycle.check_update(target))
         else:
-            lifecycle.update(target, emit=_lifecycle_emit)
+            lifecycle.update(target, emit=_lifecycle_emit, verbose=verbose,
+                             progress=console.status if console.is_terminal and not verbose else None)
     except (lifecycle.LifecycleError, OSError) as exc:
         _fail(str(exc))
+    except lifecycle.psutil.Error as exc:
+        _fail(f"Could not inspect the running installation: {exc}")
 
 
 @app.command()
@@ -346,7 +360,7 @@ app.add_typer(_themes, name="themes")
 def chats_root(ctx: typer.Context):
     """List chats, newest first."""
     if ctx.invoked_subcommand is None:
-        chats_list()
+        chats_list(as_json=False)
 
 
 def get_client() -> KovaClient:
@@ -417,8 +431,13 @@ def _ask_prompt(question: str | None, piped: str | None, files: list[tuple[str, 
     return "\n\n".join(parts)
 
 
-def _ask_error(message: str) -> None:
-    print(f"Error: {' '.join(message.splitlines())}", file=sys.stderr)
+def _ask_error(message: str, *, as_json: bool = False) -> None:
+    """One ask/compare failure; JSON for scripts when ``--json`` was asked for."""
+    text = " ".join(message.splitlines())
+    if as_json:
+        print(json.dumps({"error": text, "hint": _hint_for(text)}, ensure_ascii=False))
+    else:
+        print(f"Error: {text}", file=sys.stderr)
     raise typer.Exit(1)
 
 
@@ -459,14 +478,15 @@ def ask(
     """
     _check_mode(mode)
     if incognito and chat_id:
-        _ask_error("Use --incognito without --chat to start a private one-off question.")
+        _ask_error("Use --incognito without --chat to start a private one-off question.",
+                   as_json=as_json)
     if incognito:
         _stderr.print("Incognito: not saved on this PC. Your provider still receives messages.", markup=False)
     cleanup_id = None
     if think:
         reason = _reasoning_error(model)
         if reason:
-            _ask_error(f"{reason}. Use a reasoning model, or drop --think.")
+            _ask_error(f"{reason}. Use a reasoning model, or drop --think.", as_json=as_json)
     attached = []
     for path in files:
         with path.open("rb") as handle:
@@ -517,13 +537,13 @@ def ask(
             elif kind == "error":
                 if pieces and not as_json:
                     print()
-                _ask_error(event["message"])
+                _ask_error(event["message"], as_json=as_json)
             elif kind == "done":
                 used_model = event.get("model", used_model)
                 usage = event.get("usage")
                 break
     except KovaError as exc:
-        _ask_error(str(exc))
+        _ask_error(str(exc), as_json=as_json)
     finally:
         if cleanup_id is not None:
             client.delete_chat(cleanup_id)
@@ -634,7 +654,48 @@ def serve():
 
     from kova.server import create_app
 
-    uvicorn.run(create_app(load_config()), host="127.0.0.1", port=load_config().port, timeout_graceful_shutdown=3)
+    from filelock import FileLock, Timeout
+    from kova.config import private_write
+
+    cfg = load_config()
+    pidfile = cfg.home / "server.pid"
+    try:
+        with FileLock(cfg.home / ".server-start.lock", timeout=0):
+            private_write(pidfile, str(os.getpid()))
+            try:
+                uvicorn.run(create_app(cfg), host="127.0.0.1", port=cfg.port, timeout_graceful_shutdown=3)
+            finally:
+                pidfile.unlink(missing_ok=True)
+    except Timeout:
+        _fail("A Kova server is already running for this data directory.")
+
+
+@app.command()
+def restart():
+    """Start a fresh background server and wait for it to answer."""
+    from kova import build, update_runtime
+
+    cfg = load_config()
+    try:
+        if process := update_runtime.running_server(cfg):
+            update_runtime.stop(process)
+        client = ensure_server(cfg)
+        try:
+            update_runtime.verify_server(cfg, build.installed())
+        finally:
+            client.http.close()
+    except (lifecycle.LifecycleError, lifecycle.psutil.Error, KovaError, OSError) as exc:
+        _fail(str(exc))
+    _ok("Server is healthy on the installed build.")
+
+
+@app.command("app-reconcile", hidden=True)
+def app_reconcile() -> None:
+    """Let the desktop shell reconcile an idle server before connecting."""
+    from kova.update_runtime import restart_stale_server
+
+    if restart_stale_server():
+        _ok("Restarted the server on the installed build.")
 
 
 @app.command()
@@ -771,6 +832,7 @@ def status():
         console.print(brand.card(_status_rows(cfg, None, notes=None, reminders=None),
                                  "Kova status", tone=colour('ERROR')))
         _muted("It starts by itself when you run kova.")
+        _show_update_hint(cfg)
         return
 
     try:
@@ -796,6 +858,14 @@ def status():
                              tone=colour('ACCENT') if info.get("model_ok") else colour('WARNING')))
     if not info.get("model_ok"):
         _muted("To configure or reconnect your model, run: kova setup")
+    if info.get("restart_available"):
+        _muted("A newer Kova is installed. Run: kova restart")
+    _show_update_hint(cfg)
+
+
+def _show_update_hint(cfg) -> None:
+    if console.is_terminal and (message := lifecycle.update_hint(cfg)):
+        _muted(message)
 
 
 @app.command("usage")
@@ -1063,16 +1133,21 @@ def prefs_import(
 def themes_root(ctx: typer.Context):
     """List the themes Kova can use."""
     if ctx.invoked_subcommand is None:
-        themes_list()
+        themes_list(as_json=False)
 
 
 @_themes.command("list")
-def themes_list():
+def themes_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List the built-in themes and the theme files in Kova's home."""
     try:
         entries = get_client().themes()
     except KovaError as exc:
         _fail(str(exc))
+    if as_json:
+        print(json.dumps(entries, ensure_ascii=False))
+        return
     active = kova_theme.theme_id(active_theme())
     table = _table(caption=f"{len(entries)} theme(s) · built-in and user files · ● the terminal's theme")
     table.add_column("", no_wrap=True, width=1)
@@ -1430,6 +1505,14 @@ app.add_typer(_mcp, name="mcp")
 _MCP_STATE = {"connected": "SUCCESS", "connecting": "WARNING", "error": "ERROR", "off": "MUTED"}
 
 
+def _mcp_error_line(message: str) -> None:
+    """A failed server's reason; a clean exit is a note, not a red failure."""
+    if "(exit code 0)" in message:
+        _muted(message)
+    else:
+        _error_line(message)
+
+
 def _pairs(values: list[str], label: str) -> dict[str, str]:
     """``KEY=VALUE`` options as a dict; a malformed one is an error, not a guess."""
     result = {}
@@ -1443,7 +1526,7 @@ def _pairs(values: list[str], label: str) -> dict[str, str]:
 
 def _mcp_tools(row: dict) -> None:
     if row["error"]:
-        _error_line(row["error"])
+        _mcp_error_line(row["error"])
     if not row["tools"]:
         if row["state"] == "connected":
             _muted(f"{row['name']} offers no tools.")
@@ -1460,9 +1543,14 @@ def _mcp_tools(row: dict) -> None:
 
 
 @_mcp.command("list")
-def mcp_list():
+def mcp_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """Show MCP servers, whether they are connected, and their tools."""
     rows = get_client().mcp_list()
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return
     if not rows:
         _empty("No MCP servers yet.",
                "Add one: kova mcp add NAME -- COMMAND [ARGS...]   or   kova mcp add NAME --url URL")
@@ -1482,7 +1570,7 @@ def mcp_list():
     console.print(table)
     for row in rows:
         if row["error"]:
-            _error_line(row["error"])
+            _mcp_error_line(row["error"])
 
 
 @_mcp.command("add")
@@ -1513,7 +1601,7 @@ def mcp_add(
     else:
         _ok(f"Added {name}, but it is not connected yet.")
         if row["error"]:
-            _error_line(row["error"])
+            _mcp_error_line(row["error"])
         _muted(f"Fix it, then run: kova mcp test {name}")
 
 
@@ -2022,11 +2110,24 @@ def plugin_install(
 
 
 @_plugins.command("list")
-def plugin_list():
+def plugin_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List installed plugins and their enabled state."""
     from kova import plugins
 
     items = plugins.installed()
+    if as_json:
+        print(json.dumps([{
+            "name": plugin.name,
+            "version": plugin.version,
+            "description": plugin.description,
+            "author": plugin.author,
+            "homepage": plugin.homepage,
+            "source": plugin.source,
+            "enabled": plugin.enabled,
+        } for plugin in items], ensure_ascii=False))
+        return
     if not items:
         _empty("No plugins installed.", "Add one with: kova plugin install <path|git url>")
         return
@@ -2413,9 +2514,14 @@ def _resolve_chat_id(client: KovaClient, ref: str) -> str:
 
 
 @_chats.command("list")
-def chats_list():
+def chats_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List chats, newest first."""
     chats = get_client().list_chats()
+    if as_json:
+        print(json.dumps(chats, ensure_ascii=False))
+        return
     if not chats:
         _empty("No chats yet.", "Start one with: kova")
         return
@@ -2572,12 +2678,17 @@ def chats_move(ref: str, project: str = typer.Argument(
 
 
 @_projects.command("list")
-def projects_list():
+def projects_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List projects and their IDs."""
     try:
         projects = get_client().list_projects()
     except KovaError as exc:
         _fail(str(exc))
+    if as_json:
+        print(json.dumps(projects, ensure_ascii=False))
+        return
     if not projects:
         _empty("No projects yet.", "Create one with: kova projects create NAME")
         return
@@ -2662,10 +2773,20 @@ def projects_edit(
 
 
 def _find_project(client: KovaClient, project_id: str) -> dict:
+    """A project by ID, or a clear exit that names what was asked for."""
+    wanted = project_id.strip()
+    if not wanted:
+        _fail('No project named "".', hint="See the IDs with: kova projects list")
     try:
-        return client.get_project(project_id)
+        project = client.get_project(wanted)
     except KovaError as exc:
-        _fail(f'No project "{project_id}".' if exc.status == 404 else str(exc))
+        if exc.status == 404:
+            _fail(f'No project named "{wanted}".', hint="See the IDs with: kova projects list")
+        _fail(str(exc))
+    if not isinstance(project, dict):
+        # An empty ID can be redirected to the /projects list; never treat that as one.
+        _fail(f'No project named "{wanted}".', hint="See the IDs with: kova projects list")
+    return project
 
 
 @_projects.command("show")
@@ -2704,7 +2825,7 @@ def projects_rm(project_id: str, yes: bool = typer.Option(False, "--yes", "-y", 
     except KovaError as exc:
         _fail(str(exc))
     if not removed:
-        _fail(f'No project "{project_id}".')
+        _fail(f'No project named "{project_id}".', hint="See the IDs with: kova projects list")
     _ok(f'Removed project "{name}".')
 
 
@@ -3168,7 +3289,7 @@ def config_show(
     console.print(table)
 
 
-@_config.command("set")
+@_config.command("set", context_settings={"ignore_unknown_options": True})
 def config_set(key: str, value: str):
     """Validate and save one setting. Use a dotted key, such as memory.budget."""
     cfg = load_config()
@@ -3359,14 +3480,19 @@ app.add_typer(_devices, name="devices")
 def devices_root(ctx: typer.Context):
     """List paired devices."""
     if ctx.invoked_subcommand is None:
-        devices_list()
+        devices_list(as_json=False)
 
 
 @_devices.command("list")
-def devices_list():
+def devices_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List paired devices."""
     status = get_client().phone_status()
     devices = status["devices"]
+    if as_json:
+        print(json.dumps(devices, ensure_ascii=False))
+        return
     state = "on" if status["listening"] else ("on, not listening" if status["enabled"] else "off")
     if not devices:
         _empty(f"No paired devices. Phone access is {state}.", "Pair a phone with: kova pair")

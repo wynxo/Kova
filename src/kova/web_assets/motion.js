@@ -130,6 +130,13 @@
     else if (typeof query.addListener === 'function') query.addListener(paint);
   }
 
-  window.KovaMotion = {KEY, mode, applied, setMode};
-  load();
+  // A window opened from `kova web` (or a pairing URL) reaches this script
+  // before app.js has exchanged its one-use token for a session cookie, so the
+  // shared document is not readable yet. Keep the local copy for this first
+  // frame; app.js calls sync() once the window is signed in.
+  const loginPending = () => typeof location === 'object' &&
+    /(^|[#&])(ticket|pair)=/.test(location.hash || '');
+
+  window.KovaMotion = {KEY, mode, applied, setMode, sync: load};
+  if (!loginPending()) load();
 })();

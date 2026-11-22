@@ -303,9 +303,9 @@ Delete on the row) for each call still waiting or running; the terminal shows th
 calls as ordinary tool rows. The live tree shows elapsed time, the latest tool
 action, and a quoted excerpt of each finished tool's output or error when its row
 is expanded. When the turn ends, the calls that succeeded fold into one `Done · N`
-row that quotes each call's one-line result; a failed, stopped or interrupted call
-keeps its own row and reason under the header's failed count. Reloaded transcripts
-still show ordinary tool cards.
+row that quotes each call's one-line result and still opens to its individual
+rows. Failed, stopped and interrupted calls keep their own rows and reasons.
+Reloaded transcripts still show ordinary tool cards.
 
 Parallel reads are calls in the parent model step, not child model tasks.
 In work mode, consecutive independent `delegate_analysis` calls can run
@@ -314,9 +314,17 @@ tasks and the shared model destination; declining sends none of that batch.
 There are at most four attempts per turn, including denials. Each child sends
 only its approved task and a fixed system instruction, with no history or
 tools. Children are time- and size-bounded and reuse individual Stop, ordered
-tool results, and the live task tree (`kind: "delegated"` on the root).
-Separate model selection, scoped child tools and nested tool steps, child
-usage accounting, and replay of the live tree are not part of this slice.
+tool results, and the live task tree (`kind: "delegated"` on the root and
+`kind: "agent"` on the child). Stop is available from the moment a child's
+row is announced, even before the request starts. Each child's `task_output`
+events carry its `id`, group `parent`, `step` (`"reasoning"` or `"text"`),
+and a bounded text delta. Expanding the row shows the approved request and
+the child's actual streamed reasoning and analysis. Child reasoning follows
+the same display preference as parent reasoning and is not stored or sent
+back to the parent model. Failures are counted in the reply header as well
+as in the group; user stops are shown separately. Separate model selection,
+scoped child tool execution, child usage accounting and replay of the live
+tree are not part of this feature.
 
 `GET /events`: `ping` at once and then every keepalive interval, so a browser can
 tell a quiet stream from a dead one; `reminder` when a reminder is due; `job`
@@ -374,7 +382,7 @@ writes need `memory:write`. The matrix is in
 
 ### CLI (`src/kova/cli.py`)
 
-A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`,
+A Typer app. Top-level commands include `app`, `web`, `ask`, `compare`, `setup`, `serve`, `stop`, `restart`,
 `status`, `usage`, `privacy`, `config`, `update`, `uninstall`, `export`, `import`, `pair`, `devices`
 and `doctor`; groups `model`, `providers`, `mcp`, `memory`, `reminders`, `jobs`,
 `chats`, `projects`, `plugin`, `catalog`, `skills`, `prefs`, `themes` and `autostart` hold their subcommands. Use `uv run kova` from a checkout. Commands talk to the server through
@@ -487,7 +495,12 @@ values, so no component repeats a size or a gap. Optional custom CSS (#178) is u
 it is off by default, served at `/app/custom.css` only while the shared `custom_css`
 preference is on, stripped of `@import` and any `url(...)` outside `/app/assets/`, capped
 at 64 KiB, and appended last by `web_assets/custom_css.js`. `?safe=1` skips it so a broken
-stylesheet can be turned off. An unsent
+stylesheet can be turned off. A window opened from `kova web` paints its first frame from
+the local copies, then reads the shared document once `app.js` has exchanged the one-use
+login ticket for a session cookie (`KovaTheme.sync`, `KovaTypography.sync`,
+`KovaCustomCss.sync`, `KovaMotion.sync`, `KovaReasoning.sync`, `KovaThinking.sync`,
+`KovaStarters.sync` and the shortcut registry's `sync`), so a first launch never fires
+unauthenticated preference requests. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and
@@ -555,6 +568,10 @@ model-catalog check, then the models to keep and the default for new chats.
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
 authenticated `/chats/{id}/attachments` API and shows ordinary attachment chips.
+`/app/sw.js` is served with `Service-Worker-Allowed: /app`, because a worker
+may otherwise only claim its own folder (`/app/`) and the browser would refuse
+the page's `scope: '/app'` registration, leaving the app with no offline shell,
+share target or notifications.
 If the worker is not in control, `/app/share` saves the same native attachments
 on the server before redirecting to a one-use composer. Text and link shares
 stay editable drafts. Shared images obey the selected model's vision setting;
@@ -954,7 +971,7 @@ which is what the clients read (see *The capability contract* below).
 ## Theme
 
 `src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`, `THINK`,
 `BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
 blocks. The constants are `kova-dark`'s values; every other theme maps onto them
 from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->

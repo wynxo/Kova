@@ -37,6 +37,7 @@
         "border": { "$ref": "#/$defs/colorGroup" },
         "accent": { "$ref": "#/$defs/colorGroup" },
         "status": { "$ref": "#/$defs/colorGroup" },
+        "step": { "$ref": "#/$defs/colorGroup" },
         "syntax": { "$ref": "#/$defs/colorGroup" },
         "chat": {
           "type": "object",
