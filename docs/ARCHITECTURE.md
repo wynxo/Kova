@@ -689,7 +689,15 @@ settings views from that response. Two design settings land with their own
 tasks, because a setting appears only when it works: retry in groups and memory
 sharing.
 
-Commands, storage and the runner are separate modules that consume it.
+`src/kova/mentions.py` is the pure mention parser and router. It finds
+`@handles` outside code spans, fenced blocks and `>` quotes, ignores
+`email@coder.dev`, a bot's mention of itself and muted members, and returns the
+queue for every answer mode (`mentioned`, `lead`, `auto`, `everyone`, `subset`,
+`count`, `random`, `lead_only`), with `@all`/`@everyone`, the per-message
+override, the `count` rotation and seeded `random`. Its `preview` is the
+deterministic part the who-answers chip shows; `tests/fixtures/group_routing.json`
+is shared with the browser's twin so the two cannot drift. Commands, storage
+and the runner are separate modules that consume these two.
 
 ## Store
 
@@ -1174,6 +1182,7 @@ with `KOVA_LIVE=1`.
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
 | `src/kova/bots.py` | bot definitions: format, validation, file I/O |
 | `src/kova/group_settings.py` | group and member settings: schema, validation, presets, resolution |
+| `src/kova/mentions.py` | `@mention` parsing and the who-answers router for every group mode |
 | `src/kova/actors.py` | who answers: the default assistant or one bot in one chat |
 | `src/kova/bot_routes.py` | the `/bots` router, avatars and the phone capability guard |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
