@@ -346,7 +346,7 @@ app.add_typer(_themes, name="themes")
 def chats_root(ctx: typer.Context):
     """List chats, newest first."""
     if ctx.invoked_subcommand is None:
-        chats_list()
+        chats_list(as_json=False)
 
 
 def get_client() -> KovaClient:
@@ -1063,16 +1063,21 @@ def prefs_import(
 def themes_root(ctx: typer.Context):
     """List the themes Kova can use."""
     if ctx.invoked_subcommand is None:
-        themes_list()
+        themes_list(as_json=False)
 
 
 @_themes.command("list")
-def themes_list():
+def themes_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List the built-in themes and the theme files in Kova's home."""
     try:
         entries = get_client().themes()
     except KovaError as exc:
         _fail(str(exc))
+    if as_json:
+        print(json.dumps(entries, ensure_ascii=False))
+        return
     active = kova_theme.theme_id(active_theme())
     table = _table(caption=f"{len(entries)} theme(s) · built-in and user files · ● the terminal's theme")
     table.add_column("", no_wrap=True, width=1)
@@ -1460,9 +1465,14 @@ def _mcp_tools(row: dict) -> None:
 
 
 @_mcp.command("list")
-def mcp_list():
+def mcp_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """Show MCP servers, whether they are connected, and their tools."""
     rows = get_client().mcp_list()
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return
     if not rows:
         _empty("No MCP servers yet.",
                "Add one: kova mcp add NAME -- COMMAND [ARGS...]   or   kova mcp add NAME --url URL")
@@ -2022,11 +2032,24 @@ def plugin_install(
 
 
 @_plugins.command("list")
-def plugin_list():
+def plugin_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List installed plugins and their enabled state."""
     from kova import plugins
 
     items = plugins.installed()
+    if as_json:
+        print(json.dumps([{
+            "name": plugin.name,
+            "version": plugin.version,
+            "description": plugin.description,
+            "author": plugin.author,
+            "homepage": plugin.homepage,
+            "source": plugin.source,
+            "enabled": plugin.enabled,
+        } for plugin in items], ensure_ascii=False))
+        return
     if not items:
         _empty("No plugins installed.", "Add one with: kova plugin install <path|git url>")
         return
@@ -2413,9 +2436,14 @@ def _resolve_chat_id(client: KovaClient, ref: str) -> str:
 
 
 @_chats.command("list")
-def chats_list():
+def chats_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List chats, newest first."""
     chats = get_client().list_chats()
+    if as_json:
+        print(json.dumps(chats, ensure_ascii=False))
+        return
     if not chats:
         _empty("No chats yet.", "Start one with: kova")
         return
@@ -2572,12 +2600,17 @@ def chats_move(ref: str, project: str = typer.Argument(
 
 
 @_projects.command("list")
-def projects_list():
+def projects_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List projects and their IDs."""
     try:
         projects = get_client().list_projects()
     except KovaError as exc:
         _fail(str(exc))
+    if as_json:
+        print(json.dumps(projects, ensure_ascii=False))
+        return
     if not projects:
         _empty("No projects yet.", "Create one with: kova projects create NAME")
         return
@@ -3359,14 +3392,19 @@ app.add_typer(_devices, name="devices")
 def devices_root(ctx: typer.Context):
     """List paired devices."""
     if ctx.invoked_subcommand is None:
-        devices_list()
+        devices_list(as_json=False)
 
 
 @_devices.command("list")
-def devices_list():
+def devices_list(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
+):
     """List paired devices."""
     status = get_client().phone_status()
     devices = status["devices"]
+    if as_json:
+        print(json.dumps(devices, ensure_ascii=False))
+        return
     state = "on" if status["listening"] else ("on, not listening" if status["enabled"] else "off")
     if not devices:
         _empty(f"No paired devices. Phone access is {state}.", "Pair a phone with: kova pair")

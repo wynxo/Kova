@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -421,6 +422,21 @@ def test_cli_add_list_test_remove(api):
     assert removed.exit_code == 0 and "Removed fake" in removed.output
     missing = runner.invoke(cli.app, ["mcp", "remove", "fake"])
     assert missing.exit_code == 1 and "No MCP server" in missing.output
+
+
+def test_cli_mcp_list_json_is_machine_readable(api):
+    client, cfg, app = api
+    runner = CliRunner()
+    empty = runner.invoke(cli.app, ["mcp", "list", "--json"])
+    assert empty.exit_code == 0, empty.output
+    assert json.loads(empty.stdout) == []
+
+    client.mcp_add(stdio_body())
+    listed = runner.invoke(cli.app, ["mcp", "list", "--json"])
+    assert listed.exit_code == 0, listed.output
+    [row] = json.loads(listed.stdout)
+    assert row["name"] == "fake" and row["state"] == "connected"
+    assert [tool["name"] for tool in row["tools"]] == [tool["name"] for tool in TOOLS]
 
 
 def _wait_for(events, kind):

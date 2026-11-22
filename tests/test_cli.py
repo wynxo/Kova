@@ -327,6 +327,30 @@ def test_chats_list_shows_mode_column(runner):
     assert "Small talk" in result.output and "Deeper work" in result.output
 
 
+def test_chats_and_projects_list_json_matches_their_data(runner):
+    cli_runner, client, cfg, fake = runner
+    chat = client.create_chat("Scripted chat")
+    project = client.create_project("Scripted project")
+
+    chats = cli_runner.invoke(cli.app, ["chats", "list", "--json"])
+    assert chats.exit_code == 0, chats.output
+    rows = json.loads(chats.stdout)
+    assert [row["id"] for row in rows] == [chat["id"]]
+    assert rows[0]["title"] == "Scripted chat"
+
+    projects = cli_runner.invoke(cli.app, ["projects", "list", "--json"])
+    assert projects.exit_code == 0, projects.output
+    rows = json.loads(projects.stdout)
+    assert [(row["id"], row["name"]) for row in rows] == [(project["id"], "Scripted project")]
+
+
+def test_empty_chats_list_json_is_an_empty_array(runner):
+    cli_runner, client, cfg, fake = runner
+    result = cli_runner.invoke(cli.app, ["chats", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == []
+
+
 def test_reminders_add_list(runner):
     cli_runner, client, cfg, fake = runner
     added = cli_runner.invoke(cli.app, ["reminders", "add", "2030-01-01T10:00", "Buy milk"])
