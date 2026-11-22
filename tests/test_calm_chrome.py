@@ -181,7 +181,7 @@ def test_start_screen_is_mark_statement_legend_and_message_box() -> None:
     suggestion only fills the message box."""
     parser, html = _shell()
     welcome = re.search(r'<div id="welcome".*?<div id="messages"', html, re.S).group(0)
-    assert "runs on this computer." in welcome and "welcome-mark" in welcome
+    assert "shows its work." in welcome and "welcome-mark" in welcome
     assert "welcome-title" in parser.by_id, "the statement carries the assistant's name"
     assert "welcome-greeting" in parser.by_id
     steps = re.findall(r'<li data-step="([a-z]+)"', welcome)

@@ -1036,6 +1036,10 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   .messages .message.user .message-body { font-size:var(--type-size-title); }
   .messages .message.user + .message.assistant { margin-top:calc(var(--space-6) * -1 + var(--space-2)); }
   .compose-wrap { padding-left:var(--space-3); padding-right:var(--space-3); }
+  /* Keep the phone composer anchored below the scrollable start screen. */
+  .is-empty main::after { display:none; }
+  .is-empty .welcome { margin-top:0; }
+  .is-empty .compose-wrap { padding-bottom:max(var(--space-4), env(safe-area-inset-bottom)); }
   .welcome { padding:var(--space-3) var(--space-4) var(--space-5); }
   .welcome-mark { margin-bottom:var(--space-4); }
   .welcome h1 { font-size:var(--type-size-heading); }

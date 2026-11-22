@@ -93,10 +93,9 @@
     // turned back on after "Turn off".
     if (edit) edit.hidden = false;
   }
-  // The start screen says what this assistant is, by its own name.
-  function renderGreeting() {
+  function renderWelcome() {
     const title = $('welcome-title');
-    if (title && state.persona?.name) title.textContent = `${state.persona.name} runs on this computer.`;
+    if (title && state.persona?.name) title.textContent = `${state.persona.name} shows its work.`;
   }
   $('starters-edit')?.addEventListener('click', () => safe(async () => {
     const module = starterComponent(); if (!module) return;
@@ -2637,7 +2636,7 @@
       });
       dialog.remove();
     }
-    pageTitle(); renderGreeting();
+    pageTitle(); renderWelcome();
   }
 
   // The /events stream carries reminders and chat states. A non-200 reply (a 401

@@ -114,19 +114,19 @@ Desktop (1440):
 +-----------------+--------------------------------------------------------------+
 ```
 
-Start screen: no greeting and no centred question. It states what Kova is, then shows the
+Start screen: no greeting and no centred question. It states what makes Kova useful, then shows the
 four channels as a short legend you can read once and recognise forever, then the box.
 
 ```
    [K]
-   Kova runs on this computer.                          <- display, 36px
-   You see every step it takes, and you can stop it
-   at any point.
+   Kova shows its work.                                 <- display, 36px
+   Follow each step as it happens. Stop a reply
+   whenever you need to.
 
-    |  <> Thinks out loud      Open any thought to read what it weighed up.
-    |  o  Uses tools           Every file, command and search, with its output.
-    |  !  Asks first           You decide which actions wait for your OK.
-    |  #  Splits up big jobs   Parallel tasks show as a tree; stop any one.
+    |  <> Thinking         Read the reasoning when your model shares it.
+    |  o  Tool calls       See what ran and inspect its result.
+    |  !  Approvals        Allow or deny actions that need your OK.
+    |  #  Parallel tasks   Follow each branch and stop individual tasks.
 
    Plan a small project with me    Summarise a file I send   (your suggestions)
    +-----------------------------------------------------------+
@@ -143,7 +143,7 @@ left edge with a 24px gutter, and approval buttons stack full width.
 - Each step is a node on the spine, shaped and coloured by kind: thinking is a lilac diamond,
   a tool call a cyan ring, a request for approval an amber triangle, a sub-agent group a
   magenta square, the answer a solid ink dot, a plan a hollow ink square.
-- A node that is running breathes (opacity only). Nothing else on the page animates by itself.
+- A running node pulses in opacity without shifting the trace.
 - An approval that waits for you turns its stretch of spine amber, so a long reply shows where
   it stopped from across the room.
 - In a group chat each bot's trace hangs from that bot's own mark and colour (`--speaker`).

@@ -11,8 +11,8 @@
      the answer    ink dot           --fg-default
      a plan        hollow ink square --fg-muted
 
-   The node of a step that is running breathes; nothing else on the page moves
-   by itself. A step that waits for your answer turns its stretch of the spine
+   The node of a running step pulses without moving. A step that waits for
+   your answer turns its stretch of the spine
    amber. This file only adds the spine and the nodes: each step keeps its own
    stylesheet (reasoning.css, tool-cards.css, agent-tree.css, app.css). The
    nodes are ::before boxes on the steps, so the DOM is unchanged and a screen
@@ -90,13 +90,14 @@
 
 /* A tool call: a cyan ring, filled while it runs. */
 .message.assistant > .message-body > :is(.tool-card, .tool) { --node-colour:var(--step-tool); --node-top:calc(var(--space-4)); }
-.message.assistant > .message-body > .tool-card:has(> .tool-card-summary > .tool-card-mark.running)::before { background:var(--step-tool); animation:trace-breathe 1.6s var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .tool-card:has(> .tool-card-summary > .tool-card-mark.running)::before { background:var(--step-tool); animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
 .message.assistant > .message-body > .tool-card:has(> .tool-card-summary > .tool-card-mark.failed)::before { border-color:var(--status-danger); }
 
 /* Sub-agents and parallel groups: a square, magenta for delegated work. */
 .message.assistant > .message-body > .agent-tree { --node-colour:var(--step-tool); --node-top:calc(var(--space-5)); }
 .message.assistant > .message-body > .agent-tree[data-kind="delegated"] { --node-colour:var(--step-agent); }
 .message.assistant > .message-body > .agent-tree::before { border-radius:var(--space-0-5); background:var(--node-colour); }
+.message.assistant > .message-body > .agent-tree:has(> .agent-tree-node[aria-level="1"] > .agent-tree-row > .tool-card-mark.running)::before { animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
 
 /* A plan: a hollow square in ink. */
 .message.assistant > .message-body > .plan-view { --node-colour:var(--fg-muted); --node-top:calc(var(--space-3) + var(--space-2)); }
@@ -125,7 +126,7 @@
   width:var(--trace-line);
   background:var(--step-ask);
 }
-.message.assistant > .message-body > .approval-card:has(> .approval-status:empty)::before { animation:trace-breathe 1.6s var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .approval-card:has(> .approval-status:empty)::before { animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
 .message.assistant > .message-body > .approval-card:has(> .approval-status:not(:empty))::after { background:var(--border-strong); }
 
 /* Small facts about the turn (privacy, network, stopped): a faint pin. */
@@ -139,7 +140,7 @@
    channel of what Kova is doing. app.js sets data-step on the activity row. */
 .message.assistant > .message-body > .activity { --node-colour:var(--step-think); --node-top:calc(var(--space-3) - var(--space-0-5)); min-height:var(--space-6); padding-block:var(--space-0-5); }
 .message.assistant > .message-body > .activity[data-step="tool"] { --node-colour:var(--step-tool); }
-.message.assistant > .message-body > .activity::before { background:var(--node-colour); animation:trace-breathe 1.6s var(--motion-ease-standard) infinite; }
+.message.assistant > .message-body > .activity::before { background:var(--node-colour); animation:trace-breathe var(--motion-trace-pulse) var(--motion-ease-standard) infinite; }
 .message.assistant > .message-body > .activity .shimmer { color:var(--node-colour); }
 
 /* An approval card takes focus when it arrives; its ring is in its channel. */
@@ -171,7 +172,7 @@
   --node-colour:var(--fg-muted);
   position:relative;
   display:grid;
-  grid-template-columns:minmax(0, 11rem) minmax(0, 1fr);
+  grid-template-columns:calc(var(--space-12) * 3) minmax(0, 1fr);
   gap:var(--space-1) var(--space-4);
   align-items:baseline;
   font-size:var(--type-size-body);
@@ -208,16 +209,18 @@
 
 /* Motion is optional: the breathing node holds still at full strength. */
 @media (prefers-reduced-motion: reduce) {
-  .message.assistant > .message-body > :is(.tool-card, .approval-card, .activity)::before { animation:none; }
+  .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before { animation:none !important; }
 }
-[data-motion="reduced"] .message.assistant > .message-body > :is(.tool-card, .approval-card, .activity)::before,
-[data-motion="off"] .message.assistant > .message-body > :is(.tool-card, .approval-card, .activity)::before { animation:none !important; opacity:1; }
+[data-motion="reduced"] .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before,
+[data-motion="off"] .message.assistant > .message-body > :is(.tool-card, .agent-tree, .approval-card, .activity)::before { animation:none !important; opacity:1; }
 
 /* Forced colours: the nodes keep a shape in system colours; the spine stays. */
 @media (forced-colors: active) {
   .message.assistant > .message-body::before,
   .trace-legend::before { forced-color-adjust:none; background:CanvasText; }
-  .message.assistant > .message-body > *::before,
+  .message.assistant > .message-body > :is(.reasoning, .tool-card, .agent-tree, .plan-view, .markdown, .approval-card, .turn-status, .turn-error, .activity, .changes-card, .tool)::before,
   .trace-legend li::before { forced-color-adjust:none; border-color:CanvasText; background:Canvas; }
+  .message.assistant > .message-body > :is(.agent-tree, .markdown, .approval-card, .turn-status, .activity)::before,
+  .trace-legend li:is([data-step="ask"], [data-step="agent"])::before { background:CanvasText; }
   .message.assistant > .message-body > .approval-card::after { forced-color-adjust:none; background:Highlight; }
 }

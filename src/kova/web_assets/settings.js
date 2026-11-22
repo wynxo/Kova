@@ -32,7 +32,7 @@
          keywords: 'corners radius round sharp shape square soft',
          control: 'radius'},
         {title: 'Font', help: 'Keep the bundled Geologica, follow this device, or set the conversation in a monospace face.',
-         keywords: 'font typeface inter system monospace mono code readable',
+         keywords: 'font typeface geologica system monospace mono code readable',
          control: 'font'},
         {title: 'Motion', help: "Full follows this device's reduced-motion setting; Reduced keeps quick fades; Off stays still.",
          keywords: 'motion animation animate transition reduce reduced still accessibility',

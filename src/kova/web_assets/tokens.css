@@ -23,6 +23,7 @@
   --motion-fast: 120ms;
   --motion-base: 180ms;
   --motion-slow: 280ms;
+  --motion-trace-pulse: 1600ms;
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --type-size-body: 14px;
