@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
-from kova import bots, pairing
+from kova import bots, group_settings, pairing
 from kova.actors import Actor
 from kova.bots import AVATAR_TYPES, BotDefinition, BotError
 from kova.config import Config
@@ -163,6 +163,15 @@ def install_bot_routes(app, config: Config, require_token) -> None:
     async def list_bots() -> list[dict]:
         records = await asyncio.to_thread(bots.list_bots, config.home, models=models())
         return [public_record(record) for record in records]
+
+    @router.get("/group-settings")
+    async def group_settings_schema() -> dict:
+        """Every group and member setting, and the presets, for every surface.
+
+        Web, desktop, phone and terminal render their settings views from this
+        one response, so labels, ranges and defaults cannot drift between them.
+        """
+        return group_settings.schema()
 
     @router.get("/bots/{bot_id}")
     async def get_bot(bot_id: str) -> dict:
