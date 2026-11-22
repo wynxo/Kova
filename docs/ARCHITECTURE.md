@@ -13,7 +13,7 @@ The import package is `kova`; the distribution on GitHub is `kova-ai`.
             ┌──────────────────────────────────────────────────────┐
             │  kova serve · FastAPI · 127.0.0.1:7700               │
             │                                                      │
-  CLI  ────▶│  /health   /chats   /memory   /reminders   /models   │
+  CLI  ────▶│  /health   /chats   /memory   /reminders   /models   /bots    │
  (cli.py)   │  /events (SSE)   /app + /app/assets                  │
             │                                                      │
   TUI  ────▶│   Agent ──▶ ModelClient ──▶ OpenAI-compatible model   │
@@ -78,7 +78,6 @@ if the HTTP client disconnects, the turn still finishes and is saved.
 
 ### Routes
 
-The app exposes 130 endpoints: 129 route handlers plus the static asset mount.
 `tests/test_architecture_docs.py` walks the live app and fails when this table
 and the code drift apart in either direction, so add or delete a row in the
 same commit as the route.
@@ -120,7 +119,10 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /capabilities` | token or session | what a model's provider declares (`?model=`), and what each mode offers |
 | `GET/POST /projects` | token or session | list / create projects, including pinned file references; writes need `host:exec` from a paired phone |
 | `GET/PATCH/DELETE /projects/{project_id}` | token or session | read, edit (including its pinned references) or remove a project; removal keeps its chats, and writes need `host:exec` from a paired phone |
-| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` when creating a persistent chat |
+| `GET/POST /bots` | token or session | list every bot with its state and live status / create one from a definition (`?validate_only=true` checks a draft) |
+| `GET/PATCH/DELETE /bots/{bot_id}` | token or session | read one bot with its persona / change the named fields / remove it, its memory and its routines |
+| `GET/PUT/DELETE /bots/{bot_id}/avatar` | token or session | read / replace / clear the avatar image, type-checked and capped at 256 KB |
+| `GET/POST /chats` | token or session | list / create chats; optionally set `project_id` or `bot_id` (a direct bot chat) when creating one |
 | `GET /files` | token or session | names in the default folder, for an `@` list before a chat exists |
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
@@ -154,14 +156,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /events` | token or session | SSE stream of background events (reminders, jobs, conversation state) |
 | `GET/POST /jobs` | token or session | list / add scheduled recurring jobs |
 | `DELETE /jobs/{jid}` | token or session | delete a job |
-| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id` |
+| `GET/POST /memory` | token or session | list/search / save global notes, or one project's scope with `project_id`, or one bot's with `bot_id` |
 | `POST /memory/consolidate` | token or session | plan one consolidation run, and apply it unless asked to dry-run |
 | `GET /memory/diary` | token or session | what the background memory passes did, oldest first |
 | `POST /memory/location` | token or session | switch memory folder at runtime |
 | `GET /memory/revisions` | token or session | recent background memory writes with their undo state |
 | `GET/PATCH /memory/settings` | token or session | read / change the background passes' switches and gates |
 | `POST /memory/undo` | token or session | reverse recorded review/consolidation writes |
-| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global or a `project_id` scope |
+| `PATCH/DELETE /memory/{slug}` | token or session | rewrite one note in place / delete it, in global, a `project_id` or a `bot_id` scope |
 | `GET/POST /models` | token or session | list / add model servers |
 | `PATCH /models` | token or session | update one model's settings, such as vision |
 | `POST /models/active` | token or session | choose the active model |
@@ -251,6 +253,12 @@ this month's estimated spend passes 80% of `[usage] monthly_budget_usd`; `stoppe
 turn that was cancelled, `error` closes a turn that failed. A turn keeps running
 to completion even if the HTTP client disconnects, and `POST /chats/{chat_id}/stop`
 cancels it server-side.
+
+A turn answered by a bot (a chat created with `bot_id`) carries two additive fields on
+every event it emits: `author` (the bot id) and `bot_turn_id` (one reply's rows inside
+the user turn). The stored rows carry the same `author`, the display name at the time
+and the `hop`; a turn with the default assistant has none of them, so old clients and
+old transcripts are unchanged.
 
 Compare stream (`POST /chats/{chat_id}/compare`, `src/kova/compare.py`): `start`
 with the `compare_id` and model names, then `text`, `reasoning` and `privacy`
@@ -611,6 +619,51 @@ forwards its events to the client as SSE.
 Event types on the turn stream: `text`, `reasoning`, `privacy`, `tool_call`,
 `tool_result`, the `task_*` events of a parallel group, `done`, `error`, `stopped`.
 
+## Bots
+
+A **bot** is a named, saved assistant with its own persona, model, tools,
+permission ceiling, working folder, memory and, later, routines. A direct chat
+with one bot (`POST /chats {bot_id}`) is a `kind = "bot"` chat whose turns run
+with that bot as the actor. Groups and the UI for them are later phases; this
+section is the backend that everything else builds on.
+
+Definitions are **data, never code** — the same rule as themes. `src/kova/bots.py`
+owns the format: one folder per bot under `KOVA_HOME/bots/<id>/` holding
+`bot.toml`, an optional `persona.md` (role prompt, at most 8,000 characters) and
+an optional avatar image (PNG, JPEG or WebP, at most 256 KB). The file names
+only a model *entry*, never a key. Validation refuses a filename-unsafe id that
+does not match its folder, the reserved id `kova`, a duplicate handle (or one
+that addresses `all`, `everyone`, `here`, `you`), unknown keys, a colour or icon
+outside the token tables, anything shaped like a credential, and a working folder
+that is inside or contains the Kova home or is a link. Writes are atomic and
+0600. A file broken by hand is listed with its one-line error and cannot be
+chatted with; a model entry that was removed since is only a warning, so the bot
+falls back to the chat's model.
+
+`src/kova/actors.py` turns a definition into an `Actor`: name, role text, model,
+tool allowlist, effective permission, folder, memory scope and turn limits.
+`Actor.for_chat` is the **one** place that combines a bot with a chat. The
+effective permission is the stricter of the bot's ceiling and the chat's
+permission; the tool allowlist (with `deny` winning) is applied *after* the
+mode, the device capabilities and every bound per-chat tool, so no rule or
+approval can bring a tool back. `Agent.run_turn(actor=…)` uses the bot's model
+(a removed entry falls back as before), answers in the bot's own folder, caps
+model calls at its `max_rounds` (never above the agent's 11) and sends its
+`max_output_tokens` as the request's own limit. `actor=None` is exactly today's
+turn; a bot's events and rows gain `author`, `author_name`, `bot_turn_id` and
+`hop`, which the default assistant never has.
+
+A bot with `memory.own` mounts its own hidden memory scope (see
+[Memory](#memory)); the routes take `bot_id` exactly as they take `project_id`.
+`src/kova/bot_routes.py` serves `/bots` and publishes `bot_changed`
+(`{id, action}`) so a second window refreshes its contacts. Deleting a bot
+removes its definition, its private notes and its routines (when routines land);
+its chats and messages stay, and a chat whose bot is gone answers with the
+default assistant. Read routes need only a chat-capable session; writes need
+`settings:write` from a phone, and a definition that would grant commands, jobs,
+MCP tools, a `full` ceiling or a folder outside Kova Files needs `host:exec`
+(see [remote-access.md](remote-access.md#what-a-paired-phone-may-do)).
+
 ## Store
 
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
@@ -620,13 +673,17 @@ with `check_same_thread=False` and guarded by one re-entrant lock. Tables:
   colour, icon and default model, plus `files` (a JSON list of project-relative
   pinned references)
 - `chats` — id, title, created, mode, web, permission, cwd, pinned, colour, icon,
-  optional project_id
-- `messages` — role, content, tool_calls (JSON), tool_call_id, created, and
-  nullable usage columns (`USAGE_COLUMNS`) set only on a turn's final answer
+  optional project_id, kind (`chat`, `bot` or `group`) and, for a direct bot chat,
+  `bot_id`
+- `messages` — role, content, tool_calls (JSON), tool_call_id, created, who wrote it
+  (`author` and `author_name`; NULL for the user and the default assistant),
+  `bot_turn_id` and `hop`, and nullable usage columns (`USAGE_COLUMNS`) set only on
+  a turn's final answer
 - `reminders` — reminder_at, text, done
 
 Startup applies small migrations (message timestamps, `mode`, `web`, `pinned`,
-`colour`, `icon`, `project_id`, and the projects' `colour`, `icon`, `model`,
+`colour`, `icon`, `project_id`, the chat `kind` and `bot_id`, message `author`,
+`author_name`, `bot_turn_id` and `hop`, and the projects' `colour`, `icon`, `model`,
 `files`) so older databases keep working. Search uses an FTS5 virtual table
 `messages_fts`, kept in sync by triggers and back-filled once; only `user` and
 `assistant` text is indexed, so tool output never pollutes results. If the local SQLite lacks
@@ -792,6 +849,17 @@ scope ids are matched against a filename-safe pattern, never joined from raw
 input. Each turn mounts at most the chat's current project, and a chat moved to
 another project stops reading the old scope on its next turn.
 
+A bot with `memory.own` gets the same arrangement at
+`<write dir>/.kova-bots/<bot-id>/` (`Memory.bot_scope`, with the bot's own
+budget): the global store, another bot and a project never list or search it,
+and a bot turn binds its memory tools to that scope, so the bot cannot write
+the user's notes or anyone else's. `memory.user_memory = "read"` adds the
+global index and recalled notes to the prompt as read-only context; `"none"`
+gives the bot nothing about the user beyond the chat. A bot with
+`memory.own = false` keeps recall but loses every memory-write tool. The HTTP
+memory routes take `bot_id` exactly as they take `project_id`, and refuse both
+together.
+
 ## Tools
 
 A tool is a `Tool` dataclass (`src/kova/tools/__init__.py`) with a name,
@@ -895,7 +963,7 @@ which is what the clients read (see *The capability contract* below).
 ## Theme
 
 `src/kova/theme.py` names the terminal roles: `ACCENT`, `ACCENT_SOFT`, `USER`,
-`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`,
+`MUTED`, `FAINT`, `BORDER`, `SURFACE`, `ON_ACCENT`, `SUCCESS`, `WARNING`, `ERROR`, `THINK`,
 `BASH`, `MEMORY`, `CODE`, the logo `GRADIENT`, plus `CODE_THEME` for Pygments code
 blocks. The constants are `kova-dark`'s values; every other theme maps onto them
 from its semantic tokens (`ROLE_TOKENS`: `accent.default` -> `ACCENT`, `fg.muted` ->
@@ -1077,6 +1145,9 @@ with `KOVA_LIVE=1`.
 | `src/kova/privacy.py` | opt-in outbound scan, redact or block, loopback bypass |
 | `src/kova/secrets.py` | bounded credential detectors and placeholders |
 | `src/kova/store.py` | SQLite schema, chats, search, reminders |
+| `src/kova/bots.py` | bot definitions: format, validation, file I/O |
+| `src/kova/actors.py` | who answers: the default assistant or one bot in one chat |
+| `src/kova/bot_routes.py` | the `/bots` router, avatars and the phone capability guard |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |
 | `src/kova/tools/` | the tools and their limits |
 | `src/kova/mcp.py` | MCP client: stdio/HTTP servers become tools |

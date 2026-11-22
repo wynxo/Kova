@@ -217,6 +217,11 @@ def test_the_browser_paints_a_layer_and_honours_the_fallbacks():
 from kova import theme_contrast  # noqa: E402
 
 
+#: A secondary text colour that clears 4.5:1 on the dark surfaces with little to
+#: spare, so a bright background area is enough to fail it.
+MARGINAL_MUTED = "#8f949c"
+
+
 def dark_tokens(**overrides):
     tokens = dict(themes.base_tokens("kova-dark"))
     tokens.pop("terminal", None)
@@ -241,7 +246,8 @@ def test_a_mild_gradient_noise_and_image_keep_the_built_in_palettes_readable():
 
 
 def test_a_gradient_stop_that_would_wash_out_text_is_named():
-    tokens = dark_tokens()   # the stock secondary text is only just above 4.5:1 on its surface
+    # Secondary text only just above 4.5:1 on its surface, so a bright stop tips it over.
+    tokens = dark_tokens(**{"fg.muted": MARGINAL_MUTED})
     assert theme_contrast.contrast_failures(tokens) == []
     bright = {"kind": "gradient", "stops": ["#14121c", "#ffffff"], "angle": 160}
     failures = theme_contrast.contrast_failures(tokens, None, bright)
@@ -250,7 +256,7 @@ def test_a_gradient_stop_that_would_wash_out_text_is_named():
 
 
 def test_the_worst_image_pixel_is_measured_through_the_dim_scrim():
-    tokens = dark_tokens()
+    tokens = dark_tokens(**{"fg.muted": MARGINAL_MUTED})
     undimmed = theme_contrast.contrast_failures(tokens, None, {"kind": "image", "dim": 0, "blur": 0, "file": "x.png"})
     assert undimmed and all("white pixel" in text for text in undimmed), "only the white pixel hurts a dark theme"
     dimmed = theme_contrast.contrast_failures(tokens, None, {"kind": "image", "dim": 0.8, "blur": 0, "file": "x.png"})
@@ -276,6 +282,7 @@ def test_a_translucent_stop_is_measured_over_the_base():
 def test_the_route_and_the_validator_reject_a_theme_the_background_would_wash_out(http, config):
     washed = base_theme(
         id="washed",
+        tokens={"fg": {"muted": MARGINAL_MUTED}},
         background={"kind": "gradient", "stops": ["#14121c", "#ffffff"]})
     response = http.post("/themes?validate_only=true", json=washed)
     assert response.status_code == 422

@@ -395,6 +395,20 @@ def test_cli_list_empty_state(cli_runner):
     assert "No plugins installed." in result.output
 
 
+def test_cli_list_json_matches_installed_plugins(cli_runner, tmp_path):
+    empty = cli_runner.invoke(cli.app, ["plugin", "list", "--json"])
+    assert empty.exit_code == 0, empty.output
+    assert json.loads(empty.stdout) == []
+
+    source = write_plugin(tmp_path / "src")
+    cli_runner.invoke(cli.app, ["plugin", "install", str(source), "--yes"])
+
+    result = cli_runner.invoke(cli.app, ["plugin", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    [plugin] = json.loads(result.stdout)
+    assert (plugin["name"], plugin["version"], plugin["enabled"]) == ("demo", "1.2.3", True)
+
+
 # ---------------------------------------------------------------------------
 # Integration with the agent prompt and the chat's slash commands
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -285,3 +286,121 @@ def test_project_migration_preserves_existing_chat(tmp_path):
     assert reopened.get_chat(grouped["id"])["project_id"] == project["id"]
     assert reopened.get_chat(grouped["id"])["cwd"] == folder
     assert reopened.get_chat(chat["id"]) == saved
+
+
+# ------------------------------------------------------- bots (task 1.4)
+def _pre_bot_database(path):
+    """What an older Kova left behind: no chat kind and no author columns."""
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE chats (id TEXT PRIMARY KEY, title TEXT, created TEXT NOT NULL, "
+        "mode TEXT NOT NULL DEFAULT 'work', web INTEGER NOT NULL DEFAULT 1, "
+        "pinned INTEGER NOT NULL DEFAULT 0);"
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT, tool_calls TEXT, "
+        "tool_call_id TEXT, created TEXT);"
+        "INSERT INTO chats (id, title, created) "
+        "VALUES ('legacy', 'Old chat', '2026-01-01T00:00:00+00:00');"
+        "INSERT INTO messages (chat_id, role, content, created) VALUES "
+        "('legacy', 'user', 'hello', '2026-01-01T00:00:00+00:00'), "
+        "('legacy', 'assistant', 'hi there', '2026-01-01T00:00:01+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_a_pre_bot_database_migrates_without_changing_a_single_row(tmp_path):
+    path = tmp_path / "kova.db"
+    _pre_bot_database(path)
+
+    store = Store(path)
+    chat = store.get_chat("legacy", include_message_meta=True)
+    assert (chat["kind"], chat["bot_id"]) == ("chat", None)
+    assert store.list_chats()[0]["kind"] == "chat"
+    assert store.list_chats()[0]["bot_id"] is None
+    # A row written before bots existed belongs to the user and the default
+    # assistant, so its shape is exactly what it was.
+    assert chat["messages"][0] == {"role": "user", "content": "hello", "id": 1,
+                                   "created": "2026-01-01T00:00:00+00:00"}
+    assert "author" not in chat["messages"][1] and "hop" not in chat["messages"][1]
+
+    # The new columns work on the migrated database, and survive a reopen.
+    bot_chat = store.create_chat("Bots", kind="bot", bot_id="researcher")
+    message_id = store.add_message(bot_chat["id"], "assistant", "found it",
+                                   author="researcher", author_name="Researcher",
+                                   bot_turn_id="turn-1", hop=2)
+    store._conn.close()
+    reopened = Store(path)
+    saved = reopened.get_chat(bot_chat["id"], include_message_meta=True)
+    assert (saved["kind"], saved["bot_id"]) == ("bot", "researcher")
+    reply = saved["messages"][0]
+    assert reply["id"] == message_id and reply["content"] == "found it"
+    assert (reply["author"], reply["author_name"]) == ("researcher", "Researcher")
+    assert (reply["bot_turn_id"], reply["hop"]) == ("turn-1", 2)
+
+
+def test_a_chats_kind_is_fixed_to_a_known_shape(store):
+    assert store.create_chat("plain")["kind"] == "chat"
+    with pytest.raises(ValueError, match="bot_id"):
+        store.create_chat("no bot", kind="bot")
+    with pytest.raises(ValueError, match="only a bot chat"):
+        store.create_chat("odd", bot_id="researcher")
+    with pytest.raises(ValueError, match="unknown chat kind"):
+        store.create_chat("odd", kind="squad")
+    # Incognito stays conversation-only with the default assistant.
+    with pytest.raises(ValueError, match="Incognito"):
+        store.create_chat("private bot", ephemeral=True, kind="bot", bot_id="researcher")
+    assert [chat["title"] for chat in store.list_chats(include_ephemeral=True)] == ["plain"]
+
+
+def test_default_rows_keep_their_shape_and_only_bot_rows_carry_an_author(store):
+    chat = store.create_chat()
+    store.add_message(chat["id"], "user", "hello")
+    store.add_message(chat["id"], "assistant", "hi")
+    assert store.get_messages(chat["id"]) == [
+        {"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+    with_meta = store.get_messages(chat["id"], include_message_meta=True)
+    assert all("author" not in row and "bot_turn_id" not in row for row in with_meta)
+
+
+def test_a_fork_keeps_who_wrote_each_row(store):
+    chat = store.create_chat()
+    store.add_message(chat["id"], "user", "hello")
+    store.add_message(chat["id"], "assistant", "answer", author="researcher",
+                      author_name="Researcher", bot_turn_id="bt1", hop=1)
+    fork = store.fork_chat(chat["id"])
+    saved = store.get_messages(fork["id"], include_message_meta=True)
+    assert saved[0].get("author") is None
+    assert (saved[1]["author"], saved[1]["author_name"]) == ("researcher", "Researcher")
+    assert (saved[1]["bot_turn_id"], saved[1]["hop"]) == ("bt1", 1)
+    assert (fork["kind"], fork["bot_id"]) == ("chat", None)
+
+
+def test_an_import_keeps_a_bot_chat_and_its_authors(tmp_path):
+    source = Store(tmp_path / "a.db")
+    chat = source.create_chat("Direct", kind="bot", bot_id="researcher")
+    source.add_message(chat["id"], "user", "hello")
+    source.add_message(chat["id"], "assistant", "answer", author="researcher",
+                       author_name="Researcher", bot_turn_id="bt1")
+    exported = json.loads(json.dumps(source.get_chat(chat["id"], include_created=True,
+                                                     include_message_meta=True)))
+    target = Store(tmp_path / "b.db")
+    assert target.import_chat(exported)
+    saved = target.get_chat(chat["id"], include_message_meta=True)
+    assert (saved["kind"], saved["bot_id"]) == ("bot", "researcher")
+    assert saved["messages"][1]["author"] == "researcher"
+    # A hand-edited backup cannot invent a bot chat without a bot.
+    assert target.import_chat({**exported, "id": "odd", "bot_id": None})
+    assert target.get_chat("odd")["kind"] == "chat"
+    assert target.import_chat({**exported, "id": "weird", "kind": "squad"})
+    assert target.get_chat("weird")["kind"] == "chat"
+
+
+def test_search_results_say_who_wrote_the_matching_message(store):
+    chat = store.create_chat()
+    store.add_message(chat["id"], "assistant", "the researcher found sources",
+                      author="researcher", author_name="Researcher")
+    [result] = store.search_chats("researcher")
+    assert result["author"] == "researcher"
+    store.add_message(chat["id"], "user", "a plain note about researchers")
+    assert all("author" in result for result in store.search_chats("researcher"))

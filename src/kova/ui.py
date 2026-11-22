@@ -35,6 +35,7 @@ from kova.config import load_config
 from kova.modes import MODES
 from kova.privacy import status_text as privacy_status_text
 from kova.tui.app import COMMANDS, PERMISSIONS
+from kova.tui.glyphs import glyphs
 from kova.tui.style import colour
 
 _COMMANDS = {"/" + name: description for name, (_usage, description) in COMMANDS.items()}
@@ -58,7 +59,6 @@ def _all_commands() -> dict[str, str]:
 
 # Arguments the commands offer for Tab completion, if any.
 _COMMAND_ARGUMENTS = {"/mode": MODES, "/web": ("on", "off"), "/permissions": tuple(PERMISSIONS)}
-_PLAN_MARKS = {"done": "☑", "in_progress": "◐", "pending": "☐"}
 
 # Prompt_toolkit styling for the input line, the completion menu and the
 # bottom toolbar. Resolve the active theme when the input session starts.
@@ -180,9 +180,21 @@ class _Turn:
             self.blocks.append(_Block("stopped"))
 
     def render(self) -> Group:
+        """The turn as a trace, like the full-screen chat (docs/TERMINAL-DESIGN.md)."""
         from kova.tui.brand import assistant_name
-        items: list = [Text.assemble(("◆ ", f"bold {colour('ACCENT')}"),
-                                     (assistant_name(), f"bold {colour('ACCENT')}"))]
+        from kova.tui.render import WORD, first_sentence, step_kind, step_word
+        g = glyphs()
+        kinds = {"think": "THINK", "look": "MEMORY", "change": "CODE", "ask": "WARNING",
+                 "plan": "MUTED", "failed": "ERROR", "stopped": "WARNING"}
+
+        def lead(kind: str, word: str, glyph: str | None = None) -> Text:
+            role = kinds.get(kind, "MUTED")
+            return Text.assemble((glyph or g[kind], f"bold {colour(role)}"), " ",
+                                 (word.ljust(WORD - 1) + " ", colour(role)))
+
+        name = assistant_name()
+        items: list = [Text.assemble((f" {name[:1].upper()} ", f"bold {colour('ON_ACCENT')} on {colour('ACCENT')}"),
+                                     " ", (name, "bold"))]
         for block in self.blocks:
             text = "".join(block.chunks)
             if block.kind == "text":
@@ -190,69 +202,68 @@ class _Turn:
             elif block.kind == "reasoning":
                 if block.elapsed is None and not self.finished:
                     age = perf_counter() - block.started
-                    items.append(Spinner("dots",
-                                         text=Text(f"Thinking… {age:.1f}s", style=colour('MUTED')),
+                    items.append(Spinner("circleHalves",
+                                         text=Text(f"thinking  {age:.1f}s", style=colour('THINK')),
                                          style=colour('ACCENT')))
                 elif not self.no_think:
-                    items.append(Text(f"  thought for {block.elapsed or 0:.1f}s",
-                                      style=colour('MUTED')))
+                    row = lead("think", "thought")
+                    row.append(_short(first_sentence(text)) or "no reasoning", style=colour('FAINT'))
+                    row.append(f"  {block.elapsed or 0:.1f}s", style=colour('FAINT'))
+                    items.append(row)
                 if self.show_thinking and not self.no_think:
-                    items.append(Text(text, style=colour('MUTED')))
+                    items.append(Text(text, style=f"italic {colour('MUTED')}"))
             elif block.kind == "tool":
+                kind = step_kind(block.name)
                 if block.ok is None and not self.finished:
-                    label = Text(f"⚙ {block.name}", style=f"bold {colour('ACCENT')}")
+                    label = Text(f"{step_word(block.name)}  ", style=f"bold {colour(kinds[kind])}")
                     if block.args:
-                        label.append(f"  {block.args}", style=colour('MUTED'))
-                    items.append(Spinner("dots", text=label, style=colour('ACCENT')))
+                        label.append(block.args, style=colour('MUTED'))
+                    items.append(Spinner("circleHalves", text=label, style=colour('ACCENT')))
                 else:
-                    if block.ok is True:
-                        icon_style = f"bold {colour('SUCCESS')}"
-                        detail_style = colour('MUTED')
-                    else:
-                        # Plain "red": committed tests pin ANSI red (\x1b[31m)
-                        # here, which the theme's truecolor red would not emit.
-                        icon_style = "bold red"
-                        detail_style = "red" if block.ok is False else colour('MUTED')
-                    icon = "✓" if block.ok else "✗" if block.ok is False else "·"
+                    failed = block.ok is False
+                    # Plain "red" for failures: committed tests pin ANSI red (\x1b[31m)
+                    # here, which the theme's truecolor red would not emit.
+                    row = Text.assemble((g.failed if failed else g[kind],
+                                         "bold red" if failed else f"bold {colour(kinds[kind])}"), " ",
+                                        (step_word(block.name).ljust(WORD - 1) + " ",
+                                         "red" if failed else colour(kinds[kind])))
                     detail = text if block.ok is not None else "interrupted"
-                    row = Text("  ")
-                    row.append(f"{icon} ", style=icon_style)
-                    row.append(block.name)
                     if detail:
-                        row.append(f" · {detail}", style=detail_style)
+                        row.append(detail, style="red" if failed else colour('MUTED'))
                     items.append(row)
             elif block.kind == "error":
-                # Plain "red" for the same committed-test reason as above.
-                items.append(Text(f"  Error: {text}", style="red"))
+                items.append(Text.assemble((g.failed + " ", "bold red"), ("error   ", "red"),
+                                           (f"Error: {text}", "red")))
             elif block.kind == "privacy":
-                items.append(Text(f"  {text}", style=colour('MUTED')))
+                items.append(Text(f"{g.note} {text}", style=colour('MUTED')))
             elif block.kind == "plan":
-                items.append(Text.assemble(("  ● ", colour('ACCENT')), ("Update Todos", "bold")))
+                done = sum(1 for item in block.items if item.get("status") == "done")
+                row = lead("plan", "plan")
+                row.append(f"{done} of {len(block.items)} done", style=colour('MUTED'))
+                items.append(row)
                 for item in block.items:
                     status = item.get("status")
-                    style = {"done": f"strike {colour('MUTED')}", "in_progress": f"bold {colour('ACCENT')}"}
-                    items.append(Text(f"    {_PLAN_MARKS.get(status, '☐')} "
-                                      f"{_short(str(item.get('text', '')))}",
+                    style = {"done": colour('FAINT'), "in_progress": "bold"}
+                    mark = {"done": g.done, "in_progress": g.doing}.get(status, g.todo)
+                    items.append(Text(f"{g.spine}{' ' * (WORD + 1)}{mark} {_short(str(item.get('text', '')))}",
                                       style=style.get(status, "")))
             elif block.kind == "review":
                 additions = sum(int(file.get("additions") or 0) for file in block.items)
                 deletions = sum(int(file.get("deletions") or 0) for file in block.items)
-                row = Text("  ")
-                row.append("◆ ", style=f"bold {colour('ACCENT')}")
-                row.append(f"{len(block.items)} file{'' if len(block.items) == 1 else 's'} changed",
-                           style="bold")
-                row.append(f"  +{additions} −{deletions}", style=colour('MUTED'))
-                row.append("  · /changes to review", style=colour('FAINT'))
+                row = lead("change", "changed")
+                row.append(f"{len(block.items)} file{'' if len(block.items) == 1 else 's'} changed")
+                row.append(f"  +{additions} {g.minus}{deletions}", style=colour('MUTED'))
+                row.append("   /changes to review", style=colour('FAINT'))
                 items.append(row)
             elif block.kind == "stopped":
-                items.append(Text("  Interrupted.", style=colour('MUTED')))
+                items.append(lead("stopped", "stopped") + Text("Interrupted.", style=colour('MUTED')))
         # Keep activity visible before the first token and between tool calls.
         if not self.finished and (not self.blocks or
                                   (self.blocks[-1].kind == "tool" and self.blocks[-1].ok is not None)):
             age = self.age()
-            thinking = Text("Thinking…", style=colour('MUTED')) if age is None else \
-                Text(f"Thinking… {age:.1f}s", style=colour('MUTED'))
-            items.append(Spinner("dots", text=thinking, style=colour('ACCENT')))
+            waiting = Text("waiting", style=colour('MUTED')) if age is None else \
+                Text(f"waiting  {age:.1f}s", style=colour('MUTED'))
+            items.append(Spinner("circleHalves", text=waiting, style=colour('ACCENT')))
         return Group(*items)
 
 
@@ -266,12 +277,12 @@ def _approve(client: KovaClient, chat_id: str, event: dict, console: Console,
     if sys.stdin.isatty() and console.is_terminal:
         if live is not None:
             live.stop()
-        console.print(Text.assemble(("  ? ", f"bold {colour('WARNING')}"), (f"Allow {tool}", "bold"),
-                                    (f"  {summary}", colour('MUTED'))))
+        console.print(Text.assemble((glyphs().ask + " ", f"bold {colour('WARNING')}"),
+                                    (f"Allow {tool}", "bold"), (f"  {summary}", colour('MUTED'))))
         if destructive:
-            console.print("    Destructive: can delete data or change the system for good",
+            console.print("  This can delete data or change the system for good.",
                           style=colour('ERROR'))
-        choices = "[y]es · [n]o" if destructive else "[y]es · [a]lways this chat · [n]o"
+        choices = "[y] yes   [n] no" if destructive else "[y] yes   [a] always in this chat   [n] no"
         try:
             answer = console.input(f"    {choices} › ").strip().lower()
             if answer in ("y", "yes"):
@@ -339,7 +350,7 @@ def _render_turn(client: KovaClient, chat_id: str, text: str, no_think: bool,
         # taller than the terminal, rather than leaving only the cropped live view.
         console.print(turn.render())
         if interrupted:
-            console.print("  Reply stopped · send another message when ready.", style=colour('MUTED'))
+            console.print("  Reply stopped. Send another message when ready.", style=colour('MUTED'))
         console.print()
 
 
@@ -353,33 +364,47 @@ def _header(client: KovaClient, console: Console, chat_id: str | None = None, *,
     web = web if web is not None else (chat.get("web", True) if chat else True)
 
     from kova import __version__
-    from kova.tui.brand import assistant_name, gradient_text, wordmark
+    from kova.tui.brand import assistant_name
+    from kova.tui.widgets import MODE_HINTS
 
+    name = assistant_name()
     console.print()
-    console.print(wordmark(__version__))
-    console.print()
-    status = Text("  ")
-    status.append("●", style=colour('SUCCESS') if health["model_ok"] else colour('WARNING'))
-    status.append("  ")
-    status.append_text(gradient_text(assistant_name()))
-    status.append("  ·  model ", style=colour('MUTED'))
-    status.append(str(health["model"]), style="bold")
+
+    def header(label: str, value: Text) -> None:
+        line = Text("    ")
+        line.append(label.ljust(9), style=colour('FAINT'))
+        line.append_text(value)
+        console.print(line)
+
+    head = Text(f" {name[:1].upper()} ", style=f"bold {colour('ON_ACCENT')} on {colour('ACCENT')}")
+    head.append(" " + name, style="bold")
+    head.append(f"  v{__version__}", style=colour('FAINT'))
+    console.print(head)
+    model = Text(str(health["model"]), style="bold")
+    model.append("  offline" if not health["model_ok"] else "  ready",
+                 style=f"bold {colour('WARNING')}" if not health["model_ok"] else colour('SUCCESS'))
+    header("model", model)
+    mode_text = Text(mode, style=f"bold {colour('ACCENT')}")
+    hint = MODE_HINTS.get(mode, "")
+    if not web and hint:
+        hint = hint.replace("web, ", "").replace(", web at most", "") + ", web off"
+    if hint:
+        mode_text.append("  " + hint, style=colour('MUTED'))
+    header("mode", mode_text)
+    counted = Text(f"{notes} {'note' if notes == 1 else 'notes'}", style=colour('MUTED'))
+    counted.append("  in " + str(cfg.memory_path), style=colour('FAINT'))
+    header("memory", counted)
     if not health["model_ok"]:
-        status.append("  ·  offline", style=f"bold {colour('WARNING')}")
-    status.append("  ·  mode ", style=colour('MUTED'))
-    status.append(mode, style=f"bold {colour('ACCENT')}")
-    if not web:
-        status.append("  ·  web off", style=colour('MUTED'))
-    status.append("  ·  ", style=colour('MUTED'))
-    status.append(f"{notes} {'note' if notes == 1 else 'notes'}", style=colour('MUTED'))
-    console.print(status)
-    console.print(f"     memory  {cfg.memory_path}", style=colour('FAINT'))
-    if not health["model_ok"]:
-        console.print("  The model is unreachable — replies may fail. "
-                      "Check kova setup or /model.", style=colour('WARNING'))
-    console.print(Text.assemble(("  /help", f"bold {colour('ACCENT_SOFT')}"), (" commands  ·  ", colour('MUTED')),
-                                ("/think", f"bold {colour('ACCENT_SOFT')}"), (" reasoning  ·  ", colour('MUTED')),
-                                ("Ctrl+D", f"bold {colour('ACCENT_SOFT')}"), (" leave", colour('MUTED'))))
+        console.print(Text("    " + "The model is not answering. Check kova setup or /model.",
+                           style=colour('WARNING')))
+    keys = Text("    ")
+    keys.append("/help", style=f"bold {colour('ACCENT_SOFT')}")
+    keys.append(" lists every command, ", style=colour('MUTED'))
+    keys.append("/think", style=f"bold {colour('ACCENT_SOFT')}")
+    keys.append(" shows reasoning, ", style=colour('MUTED'))
+    keys.append("ctrl+d", style=f"bold {colour('ACCENT_SOFT')}")
+    keys.append(" leaves", style=colour('MUTED'))
+    console.print(keys)
     console.print()
 
 
@@ -722,10 +747,13 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
         while True:
             try:
                 if session is None:
-                    line = console.input(f"[bold {colour('USER')}]› [/]")
+                    # A pipe leaves nothing on screen, so the turn is echoed below
+                    # with the user's bar; a console prompt keeps the line itself.
+                    prefix = f"[bold {colour('USER')}]{glyphs().user} [/]" if sys.stdin.isatty() else ""
+                    line = console.input(prefix)
                 else:
                     with patch_stdout(raw=True):
-                        line = session.prompt([("class:prompt", "› ")])
+                        line = session.prompt([("class:prompt", glyphs().user + " ")])
             except EOFError:
                 break
             except KeyboardInterrupt:
@@ -870,7 +898,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                 if session is None:
                     # Piped input leaves no visible line behind, so echo it as the
                     # user's turn; an interactive prompt already stays on screen.
-                    console.print(Text(f"› {stripped}", style=f"bold {colour('USER')}"))
+                    console.print(Text(f"{glyphs().user} {stripped}", style=f"bold {colour('USER')}"))
                 else:
                     console.print()
                 _render_turn(client, ensure_chat(), stripped, no_think, console,

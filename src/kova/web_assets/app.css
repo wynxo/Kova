@@ -2,26 +2,76 @@
    Sections: tokens, base, icons, buttons and fields, sidebar, main, composer,
    menus, messages, cards, dialogs, toasts, responsive. */
 
+/* Geologica for everything people read, Martian Mono only for text a machine
+   would read (docs/DESIGN.md). Both are OFL, bundled, split by script. Martian
+   Mono is pinned to its semi-condensed width so a command line fits the trace. */
 @font-face {
-  font-family:Inter;
+  font-family:"Geologica";
   font-style:normal;
   font-weight:100 900;
   font-display:swap;
-  src:url(/app/assets/fonts/InterVariable.woff2) format("woff2");
+  src:url(/app/assets/fonts/Geologica-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
-  font-family:Inter;
-  font-style:italic;
+  font-family:"Geologica";
+  font-style:normal;
   font-weight:100 900;
   font-display:swap;
-  src:url(/app/assets/fonts/InterVariable-Italic.woff2) format("woff2");
+  src:url(/app/assets/fonts/Geologica-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 @font-face {
-  font-family:"JetBrains Mono";
+  font-family:"Geologica";
+  font-style:normal;
+  font-weight:100 900;
+  font-display:swap;
+  src:url(/app/assets/fonts/Geologica-cyrillic.woff2) format("woff2");
+  unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family:"Geologica";
+  font-style:normal;
+  font-weight:100 900;
+  font-display:swap;
+  src:url(/app/assets/fonts/Geologica-cyrillic-ext.woff2) format("woff2");
+  unicode-range:U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family:"Martian Mono";
   font-style:normal;
   font-weight:100 800;
+  font-stretch:87.5%;
   font-display:swap;
-  src:url(/app/assets/fonts/JetBrainsMonoVariable.woff2) format("woff2");
+  src:url(/app/assets/fonts/MartianMono-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family:"Martian Mono";
+  font-style:normal;
+  font-weight:100 800;
+  font-stretch:87.5%;
+  font-display:swap;
+  src:url(/app/assets/fonts/MartianMono-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family:"Martian Mono";
+  font-style:normal;
+  font-weight:100 800;
+  font-stretch:87.5%;
+  font-display:swap;
+  src:url(/app/assets/fonts/MartianMono-cyrillic.woff2) format("woff2");
+  unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family:"Martian Mono";
+  font-style:normal;
+  font-weight:100 800;
+  font-stretch:87.5%;
+  font-display:swap;
+  src:url(/app/assets/fonts/MartianMono-cyrillic-ext.woff2) format("woff2");
+  unicode-range:U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
 }
 
 /* ---------- Shell geometry ----------
@@ -29,8 +79,8 @@
    only what is specific to this shell: its grid, the font stacks and the
    radius aliases the layout issues (#243, #244) move onto --radius-*. */
 :root {
-  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font:Geologica, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:"Martian Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   /* What chat text is set in: the UI font unless "Monospace for chat" is chosen. */
   --font-chat:var(--font);
 
@@ -84,7 +134,7 @@ body {
   background:var(--bg-base);
   color:var(--fg-default);
   font:var(--type-size-body)/1.5 var(--font);
-  font-feature-settings:"cv11", "ss03";
+  font-optical-sizing:auto;
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
   text-rendering:optimizeLegibility;
@@ -97,8 +147,8 @@ h1, h2, h3, p { margin:0; }
 ::selection { background:color-mix(in srgb, var(--accent-default) 42%, transparent); color:var(--fg-default); }
 :focus-visible { outline:2px solid var(--accent-default); outline-offset:2px; }
 kbd {
-  font:500 11px/1 var(--font);
-  padding:3px 5px;
+  font:500 var(--type-size-label)/1 var(--font);
+  padding:var(--space-0-5) var(--space-1);
   border:1px solid var(--border-strong);
   border-radius:5px;
   color:var(--fg-faint);
@@ -179,19 +229,19 @@ noscript { position:fixed; inset:auto 16px 16px; padding:12px 14px; border-radiu
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  gap:6px;
+  gap:var(--space-2);
   min-height:34px;
-  padding:0 14px;
+  padding:0 var(--space-3);
   border:1px solid var(--border-strong);
-  border-radius:var(--r-md);
-  background:var(--bg-raised);
+  border-radius:var(--radius-sm);
+  background:transparent;
   color:var(--fg-default);
-  font-weight:550;
-  font-size:13px;
+  font-weight:560;
+  font-size:var(--type-size-body);
   white-space:nowrap;
   transition:background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
 }
-.btn:hover:not(:disabled) { background:var(--bg-raised); }
+.btn:hover:not(:disabled) { background:var(--bg-raised); border-color:var(--fg-muted); }
 .btn:active:not(:disabled) { transform:translateY(.5px); }
 .btn:disabled { opacity:.45; }
 .btn.primary { background:var(--accent-default); border-color:transparent; color:var(--accent-on); }
@@ -200,7 +250,7 @@ noscript { position:fixed; inset:auto 16px 16px; padding:12px 14px; border-radiu
 .btn.quiet:hover:not(:disabled) { background:var(--bg-raised); color:var(--fg-default); }
 .btn.danger { background:transparent; border-color:color-mix(in srgb, var(--status-danger) 40%, transparent); color:var(--status-danger); }
 .btn.danger:hover:not(:disabled) { background:color-mix(in srgb, var(--status-danger) 11%, transparent); }
-.btn.small { min-height:28px; padding:0 10px; font-size:12px; border-radius:var(--r-sm); }
+.btn.small { min-height:28px; padding:0 var(--space-2); font-size:var(--type-size-label); border-radius:var(--radius-sm); }
 
 .icon-button {
   display:inline-grid;
@@ -208,7 +258,7 @@ noscript { position:fixed; inset:auto 16px 16px; padding:12px 14px; border-radiu
   flex:none;
   width:32px;
   height:32px;
-  border-radius:var(--r-sm);
+  border-radius:var(--radius-sm);
   color:var(--fg-muted);
   transition:background var(--motion-fast), color var(--motion-fast);
 }
@@ -239,18 +289,21 @@ input:disabled, textarea:disabled { opacity:.55; }
 input[type="search"]::-webkit-search-cancel-button { -webkit-appearance:none; appearance:none; }
 input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-color:var(--accent-default); }
 
-/* ---------- Sidebar ---------- */
+/* ---------- Sidebar ----------
+   The sidebar is part of the panel, not a slab of its own: same surface as the
+   page, one hairline. Rows are the people and jobs you talk to; a row's second
+   line appears only while that chat needs attention, in its step channel. */
 #sidebar {
   display:flex;
   flex-direction:column;
   min-height:0;
-  padding:var(--space-3) var(--space-2) var(--space-2);
-  background:var(--bg-surface);
+  padding:var(--space-3) var(--space-3) var(--space-3);
+  background:var(--bg-base);
   border-right:1px solid var(--border-subtle);
 }
-.sidebar-head { display:flex; align-items:center; justify-content:space-between; padding:var(--space-0-5) var(--space-1) var(--space-3) var(--space-2); }
-.brand { display:inline-flex; align-items:center; gap:var(--space-2); color:var(--fg-default); text-decoration:none; font-weight:600; font-size:var(--type-size-body-comfortable); letter-spacing:-.01em; border-radius:var(--radius-sm); }
-.brand .kova-mark { width:24px; height:24px; }
+.sidebar-head { display:flex; align-items:center; justify-content:space-between; min-height:var(--space-8); padding:0 var(--space-1) var(--space-4) var(--space-2); }
+.brand { display:inline-flex; align-items:center; gap:var(--space-2); color:var(--fg-default); text-decoration:none; font-weight:680; font-size:var(--type-size-title); letter-spacing:-.02em; border-radius:var(--radius-sm); }
+.brand .kova-mark { width:var(--space-6); height:var(--space-6); }
 /* The app mark: a tile in the text colour with the K cut out, so the surface
    behind shows through the letter and the mark follows every theme.
    mark.svg is generated by scripts/build_icons.py. */
@@ -268,17 +321,18 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
   align-items:center;
   gap:var(--space-3);
   width:100%;
-  height:36px;
+  height:var(--space-10);
   padding:0 var(--space-3);
+  border:1px solid var(--border-subtle);
   border-radius:var(--radius-md);
   color:var(--fg-default);
-  font-weight:500;
+  font-weight:560;
   font-size:var(--type-size-body);
   text-align:left;
-  transition:background var(--motion-fast) var(--motion-ease-standard);
+  transition:background var(--motion-fast) var(--motion-ease-standard), border-color var(--motion-fast) var(--motion-ease-standard);
 }
-.new-chat .icon { color:var(--fg-muted); }
-.new-chat:hover:not(:disabled) { background:var(--bg-raised); }
+.new-chat .icon { color:var(--fg-default); }
+.new-chat:hover:not(:disabled) { background:var(--bg-surface); border-color:var(--border-strong); }
 .new-chat:disabled { opacity:.5; }
 
 /* One search field: it filters the list below. Ctrl/Cmd+K is the palette. */
@@ -286,7 +340,7 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
   display:flex;
   align-items:center;
   gap:var(--space-3);
-  height:36px;
+  height:var(--space-10);
   margin:var(--space-1) 0 var(--space-3);
   padding:0 var(--space-3);
   border:1px solid transparent;
@@ -295,21 +349,30 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
   cursor:text;
   transition:background var(--motion-fast) var(--motion-ease-standard), border-color var(--motion-fast) var(--motion-ease-standard);
 }
-.search:hover { background:var(--bg-raised); }
-.search:focus-within { background:var(--bg-base); border-color:var(--border-strong); }
+.search:hover { background:var(--bg-surface); }
+.search:focus-within { background:var(--bg-surface); border-color:var(--border-strong); }
 .search input { flex:1; width:100%; padding:0; border:0; outline:0; background:none; color:var(--fg-default); font-size:var(--type-size-body); }
 
-#chat-list { flex:1; min-height:0; overflow-y:auto; margin:0 -4px; padding:0 4px 8px; display:flex; flex-direction:column; gap:1px; }
-.history-row { position:relative; display:flex; flex:none; border-radius:var(--r-sm); transition:background var(--motion-fast); }
+#chat-list { flex:1; min-height:0; overflow-y:auto; margin:0 calc(var(--space-1) * -1); padding:0 var(--space-1) var(--space-2); display:flex; flex-direction:column; gap:var(--space-0-5); }
+.history-row { position:relative; display:flex; flex:none; border-radius:var(--radius-md); transition:background var(--motion-fast); }
 .history-row:hover, .history-row:focus-within { background:var(--bg-surface); }
+/* The open chat: a raised row and a short ink bar on the spine side. */
 .history-row.active { background:var(--bg-raised); }
-.history-open { flex:1; min-width:0; display:grid; gap:var(--space-0-5); padding:var(--space-2) var(--space-10) var(--space-2) var(--space-3); text-align:left; border-radius:var(--r-sm); }
+.history-row.active::before {
+  content:""; position:absolute; left:0; top:var(--space-2); bottom:var(--space-2);
+  width:var(--space-0-5); border-radius:var(--radius-pill); background:var(--chat-colour, var(--fg-default));
+}
+.history-open { flex:1; min-width:0; display:grid; gap:var(--space-0-5); padding:var(--space-2) var(--space-10) var(--space-2) var(--space-3); text-align:left; border-radius:var(--radius-md); }
 .history-open:disabled { opacity:.55; }
 .history-rename { flex:1; min-width:0; margin:var(--space-1) var(--space-10) var(--space-1) var(--space-1); padding:0 var(--space-2); border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-base); color:var(--fg-default); font-size:var(--type-size-body); }
 .history-title { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-size-body); color:var(--fg-default); }
 .history-row:not(.active) .history-title { color:var(--fg-muted); }
 .history-row:hover .history-title { color:var(--fg-default); }
-.history-date { font-size:var(--type-size-label); color:var(--fg-faint); text-transform:capitalize; }
+/* Working and waiting rows say so in their step channel, with a small node. */
+.history-date { display:flex; align-items:center; gap:var(--space-1); font-size:var(--type-size-label); color:var(--fg-muted); }
+.history-date::before { content:""; flex:none; width:var(--space-1); height:var(--space-1); border-radius:var(--radius-pill); background:currentColor; }
+.history-row[data-state="working"] .history-date { color:var(--step-tool); }
+.history-row[data-state="blocked-on-approval"] .history-date { color:var(--step-ask); }
 /* Row actions: one quiet ellipsis that shows on hover, focus and the open row,
    and opens a small list in place. */
 .history-actions {
@@ -319,7 +382,7 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-row:hover .history-actions, .history-row:focus-within .history-actions,
 .history-row.active .history-actions, .history-actions[open] { opacity:1; }
 .history-actions > summary {
-  display:grid; place-items:center; width:28px; height:28px; border-radius:var(--radius-md);
+  display:grid; place-items:center; width:var(--space-8); height:var(--space-8); border-radius:var(--radius-md);
   color:var(--fg-muted); list-style:none; cursor:pointer;
 }
 .history-actions > summary::-webkit-details-marker { display:none; }
@@ -327,18 +390,18 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 .history-actions[open] {
   top:var(--space-1); transform:none; display:grid; min-width:180px; padding:var(--space-1);
   border:1px solid var(--border-strong); border-radius:var(--radius-lg); background:var(--bg-surface);
-  box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  box-shadow:0 var(--space-2) var(--space-6) color-mix(in srgb, var(--bg-overlay) 50%, transparent);
 }
 .history-actions[open] > summary { justify-self:end; }
 .history-actions > .btn {
-  display:flex; width:100%; justify-content:flex-start; min-height:32px; padding:0 var(--space-3); border:0; border-radius:var(--radius-md);
-  background:transparent; color:var(--fg-default); font-weight:450; font-size:var(--type-size-body);
+  display:flex; width:100%; justify-content:flex-start; min-height:var(--space-8); padding:0 var(--space-3); border:0; border-radius:var(--radius-md);
+  background:transparent; color:var(--fg-default); font-weight:400; font-size:var(--type-size-body);
 }
 .history-actions > .btn:hover:not(:disabled) { background:var(--bg-raised); }
 .history-actions > .btn:last-child:hover:not(:disabled) { color:var(--status-danger); }
-.history-row { min-height:36px; }
-.history-empty { display:grid; gap:var(--space-2); justify-items:start; padding:var(--space-3); color:var(--fg-faint); font-size:var(--type-size-body); }
-.history-empty .btn { color:var(--fg-muted); }
+.history-row { min-height:var(--space-10); }
+.history-empty { display:grid; gap:var(--space-2); justify-items:start; padding:var(--space-3); color:var(--fg-muted); font-size:var(--type-size-body); }
+.history-empty .btn { padding:0; min-height:var(--space-6); color:var(--fg-default); text-decoration:underline; text-underline-offset:var(--space-1); }
 /* A still skeleton, not a shimmer: the first list is a moment, not activity. */
 .history-skeleton { display:grid; gap:var(--space-2); padding:var(--space-2) var(--space-3); }
 .history-skeleton-row { display:grid; gap:var(--space-2); padding:var(--space-2) 0; }
@@ -347,25 +410,25 @@ input[type="checkbox"] { width:16px; height:16px; margin:0; flex:none; accent-co
 
 .sidebar-footer { flex:none; padding-top:var(--space-2); border-top:1px solid var(--border-subtle); }
 .nav-row {
-  display:flex; align-items:center; gap:var(--space-3); width:100%; height:36px; padding:0 var(--space-3);
+  display:flex; align-items:center; gap:var(--space-3); width:100%; height:var(--space-10); padding:0 var(--space-3);
   border-radius:var(--radius-md); color:var(--fg-muted); font-size:var(--type-size-body); text-align:left;
   transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
 }
 .nav-row > .icon { color:var(--fg-muted); }
-.nav-row:hover:not(:disabled) { background:var(--bg-raised); color:var(--fg-default); }
+.nav-row:hover:not(:disabled) { background:var(--bg-surface); color:var(--fg-default); }
 .nav-row:hover:not(:disabled) > .icon { color:var(--fg-default); }
 .nav-row:disabled { opacity:.45; }
 #backdrop { display:none; }
 
 /* ---------- Main column ---------- */
 main { display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg-base); }
-.topbar { position:relative; flex:none; display:flex; align-items:center; gap:8px; height:52px; padding:0 16px 0 10px; border-bottom:1px solid var(--border-subtle); }
+.topbar { position:relative; flex:none; display:flex; align-items:center; gap:var(--space-2); height:var(--space-12); padding:0 var(--space-4) 0 var(--space-3); border-bottom:1px solid var(--border-subtle); }
 .is-empty .topbar { border-bottom-color:transparent; }
-/* Activity (#191): a dot and a count only while something runs or needs you.
-   The accent is the running dot, because the accent means activity. */
+/* Activity (#191): a node and a count only while something runs or needs you,
+   in the channel of what it is doing. */
 .activity-wrap { flex:none; display:flex; align-items:center; }
 .activity-button { display:inline-flex; align-items:center; gap:var(--space-1); width:auto; min-width:var(--space-8); padding:0 var(--space-2); }
-.activity-dot { width:var(--space-2); height:var(--space-2); flex:none; border-radius:var(--radius-pill); background:var(--accent-default); }
+.activity-dot { width:var(--space-2); height:var(--space-2); flex:none; border-radius:var(--radius-pill); background:var(--step-tool); }
 .activity-button[data-active="false"] .activity-dot { background:var(--fg-faint); }
 .activity-count { font-size:var(--type-size-label); color:var(--fg-muted); font-variant-numeric:tabular-nums; }
 .activity-panel {
@@ -380,54 +443,57 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 .activity-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2); border-radius:var(--radius-md); }
 .activity-row:hover, .activity-row:focus-within { background:var(--bg-raised); }
 .activity-info { display:grid; gap:var(--space-0-5); flex:1; min-width:0; }
-.activity-name { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-size-body); font-weight:550; }
+.activity-name { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-size-body); font-weight:560; }
 .activity-state { color:var(--fg-muted); font-size:var(--type-size-label); }
 .activity-actions { display:flex; gap:var(--space-1); flex:none; }
 .activity-group { margin-top:var(--space-1); padding:var(--space-2) var(--space-2) var(--space-1); border-top:1px solid var(--border-subtle); color:var(--fg-muted); font-size:var(--type-size-label); }
-.chat-title { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; font-weight:550; letter-spacing:-.005em; }
-.is-empty .chat-title { color:var(--fg-muted); font-weight:500; }
+.chat-title { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-size-body); font-weight:560; letter-spacing:-.005em; }
+.is-empty .chat-title { color:var(--fg-muted); font-weight:400; }
 .chat-menu { position:relative; flex:none; }
 .chat-menu > summary { list-style:none; }
 .chat-menu > summary::-webkit-details-marker { display:none; }
 .chat-menu[open] > summary { background:var(--bg-raised); color:var(--fg-default); }
 .chat-menu-list {
   position:absolute; top:calc(100% + var(--space-1)); right:0; z-index:20; min-width:180px; padding:var(--space-1);
-  border:1px solid var(--border-strong); border-radius:var(--r-lg); background:var(--bg-raised); box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  border:1px solid var(--border-strong); border-radius:var(--radius-lg); background:var(--bg-surface); box-shadow:0 var(--space-2) var(--space-6) color-mix(in srgb, var(--bg-overlay) 50%, transparent);
 }
 .chat-menu-list .nav-row:hover:not(:disabled) { background:var(--bg-raised); }
 /* Incognito is a fact about this chat, said once and quietly under the header. */
 .incognito-note {
-  flex:none; display:flex; align-items:center; justify-content:center; gap:var(--space-2);
-  margin:0 auto; padding:var(--space-2) var(--space-5) 0; max-width:var(--column);
-  color:var(--fg-muted); font-size:var(--type-size-label); line-height:var(--type-leading-body); text-align:center;
+  flex:none; display:flex; align-items:center; gap:var(--space-2);
+  width:100%; margin:0 auto; padding:var(--space-2) var(--space-6) 0; max-width:var(--column);
+  color:var(--fg-muted); font-size:var(--type-size-label); line-height:var(--type-leading-body);
 }
-.incognito-note .icon { width:14px; height:14px; }
+.incognito-note .icon { width:var(--space-4); height:var(--space-4); }
 
 #scroll-area { flex:1 1 0; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable both-edges; }
-.messages { display:flex; flex-direction:column; gap:var(--space-6); width:100%; max-width:var(--column); margin:0 auto; padding:var(--space-6) var(--space-5) var(--space-8); }
+.messages { display:flex; flex-direction:column; gap:var(--space-8); width:100%; max-width:var(--column); margin:0 auto; padding:var(--space-8) var(--space-6) var(--space-10); }
 .messages:empty { display:none; }
 
-/* Start screen: the mark, one question and the message box, near the middle. */
-.is-empty #scroll-area { display:flex; flex-direction:column; justify-content:flex-end; scrollbar-gutter:auto; }
+/* Start screen: what Kova is, the four step channels as a legend you read once,
+   then the message box. Left-aligned on the same line as the conversation. */
+.is-empty #scroll-area { display:flex; flex-direction:column; scrollbar-gutter:auto; }
+/* margin-top:auto keeps the statement low on a tall window and scrollable on a short one. */
+.is-empty .welcome { margin-top:auto; }
 /* What is left below the message box balances the space above it. */
-.is-empty main::after { content:""; flex:1.15 1 0; min-height:0; }
-.welcome { flex:none; max-width:var(--column); width:100%; margin:0 auto; padding:var(--space-4) var(--space-5) var(--space-6); text-align:center; }
-.welcome-mark { width:40px; height:40px; margin:0 auto var(--space-4); }
-.welcome h1 { font-size:var(--type-size-heading); line-height:var(--type-leading-tight); font-weight:600; letter-spacing:-.02em; text-wrap:balance; }
-.welcome-greeting { color:var(--fg-muted); font-size:var(--type-size-body); margin-bottom:var(--space-1); }
-/* Suggested prompts are quiet text, not cards: no border, no fill, no accent.
-   They wrap into as many rows as the width needs. */
-.starters { display:flex; flex-wrap:wrap; justify-content:center; gap:var(--space-2); margin-top:var(--space-5); }
-.starter { max-inline-size:100%; min-block-size:var(--space-8); overflow-wrap:anywhere; padding:var(--space-2) var(--space-3); border-radius:var(--radius-md); color:var(--fg-muted); font-size:var(--type-size-body); line-height:var(--type-leading-tight); text-align:center; transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard); }
-.starter:hover { background:var(--bg-raised); color:var(--fg-default); }
-.starters-edit { display:inline-flex; align-items:center; gap:var(--space-1); margin-top:var(--space-3); min-block-size:var(--space-8); color:var(--fg-muted); font-size:var(--type-size-label); }
-.starters-edit .icon { width:var(--space-4); height:var(--space-4); }
-.starters-edit:hover { text-decoration:underline; }
+.is-empty main::after { content:""; flex:.6 1 0; min-height:0; }
+.welcome { flex:none; max-width:var(--column); width:100%; margin:0 auto; padding:var(--space-6) var(--space-6) var(--space-6); text-align:left; }
+.welcome-mark { width:var(--space-8); height:var(--space-8); margin:0 0 var(--space-6); }
+.welcome h1 { max-width:24ch; font-size:var(--type-size-display); line-height:1.08; font-weight:680; letter-spacing:-.025em; text-wrap:balance; }
+.welcome-greeting { max-width:var(--type-measure-prose); margin-top:var(--space-3); color:var(--fg-muted); font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); text-wrap:pretty; }
+/* Suggested prompts are your own words, kept as quiet underlined text in a
+   row: no border, no fill, no colour. They wrap into as many rows as needed. */
+.starters { display:flex; flex-wrap:wrap; justify-content:flex-start; gap:var(--space-1) var(--space-4); margin-top:var(--space-6); }
+.starter { max-inline-size:100%; min-block-size:var(--space-8); overflow-wrap:anywhere; padding:var(--space-1) 0; color:var(--fg-muted); font-size:var(--type-size-body); line-height:var(--type-leading-tight); text-align:left; text-decoration:underline; text-decoration-color:var(--border-strong); text-underline-offset:var(--space-1); transition:color var(--motion-fast) var(--motion-ease-standard), text-decoration-color var(--motion-fast) var(--motion-ease-standard); }
+.starter:hover { color:var(--fg-default); text-decoration-color:currentColor; }
+.starters-edit { display:inline-flex; align-items:center; gap:var(--space-1); margin-top:var(--space-2); min-block-size:var(--space-8); color:var(--fg-muted); font-size:var(--type-size-label); }
+.starters-edit .icon { width:var(--space-3); height:var(--space-3); }
+.starters-edit:hover { color:var(--fg-default); text-decoration:underline; }
 .starters-intro { color:var(--fg-muted); font-size:var(--type-size-body); line-height:var(--type-leading-body); margin-bottom:var(--space-3); }
 .starters-fields { display:grid; gap:var(--space-2); }
 
 /* ---------- Composer ---------- */
-.compose-wrap { container:composer / inline-size; position:relative; flex:none; width:100%; max-width:var(--column); margin:0 auto; padding:0 20px max(var(--space-4), env(safe-area-inset-bottom)); }
+.compose-wrap { container:composer / inline-size; position:relative; flex:none; width:100%; max-width:var(--column); margin:0 auto; padding:0 var(--space-6) max(var(--space-5), env(safe-area-inset-bottom)); }
 .is-empty .compose-wrap { padding-bottom:0; }
 .jump {
   position:absolute; left:50%; top:-46px; z-index:5; display:grid; place-items:center; width:34px; height:34px; margin-left:-17px;
@@ -455,20 +521,26 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; backgroun
 }
 .notice-retry:hover { background:var(--bg-raised); }
 
+/* The message box is the one solid object on the panel: raised surface, a
+   control boundary, and an ink edge while you type. */
 .composer {
   position:relative; display:flex; flex-direction:column;
   border:1px solid var(--border-strong); border-radius:var(--radius-lg);
   background:var(--bg-surface);
+  box-shadow:0 var(--space-2) var(--space-6) color-mix(in srgb, var(--bg-overlay) 35%, transparent);
   transition:border-color var(--motion-fast) var(--motion-ease-standard);
 }
-.composer:focus-within { border-color:var(--fg-faint); }
+.composer:focus-within { border-color:var(--fg-default); }
 /* + · message · model chip · send, on one line. The text grows upward. */
 .compose-row { display:flex; align-items:flex-end; gap:var(--space-1); min-width:0; padding:var(--space-2); }
 #prompt {
-  flex:1 1 0; display:block; width:100%; min-width:0; min-height:32px; max-height:180px; padding:5px var(--space-2);
+  flex:1 1 0; display:block; width:100%; min-width:0; min-height:var(--space-8); max-height:180px; padding:var(--space-1) var(--space-2);
   border:0; outline:0; resize:none; background:none; color:var(--fg-default);
   font:var(--type-size-body-comfortable)/var(--type-leading-body) var(--font); overflow-y:auto;
 }
+/* The placeholder never wraps: on a phone the field is narrow while a reply
+   runs, and a wrapped hint would double the box's height. */
+#prompt::placeholder { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .compose-icon {
   display:grid; place-items:center; flex:none; width:32px; height:32px; border-radius:var(--radius-md); color:var(--fg-muted);
   transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
@@ -577,7 +649,7 @@ label:has(> input[type="checkbox"]) {
 .menu-button:disabled { opacity:.5; }
 
 .send {
-  display:grid; place-items:center; flex:none; width:32px; height:32px; border-radius:var(--radius-md);
+  display:grid; place-items:center; flex:none; width:var(--space-8); height:var(--space-8); border-radius:var(--radius-md);
   background:var(--fg-default); color:var(--bg-base);
   transition:background var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard), opacity var(--motion-fast) var(--motion-ease-standard), transform var(--motion-fast) var(--motion-ease-standard);
 }
@@ -649,10 +721,12 @@ label:has(> input[type="checkbox"]) {
   color:var(--fg-muted); font-size:var(--type-size-label); overflow-wrap:anywhere;
 }
 .model-switch::before, .model-switch::after { content:""; flex:1; border-top:solid var(--space-0-5) var(--border-subtle); }
-/* ---------- Messages ---------- */
+/* ---------- Messages ----------
+   Your message is an instruction: set a step larger than the reply, flush with
+   the spine, no bubble. The reply under it is a trace (trace.css). */
 .message { min-width:0; animation:rise var(--slow) var(--ease); }
-.message-label { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--space-2); color:var(--fg-muted); font-size:var(--type-size-label); font-weight:600; }
-.avatar { width:20px; height:20px; }
+.message-label { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--space-2); color:var(--fg-muted); font-size:var(--type-size-label); font-weight:560; }
+.avatar { width:var(--space-5); height:var(--space-5); }
 .message.user { align-self:flex-end; max-width:min(82%, 620px); }
 .message.user .message-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .message.user .message-body {
@@ -662,19 +736,19 @@ label:has(> input[type="checkbox"]) {
 }
 .message.assistant .message-body { display:flex; flex-direction:column; gap:var(--space-3); min-width:0; }
 .message.assistant .message-body > * { min-width:0; }
-@keyframes rise { from { opacity:0; transform:translateY(4px); } }
+@keyframes rise { from { opacity:0; transform:translateY(var(--space-1)); } }
 .message-actions { display:flex; gap:var(--space-0-5); margin-top:var(--space-1); opacity:0; transition:opacity var(--motion-fast); }
-.message.assistant .message-actions { margin-left:-7px; }
-/* Under your own bubble the actions float in the gap, so they cost no space. */
+.message.assistant .message-actions { margin-left:calc(var(--space-1) * -1); }
+/* Under your own message the actions float in the gap, so they cost no space. */
 .message.user { position:relative; }
 .message.user .message-actions { position:absolute; top:100%; right:0; margin-top:1px; }
 .message:hover .message-actions, .message:focus-within .message-actions, .message:last-of-type .message-actions { opacity:1; }
-.message-action { display:grid; place-items:center; width:28px; height:28px; border-radius:var(--r-xs); color:var(--fg-faint); transition:background var(--motion-fast), color var(--motion-fast); }
+.message-action { display:grid; place-items:center; width:var(--space-8); height:var(--space-8); border-radius:var(--radius-sm); color:var(--fg-muted); transition:background var(--motion-fast), color var(--motion-fast); }
 .message-action:hover { background:var(--bg-raised); color:var(--fg-default); }
-.message-action .icon { width:14px; height:14px; }
+.message-action .icon { width:var(--space-4); height:var(--space-4); }
 .message-action .i-check { color:var(--status-success); }
 /* Tokens, cost and speed of one answer; hovering shows the timings. */
-.usage-meter { align-self:center; margin-left:6px; color:var(--fg-faint); font-size:var(--type-size-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; cursor:default; }
+.usage-meter { align-self:center; margin-left:var(--space-2); color:var(--fg-muted); font-size:var(--type-size-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; cursor:default; }
 @media (hover:none) { .message.assistant .message-actions { opacity:1; } #open-shortcuts { display:none; } }
 
 /* Reply Markdown lives in markdown.css so this file stays the transcript shell. */
@@ -712,8 +786,8 @@ label:has(> input[type="checkbox"]) {
 .tool:has(> .tool-row.failed) { border-color:color-mix(in srgb, var(--status-danger) 28%, transparent); }
 .tool-row.failed > .icon { color:var(--status-danger); }
 
-.plan-view { padding:var(--space-3) var(--space-4); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--bg-surface); }
-.plan-view > strong { display:block; margin-bottom:var(--space-2); color:var(--fg-faint); font-size:var(--type-size-label); font-weight:600; }
+.plan-view { padding:var(--space-1) 0; border:0 solid transparent; border-radius:var(--radius-md); background:none; }
+.plan-view > strong { display:block; margin-bottom:var(--space-2); color:var(--fg-default); font-size:var(--type-size-body); font-weight:560; }
 .plan-view ul { display:grid; gap:var(--space-2); margin:0; padding:0; list-style:none; }
 .plan-view li { display:flex; align-items:flex-start; gap:var(--space-2); font-size:var(--type-size-body); line-height:1.45; overflow-wrap:anywhere; }
 .plan-mark { flex:none; display:grid; place-items:center; width:16px; height:16px; margin-top:2px; border:1.5px solid var(--fg-faint); border-radius:50%; }
@@ -721,8 +795,8 @@ label:has(> input[type="checkbox"]) {
 .plan-done { color:var(--fg-muted); }
 .plan-done .plan-mark { border-color:var(--status-success); background:var(--status-success); color:var(--bg-base); }
 .plan-in_progress { font-weight:500; }
-.plan-in_progress .plan-mark { border-color:var(--accent-default); }
-.plan-in_progress .plan-mark::after { content:""; width:6px; height:6px; border-radius:50%; background:var(--accent-default); animation:pulse 1.4s ease-in-out infinite; }
+.plan-in_progress .plan-mark { border-color:var(--fg-default); }
+.plan-in_progress .plan-mark::after { content:""; width:6px; height:6px; border-radius:50%; background:var(--fg-default); animation:pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity:.35; } }
 
 /* ---------- Per-turn change review ---------- */
@@ -756,41 +830,48 @@ label:has(> input[type="checkbox"]) {
 .changes-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); justify-self:start; }
 .restore-list { max-height:220px; margin:0; padding-left:18px; overflow:auto; color:var(--fg-muted); font:var(--type-size-label)/1.6 var(--mono); }
 
-.approval-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid color-mix(in srgb, var(--accent-default) 42%, transparent); border-radius:var(--radius-md); background:var(--bg-surface); }
+/* The one step that needs a decision keeps a card, in the "needs you" channel:
+   an amber edge, the exact command in mono, and Allow once as the only filled
+   button. It is the only card in the trace. */
+.approval-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid color-mix(in srgb, var(--step-ask) 45%, transparent); border-radius:var(--radius-md); background:color-mix(in srgb, var(--step-ask) 6%, var(--bg-surface)); }
 .approval-card > * { min-width:0; }
-.approval-heading { display:flex; align-items:center; gap:var(--space-2); font-size:var(--type-size-body); }
-.approval-heading > .icon { color:var(--accent-default); }
-.approval-heading strong { flex:1; min-width:0; font-weight:600; }
-.risk-badge { flex:none; display:inline-block; color:var(--fg-faint); font-size:var(--type-size-label); font-weight:500; }
+.approval-card:focus-visible { outline:2px solid var(--step-ask); outline-offset:var(--space-0-5); }
+.approval-heading { display:flex; align-items:center; gap:var(--space-2); font-size:var(--type-size-body-comfortable); }
+.approval-heading > .icon { color:var(--step-ask); }
+.approval-heading strong { flex:1; min-width:0; color:var(--fg-default); font-weight:620; }
+.approval-card > small:first-of-type { color:var(--step-ask); font:var(--type-size-label) var(--mono); }
+.risk-badge { flex:none; display:inline-block; color:var(--fg-muted); font-size:var(--type-size-label); font-weight:560; }
 .risk-badge::first-letter { text-transform:uppercase; }
-.risk-destructive { color:var(--status-danger); font-weight:600; }
-.approval-card pre { margin:0; max-height:220px; padding:10px 12px; overflow:auto; border:1px solid var(--border-subtle); border-radius:var(--r-md); background:var(--bg-base); font:var(--type-size-label)/1.55 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.risk-destructive { color:var(--status-danger); font-weight:620; }
+.approval-card pre { margin:0; max-height:220px; padding:var(--space-3) var(--space-4); overflow:auto; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-base); color:var(--fg-default); font:var(--type-size-body)/1.55 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
 .approval-arguments summary { color:var(--fg-muted); font-size:var(--type-size-label); cursor:pointer; }
-.approval-arguments pre { margin-top:8px; }
-.approval-folder { display:flex; align-items:center; gap:7px; color:var(--fg-faint); font:var(--type-size-label) var(--mono); }
-.approval-folder .icon { width:13px; height:13px; }
+.approval-arguments pre { margin-top:var(--space-2); }
+.approval-folder { display:flex; align-items:center; gap:var(--space-2); color:var(--fg-muted); font:var(--type-size-label) var(--mono); }
+.approval-folder .icon { width:var(--space-3); height:var(--space-3); }
 .approval-folder span { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.approval-message { display:grid; gap:6px; color:var(--fg-muted); font-size:var(--type-size-label); }
-.approval-message input { width:100%; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:var(--r-md); outline:0; background:var(--bg-base); color:var(--fg-default); font-size:var(--type-size-body); transition:border-color var(--motion-fast), box-shadow var(--motion-fast); }
-.approval-message input:focus-visible { border-color:var(--accent-default); box-shadow:0 0 0 3px var(--accent-soft); }
-.approval-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.approval-message { display:grid; gap:var(--space-1); color:var(--fg-muted); font-size:var(--type-size-label); }
+.approval-message input { width:100%; height:var(--space-10); padding:0 var(--space-3); border:1px solid var(--border-strong); border-radius:var(--radius-sm); outline:0; background:var(--bg-base); color:var(--fg-default); font-size:var(--type-size-body); transition:border-color var(--motion-fast), box-shadow var(--motion-fast); }
+.approval-message input:focus-visible { border-color:var(--fg-default); box-shadow:0 0 0 3px var(--accent-soft); }
+.approval-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); }
+.approval-actions .btn.primary { background:var(--step-ask); color:var(--fg-inverse); }
+.approval-actions .btn.primary:hover:not(:disabled) { background:color-mix(in srgb, var(--step-ask) 86%, var(--fg-default)); }
 .approval-status { color:var(--fg-muted); font-size:var(--type-size-label); }
 .approval-status:empty { display:none; }
 
 .turn-error { display:flex; align-items:flex-start; gap:var(--space-2); padding:var(--space-2) var(--space-3); border:1px solid color-mix(in srgb, var(--status-danger) 30%, transparent); border-radius:var(--radius-md); background:color-mix(in srgb, var(--status-danger) 11%, transparent); font-size:var(--type-size-body); line-height:1.5; overflow-wrap:anywhere; }
 .turn-error .icon { margin-top:2px; color:var(--status-danger); }
-.turn-status { color:var(--fg-faint); font-size:var(--type-size-body); }
+.turn-status { color:var(--fg-muted); font-size:var(--type-size-label); }
 
 /* ---------- Dialogs and panels ---------- */
 dialog {
-  width:min(440px, calc(100vw - 24px)); max-height:calc(100dvh - 32px); padding:20px;
-  border:1px solid var(--border-strong); border-radius:var(--r-xl);
+  width:min(440px, calc(100vw - 24px)); max-height:calc(100dvh - 32px); padding:var(--space-6);
+  border:1px solid var(--border-strong); border-radius:var(--radius-lg);
   background:var(--bg-surface); color:var(--fg-default); box-shadow:0 8px 24px color-mix(in srgb, var(--bg-overlay) 50%, transparent);
 }
 dialog[open] { animation:dialog-in var(--slow) var(--ease); }
 dialog::backdrop { background:var(--bg-overlay); }
 @keyframes dialog-in { from { opacity:0; transform:translateY(8px) scale(.985); } }
-dialog h2 { font-size:17px; font-weight:620; letter-spacing:-.015em; }
+dialog h2 { font-size:var(--type-size-title); font-weight:640; letter-spacing:-.015em; }
 dialog form { display:grid; gap:14px; }
 dialog label, dialog .field { display:grid; gap:6px; color:var(--fg-muted); font-size:12.5px; font-weight:500; }
 .dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -950,11 +1031,20 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   /* No hover on touch: the ellipsis stays, quietly. */
   .history-actions { opacity:1; }
   .topbar { padding:0 10px 0 8px; gap:6px; }
-  .messages { padding:var(--space-5) var(--space-3) var(--space-6); gap:var(--space-5); }
+  .messages { padding:var(--space-5) var(--space-4) var(--space-6); gap:var(--space-6); }
   .message.user { max-width:88%; }
-  .compose-wrap { padding-left:10px; padding-right:10px; }
+  .messages .message.user .message-body { font-size:var(--type-size-title); }
+  .messages .message.user + .message.assistant { margin-top:calc(var(--space-6) * -1 + var(--space-2)); }
+  .compose-wrap { padding-left:var(--space-3); padding-right:var(--space-3); }
+  /* Keep the phone composer anchored below the scrollable start screen. */
+  .is-empty main::after { display:none; }
+  .is-empty .welcome { margin-top:0; }
+  .is-empty .compose-wrap { padding-bottom:max(var(--space-4), env(safe-area-inset-bottom)); }
   .welcome { padding:var(--space-3) var(--space-4) var(--space-5); }
-  .welcome h1 { font-size:var(--type-size-title); }
+  .welcome-mark { margin-bottom:var(--space-4); }
+  .welcome h1 { font-size:var(--type-size-heading); }
+  .welcome-greeting { font-size:var(--type-size-body); }
+  .approval-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); }
   #prompt { font-size:16px; }
   @keyframes fade { from { opacity:0; } }
 }
@@ -1316,7 +1406,7 @@ html[data-motion="off"][data-background] main {
   --r-xl:28px;
 }
 
-/* Font: the bundled Inter stays the default, System leaves the choice to the
+/* Font: the bundled Geologica stays the default, System leaves the choice to the
    device, and Monospace for chat sets the conversation in the bundled mono
    face while the surrounding UI keeps --font. Code blocks are already mono. */
 [data-font="system"] {
@@ -1343,11 +1433,21 @@ html[data-motion="off"][data-background] main {
   display:none;
 }
 
-/* Document is the default. Only the Bubbles layout paints a message surface. */
+/* Document is the default. Only the Bubbles layout paints a message surface.
+   In it your message is the instruction at the head of a turn: the lead size,
+   flush with the spine, and "You" is said to screen readers only. */
 .messages .message.user { align-self:stretch; max-width:none; }
-.messages .message.user .message-label { position:static; width:auto; height:auto; clip-path:none; }
-.messages .message.user .message-body { padding:0; background:none; }
-.messages .message.user .message-actions { position:static; }
+.messages .message.user .message-body {
+  max-width:var(--type-measure-prose); padding:0; background:none;
+  font-size:var(--type-size-lead); line-height:var(--type-leading-tight); font-weight:500; letter-spacing:-.012em;
+  text-wrap:pretty;
+}
+.messages .message.user .message-actions { position:static; margin-left:calc(var(--space-2) * -1); }
+.messages .message.user + .message.assistant { margin-top:calc(var(--space-8) * -1 + var(--space-2)); }
+[data-message-style="bubbles"] .messages .message.user .message-body,
+[data-message-style="compact"] .messages .message.user .message-body { font-size:var(--type-size-body-comfortable); line-height:var(--type-leading-body); font-weight:400; letter-spacing:0; }
+[data-message-style="bubbles"] .messages .message.user + .message.assistant,
+[data-message-style="compact"] .messages .message.user + .message.assistant { margin-top:0; }
 [data-message-style="bubbles"] .messages .message.user { align-self:flex-end; max-width:var(--type-measure-prose); }
 [data-message-style="bubbles"] .messages .message-body {
   padding:var(--space-2) var(--space-4);
