@@ -175,7 +175,7 @@ def install(request, tmp_path):
 
 
 def test_first_run(stub, install):
-    from playwright.sync_api import expect, sync_playwright
+    from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 
     kind, home, data, config, port, env, cli, kova = install
     base = f"http://127.0.0.1:{port}"
@@ -242,7 +242,13 @@ def test_first_run(stub, install):
                                               and response.url.endswith("/messages")) as turn:
                         page.locator("#send").click()
                     expect(page.get_by_text(REPLY, exact=True)).to_be_visible()
-                    assert REASONING in turn.value.text()
+                    assert turn.value.ok
+                    try:
+                        body = turn.value.text()
+                    except PlaywrightError:
+                        # Chromium sometimes drops a finished stream's body; the page still has it.
+                        body = page.content()
+                    assert REASONING in body
                 finally:
                     browser.close()
 
