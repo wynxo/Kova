@@ -55,5 +55,21 @@
       .map(key => ({key, label: LABELS[key], chats: buckets.get(key)}));
   }
 
-  global.KovaChatList = {LABELS, bucket, groups};
+  function contacts(bots) {
+    return {key: 'contacts', label: 'Contacts', bots: [...bots].sort((a, b) =>
+      (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id))};
+  }
+
+  function latestDirectChat(chats, botId) {
+    let latest = null;
+    for (const chat of chats) {
+      if (chat.kind !== 'bot' || chat.bot_id !== botId || chat.ephemeral) continue;
+      const time = timeOf(chat) ?? -Infinity;
+      const previous = timeOf(latest) ?? -Infinity;
+      if (!latest || time > previous || (time === previous && chat.created > latest.created)) latest = chat;
+    }
+    return latest;
+  }
+
+  global.KovaChatList = {LABELS, bucket, groups, contacts, latestDirectChat};
 })(typeof globalThis !== 'undefined' ? globalThis : this);

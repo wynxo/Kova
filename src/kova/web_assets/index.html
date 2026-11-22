@@ -75,11 +75,13 @@
   <!-- The live step trace (docs/DESIGN.md): after every turn component it
        draws a node for, before the phone layout. -->
   <link rel="stylesheet" href="/app/assets/trace.css">
+  <link rel="stylesheet" href="/app/assets/bots.css">
   <link rel="stylesheet" href="/app/assets/mobile.css">
   <script defer src="/app/assets/mobile.js"></script>
   <script defer src="/app/assets/thinking.js"></script>
   <script defer src="/app/assets/focus-trap.js"></script>
   <script defer src="/app/assets/model-picker.js"></script>
+  <script defer src="/app/assets/bots.js"></script>
   <script defer src="/app/assets/app.js"></script>
   <script defer src="/app/assets/theme-editor.js"></script>
   <script defer src="/app/assets/theme-gallery.js"></script>
@@ -122,6 +124,7 @@
     <header class="topbar">
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" data-shortcut="toggle-sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New chat</strong>
+      <div id="bot-chat-header" hidden></div>
       <div class="activity-wrap">
         <button id="activity" type="button" class="icon-button activity-button" aria-label="Activity" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-panel" hidden><span id="activity-dot" class="activity-dot" aria-hidden="true"></span><span id="activity-count" class="activity-count" hidden></span></button>
         <div id="activity-panel" class="activity-panel" role="dialog" aria-label="Activity" hidden></div>
@@ -144,6 +147,7 @@
         <button id="starters-edit" type="button" class="starters-edit" hidden><span class="icon i-pencil" aria-hidden="true"></span><span>Edit suggestions</span></button>
       </div>
       <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
+      <div id="bot-welcome" class="welcome" hidden></div>
     </section>
     <div class="compose-wrap">
       <button id="zen-exit" type="button" class="btn quiet small" data-shortcut="toggle-zen" hidden>Exit zen mode</button>
@@ -164,9 +168,10 @@
               <button id="commands" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-slash" aria-hidden="true"></span><span>Slash commands</span></button>
               <button id="compare-open" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-columns-2" aria-hidden="true"></span><span>Compare answers</span></button>
               <button id="new-incognito" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" data-shortcut="new-incognito" aria-keyshortcuts="Control+Shift+N Meta+Shift+N"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span></button>
+              <button id="new-bot" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" hidden><span class="icon i-plus" aria-hidden="true"></span><span>New bot</span></button>
             </div>
           </div>
-          <label class="sr-only" for="prompt">Message Kova</label>
+          <label id="prompt-label" class="sr-only" for="prompt">Message Kova</label>
           <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000" aria-autocomplete="list" aria-expanded="false" aria-controls="mention-list"></textarea>
           <div class="chat-options-wrap">
             <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span id="chat-options-effort" class="model-chip-effort" hidden></span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
@@ -208,6 +213,7 @@
         <button id="status-bar-compact" type="button" class="status-bar-compact" hidden>Compact</button>
       </div>
     </div>
+    <section id="bot-editor" hidden></section>
   </main>
   <!-- Action targets. Settings (settings.js) and the command palette run these;
        app.js and the panel scripts bind them by id. Nothing here is drawn. -->

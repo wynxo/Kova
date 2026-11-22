@@ -59,3 +59,9 @@ def test_literal_guard_covers_named_and_functional_colors():
     for value in ("var(--status-danger)", "currentColor", "transparent",
                   "color-mix(in srgb, var(--accent-default) 10%, transparent)"):
         assert not LITERAL.search(value), value
+
+
+def test_bot_controls_only_reference_defined_spacing_tokens():
+    tokens = set(re.findall(r'(--space-[\w-]+):', (ASSETS / 'tokens.css').read_text()))
+    used = set(re.findall(r'var\((--space-[\w-]+)\)', plain((ASSETS / 'bots.css').read_text())))
+    assert used <= tokens, used - tokens
