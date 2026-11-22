@@ -186,6 +186,7 @@ def test_background_server_detects_same_version_new_build_and_web_cache_is_versi
     monkeypatch.setattr(build, "tool_build", latest)
     monkeypatch.setattr(build, "managed", lambda: True)
     cfg = load_config(tmp_path)
+    cfg.models.clear()  # Health must not start a live model probe in this test.
 
     with TestClient(server.create_app(cfg)) as client:
         before = client.get("/app/sw.js")
