@@ -12,7 +12,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from kova import build, updater
+from kova import build, desktop_integration, updater
 from kova.cli import app
 
 
@@ -39,7 +39,7 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(updater.runtime, "running_server", lambda cfg: None)
     monkeypatch.setattr(updater.runtime, "running_desktop", lambda home: None)
     monkeypatch.setattr(updater.autostart, "status", lambda **_: updater.autostart.Status("linux", "desktop", False))
-    monkeypatch.setattr(updater, "menu_path", lambda: tmp_path / ".local/share/applications/kova.desktop")
+    monkeypatch.setattr(desktop_integration, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(platform="linux", stdin=sys.stdin))
     return lifecycle
 
@@ -321,20 +321,22 @@ def test_windows_uninstall_schedules_helper_without_running_uv(lifecycle, monkey
 
 def test_cli_uninstall_removes_linux_menu_entry(lifecycle, monkeypatch, tmp_path):
     entry = tmp_path / ".local/share/applications/kova.desktop"
-    icon = tmp_path / ".local/share/icons/hicolor/512x512/apps/kova.png"
-    for item in (entry, icon):
+    icons = tmp_path / ".local/share/icons/hicolor"
+    installed = (entry, icons / "512x512/apps/kova.png", icons / "16x16/apps/kova.png",
+                 icons / "scalable/apps/kova.svg")
+    for item in installed:
         item.parent.mkdir(parents=True, exist_ok=True)
         item.write_text("installed")
     monkeypatch.setattr(lifecycle.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0)))
     lifecycle.uninstall(purge=False, keep_data=True, confirm=lambda _: False)
-    assert not entry.exists()
-    assert not icon.exists()
+    assert not any(item.exists() for item in installed)
 
 
 def test_cli_uninstall_removes_macos_launcher(lifecycle, monkeypatch, tmp_path):
     bundle = tmp_path / "Applications/Kova.app"
     (bundle / "Contents/MacOS").mkdir(parents=True)
     (bundle / "Contents/Info.plist").write_text("launcher")
+    monkeypatch.setattr(desktop_integration, "sys", SimpleNamespace(platform="darwin"))
     monkeypatch.setattr(lifecycle, "sys", SimpleNamespace(platform="darwin", stdin=sys.stdin))
     monkeypatch.setattr(lifecycle.subprocess, "run", Mock(return_value=subprocess.CompletedProcess([], 0)))
     lifecycle.uninstall(purge=False, keep_data=True, confirm=lambda _: False)
@@ -344,14 +346,15 @@ def test_cli_uninstall_removes_macos_launcher(lifecycle, monkeypatch, tmp_path):
 def test_windows_cli_uninstall_helper_removes_start_menu_shortcut(lifecycle, monkeypatch, tmp_path):
     import base64
 
+    monkeypatch.setattr(desktop_integration, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     launch = Mock()
     monkeypatch.setattr(lifecycle.subprocess, "Popen", launch)
     monkeypatch.setattr(lifecycle.subprocess, "CREATE_NEW_PROCESS_GROUP", 0, raising=False)
     lifecycle._windows_uninstall("uv.exe", tmp_path / ".kova", False)
     encoded = launch.call_args.args[0][-1]
     script = base64.b64decode(encoded).decode("utf-16le")
-    assert "Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Kova.lnk'" in script
-    assert "Remove-Item -LiteralPath" in script
+    assert f"Remove-Item -LiteralPath '{desktop_integration.menu_path()}'" in script
 
 
 @pytest.mark.parametrize("evidence", ["stage directory", "desktop profile", "menu entry"])
@@ -362,7 +365,7 @@ def test_update_uses_new_package_even_if_the_desktop_manifest_is_missing(lifecyc
     elif evidence == "desktop profile":
         (home / "desktop-data").mkdir(parents=True)
     else:
-        menu = updater.menu_path()
+        menu = desktop_integration.menu_path()
         menu.parent.mkdir(parents=True)
         menu.write_text("Exec=kova-app")
     calls = fake_install(lifecycle, monkeypatch)
@@ -372,6 +375,81 @@ def test_update_uses_new_package_even_if_the_desktop_manifest_is_missing(lifecyc
     for args, options in calls[2:]:
         assert args[:3] == [str(build.tool_python()), "-m", "kova.updater"]
         assert options["env"]["KOVA_HOME"] == str(home)
+
+
+@pytest.fixture
+def legacy_desktop(lifecycle, monkeypatch):
+    """The old updater runs the newly installed kova-app --prepare entry point."""
+    from kova import app as launcher
+
+    entry = desktop_integration.menu_path()
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nName=Kova\nExec=/old/bin/kova-app\nType=Application\nStartupWMClass=Kova\n")
+    bin_dir = lifecycle.Path(lifecycle.tool_env()["UV_TOOL_BIN_DIR"])
+    bin_dir.mkdir(parents=True)
+    cli = bin_dir / "kova"
+    cli.touch()
+    commands = []
+    staged = []
+    monkeypatch.setattr(launcher, "refresh_desktop", lambda home: staged.append(home))
+    monkeypatch.setenv("UV_TOOL_BIN_DIR", str(bin_dir))
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: f"/test/{name}")
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    return entry, cli, commands, staged
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop entry paths")
+def test_old_updater_repairs_the_menu_and_refreshes_icons(legacy_desktop):
+    from kova import app as launcher
+
+    entry, cli, commands, staged = legacy_desktop
+    icons = entry.parent.parent / "icons/hicolor"
+    current = launcher._bundled_desktop() / "assets"
+    stale = icons / "512x512/apps/kova.png"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old icon")
+    launcher.main(["--prepare"])
+    home, = staged
+    script = home / "desktop/launch"
+    assert f"Exec={script}" in entry.read_text()
+    assert str(cli) in script.read_text()
+    assert "StartupWMClass=kova\n" in entry.read_text()
+    assert stale.read_bytes() == (current / "icon.png").read_bytes()
+    assert (icons / "scalable/apps/kova.svg").read_bytes() == (current / "icon.svg").read_bytes()
+    for size in (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256):
+        installed = icons / f"{size}x{size}/apps/kova.png"
+        assert installed.read_bytes() == (current / f"icon-{size}.png").read_bytes()
+    assert ["/test/gtk-update-icon-cache", "-f", "-t", str(icons)] in commands
+    assert ["/test/kbuildsycoca6"] in commands
+    assert ["/test/xdg-desktop-menu", "forceupdate"] in commands
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop entry paths")
+@pytest.mark.parametrize("legacy", [False, True])
+def test_update_preserves_the_menu_data_home_without_an_env_override(
+    lifecycle, legacy_desktop, monkeypatch, tmp_path, legacy
+):
+    entry, cli, _, staged = legacy_desktop
+    data = tmp_path / "custom data"
+    old_exec = f'"{data}/desktop/launch"' if legacy else f'{cli} app --data-home "{data}"'
+    entry.write_text(f"[Desktop Entry]\nName=Kova\nExec={old_exec}\n")
+    monkeypatch.delenv("KOVA_HOME")
+
+    from kova import app as launcher
+    launcher.main(["--prepare"])
+    assert staged == [data]
+    assert f'Exec="{data}/desktop/launch"' in entry.read_text()
+
+    calls = fake_install(lifecycle, monkeypatch)
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert [args[-1] for args, _ in calls[2:]] == ["migrate", "stage", "register", "verify-desktop"]
+    assert all(options["env"]["KOVA_HOME"] == str(data) for _, options in calls[2:])
 
 
 def test_update_failure_in_desktop_still_refreshes_login_and_restarts(lifecycle, monkeypatch):

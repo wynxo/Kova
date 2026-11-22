@@ -17,10 +17,9 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
-from kova import autostart, build, egress, lifecycle, update_runtime as runtime
+from kova import autostart, build, desktop_integration, egress, lifecycle, update_runtime as runtime
 from kova.client import KovaError
 from kova.config import CONFIG_SCHEMA, kova_home, load_config, private_write, save_config
-from kova.desktop_integration import menu_path, refresh_desktop_integration, verify_desktop_integration
 from kova.app import DesktopError, refresh_desktop
 
 FAILURES = (OSError, subprocess.SubprocessError, lifecycle.LifecycleError, DesktopError,
@@ -162,8 +161,12 @@ def _details(exc: Exception) -> str:
 
 
 def update_installation(ref: str, emit=print, *, verbose=False, progress=None, worker=False) -> None:
+    home = kova_home().resolve()
+    if not os.environ.get("KOVA_HOME"):
+        if registered_home := desktop_integration.registered_linux_home(desktop_integration.menu_path()):
+            home = registered_home.resolve()
     # Fail before looking up GitHub, invoking any helpers, or changing files.
-    with egress.scope(config_loader=lambda: load_config(read_only=True), audit=False):
+    with egress.scope(config_loader=lambda: load_config(home, read_only=True), audit=False):
         egress.check_external_process()
     if sys.platform == "win32" and build.managed() and not worker:
         _defer_windows(ref, verbose)
@@ -171,7 +174,6 @@ def update_installation(ref: str, emit=print, *, verbose=False, progress=None, w
         return
 
     progress = progress or (lambda _: nullcontext())
-    home = kova_home().resolve()
     env = lifecycle.tool_env()
     env["KOVA_HOME"] = str(home)
     env.pop("PYTHONPATH", None)
@@ -237,7 +239,7 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
     desktop = step("Detect running desktop", lambda: (runtime.running_desktop(home),), "kova app")
     desktop = desktop[0] if desktop else None
     login = step("Read start-at-login state", lambda: autostart.status(kova_home=home), "kova autostart status")
-    menu = menu_path()
+    menu = desktop_integration.menu_path()
     wants_desktop = desktop or (home / "desktop").exists() or (home / "desktop-data").exists() or (menu and menu.exists())
 
     # Windows locks the old Electron files and DLLs while the processes run.
@@ -398,9 +400,9 @@ def main() -> None:
         elif action == "stage":
             stage_desktop(home)
         elif action in ("register", "login"):
-            refresh_desktop_integration(home, launcher, login=action == "login")
+            desktop_integration.refresh_desktop_integration(home, launcher, login=action == "login")
         elif action == "verify-desktop":
-            verify_desktop_integration(home, launcher)
+            desktop_integration.verify_desktop_integration(home, launcher)
     except FAILURES as exc:
         print(_details(exc), file=sys.stderr)
         raise SystemExit(1) from None

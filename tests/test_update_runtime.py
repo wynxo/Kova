@@ -1,10 +1,12 @@
 """Updater integration on fake processes, launchers, and an in-process server."""
 
 import plistlib
+import shutil
 import sqlite3
 import subprocess
 import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -66,14 +68,15 @@ def test_refresh_desktop_registration_updates_native_icons_and_launcher(tmp_path
     monkeypatch.setenv("APPDATA", str(tmp_path / "app-data"))
     project = tmp_path / "Kova Data" / "desktop"
     assets = project / "assets"
-    assets.mkdir(parents=True)
-    for size, icon in integration.ICON_FILES.items():
-        (assets / icon).write_bytes(f"test-icon-{size}".encode())
-    (assets / "icon.svg").write_text("<svg/>")
+    source = Path(__file__).resolve().parents[1] / "src/kova/desktop"
+    shutil.copytree(source / "assets", assets)
+    shutil.copyfile(source / "kova.desktop", project / "kova.desktop")
     binary = project / "electron"
     binary.touch()
     monkeypatch.setattr(integration, "_electron_binary", lambda project: binary)
     launcher = tmp_path / "Kova Tools" / "kova"
+    launcher.parent.mkdir()
+    launcher.touch()
     fake_subprocess = Mock(return_value=subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(integration.subprocess, "run", fake_subprocess)
     monkeypatch.setattr(integration.shutil, "which", lambda tool: tool)
@@ -93,19 +96,28 @@ def test_refresh_desktop_registration_updates_native_icons_and_launcher(tmp_path
         entry = menu.read_text()
         assert f'Exec="{project / "launch"}"' in entry
         assert "kova-app" not in entry
-        assert fake_subprocess.call_count == 2
+        assert "StartupWMClass=kova" in entry
+        share = menu.parent.parent
+        for size in (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512):
+            name = "icon.png" if size == 512 else f"icon-{size}.png"
+            assert (share / f"icons/hicolor/{size}x{size}/apps/kova.png").read_bytes() == (assets / name).read_bytes()
+        assert (share / "icons/hicolor/scalable/apps/kova.svg").read_bytes() == (assets / "icon.svg").read_bytes()
+        assert [call.args[0][0] for call in fake_subprocess.call_args_list] == [
+            "update-desktop-database", "gtk-update-icon-cache", "xdg-desktop-menu", "kbuildsycoca6",
+        ]
     elif platform == "darwin":
         contents = menu / "Contents"
         assert plistlib.loads((contents / "Info.plist").read_bytes())["CFBundleName"] == "Kova"
-        assert b"test-icon-512" in (contents / "Resources/kova.icns").read_bytes()
+        assert (contents / "Resources/kova.icns").read_bytes() == (assets / "icon.icns").read_bytes()
         assert fake_subprocess.call_count == 1
     else:
-        # Windows PowerShell is simulated; the generated ICO is real.
-        assert b"test-icon-256" in (assets / "kova.ico").read_bytes()
-        link_code = fake_subprocess.call_args.args[0][-1]
-        assert f"--kova-home={project.parent}" in link_code
-        assert f"--kova-cli={launcher}" in link_code
-        assert "IconLocation" in link_code
+        # PowerShell is simulated, but it points at the bundled ICO.
+        assert (assets / "icon.ico").read_bytes() == (source / "assets/icon.ico").read_bytes()
+        shortcut = fake_subprocess.call_args
+        assert f"--kova-home={project.parent}" in shortcut.kwargs["env"]["KOVA_SHORTCUT_ARGS"]
+        assert f"--kova-cli={launcher}" in shortcut.kwargs["env"]["KOVA_SHORTCUT_ARGS"]
+        assert shortcut.kwargs["env"]["KOVA_SHORTCUT_ICON"] == f'{assets / "icon.ico"},0'
+        assert "IconLocation" in shortcut.args[0][-1]
         menu.parent.mkdir(parents=True, exist_ok=True)
         menu.touch()
         integration.verify_desktop_integration(project.parent, launcher)

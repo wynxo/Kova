@@ -184,7 +184,12 @@ def test_installed_commands_and_menu_entry_name_real_launchers():
     import tomllib
     repo = Path(__file__).resolve().parents[1]
     scripts = tomllib.loads((repo / "pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts == {"kova": "kova.cli:app"}
+    assert scripts == {
+        "kova": "kova.cli:app",
+        # An older updater calls this in the newly installed package; the
+        # rewritten menu and documented invocation still use kova app.
+        "kova-app": "kova.app:main",
+    }
     entry = (repo / "src/kova/desktop" / "kova.desktop").read_text().splitlines()
     assert "Exec=kova app" in entry
 
