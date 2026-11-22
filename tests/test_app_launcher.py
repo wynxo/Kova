@@ -133,6 +133,27 @@ def test_desktop_runs_electron_without_reinstalling(monkeypatch, tmp_path, runs)
     assert 'ELECTRON_RUN_AS_NODE' not in runs[0][1]['env']
 
 
+def test_desktop_passes_chromium_switches_through_to_electron(monkeypatch, tmp_path, runs):
+    from kova import app as launcher
+
+    project = project_with(tmp_path, electron=True)
+    monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path / 'data'))
+    monkeypatch.setattr(launcher.shutil, 'which', lambda name: None)
+    with pytest.raises(SystemExit) as exc:
+        launcher.main(['--remote-debugging-port=9333'])
+    assert exc.value.code == 0
+    assert runs[0][0][-1] == '--remote-debugging-port=9333'
+
+
+def test_desktop_rejects_stray_positional_arguments(monkeypatch, tmp_path):
+    from kova import app as launcher
+
+    with pytest.raises(SystemExit) as exc:
+        launcher.main(['oops'])
+    assert exc.value.code == 2
+
+
 def test_desktop_installs_missing_electron_dependencies(monkeypatch, tmp_path, runs, capsys):
     from kova import app as launcher
 

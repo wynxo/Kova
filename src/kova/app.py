@@ -123,7 +123,7 @@ def _prepare_electron(project: Path, npm: str | None, *, reinstall: bool = False
             raise DesktopError("Electron could not be downloaded. Check your connection and run kova app again.")
 
 
-def launch_desktop() -> int:
+def launch_desktop(electron_args: list[str] | None = None) -> int:
     """Run the native Electron app, installing its dependencies on first use."""
     npm = shutil.which("npm")
     home = kova_home().absolute()
@@ -143,7 +143,7 @@ def launch_desktop() -> int:
             _prepare_electron(project, npm)
     except (DesktopError, OSError, Timeout) as exc:
         return _report_preparation_failure(home, f"could not prepare the desktop app: {exc}")
-    return _launch_electron(project.absolute(), home)
+    return _launch_electron(project.absolute(), home, electron_args or [])
 
 
 def _open_desktop_log(path: Path):
@@ -165,7 +165,7 @@ def _report_preparation_failure(home: Path, message: str) -> int:
     return 1
 
 
-def _launch_electron(project: Path, home: Path) -> int:
+def _launch_electron(project: Path, home: Path, electron_args: list[str] | None = None) -> int:
     env = dict(os.environ)
     env.pop("ELECTRON_RUN_AS_NODE", None)
     env["KOVA_HOME"] = str(home)
@@ -176,6 +176,8 @@ def _launch_electron(project: Path, home: Path) -> int:
     command = [str(_electron_binary(project)), str(project)]
     if sys.platform == "linux":
         command.append("--ozone-platform-hint=auto")
+    # Chromium switches such as --remote-debugging-port pass straight through.
+    command += electron_args or []
     log_path = home / "desktop.log"
     try:
         with _open_desktop_log(log_path) as log:
@@ -265,7 +267,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--register", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--data-home", type=Path, help=argparse.SUPPRESS)
-    args = parser.parse_args(argv)
+    args, extra = parser.parse_known_args(argv)
+    unknown = [arg for arg in extra if not arg.startswith("--")]
+    if unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
     if args.data_home is not None:
         os.environ["KOVA_HOME"] = str(args.data_home)
     if args.prepare:
@@ -275,7 +280,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Kova: could not prepare the desktop app: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         return
-    raise SystemExit(open_in_browser() if args.browser else launch_desktop())
+    raise SystemExit(open_in_browser() if args.browser else launch_desktop(extra))
 
 
 if __name__ == "__main__":

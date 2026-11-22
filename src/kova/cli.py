@@ -200,8 +200,9 @@ app = typer.Typer(
 )
 
 
-@app.command("app")
+@app.command("app", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def desktop_app(
+    ctx: typer.Context,
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
     prepare: bool = typer.Option(False, "--prepare", hidden=True),
     register: bool = typer.Option(False, "--register", hidden=True),
@@ -219,7 +220,7 @@ def desktop_app(
         args += ["--data-home", data_home]
     if browser:
         args.append("--browser")
-    app_main(args)
+    app_main(args + list(ctx.args))
 
 
 @app.command("web")
