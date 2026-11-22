@@ -15,6 +15,19 @@ class Node {
     this.events = {};
     this.dataset = {};
     this.value = '';
+    this.classList = {
+      add: (...names) => {
+        const set = new Set((this.className || '').split(' ').filter(Boolean));
+        for (const name of names) set.add(name);
+        this.className = [...set].join(' ');
+      },
+      remove: (...names) => {
+        const set = new Set((this.className || '').split(' ').filter(Boolean));
+        for (const name of names) set.delete(name);
+        this.className = [...set].join(' ');
+      },
+      contains: name => (this.className || '').split(' ').includes(name),
+    };
   }
   append(...children) {
     for (const child of children) child.parentNode = this;
@@ -393,5 +406,65 @@ assert.equal(closes, 2);
   assert.equal(previews.at(-1), null);
   assert.equal(closes, 4);
 
-  console.log('Theme editor: editable palette, live validation, preview, import, export, share string, Simple/Advanced modes and Save passed');
+  // ---- Drag-and-drop import (#176): a theme file dropped on the panel
+  {
+    await open();
+    const panel = body.find(node => node.tagName === 'aside');
+    assert.ok(body.find(node => (node.className || '').includes('theme-editor-hint')
+      && (node.textContent || '').includes('drop a theme JSON file')),
+      'the sources row names the drop zone');
+    const dragFile = payload => {
+      const text = JSON.stringify(payload);
+      return {size: text.length, text: async () => text};
+    };
+    const filesDrag = file => ({types: ['Files'], files: [file], dropEffect: ''});
+
+    // A file drag claims the panel and outlines it; leaving puts it back.
+    let claimed = false;
+    const claim = () => { claimed = true; };
+    panel.fire('dragenter', {dataTransfer: filesDrag(dragFile(imported)), preventDefault: claim});
+    assert.equal(claimed, true, 'dragenter claims a file drag');
+    assert.ok(panel.classList.contains('is-drop-target'), 'the panel outlines itself as the drop target');
+    claimed = false;
+    panel.fire('dragover', {dataTransfer: filesDrag(dragFile(imported)), preventDefault: claim});
+    assert.equal(claimed, true, 'dragover keeps the drop allowed');
+    panel.fire('dragleave', {});
+    assert.equal(panel.classList.contains('is-drop-target'), false, 'dragging away puts the outline back');
+
+    // A text drag is never claimed, so dropping text into a field stays native.
+    claimed = false;
+    panel.fire('dragover', {dataTransfer: {types: ['text/plain']}, preventDefault: claim});
+    assert.equal(claimed, false, 'a text drag is not claimed');
+    assert.equal(panel.classList.contains('is-drop-target'), false);
+
+    // A dropped theme file imports through the same path as the picker.
+    claimed = false;
+    panel.fire('drop', {dataTransfer: filesDrag(dragFile(imported)), preventDefault: claim});
+    await settle();
+    assert.equal(claimed, true, 'the drop is claimed');
+    assert.equal(panel.classList.contains('is-drop-target'), false, 'the outline comes off with the drop');
+    assert.equal(byId('theme-editor-id').value, imported.id, 'a dropped theme file loads like a picked one');
+    assert.equal(previews.at(-1).tokens['syntax.keyword'], '#eeeeee', 'the dropped tokens preview');
+    assert.equal(calls.at(-1).url, '/themes?validate_only=true', 'a drop reuses the import check');
+
+    // A file that is not a theme says so without painting anything.
+    const before = previews.at(-1);
+    panel.fire('drop', {dataTransfer: filesDrag({size: 9, text: async () => 'not json'})});
+    await settle();
+    assert.equal(previews.at(-1), before, 'a broken drop never paints');
+    assert.ok((body.find(node => (node.className || '').includes('theme-editor-notice')).textContent || '')
+      .includes('Drop a valid theme JSON file.'), 'the notice names the drop');
+
+    // The picker's size cap governs drops too.
+    panel.fire('drop', {dataTransfer: filesDrag({size: 40 * 1024, text: async () => '{}'})});
+    await settle();
+    assert.ok((body.find(node => (node.className || '').includes('theme-editor-notice')).textContent || '')
+      .includes('at most 32 KiB'), 'an oversized drop is refused before parsing');
+
+    await button('Cancel').click();
+    await settle();
+    assert.equal(closes, 5);
+  }
+
+  console.log('Theme editor: editable palette, live validation, preview, import, export, share string, Simple/Advanced modes, drag-and-drop and Save passed');
 

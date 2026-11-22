@@ -289,7 +289,8 @@ colour nearest to the theme's.
 
 In **Settings > General > Theme**, choose **Customize…** to start from the current
 palette, duplicate another installed theme, or **Import** a theme JSON file (up
-to 32 KiB). The editor opens in **Simple** mode:
+to 32 KiB) — picked with the file chooser or dropped anywhere on the editor
+panel. The editor opens in **Simple** mode:
 
 - **Accent** picks one colour and derives hover, pressed and the text drawn on
   it, so the whole accent role stays consistent.
