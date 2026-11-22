@@ -239,9 +239,10 @@
       if (!available()) return [];
       const group = window.KovaChatList.contacts([...records.values()]);
       return [
-        {title: 'New bot', keywords: 'create contact assistant', run: () => openEditor()},
+        {title: 'New bot', hint: 'Save an assistant with its own persona and model', keywords: 'create contact assistant',
+          run: () => openEditor()},
         ...group.bots.filter(bot => bot.state === 'ok').map(bot => ({
-          title: `Chat with ${bot.name}`, keywords: `bot contact ${bot.handle}`,
+          title: `Chat with ${bot.name}`, hint: `@${bot.handle}`, keywords: `bot contact ${bot.handle}`,
           run: () => safe(() => openChat(bot)),
         })),
       ];
@@ -315,6 +316,7 @@
     }
 
     editor.innerHTML = editorMarkup;
+    editor.setAttribute('aria-labelledby', 'bot-editor-title');
     const field = selector => editor.querySelector(selector);
     const form = field('#bot-form'), fields = field('.bot-fields'), title = field('#bot-editor-title');
     const save = field('.bot-save'), back = field('.bot-editor-back'), status = field('.bot-load-status');

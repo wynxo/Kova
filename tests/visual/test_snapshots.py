@@ -263,6 +263,8 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
 
     def snapshot(page, name):
         page.mouse.move(-1, -1)
+        # The status bar's speed comes from wall-clock timing of the stub reply.
+        page.add_style_tag(content="#status-bar-speed { display: none !important; }")
         page.evaluate("""async () => {
             document.activeElement.blur();
             await document.fonts.ready;

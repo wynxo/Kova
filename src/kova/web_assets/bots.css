@@ -176,7 +176,6 @@
   line-height: var(--type-leading-tight);
   font-weight: 680;
 }
-.bot-editor-bar h1:focus { outline: none; }
 .bot-editor-back, .bot-save { flex: none; }
 .bot-editor-scroll {
   flex: 1;
@@ -294,4 +293,9 @@
   .bot-form-section :is(input:not([type="checkbox"]), select, textarea) {
     font-size: var(--type-size-body-comfortable);
   }
+}
+
+/* The section chevron turns instantly when motion is reduced. */
+@media (prefers-reduced-motion: reduce) {
+  .bot-contacts-summary .icon { transition: none; }
 }
