@@ -493,6 +493,8 @@ Everything below lives in the app's **Settings → General**.
 
 Projects group chats and add shared instructions: `kova projects list`, `kova projects create`, `kova projects show <id>`, and `kova projects rm <id>`.
 
+Bots are saved assistants with their own name, persona, model, tools and folder. `kova bots templates` shows the four starters (Researcher, Coder, Writer and Buddy), `kova bots create --from researcher` adds one, and `kova bots list|show|set|edit|rm` manage them; `kova chat --bot <handle>` talks to one. Plain `kova` is unchanged: it opens your own chats, never a bot's.
+
 ## Where your data lives
 
 Everything Kova keeps — config, the chat database, memory notes — lives in `~/.kova/`. Set `KOVA_HOME` to put it somewhere else. Kova runs no cloud service and requires no Kova account. Hosted model connections use the provider account or key you choose.
