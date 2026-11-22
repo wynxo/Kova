@@ -18,10 +18,12 @@ Captured from the real app: the Kova server on an isolated `KOVA_HOME`
   and 32px at real size; 16px enlarged 8x as the static icon, in the dark UI and in the
   light UI; 128px static and in the dark UI.
 
-- `redesign-before-*` / `redesign-after-*`: the web UI before and after the live step
-  trace redesign (docs/DESIGN.md): the start screen, a finished turn with thinking, a
-  parallel tool group, a plan and an answer, and a second turn waiting on an approval.
-  Captured with a throwaway `KOVA_HOME` under `/tmp/kova-demo` and a scripted stub model,
-  at 1440x900 and 390x844 (2x), metadata stripped.
+- `redesign-before-*` / `redesign-after-*`: matching views of the main branch and the
+  live step trace redesign. The same scripted local model reads two sample files
+  in parallel, replies, and asks before saving a summary. `start` shows the welcome
+  screen; `chat-top` shows the expanded reasoning and parallel results; `chat` shows
+  the pending approval. Captured in Chromium at 1440×900 and 390×844 (1.25×) in dark
+  and light, with a throwaway Kova home. The approval's demo folder label is
+  anonymized and image metadata is stripped.
 
 The `cli-*` and `tui-*` files are the terminal screenshots from earlier work.
