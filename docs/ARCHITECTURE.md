@@ -487,7 +487,12 @@ values, so no component repeats a size or a gap. Optional custom CSS (#178) is u
 it is off by default, served at `/app/custom.css` only while the shared `custom_css`
 preference is on, stripped of `@import` and any `url(...)` outside `/app/assets/`, capped
 at 64 KiB, and appended last by `web_assets/custom_css.js`. `?safe=1` skips it so a broken
-stylesheet can be turned off. An unsent
+stylesheet can be turned off. A window opened from `kova web` paints its first frame from
+the local copies, then reads the shared document once `app.js` has exchanged the one-use
+login ticket for a session cookie (`KovaTheme.sync`, `KovaTypography.sync`,
+`KovaCustomCss.sync`, `KovaMotion.sync`, `KovaReasoning.sync`, `KovaThinking.sync`,
+`KovaStarters.sync` and the shortcut registry's `sync`), so a first launch never fires
+unauthenticated preference requests. An unsent
 message is kept per saved chat (`web_assets/drafts.js`) so it survives a reload and returns
 when that chat opens. Sending, queueing, steering or deleting the chat clears its draft, and
 an incognito chat never gets a draft key. On phone widths (`web_assets/mobile.js` and
@@ -555,6 +560,10 @@ model-catalog check, then the models to keep and the default for new chats.
 The installed PWA handles a platform share with its service worker: files wait
 briefly in CacheStorage, then the page uploads them through the normal
 authenticated `/chats/{id}/attachments` API and shows ordinary attachment chips.
+`/app/sw.js` is served with `Service-Worker-Allowed: /app`, because a worker
+may otherwise only claim its own folder (`/app/`) and the browser would refuse
+the page's `scope: '/app'` registration, leaving the app with no offline shell,
+share target or notifications.
 If the worker is not in control, `/app/share` saves the same native attachments
 on the server before redirecting to a one-use composer. Text and link shares
 stay editable drafts. Shared images obey the selected model's vision setting;

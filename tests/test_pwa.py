@@ -54,6 +54,26 @@ def login(app, client, name="demo"):
     client.cookies.set("kova_session", name)
 
 
+def test_the_worker_may_claim_the_page_it_serves(tmp_path):
+    """The page registers ``/app/sw.js`` for scope ``/app``, so the worker needs
+    permission for it. A worker's default maximum scope is its own folder
+    (``/app/``), which excludes ``/app`` itself: the browser then refuses the
+    registration outright and the offline shell, the share target and
+    notifications never install, with only a console error to show for it.
+    """
+    config = load_config(tmp_path)
+    app = create_app(config)
+    with TestClient(app, base_url="http://localhost") as client:
+        response = client.get("/app/sw.js")
+        assert response.status_code == 200
+        assert response.headers["service-worker-allowed"] == "/app"
+        # The header, the manifest scope and the registration must name the same
+        # page, or the worker silently falls back to a narrower scope.
+        assert client.get("/app/manifest.webmanifest").json()["scope"] == "/app"
+    app_js = INDEX.with_name("app.js").read_text(encoding="utf-8")
+    assert re.search(r"register\('/app/sw\.js',\s*\{scope:\s*'/app'\}\)", app_js)
+
+
 def test_manifest_and_text_share(tmp_path):
     config = load_config(tmp_path)
     config.persona_name = "Nova"

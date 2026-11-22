@@ -171,6 +171,13 @@
     });
   }
 
-  globalThis.KovaStarters = {KEY, MAX, LIMIT, DEFAULT, current, save, render, openEditor};
-  load();
+  // A window opened from `kova web` (or a pairing URL) reaches this script
+  // before app.js has exchanged its one-use token for a session cookie, so the
+  // shared document is not readable yet. Keep the local copy for this first
+  // frame; app.js calls sync() once the window is signed in.
+  const loginPending = () => typeof location === 'object' &&
+    /(^|[#&])(ticket|pair)=/.test(location.hash || '');
+
+  globalThis.KovaStarters = {KEY, MAX, LIMIT, DEFAULT, current, save, render, openEditor, sync: load};
+  if (!loginPending()) load();
 })();

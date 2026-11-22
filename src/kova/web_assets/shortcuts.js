@@ -454,6 +454,7 @@
       registry: REGISTRY,
       presets: PRESET_NAMES.map(name => ({id: name, label: PRESETS[name].label})),
       ready,
+      sync: hydrate,
       overrides: () => ({...overrides}),
       binding: id => resolved()[id] || null,
       labels: id => labels(resolved()[id], {mac}),
@@ -502,8 +503,16 @@
         return () => listeners.delete(listener);
       },
     };
-    hydrate();
+    if (!loginPending()) hydrate();
     return instance;
+  }
+
+  // A window opened from `kova web` (or a pairing URL) reaches this script
+  // before app.js has exchanged its one-use token for a session cookie, so the
+  // shared document is not readable yet. Keep the local keys for this first
+  // frame; app.js calls sync() once the window is signed in.
+  function loginPending() {
+    return typeof location === 'object' && /(^|[#&])(ticket|pair)=/.test(location.hash || '');
   }
 
   // ---------------------------------------------------------------- the page
