@@ -291,10 +291,10 @@ class Agent:
     """Coordinate model streaming, tools, and persistent chat history."""
 
     def stop_task(self, chat_id: str, task_id: str) -> bool:
-        """Stop one call of a running parallel group; the turn and the others go on.
+        """Stop one queued or running call; the turn and its other calls go on.
 
-        False when that call is not running now (already finished, never part of
-        a group, or in another chat).
+        False when the call is finished, was never part of a group, or belongs
+        to a different chat.
         """
         stop = self.task_controls.get(chat_id, {}).get(task_id)
         return bool(stop and stop())
@@ -588,11 +588,11 @@ class Agent:
         if mode == 'work' and capabilities is None and entry is not None and entry.model:
             child_entry = deepcopy(entry)
 
-            async def delegate(args):
+            async def delegate(args, emit=None):
                 child = ModelClient(deepcopy(child_entry), transport=self.transport,
                                     privacy=self.config.privacy_secrets, config=self.config,
                                     fixed_destination=True)
-                return await delegation.analyze(child, args['task'])
+                return await delegation.analyze(child, args['task'], emit)
 
             tools[delegation.NAME] = Tool(
                 delegation.NAME,
@@ -950,8 +950,9 @@ class Agent:
                                                     (f" User guidance: {decision['message']}" if decision.get('message') else ''))
                                 delegated_started.update(i for i, _, _, _ in batch)
                             controls = self.task_controls.setdefault(chat_id, {})
-                            async with aclosing(parallel.run_group(batch, entry.name, grouped,
-                                                                  controls=controls, delegated=is_delegate)) as events:
+                            async with aclosing(parallel.run_group(
+                                    batch, entry.name, grouped, controls=controls,
+                                    run_child=delegate if is_delegate else None)) as events:
                                 async for event in events:
                                     yield event
                         except ToolError as exc:

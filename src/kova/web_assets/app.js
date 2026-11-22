@@ -1541,9 +1541,18 @@
     const blocks = [], approvals = new Map(), toolGroups = [];
     let toolGroup = null;
     let plan = null;
-    // Parallel tool calls draw as a live tree (agent-tree.js, #192).
+    // Parallel tools and delegated analyses draw as live trees (#192).
     const chatId = state.chat?.id;
+    let failedChildren = 0, failureSummary = null;
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint,
+      onFailure: () => {
+        failedChildren += 1;
+        if (!failureSummary) {
+          failureSummary = el('span', 'agent-tree-failures');
+          body.parentNode?.querySelector('.message-label')?.append(failureSummary);
+        }
+        failureSummary.textContent = `${failedChildren} delegated task${failedChildren === 1 ? '' : 's'} failed`;
+      },
       stopTask: id => json(`/chats/${chatId}/tasks/${encodeURIComponent(id)}/stop`, write('POST'))});
     const activityText = el('span', 'shimmer', 'Thinking…');
     // The Kova mark with one small movement (#171): still "working", never a

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import aclosing
 from datetime import datetime
 
 import pytest
@@ -510,3 +511,64 @@ async def test_child_batch_overlap_approval_order_and_turn_limit(setup, decision
     assert chat_id not in agent.task_controls
     assert not agent.approvals.pending
     assert events[-1]["type"] == "done"
+
+
+async def test_child_transcript_streams_before_its_result(setup):
+    cfg, store, memory, tools, chat_id = setup
+    task = "Compare these approaches."
+    fake = FakeModel([
+        calls(("delegate_analysis", {"task": task})),
+        [{"reasoning_content": "Checking the tradeoffs."}, {"content": "Prefer the simpler option."}],
+        text("Done"),
+    ])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    events = []
+    async for event in agent.run_turn(chat_id, "Delegate one analysis."):
+        events.append(event)
+        if event["type"] == "approval":
+            agent.approvals.answer(chat_id, event["id"], "allow")
+
+    child = [event for event in events
+             if event.get("id") == "call_0" and event["type"] != "tool_call_delta"]
+    starts = [event for event in child if event["type"] == "task_start"]
+    assert len(starts) == 1, [(event["type"], event.get("summary")) for event in child]
+    assert starts[0]["kind"] == "agent"
+    assert [(event["type"], event.get("step"), event.get("text")) for event in child] == [
+        ("task_start", None, None),
+        ("tool_call", None, None),
+        ("task_progress", None, None),
+        ("task_output", "reasoning", "Checking the tradeoffs."),
+        ("task_output", "text", "Prefer the simpler option."),
+        ("task_done", None, None),
+        ("tool_result", None, None),
+    ]
+    assert all(event["parent"] == child[0]["parent"] for event in child if event["type"] == "task_output")
+    assert child[-1]["output"] == "Prefer the simpler option."
+    assert "Checking the tradeoffs." not in json.dumps(fake.requests[-1]["messages"])
+    assert "Checking the tradeoffs." not in json.dumps(store.get_messages(chat_id))
+
+
+async def test_a_delegated_task_can_be_stopped_as_soon_as_its_row_appears(setup):
+    cfg, store, memory, tools, chat_id = setup
+    fake = FakeModel([
+        calls(("delegate_analysis", {"task": "Skip this task"}),
+              ("delegate_analysis", {"task": "Run this task"})),
+        text("Only the second child ran."), text("Parent finished."),
+    ])
+    agent = Agent(cfg, store, memory, tools, transport=fake.transport)
+    events = []
+    async with asyncio.timeout(5), aclosing(agent.run_turn(chat_id, "Delegate two tasks.")) as stream:
+        async for event in stream:
+            events.append(event)
+            if event["type"] == "approval":
+                agent.approvals.answer(chat_id, event["id"], "allow")
+            if event["type"] == "task_start" and event["id"] == "call_0":
+                assert agent.stop_task(chat_id, "call_0")
+                assert not agent.stop_task(chat_id, "call_0")
+
+    assert len(fake.requests) == 3
+    assert fake.requests[1]["messages"][-1]["content"] == "Run this task"
+    errors = [event for event in events if event["type"] == "task_error"]
+    assert [event["id"] for event in errors if event["stopped"]] == ["call_0"]
+    assert events[-1]["type"] == "done"
+    assert agent.task_controls == {}
