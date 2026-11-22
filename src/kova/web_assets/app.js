@@ -2706,6 +2706,11 @@
       globalThis.KovaTheme?.sync?.(); globalThis.KovaTheme?.refresh?.();
       globalThis.KovaTypography?.sync?.();
       globalThis.KovaCustomCss?.sync?.();
+      // These read the same document; their first-load read waited for this
+      // session instead of asking while the window was still signed out.
+      globalThis.KovaMotion?.sync?.(); globalThis.KovaReasoning?.sync?.();
+      globalThis.KovaThinking?.sync?.(); globalThis.KovaStarters?.sync?.();
+      globalThis.KovaShortcuts?.current?.sync?.();
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
       await setupIdentity();
       renderStarters();
