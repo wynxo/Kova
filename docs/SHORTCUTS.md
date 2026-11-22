@@ -13,7 +13,7 @@ below lists every key the terminal chat understands.
 | `/` | Open the commands menu |
 | `@` | Attach a file |
 | `#` | Remember a note |
-| `esc` | Interrupt Kova / stop the reply; close a menu |
+| `esc` | Stop the reply; close a menu or a question |
 | `esc` `esc` | Clear the input |
 | `ctrl+c` | Stop · clear the input · twice to exit |
 | `ctrl+d` | Exit (or `ctrl+c` twice) |
@@ -42,8 +42,8 @@ Toggle live details for the current turn:
 
 | Key | What it does |
 | --- | --- |
-| `ctrl+t` | Toggle full model reasoning (streamed live) |
-| `ctrl+o` | Expand / collapse tool calls and their output |
+| `ctrl+t` | Show or fold the model's full reasoning (streamed live) |
+| `ctrl+o` | Open or close every step's details (its arguments and output) |
 | `pgup` `pgdn` | Scroll the expanded details |
 
 ## Command palette
