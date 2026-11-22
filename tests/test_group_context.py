@@ -89,6 +89,16 @@ def test_abandoned_tools_and_passes_do_not_leak_into_another_reply():
         user("@you: First\n\n@critic: Nothing to add")]
 
 
+def test_reused_call_ids_keep_each_rounds_tool_name_and_count():
+    rows = [user("Fix it"), call("coder", "call_0", "read_file"),
+            result("coder", "call_0", "Before"), call("coder", "call_0", "write_file"),
+            result("coder", "call_0", "After"), reply("coder", "Fixed it")]
+    [summary] = view_for("critic", rows, {})
+    assert "(@coder used 2 tools: read_file, write_file)" in summary["content"]
+    [quoted] = view_for("critic", rows, {"share_work": "tools"})
+    assert "> read_file: Before\n> write_file: After" in quoted["content"]
+
+
 def test_trimming_drops_old_joined_text_and_leaves_current_user_and_tool_pairs():
     old = "old" * 80
     rows = [user(old), reply("critic", old), user("Current ask"),

@@ -24,16 +24,20 @@ def _quote(label: str, text: str) -> str:
 
 @dataclass
 class _SharedWork:
-    calls: dict[str, str] = field(default_factory=dict)
+    # Models may reuse a call id across rounds, so keep every call in order and
+    # name each result after the latest call with its id when the result arrives.
+    calls: list[tuple[str, str]] = field(default_factory=list)
     results: list[tuple[str, str]] = field(default_factory=list)
     reasoning: str = ""
 
     def add(self, row: Mapping, share_work: str) -> None:
         for call in row.get("tool_calls") or ():
-            self.calls[call["id"]] = call["function"]["name"]
+            self.calls.append((call["id"], call["function"]["name"]))
         if share_work != "replies" and row["role"] == "tool":
             text = (row.get("content") or "")[:_SHARED_CHARS]
-            self.results.append((row["tool_call_id"], text))
+            name = next((name for ident, name in reversed(self.calls)
+                         if ident == row["tool_call_id"]), "Tool result")
+            self.results.append((name, text))
         if share_work == "everything":
             reasoning = (row.get("reasoning") or row.get("reasoning_content")
                          or (row.get("content") if row["role"] == "reasoning" else None))
@@ -48,9 +52,8 @@ class _SharedWork:
                 return []
             count = len(self.calls)
             tools = "tool" if count == 1 else "tools"
-            return [f"(@{handle} used {count} {tools}: {', '.join(self.calls.values())})"]
-        lines = [_quote(self.calls.get(ident, "Tool result"), text)
-                 for ident, text in self.results]
+            return [f"(@{handle} used {count} {tools}: {', '.join(name for _, name in self.calls)})"]
+        lines = [_quote(name, text) for name, text in self.results]
         if share_work == "everything" and self.reasoning:
             lines.append(_quote("Reasoning", self.reasoning))
         return lines
