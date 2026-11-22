@@ -206,6 +206,25 @@ assert.equal(bucket({last_message: at(8)}, now), 'week');
 assert.equal(bucket({last_message: at(9)}, now), 'older');
 assert.equal(bucket({created: 'not a date'}, now), 'older');
 console.log('Pinned chats and local-calendar date groups passed');
+
+// Contacts are a separate, alphabetical section. Their chat shortcut ignores
+// pins and only considers conversations addressed directly to that bot.
+const contactGroup = sandbox.KovaChatList.contacts([
+  {id: 'scribe', name: 'Scribe', state: 'ok'},
+  {id: 'broken', state: 'error'},
+  {id: 'atlas', name: 'Atlas', state: 'ok'},
+]);
+assert.equal(contactGroup.label, 'Contacts');
+assert.equal(contactGroup.bots.map(bot => bot.id).join(','), 'atlas,broken,scribe');
+assert.equal(sandbox.KovaChatList.contacts([]).bots.length, 0);
+const botChats = [
+  {kind: 'bot', bot_id: 'atlas', id: 'pinned', pinned: true, last_message: at(1)},
+  {kind: 'group', bot_id: 'atlas', id: 'group', last_message: at(0)},
+  {kind: 'bot', bot_id: 'scribe', id: 'other', last_message: at(0)},
+  {kind: 'bot', bot_id: 'atlas', id: 'latest', created: at(0)},
+];
+assert.equal(sandbox.KovaChatList.latestDirectChat(botChats, 'atlas').id, 'latest');
+assert.equal(sandbox.KovaChatList.latestDirectChat(botChats, 'missing'), null);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 // The controls follow the declared contract: the provider's capabilities
 // intersected with the mode's, never a hardcoded mode name.

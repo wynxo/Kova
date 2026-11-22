@@ -72,8 +72,9 @@
     button.setAttribute('aria-label', label); button.append(icon(name)); return button;
   }
   function empty(flag) {
-    $('welcome').hidden = !flag;
+    $('welcome').hidden = !flag || (!!bots && state.chat?.kind === 'bot');
     document.body.classList.toggle('is-empty', flag);
+    paintBotChat();
     renderStarters();
   }
   // Start screen suggestions and greeting (#194). starters.js owns the list,
@@ -203,6 +204,8 @@
     const attachmentCount = pendingAttachments.filter(a => a.chat_id === state.chat?.id).length;
     for (const id of ['new-chat', 'new-incognito', 'mode', 'web', 'model', 'permission', 'cwd', 'add-provider']) $(id).disabled = busy || !state.connected;
     for (const id of ['model', 'mode', 'reasoning-effort']) $(id).disabled = busy || pickerSaving || !state.connected;
+    if (bots?.botModel(state.chat)) $('model').disabled = $('reasoning-effort').disabled = true;
+    bots?.refreshControls();
     // Incognito belongs to starting a chat, so the + menu offers it on the start screen.
     $('new-incognito').hidden = !!state.chat;
     for (const id of ['mode', 'web', 'permission', 'cwd']) $(id).disabled ||= !!state.chat?.ephemeral;
@@ -216,7 +219,7 @@
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend || state.comparing; $('steer').hidden = !busy || nothingToSend || state.comparing;
-    $('compare-open').disabled = busy || pickerSaving || !state.connected;
+    $('compare-open').disabled = busy || pickerSaving || !state.connected || !!bots?.contact(state.chat);
     $('send').disabled = readingAttachments || pickerSaving || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = !!state.chat?.ephemeral || state.busy || pickerSaving || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
@@ -248,6 +251,8 @@
     state.activity.clear();
     state.activityStarted = {};
     state.finishedActivity = [];
+    bots?.reset();
+    paintBotChat();
     renderActivity();
     $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
@@ -273,6 +278,13 @@
   const write = (method, value) => ({method, body: JSON.stringify(value)});
   const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat,
     models: () => state.models || []});
+  const bots = isQuick ? null : globalThis.KovaBots?.create({el, icon, json, write, safe,
+    editor: $('bot-editor'), header: $('bot-chat-header'), welcome: $('bot-welcome'),
+    models: () => state.models, activeModel: () => defaultModel, chat: () => state.chat,
+    available: () => state.connected && !state.busy,
+    onEditorOpen: () => { ++state.navigationVersion; sidebar(false); options(false); toggleZen(false, {fromTheme: true}); },
+    onChange: () => { paintBotChat(); syncComposerModel(); history(state.chats); },
+    openChat: openBotChat, focusChat: () => $('prompt').focus()});
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.
@@ -534,6 +546,7 @@
       }
     } else if (content) { const md = el('div', 'markdown'); markdown(md, content, true); body.append(md); }
     article.append(label, body); $('messages').append(article);
+    if (metadata.author) bots?.labelReply(label, metadata.author, metadata.author_name, state.persona.name);
     if (role === 'user') {
       messageActions(article, () => content, 'user', null, {
         created: metadata.created,
@@ -769,9 +782,12 @@
   const CHAT_STATE = {'working': 'Working', 'blocked-on-approval': 'Waiting for your OK'};
   function history(chats, focusChatId = null) {
     const list = $('chat-list');
+    const focused = bots && list.contains(document.activeElement) ? document.activeElement : null;
     list.replaceChildren();
     list.removeAttribute?.('aria-busy');
     const searching = !!$('search').value.trim();
+    bots?.renderContacts(list, chats, searching);
+    if (focused?.closest('.bot-contacts') && list.contains(focused)) focused.focus({preventScroll: true});
     const {sections, ungrouped} = projects?.render(list, chats, {
       searching, disabled: state.busy || !state.connected,
     }) ?? {sections: [], ungrouped: chats};
@@ -780,7 +796,7 @@
       if (searching) { empty.append(el('span', '', 'No chats found.')); list.append(empty); return; }
       empty.append(el('span', '', 'No chats yet.'));
       const begin = el('button', 'btn quiet', 'Start a chat'); begin.type = 'button';
-      begin.onclick = () => { $('prompt').focus(); };
+      begin.onclick = () => { bots?.close(); $('prompt').focus(); };
       empty.append(begin); list.append(empty);
     }
     // Pinned chats first, then date groups; app.js only renders what the module
@@ -797,6 +813,7 @@
         if (chat.pinned) titleRow.append(icon('pin'));
         if (chat.ephemeral) titleRow.append(icon('eye-off'));
         titleRow.append(document.createTextNode(title));
+        bots?.decorateHistory(titleRow, chat);
         button.append(titleRow); button.title = title;
         // A row is its title. A second line appears only while the chat needs
         // attention (working, or waiting on an approval); the date groups say when.
@@ -1036,10 +1053,19 @@
     $('incognito-note').hidden = !state.chat?.ephemeral;
     $('chat-menu').hidden = !state.chat;
     $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New chat';
+    paintBotChat();
     document.title = state.chat?.ephemeral ? `Incognito · ${state.persona.name}` : state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
     // The optional themed desktop title bar shows the same window title as the
     // native one; it is decorative for assistive tech, which reads the window.
     $('titlebar-title').textContent = document.title;
+  }
+  function paintBotChat() {
+    if (!bots) return;
+    const chat = state.chat, empty = document.body.classList.contains('is-empty');
+    const bot = bots.renderChat(chat, $('chat-title'), modelByName(composerModel().model)?.model, empty);
+    const label = `Message ${bot?.name || state.persona.name}`;
+    $('prompt').placeholder = label;
+    $('prompt-label').textContent = label;
   }
   function renderQueue() {
     const strip = $('queue-strip');
@@ -1123,7 +1149,7 @@
         if (msg.model_switch) modelSwitch(msg.model_switch);
       }
       else if (msg.role === 'assistant') {
-        if (!turn) turns.push(turn = {body: message('assistant'), parts: [], tools: 0, retry: retryable});
+        if (!turn) turns.push(turn = {body: message('assistant', undefined, undefined, [], msg), parts: [], tools: 0, retry: retryable});
         if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
         if (msg.content && !msg.tool_calls?.length) turn.reply = msg;
         if (msg.usage) turn.usage = msg.usage;
@@ -1204,15 +1230,16 @@
     if (next === 'blocked-on-approval' || recovered.cards.size) safe(() => loadPending(chatId));
     if (next !== 'done') background = chatId;
     // Show the finished reply, but only for a turn this window did not stream itself.
-    else if (background === chatId && previous !== 'done') { background = null; safe(() => openChat(chatId)); }
+    else if (background === chatId && previous !== 'done') { background = null; safe(() => openChat(chatId, true)); }
   }
-  async function openChat(id) {
+  async function openChat(id, keepEditor = false) {
     if (state.busy) return;
     const version = ++state.navigationVersion;
     const chat = await json(`/chats/${id}`);
     if (version === state.navigationVersion && !state.busy) {
       if (state.chat?.id !== id) await discardIncognito();
       if (version !== state.navigationVersion || state.busy) return;
+      if (!keepEditor) bots?.close();
       setChat(chat); background = null;
       if (chat.state && chat.state !== 'done') {
         background = id;
@@ -1220,6 +1247,7 @@
           ? 'This reply is paused until you answer below.' : 'Kova is still working on this reply. It appears here when it finishes.'));
         safe(() => loadPending(id));
       }
+      return true;
     }
   }
   async function discardIncognito() {
@@ -1231,7 +1259,30 @@
       $('prompt').value = ''; resize();
     }
   }
-  async function newChat() { if (!state.busy) { ++state.navigationVersion; const wasIncognito = !!state.chat?.ephemeral; await discardIncognito(); setChat(null); $('prompt').value = ''; $('prompt').focus(); if (wasIncognito) await refreshChats(); } }
+  async function newChat() { if (!state.busy) { ++state.navigationVersion; const wasIncognito = !!state.chat?.ephemeral; await discardIncognito(); bots?.close(); setChat(null); $('prompt').value = ''; $('prompt').focus(); if (wasIncognito) await refreshChats(); } }
+  let startingBotChat = false;
+  async function openBotChat(bot, fresh = false) {
+    if (state.busy || !state.connected || startingBotChat || bot.state !== 'ok') return;
+    startingBotChat = true;
+    const version = ++state.navigationVersion;
+    try {
+      const latest = fresh ? null : KovaChatList.latestDirectChat(await json('/chats'), bot.id);
+      if (version !== state.navigationVersion || state.busy) return;
+      if (latest) {
+        if (await openChat(latest.id)) $('prompt').focus();
+        return;
+      }
+      await discardIncognito();
+      if (version !== state.navigationVersion || state.busy) return;
+      const chat = await json('/chats', write('POST', {bot_id: bot.id}));
+      if (version === state.navigationVersion && !state.busy) {
+        bots.close();
+        setChat(chat);
+        $('prompt').focus();
+      }
+      await refreshChats();
+    } finally { startingBotChat = false; }
+  }
   let startingProjectChat = false;
   async function newProjectChat(project) {
     if (state.busy || !state.connected || startingProjectChat) return;
@@ -1243,6 +1294,7 @@
       const chat = await json('/chats', write('POST', {project_id: project.id}));
       if (version === state.navigationVersion && !state.busy) {
         projects.open(project.id);
+        bots?.close();
         setChat(chat);
         $('prompt').focus();
       }
@@ -1575,6 +1627,7 @@
     let plan = null;
     // Parallel tools and delegated analyses draw as live trees (#192).
     const chatId = state.chat?.id;
+    let authorResolved = state.chat?.kind !== 'bot';
     let failedChildren = 0, failureSummary = null;
     const tasks = window.KovaAgentTree?.turn({insert: node => body.insertBefore(node, activity), label: toolLabel, hint: toolHint,
       onFailure: () => {
@@ -1624,6 +1677,10 @@
     return {
       accept(event) {
         const kind = event.type;
+        if (!authorResolved && (event.author || ['reasoning', 'text', 'tool_call', 'done'].includes(kind))) {
+          authorResolved = true;
+          bots?.labelReply(body.parentNode.querySelector('.message-label'), event.author, event.author_name, state.persona.name);
+        }
         if (kind !== 'reasoning') endReasoning();
         if (tasks?.accept(event)) {
           current = null; toolGroup = null;
@@ -1886,7 +1943,7 @@
       }
       $('messages').querySelectorAll('.message-action-retry').forEach(button => button.remove());
       composerModules.history?.reset(); composerModules.mentions?.close();
-      const reply = message('assistant');
+      const reply = message('assistant', undefined, undefined, [], {author: bots?.contact(state.chat)?.id});
       nearBottom = true; turn = turnView(reply, model); follow();
       const response = replacement || await stream();
       submittedChat = null;
@@ -2132,6 +2189,10 @@
   $('compare-open').hidden = !compare;
   $('compare-open').onclick = () => compare?.choose();
   $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
+  if (bots) {
+    $('new-bot').hidden = false;
+    $('new-bot').onclick = () => bots.openEditor(null, $('compose-more'));
+  }
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
   $('menu').onclick = () => toggleSidebar();
@@ -2165,7 +2226,8 @@
     const current = state.chat && !state.chat.ephemeral ? state.chat : null;
     const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
     add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
-    if (compare) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
+    for (const item of bots?.paletteActions() || []) add('Contacts', item);
+    if (compare && !bots?.contact(state.chat)) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
     add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
     add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:searchConversations});
     add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
@@ -2254,7 +2316,7 @@
     add('Settings', {title:'Permission rules…', hint:'Pre-approve tools with patterns', keywords:'rules allow deny approvals', run:() => safe(openRules)});
 
     for (const model of state.models) {
-      if (state.busy) break;
+      if (state.busy || bots?.botModel(state.chat)) break;
       add('Models', {title:`Use ${model.model || model.name}`, hint:model.provider_name || 'Custom provider', keywords:`model provider ${model.name}`, run:() => { $('model').value = model.name; $('model').onchange?.(); }});
     }
     // Model-picker actions (#183): the chip's Favourite and Make default rows.
@@ -2422,7 +2484,7 @@
   document.addEventListener('kova:theme', reportWindowChrome);
   document.addEventListener('keydown', event => {
     if (event.isComposing || document.querySelectorAll('dialog[open]').length) return;  // dialogs keep their own keys
-    if (document.body.classList.contains('settings-open')) return;  // the Settings view owns the keyboard
+    if (document.body.classList.contains('settings-open') || bots?.editing()) return;
     const action = globalThis.KovaShortcuts?.current?.actionFor?.(event, {guardTyping: typingIn(event.target)}) || null;
     const run = action && shortcutActions[action];
     if (run && run(event) !== false) { event.preventDefault(); return; }
@@ -2501,6 +2563,8 @@
     } catch (_) { /* storage off: the choice still holds for this window */ }
   }
   function composerModel() {
+    const assigned = bots?.botModel(state.chat);
+    if (assigned) return {model: assigned.name, reasoning_effort: null};
     if (state.chat?.model) return {model: state.chat.model, reasoning_effort: state.chat.reasoning_effort ?? null};
     if (draftModel && modelByName(draftModel.model)?.model) return draftModel;
     return {model: defaultModel, reasoning_effort: modelByName(defaultModel)?.reasoning_effort ?? null};
@@ -2539,7 +2603,8 @@
       const option = el('option', '', effortLabels[level]); option.value = level; return option;
     }));
     effort.value = supported.includes(selection.reasoning_effort) ? selection.reasoning_effort : '';
-    $('reasoning-effort-row').hidden = !supported.length;
+    $('reasoning-effort-row').hidden = !supported.length || !!bots?.botModel(state.chat);
+    paintBotChat();
     controls();
     return refreshCapabilities(selection.model);
   }
@@ -2555,6 +2620,7 @@
     }
   }
   async function chooseComposerModel(name, effort = modelByName(name)?.reasoning_effort ?? null) {
+    if (bots?.botModel(state.chat)) throw new Error('Change this bot’s model in Edit bot.');
     if (!modelByName(name)?.model) throw new Error('Unknown model. Choose a configured model.');
     await savePicker(async () => {
       const next = {model: name, reasoning_effort: effort};
@@ -2708,6 +2774,11 @@
       if (live.lost) { live.lost = false; safe(resync); }
     });
     source.addEventListener('ping', () => { live.pinged = true; alive(); });
+    source.addEventListener('bot_changed', event => {
+      if (state.events !== source || !bots) return;
+      alive();
+      try { void bots.refresh(JSON.parse(event.data).id); } catch (_) {}
+    });
     source.addEventListener('conversation_state', event => {
       if (state.events !== source) return;
       alive();
@@ -2750,8 +2821,8 @@
   }
   // Anything missed while the stream was down: chat states, the open chat, model status.
   async function resync() {
-    await refreshChats();
-    if (state.chat?.id && !state.busy) await openChat(state.chat.id);
+    await Promise.all([refreshChats(), bots?.refresh()]);
+    if (state.chat?.id && !state.busy) await openChat(state.chat.id, true);
     await health();
   }
   function checkStream() {
@@ -2789,7 +2860,7 @@
       draftModel = restorePickerModel();
       renderModels(models);
       await syncComposerModel();
-      await refreshChats(); controls(); await health();
+      await Promise.all([refreshChats(), bots?.refresh()]); controls(); await health();
       live.lost = false; live.retry = 0; live.pinged = false; connectEvents();
       if (share) {
         const local = await readWorkerShare(share);
@@ -3963,7 +4034,7 @@
     empty: 'No model is set up yet. Add a provider, then choose one of its models here.',
     actions: [
       {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
-      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy, run: () => { options(false); compare?.choose(); }},
+      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy && !bots?.contact(state.chat), run: () => { options(false); compare?.choose(); }},
       {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
       {glyph: 'settings', label: 'Manage providers…', run: () => { options(false); openProvidersSettings(); }},
     ]});

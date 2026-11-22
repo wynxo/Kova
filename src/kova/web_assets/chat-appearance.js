@@ -147,5 +147,5 @@
     });
   }
 
-  window.KovaChatAppearance = {COLOURS, ICONS, decorateRow, decorateTopbar, openDialog};
+  window.KovaChatAppearance = {COLOURS, ICONS, appearanceOf, decorateRow, decorateTopbar, openDialog};
 })();

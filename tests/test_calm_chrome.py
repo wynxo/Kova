@@ -78,8 +78,9 @@ def test_header_is_toggle_title_and_actions_only() -> None:
     parser, html = _shell()
     header = re.search(r'<header class="topbar">(.*?)</header>', html, re.S).group(1)
     ids = re.findall(r'\bid="([^"]+)"', header)
-    assert ids == ["menu", "chat-title", "activity", "activity-dot", "activity-count",
+    assert ids == ["menu", "chat-title", "bot-chat-header", "activity", "activity-dot", "activity-count",
                    "activity-panel", "chat-menu", "compact-now"], ids
+    assert "hidden" in parser.by_id["bot-chat-header"], "the bot replaces the title only in a direct chat"
     assert "hidden" in parser.by_id["chat-menu"], "chat actions appear only once a chat is open"
     assert "hidden" in parser.by_id["activity"], "activity says nothing while nothing runs"
     assert "hidden" in parser.by_id["activity-panel"]
