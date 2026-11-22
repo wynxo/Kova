@@ -349,6 +349,8 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
                 snapshot(page, "trace")
                 menu.click()
             expect(contacts.get_by_role("button", name="Atlas", exact=True)).to_be_visible()
+            # The title arrives after the reply; don't capture the placeholder.
+            expect(page.locator("#chat-list")).to_contain_text("How should I check")
             snapshot(page, "contacts")
 
             # An API-side edit reaches the open header without a reload. The
