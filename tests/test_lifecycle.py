@@ -2,6 +2,7 @@
 
 import json
 import signal
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -118,6 +119,8 @@ def fake_install(lifecycle, monkeypatch):
     def run(args, **options):
         calls.append(([str(arg) for arg in args], options))
         if args[0] == "/test/uv":
+            # uv --force replaces the whole tool environment; never leave the old dist-info beside the new one.
+            shutil.rmtree(build.tool_dir() / "lib", ignore_errors=True)
             write_tool("0.2.0")
             launcher = updater.Path(options["env"]["UV_TOOL_BIN_DIR"]) / ("kova.exe" if updater.os.name == "nt" else "kova")
             launcher.parent.mkdir(parents=True, exist_ok=True)
