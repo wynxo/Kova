@@ -8,6 +8,11 @@ let win, tray, child, quick, quitting = false, starting = false, origin, home;
 let appName = 'Kova', trayState = 'idle', chrome = 'native';
 const icon = path.join(__dirname, 'assets/icon.png');
 const trayIcon = path.join(__dirname, 'assets/icon-64.png');
+if (process.platform === 'linux' && !app.isPackaged) {
+  app.setDesktopName('kova.desktop');
+  app.commandLine.appendSwitch('class', 'kova');
+}
+if (process.platform === 'win32') app.setAppUserModelId('io.github.wynxo.kova');
 // Tray state -> asset. The tray icon is OS chrome, so the status dot is baked
 // into the mark at build time (scripts/build_icons.py:tray + DOT_STATUS): idle
 // shows the mark alone, working a white dot, waiting amber.
@@ -16,6 +21,18 @@ const TRAY_ASSETS = {
   working: path.join(__dirname, 'assets/tray-working.png'),
   waiting: path.join(__dirname, 'assets/tray-waiting.png'),
 };
+function diagnostic(error) {
+  // Electron loadURL errors can include the single-use session fragment.
+  return String(error?.message ?? error).replace(/#ticket=[^\s'"]+/g, '#ticket=<redacted>');
+}
+// The CLI distinguishes a real window, a single-instance handoff, and a
+// native exit before JavaScript runs. Standalone Electron has no such caller.
+let startupMarked = false;
+function markStartup(state) {
+  if (startupMarked || !process.env.KOVA_DESKTOP_STARTUP) return;
+  fs.writeFileSync(process.env.KOVA_DESKTOP_STARTUP, state, {mode: 0o600});
+  startupMarked = true;
+}
 async function initialize() {
   const desktopSettings = settings();
   ({home, origin} = desktopSettings);
@@ -24,15 +41,23 @@ async function initialize() {
   fs.mkdirSync(profile, {recursive: true, mode: 0o700});
   app.setPath('userData', profile);
   if (!app.requestSingleInstanceLock()) {
+    markStartup('profile-busy');
     app.quit();
     return;
   }
   app.on('second-instance', () => show());
   await app.whenReady();
+  if (process.platform === 'darwin') app.dock.setIcon(icon);
   await create(desktopSettings.config);
 }
-initialize().catch(e => { console.error(e.message); app.quit(); });
-function show() { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
+initialize().catch(e => { console.error('Electron startup:', diagnostic(e)); app.exit(1); });
+function show() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  markStartup('ready');
+}
 // Quick ask (#71): a small, always-on-top window over /app?quick=1, toggled by a
 // global shortcut. The selection chip reads the clipboard in this process and
 // hands it to the page over a narrow channel.
@@ -84,7 +109,7 @@ async function showQuick() {
     if (window.isMinimized()) window.restore();
     window.show(); window.focus();
   } catch (e) {
-    console.error('Quick ask unavailable:', e.message);
+    console.error('Quick ask unavailable:', diagnostic(e));
     show();  // fall back to the main window
   }
 }
@@ -321,7 +346,7 @@ async function start() {
     }
     if (!quitting) await win.loadURL(origin + '/app' + (chrome === 'themed' ? '?titlebar=themed' : '') + '#ticket=' + encodeURIComponent(value));
   } catch (e) {
-    console.error(e.message);
+    console.error(diagnostic(e));
     if (!quitting) {
       await status(true);
       show();

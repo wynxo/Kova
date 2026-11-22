@@ -22,6 +22,7 @@ import psutil
 
 from kova import __version__, autostart
 from kova.config import kova_home
+from kova.desktop_registration import linux_icons, refresh_linux_caches, registration_path
 
 REPOSITORY = "https://github.com/wynxo/Kova"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Kova"
@@ -128,7 +129,8 @@ def update(ref: str, emit=print) -> None:
         subprocess.run(command, check=True, env=env)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise LifecycleError(f"Kova update failed: {exc}") from exc
-    if (kova_home() / "desktop" / "package.json").is_file():
+    entry = registration_path()
+    if (kova_home() / "desktop" / "package.json").is_file() or (entry is not None and entry.is_file()):
         # Use the newly installed executable, not modules from the old process.
         launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova.exe" if os.name == "nt" else "kova")
         try:
@@ -136,25 +138,7 @@ def update(ref: str, emit=print) -> None:
         except (OSError, subprocess.CalledProcessError):
             emit("Kova CLI was updated, but desktop preparation failed. Run kova app to retry, or use kova web.")
             return
-    _repair_menu_entry(Path(env["UV_TOOL_BIN_DIR"]))
     emit("✓ Updated Kova. Run: kova")
-
-
-def _repair_menu_entry(bin_dir: Path) -> None:
-    """Point an old Linux app-menu entry at `kova app` (the kova-app command is gone)."""
-    entry = Path.home() / ".local/share/applications/kova.desktop"
-    try:
-        text = entry.read_text()
-    except OSError:
-        return
-    if "kova-app" not in text:
-        return
-    lines = [f'Exec="{bin_dir / "kova"}" app' if line.startswith("Exec=") and "kova-app" in line else line
-             for line in text.splitlines()]
-    try:
-        entry.write_text("\n".join(lines) + "\n")
-    except OSError:
-        pass
 
 
 def verified_server(pid: int, home: Path):
@@ -213,13 +197,9 @@ def remove_desktop_registration() -> None:
     if sys.platform == "linux":
         share = Path.home() / ".local/share"
         (share / "applications/kova.desktop").unlink(missing_ok=True)
-        (share / "icons/hicolor/512x512/apps/kova.png").unlink(missing_ok=True)
-        for name, args in (
-            ("update-desktop-database", [str(share / "applications")]),
-            ("gtk-update-icon-cache", ["-f", "-t", str(share / "icons/hicolor")]),
-        ):
-            if tool := shutil.which(name):
-                subprocess.run([tool, *args], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _, icon in linux_icons(share):
+            icon.unlink(missing_ok=True)
+        refresh_linux_caches(share)
     elif sys.platform == "darwin":
         bundle = Path.home() / "Applications/Kova.app"
         if (bundle / "Contents/Info.plist").is_file() and not bundle.is_symlink():

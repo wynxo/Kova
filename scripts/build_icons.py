@@ -289,11 +289,27 @@ PNG_SIZES = {
     WEB / "icon-180.png": 180,
     WEB / "icon-192.png": 192,
     WEB / "icon-512.png": 512,
-    DESKTOP / "icon-32.png": 32,
-    DESKTOP / "icon-64.png": 64,
-    DESKTOP / "icon-256.png": 256,
+    **{DESKTOP / f"icon-{size}.png": size
+       for size in (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256)},
     DESKTOP / "icon.png": 512,
 }
+
+
+def ico_bytes(frames: list[tuple[int, bytes]]) -> bytes:
+    """Write a Windows ICO with a directory of PNG images."""
+    offset = 6 + 16 * len(frames)
+    directory = []
+    for size, png in frames:
+        dimension = size % 256
+        directory.append(struct.pack("<BBBBHHII", dimension, dimension, 0, 0, 1, 32, len(png), offset))
+        offset += len(png)
+    return struct.pack("<HHH", 0, 1, len(frames)) + b"".join(directory) + b"".join(png for _, png in frames)
+
+
+def icns_bytes(frames: dict[bytes, bytes]) -> bytes:
+    """Write a macOS icon container with PNG images."""
+    body = b"".join(kind + struct.pack(">I", len(png) + 8) + png for kind, png in frames.items())
+    return b"icns" + struct.pack(">I", len(body) + 8) + body
 
 
 def outputs() -> dict[Path, bytes]:
@@ -311,6 +327,18 @@ def outputs() -> dict[Path, bytes]:
 
     for path, size in PNG_SIZES.items():
         files[path] = png_bytes(render_once(size))
+
+    files[DESKTOP / "icon.ico"] = ico_bytes([
+        (size, files[DESKTOP / f"icon-{size}.png"]) for size in (16, 24, 32, 48, 64, 128, 256)
+    ])
+    files[DESKTOP / "icon.icns"] = icns_bytes({
+        b"icp4": files[DESKTOP / "icon-16.png"],
+        b"icp5": files[DESKTOP / "icon-32.png"],
+        b"icp6": files[DESKTOP / "icon-64.png"],
+        b"ic07": files[DESKTOP / "icon-128.png"],
+        b"ic08": files[DESKTOP / "icon-256.png"],
+        b"ic09": files[DESKTOP / "icon.png"],
+    })
 
     # Tray images: the 64px mark with the per-state dot composited over it.
     mark64 = render_once(64)
@@ -335,6 +363,27 @@ def _pixels(data: bytes) -> bytes:
     return b"".join(out)
 
 
+def _icon_frames(data: bytes, suffix: str) -> dict[bytes, bytes]:
+    """Extract frames independently of offsets and PNG compression."""
+    if suffix == ".ico":
+        frames = {}
+        count = struct.unpack_from("<H", data, 4)[0]
+        for entry in range(6, 6 + count * 16, 16):
+            size, offset = struct.unpack_from("<II", data, entry + 8)
+            frames[data[entry:entry + 8]] = _pixels(data[offset:offset + size])
+        return frames
+
+    frames = {}
+    offset = 8
+    while offset + 8 <= len(data):
+        kind, size = struct.unpack_from(">4sI", data, offset)
+        if size < 8 or offset + size > len(data):
+            raise ValueError("Invalid ICNS frame")
+        frames[kind] = _pixels(data[offset + 8:offset + size])
+        offset += size
+    return frames
+
+
 def is_fresh(path: Path, data: bytes) -> bool:
     if not path.exists():
         return False
@@ -342,7 +391,14 @@ def is_fresh(path: Path, data: bytes) -> bool:
     # A Windows checkout may turn the SVGs' line endings into CRLF.
     if current == data or current.replace(b"\r\n", b"\n") == data:
         return True
-    return path.suffix == ".png" and current[:8] == data[:8] and _pixels(current) == _pixels(data)
+    if path.suffix == ".png":
+        return current[:8] == data[:8] and _pixels(current) == _pixels(data)
+    if path.suffix in {".ico", ".icns"} and current[:4] == data[:4]:
+        try:
+            return _icon_frames(current, path.suffix) == _icon_frames(data, path.suffix)
+        except (ValueError, struct.error, zlib.error):
+            return False
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:

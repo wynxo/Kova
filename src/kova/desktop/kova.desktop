@@ -9,4 +9,4 @@ Terminal=false
 Categories=Utility;
 Keywords=AI;Assistant;Chat;Local;
 StartupNotify=true
-StartupWMClass=Kova
+StartupWMClass=kova

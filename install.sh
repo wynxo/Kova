@@ -73,6 +73,7 @@ main() {
 
     # The desktop app is optional: if it cannot be prepared, finish the CLI
     # install anyway and say how to add the app later.
+    packaged_registration=0
     skip_desktop() {
         say "Note: $* Kova itself is installed; open it in your browser with kova web."
         if [ -n "${tree-}" ]; then rm -rf -- "$tree"; trap - 0; fi
@@ -88,6 +89,14 @@ main() {
         dest=$data/desktop
         if [ -x "$UV_TOOL_BIN_DIR/kova" ] && "$UV_TOOL_DIR/kova-ai/bin/python" -c \
             'from kova.app import refresh_desktop' 2>/dev/null; then
+            if "$UV_TOOL_DIR/kova-ai/bin/python" -c 'import kova.desktop_registration' 2>/dev/null; then
+                "$UV_TOOL_BIN_DIR/kova" app --prepare --register ||
+                    { skip_desktop 'Preparing or registering the desktop app failed.'; return; }
+                packaged_registration=1
+                say "Desktop app files: $dest"
+                say 'Registered Kova in your application menu.'
+                return
+            fi
             "$UV_TOOL_BIN_DIR/kova" app --prepare ||
                 { skip_desktop 'Preparing the desktop app failed.'; return; }
             desktop_src=$dest
@@ -106,7 +115,7 @@ main() {
                 say "Downloading the desktop app from $url ..."
                 if curl -fsSL "$url" -o "$tree/kova.tar.gz" && mkdir -p "$tree/tree" &&
                    tar -xzf "$tree/kova.tar.gz" -C "$tree/tree"; then
-                    for candidate in "$tree/tree"/Kova-*/desktop; do
+                    for candidate in "$tree/tree"/Kova-*/src/kova/desktop "$tree/tree"/Kova-*/desktop; do
                         if [ -f "$candidate/package.json" ]; then desktop_src=$candidate; break; fi
                     done
                 fi
@@ -153,7 +162,7 @@ main() {
     say 'To use kova in this terminal, run (or add to your shell profile):'
     # shellcheck disable=SC2016 # Print a copyable shell command, not current values.
     say '  export PATH="$HOME/.local/bin:$PATH"'
-    if [ "$register_desktop" -eq 1 ]; then
+    if [ "$register_desktop" -eq 1 ] && [ "$packaged_registration" -eq 0 ]; then
         case "$(uname -s)" in
         Linux)
         [ -f "$dest/assets/icon.png" ] || die 'The desktop app files are incomplete: assets/icon.png is missing.'
@@ -185,7 +194,11 @@ main() {
         bundle="$HOME/Applications/Kova.app/Contents"
         mkdir -p "$bundle/MacOS" "$bundle/Resources"
         cp "$dest/launch" "$bundle/MacOS/Kova"
-        cp "$dest/node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns" "$bundle/Resources/kova.icns"
+        icon="$dest/assets/icon.icns"
+        if [ ! -f "$icon" ]; then
+            icon="$dest/node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns"
+        fi
+        cp "$icon" "$bundle/Resources/kova.icns"
         cat > "$bundle/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

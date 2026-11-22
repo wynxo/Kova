@@ -85,11 +85,16 @@ function Install-Kova {
         $App = Join-Path $Bin 'kova.exe'
         $ToolPython = Join-Path $env:UV_TOOL_DIR 'kova-ai\Scripts\python.exe'
         $PackagedDesktop = $false
+        $PackagedRegistration = $false
         if ((Test-Path -LiteralPath $App) -and (Test-Path -LiteralPath $ToolPython)) {
-            $PackagedDesktop = [bool](& $ToolPython -c 'from kova import app; print(int(hasattr(app, ''refresh_desktop'')))' | Where-Object { $_ -eq '1' })
+            $DesktopCapabilities = & $ToolPython -c 'from importlib.util import find_spec; from kova import app; print(int(hasattr(app, ''refresh_desktop'')) + int(find_spec(''kova.desktop_registration'') is not None))'
+            $PackagedDesktop = $DesktopCapabilities -in '1', '2'
+            $PackagedRegistration = $DesktopCapabilities -eq '2'
         }
         if ($PackagedDesktop) {
-            & $App app --prepare
+            $PrepareArgs = @('app', '--prepare')
+            if ($PackagedRegistration) { $PrepareArgs += '--register' }
+            & $App @PrepareArgs
             if ($LASTEXITCODE -ne 0) { throw 'Preparing the desktop app failed. Run kova app to retry.' }
             $DesktopSource = $DesktopDest
         } else {
@@ -141,16 +146,20 @@ function Install-Kova {
             }
             $Electron = Join-Path $DesktopDest 'node_modules\electron\dist\electron.exe'
             if (-not (Test-Path -LiteralPath $Electron)) { throw 'Electron is missing after npm ci. Rerun with Electron downloads enabled.' }
-            # Direct Electron target: no console window and no Node/npm needed on click.
-            $Programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-            New-Item -ItemType Directory -Path $Programs -Force | Out-Null
-            $Shell = New-Object -ComObject WScript.Shell
-            $Shortcut = $Shell.CreateShortcut((Join-Path $Programs 'Kova.lnk'))
-            $Shortcut.TargetPath = $Electron
-            $Shortcut.Arguments = "`"$DesktopDest`" `"--kova-home=$Data`""
-            $Shortcut.WorkingDirectory = $DesktopDest
-            $Shortcut.Description = 'Private local AI assistant'
-            $Shortcut.Save()
+            if (-not $PackagedRegistration) {
+                # Compatibility with refs which do not register their own launcher.
+                $Programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+                New-Item -ItemType Directory -Path $Programs -Force | Out-Null
+                $Shell = New-Object -ComObject WScript.Shell
+                $Shortcut = $Shell.CreateShortcut((Join-Path $Programs 'Kova.lnk'))
+                $Shortcut.TargetPath = $Electron
+                $Shortcut.Arguments = "`"$DesktopDest`" `"--kova-home=$Data`""
+                $Shortcut.WorkingDirectory = $DesktopDest
+                $Shortcut.Description = 'Private local AI assistant'
+                $Icon = Join-Path $DesktopDest 'assets\icon.ico'
+                if (Test-Path -LiteralPath $Icon) { $Shortcut.IconLocation = "$Icon,0" }
+                $Shortcut.Save()
+            }
             Write-Host 'Registered Kova in your Start menu.'
             Write-Host "Desktop app files: $DesktopDest"
         } else {

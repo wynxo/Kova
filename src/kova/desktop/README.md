@@ -22,6 +22,8 @@ The shell reads KOVA_HOME/config.toml (default ~/.kova), including its port.
 It reuses an authenticated server or starts one, logs to server.log, and
 exchanges the local token for a one-use /app/session ticket. Only the ticket
 fragment reaches the renderer; /app/login sets the existing HttpOnly cookie.
+`kova app` runs the prepared Electron binary directly and records its output in
+`KOVA_HOME/desktop.log`. If Electron cannot start, the CLI reports that log path.
 Electron storage lives in `KOVA_HOME/desktop-data`, separate from the staged
 app. Remembered window bounds also live under KOVA_HOME.
 The window chrome is native by default. Set `[desktop] title_bar = "themed"` in

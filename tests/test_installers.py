@@ -137,6 +137,38 @@ def test_installer_registers_the_installed_desktop_command(installer):
 
 
 @requires_posix
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop registration")
+def test_installer_packages_a_menu_entry_using_the_current_cli(installer):
+    home, _, env, run = installer
+    tool = home / ".local/share/uv/tools/kova-ai/bin"
+    tool.mkdir(parents=True)
+    python = tool / "python"
+    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    python.chmod(0o755)
+    cli = home / ".local/bin/kova"
+    cli.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m kova "$@"\n')
+    cli.chmod(0o755)
+    env["PYTHONPATH"] = str(REPO / "src")
+    data = home / "custom data"
+    env["KOVA_HOME"] = str(data)
+    share = home / ".local/share"
+    entry = share / "applications/kova.desktop"
+    icon = share / "icons/hicolor/512x512/apps/kova.png"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nExec=/old/bin/kova-app\n")
+    icon.parent.mkdir(parents=True)
+    icon.write_bytes(b"old")
+
+    result = run("install.sh")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f'Exec={cli} app --data-home "{data}"' in entry.read_text()
+    assert icon.read_bytes() == (data / "desktop/assets/icon.png").read_bytes()
+    assert (share / "icons/hicolor/16x16/apps/kova.png").is_file()
+    assert (share / "icons/hicolor/scalable/apps/kova.svg").is_file()
+
+
+@requires_posix
 @pytest.mark.parametrize("script", ["install.sh", "scripts/uninstall.sh"])
 @pytest.mark.parametrize("context", ["root", "sudo", "truncated"])
 def test_installer_does_not_run_in_unsafe_context(installer, script, context):
@@ -414,6 +446,9 @@ def test_windows_installer_stages_the_desktop_app_path_and_uninstall_entry(windo
     assert (staged / "node_modules/electron/dist/electron.exe").is_file()
     shortcut = home / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Kova.lnk"
     assert shortcut.is_file()
+    assert (staged / "assets/icon.ico").read_bytes() == (
+        REPO / "src/kova/desktop/assets/icon.ico"
+    ).read_bytes()
     assert (home / "npm-args").read_text().strip() == "ci --include=dev"
     assert (home / ".local" / "share" / "kova" / "uninstall.ps1").is_file()
 
@@ -599,6 +634,9 @@ def test_macos_installer_registers_and_removes_spotlight_app(installer):
     bundle = home / "Applications/Kova.app/Contents"
     info = plistlib.loads((bundle / "Info.plist").read_bytes())
     assert info["CFBundleExecutable"] == "Kova"
+    assert (bundle / "Resources/kova.icns").read_bytes() == (
+        REPO / "src/kova/desktop/assets/icon.icns"
+    ).read_bytes()
     assert (bundle / "MacOS/Kova").stat().st_mode & 0o111
     launched = subprocess.run([str(bundle / "MacOS/Kova")], env=env)
     assert launched.returncode == 0

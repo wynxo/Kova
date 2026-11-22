@@ -30,13 +30,19 @@ def browser(monkeypatch):
 
 @pytest.fixture
 def runs(monkeypatch):
-    """Record npm subprocesses instead of running them."""
+    """Record subprocesses and stand in for Electron's startup acknowledgement."""
     from kova import app as launcher
 
     recorded = []
 
     def run(command, **kwargs):
         recorded.append((command, kwargs))
+        if ready := (kwargs.get('env') or {}).get('KOVA_DESKTOP_STARTUP'):
+            Path(ready).write_text('ready')
+        if 'ci' in command:
+            native = launcher._electron_binary(kwargs['cwd'])
+            native.parent.mkdir(parents=True, exist_ok=True)
+            native.touch()
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(launcher.subprocess, 'run', run)
@@ -45,12 +51,17 @@ def runs(monkeypatch):
 
 
 def project_with(tmp_path, *, electron: bool) -> Path:
+    from kova import app as launcher
+
     project = tmp_path / 'desktop'
     binary = project / 'node_modules' / '.bin'
     binary.mkdir(parents=True)
     (project / 'package.json').write_text('{}')
     if electron:
         (binary / 'electron').write_text('')
+        native = launcher._electron_binary(project)
+        native.parent.mkdir(parents=True)
+        native.touch()
     return project
 
 
@@ -99,11 +110,14 @@ def test_desktop_runs_electron_without_reinstalling(monkeypatch, tmp_path, runs)
 
     project = project_with(tmp_path, electron=True)
     monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path / 'data'))
     monkeypatch.setenv('ELECTRON_RUN_AS_NODE', '1')
+    monkeypatch.setattr(launcher.shutil, 'which', lambda name: None)
     with pytest.raises(SystemExit) as exc:
         launcher.main([])
     assert exc.value.code == 0
-    assert [command for command, _ in runs] == [launcher.npm_command('/usr/bin/npm', 'start')]
+    assert len(runs) == 1
+    assert runs[0][0][:2] == [str(launcher._electron_binary(project)), str(project)]
     assert runs[0][1]['cwd'] == project
     assert 'ELECTRON_RUN_AS_NODE' not in runs[0][1]['env']
 
@@ -113,13 +127,40 @@ def test_desktop_installs_missing_electron_dependencies(monkeypatch, tmp_path, r
 
     project = project_with(tmp_path, electron=False)
     monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path / 'data'))
     with pytest.raises(SystemExit) as exc:
         launcher.main([])
     assert exc.value.code == 0
-    assert [(command, kwargs['cwd']) for command, kwargs in runs] == [
-        (launcher.npm_command('/usr/bin/npm', 'ci'), project), (launcher.npm_command('/usr/bin/npm', 'start'), project),
-    ]
-    assert str(project) in capsys.readouterr().out
+    assert [kwargs['cwd'] for _, kwargs in runs] == [project, project]
+    assert runs[0][0] == launcher.npm_command('/usr/bin/npm', 'ci', '--include=dev')
+    assert runs[1][0][0] == str(launcher._electron_binary(project))
+    assert 'preparing Electron' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('status', [0, 23, OSError('could not execute')])
+def test_desktop_reports_and_logs_an_electron_launch_failure(monkeypatch, tmp_path, capsys, status):
+    from kova import app as launcher
+
+    project = project_with(tmp_path, electron=True)
+    home = tmp_path / 'data'
+    monkeypatch.setenv('KOVA_HOME', str(home))
+    monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
+    monkeypatch.setattr(launcher.shutil, 'which', lambda name: f'/usr/bin/{name}')
+
+    def fail(command, **kwargs):
+        if isinstance(status, OSError):
+            raise status
+        if log := kwargs.get('stdout'):
+            log.write('native startup diagnostics\n')
+        return subprocess.CompletedProcess(command, status)
+
+    monkeypatch.setattr(launcher.subprocess, 'run', fail)
+    assert launcher.launch_desktop() != 0
+    error = capsys.readouterr().err
+    assert 'Electron' in error and 'desktop.log' in error and 'kova web' in error
+    assert ('could not execute' if isinstance(status, OSError) else 'native startup diagnostics') in (
+        home / 'desktop.log'
+    ).read_text()
 
 
 def test_desktop_dependency_failure_is_reported_not_hidden(monkeypatch, tmp_path, browser, capsys):
@@ -127,6 +168,8 @@ def test_desktop_dependency_failure_is_reported_not_hidden(monkeypatch, tmp_path
 
     project = project_with(tmp_path, electron=False)
     monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
+    home = tmp_path / 'data'
+    monkeypatch.setenv('KOVA_HOME', str(home))
     monkeypatch.setattr(launcher.shutil, 'which', lambda name: f'/usr/bin/{name}')
     monkeypatch.setattr(launcher.subprocess, 'run',
                         lambda command, **kwargs: subprocess.CompletedProcess(command, 1))
@@ -134,13 +177,15 @@ def test_desktop_dependency_failure_is_reported_not_hidden(monkeypatch, tmp_path
         launcher.main([])
     assert exc.value.code == 1
     assert 'npm ci failed' in capsys.readouterr().err
+    assert 'npm ci failed' in (home / 'desktop.log').read_text()
     assert browser == []  # a failed install never silently swaps the client
 
 
-def test_desktop_without_app_files_asks_for_a_reinstall(monkeypatch, browser, capsys):
+def test_desktop_without_app_files_asks_for_a_reinstall(monkeypatch, tmp_path, browser, capsys):
     from kova import app as launcher
 
     monkeypatch.setattr(launcher, 'desktop_dir', lambda home=None: None)
+    monkeypatch.setenv('KOVA_HOME', str(tmp_path / 'data'))
     monkeypatch.setattr(launcher.shutil, 'which', lambda name: f'/usr/bin/{name}')
     with pytest.raises(SystemExit) as exc:
         launcher.main([])
@@ -153,7 +198,7 @@ def test_desktop_without_app_files_asks_for_a_reinstall(monkeypatch, browser, ca
 def test_desktop_falls_back_to_the_browser_without_node(monkeypatch, tmp_path, browser, capsys):
     from kova import app as launcher
 
-    project = project_with(tmp_path, electron=True)
+    project = project_with(tmp_path, electron=False)
     monkeypatch.setenv('KOVA_DESKTOP_DIR', str(project))
     monkeypatch.setattr(launcher.shutil, 'which', lambda name: None)
     with pytest.raises(SystemExit) as exc:
@@ -190,9 +235,6 @@ def test_refresh_repairs_legacy_stage_and_retries_failed_dependencies(monkeypatc
     (source / 'package-lock.json').write_text('new lock')
     (staged / 'main.js').write_text('stale')
     (staged / 'package-lock.json').write_text('old lock')
-    native = launcher._electron_binary(staged)
-    native.parent.mkdir(parents=True)
-    native.touch()
     (staged / 'launch').write_text('keep shortcut')
     (staged.parent / 'chat.db').write_text('keep chats')
     monkeypatch.setattr(launcher, '_bundled_desktop', lambda: source)

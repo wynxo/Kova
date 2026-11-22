@@ -254,17 +254,85 @@ def test_update_refreshes_existing_desktop_with_new_launcher(lifecycle, monkeypa
                                "app", "--prepare"]
 
 
-def test_update_repairs_old_menu_entry_that_called_kova_app(lifecycle, monkeypatch):
+@pytest.fixture
+def installed_desktop(lifecycle, monkeypatch):
+    from kova import app as launcher
+    from kova import desktop_registration
+
     entry = lifecycle.Path.home() / ".local/share/applications/kova.desktop"
     entry.parent.mkdir(parents=True)
-    entry.write_text("[Desktop Entry]\nName=Kova\nExec=/old/bin/kova-app\nType=Application\n")
-    monkeypatch.setattr(lifecycle.subprocess, "run", Mock())
+    entry.write_text("[Desktop Entry]\nName=Kova\nExec=/old/bin/kova-app\nType=Application\nStartupWMClass=Kova\n")
+    desktop = lifecycle.kova_home() / "desktop"
+    cli = lifecycle.Path(lifecycle.tool_env()["UV_TOOL_BIN_DIR"]) / (
+        "kova.exe" if lifecycle.os.name == "nt" else "kova"
+    )
+    commands = []
+    monkeypatch.setattr(desktop_registration, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(launcher, "refresh_desktop", lambda home: desktop)
+    monkeypatch.setenv("UV_TOOL_BIN_DIR", str(cli.parent))
+    monkeypatch.setattr(lifecycle.shutil, "which", lambda name: f"/test/{name}")
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "/test/uv":
+            cli.parent.mkdir(parents=True, exist_ok=True)
+            cli.touch()
+            (cli.parent / "kova").touch()  # the registration side simulates Linux
+        elif command[0] == str(cli):
+            launcher.main(command[2:])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", run)
+    return entry, cli, commands
+
+
+def test_update_rewrites_menu_to_the_current_installed_command(installed_desktop):
+    entry, cli, _ = installed_desktop
     result = CliRunner().invoke(app, ["update"])
     assert result.exit_code == 0, result.output
-    text = entry.read_text()
-    assert "kova-app" not in text
-    assert any(line.startswith("Exec=") and line.endswith('kova" app') for line in text.splitlines())
-    assert "Name=Kova" in text
+    assert cli.is_file()
+    exec_line = next(line for line in entry.read_text().splitlines() if line.startswith("Exec="))
+    # A path with spaces or Windows separators needs desktop-entry quoting.
+    assert exec_line.replace('"', '').replace('\\\\', '\\') == f'Exec={cli.with_name("kova")} app'
+    assert "StartupWMClass=kova\n" in entry.read_text()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux desktop entry paths")
+@pytest.mark.parametrize("legacy", [False, True])
+def test_update_preserves_the_menu_data_home_without_an_env_override(
+    installed_desktop, monkeypatch, tmp_path, legacy
+):
+    entry, cli, _ = installed_desktop
+    data = tmp_path / "custom data"
+    old_exec = f'"{data}/desktop/launch"' if legacy else f'{cli} app --data-home "{data}"'
+    entry.write_text(f"[Desktop Entry]\nName=Kova\nExec={old_exec}\n")
+    monkeypatch.delenv("KOVA_HOME")
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0, result.output
+    assert f'Exec={cli} app --data-home "{data}"' in entry.read_text()
+
+
+def test_update_refreshes_all_installed_icons_and_caches(installed_desktop):
+    from kova import app as launcher
+
+    entry, _, commands = installed_desktop
+    icons = entry.parent.parent / "icons/hicolor"
+    current = launcher._bundled_desktop() / "assets"
+    stale = icons / "512x512/apps/kova.png"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old icon")
+    result = CliRunner().invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert stale.read_bytes() == (current / "icon.png").read_bytes()
+    assert (icons / "scalable/apps/kova.svg").read_bytes() == (current / "icon.svg").read_bytes()
+    for size in (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256):
+        installed = icons / f"{size}x{size}/apps/kova.png"
+        assert installed.read_bytes() == (current / f"icon-{size}.png").read_bytes()
+    assert ["/test/gtk-update-icon-cache", "-f", "-t", str(icons)] in commands
+    assert ["/test/kbuildsycoca6"] in commands
+    assert ["/test/xdg-desktop-menu", "forceupdate"] in commands
 
 
 def test_kova_app_prepare_refreshes_desktop(monkeypatch):

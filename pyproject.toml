@@ -33,6 +33,8 @@ attachments = ["pypdf>=5", "openpyxl>=3.1", "python-pptx>=1"]
 
 [project.scripts]
 kova = "kova.cli:app"
+# Older installed updaters call this after replacing their own package.
+kova-app = "kova.app:main"
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]
