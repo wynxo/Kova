@@ -1443,6 +1443,14 @@ app.add_typer(_mcp, name="mcp")
 _MCP_STATE = {"connected": "SUCCESS", "connecting": "WARNING", "error": "ERROR", "off": "MUTED"}
 
 
+def _mcp_error_line(message: str) -> None:
+    """A failed server's reason; a clean exit is a note, not a red failure."""
+    if "(exit code 0)" in message:
+        _muted(message)
+    else:
+        _error_line(message)
+
+
 def _pairs(values: list[str], label: str) -> dict[str, str]:
     """``KEY=VALUE`` options as a dict; a malformed one is an error, not a guess."""
     result = {}
@@ -1456,7 +1464,7 @@ def _pairs(values: list[str], label: str) -> dict[str, str]:
 
 def _mcp_tools(row: dict) -> None:
     if row["error"]:
-        _error_line(row["error"])
+        _mcp_error_line(row["error"])
     if not row["tools"]:
         if row["state"] == "connected":
             _muted(f"{row['name']} offers no tools.")
@@ -1500,7 +1508,7 @@ def mcp_list(
     console.print(table)
     for row in rows:
         if row["error"]:
-            _error_line(row["error"])
+            _mcp_error_line(row["error"])
 
 
 @_mcp.command("add")
@@ -1531,7 +1539,7 @@ def mcp_add(
     else:
         _ok(f"Added {name}, but it is not connected yet.")
         if row["error"]:
-            _error_line(row["error"])
+            _mcp_error_line(row["error"])
         _muted(f"Fix it, then run: kova mcp test {name}")
 
 

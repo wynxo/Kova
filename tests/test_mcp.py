@@ -424,6 +424,17 @@ def test_cli_add_list_test_remove(api):
     assert missing.exit_code == 1 and "No MCP server" in missing.output
 
 
+def test_cli_mcp_add_does_not_call_a_clean_exit_a_failure(api):
+    client, cfg, app = api
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["mcp", "add", "clean", "--", sys.executable, "-c", "raise SystemExit(0)"])
+    assert result.exit_code == 0, result.output
+    assert "not connected" in result.output
+    assert "exited cleanly (exit code 0)" in result.output
+    assert "stopped (exit code 0)" not in result.output
+    assert f"{cli.SYMBOL_ERROR} clean" not in result.output
+
+
 def test_cli_mcp_list_json_is_machine_readable(api):
     client, cfg, app = api
     runner = CliRunner()
