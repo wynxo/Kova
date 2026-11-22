@@ -5,27 +5,165 @@ human or an agent can actually follow, rather than a spec nobody opens.
 
 Background research, with sources, lives in [docs/research/design-ui.md](research/design-ui.md).
 
+## What Kova is, and what the design is for
+
+Kova is a private AI that runs on your own computer. Its value is not the answer box; it is
+that **you can see and steer every step**: what it thought, every tool call with its name,
+arguments and output, what it is waiting for you to allow, which sub-agents it started, and
+a Stop that always works. Group chats with several bots come next, so every speaker needs
+its own mark and colour.
+
+So the agent's *work* is the hero of the screen, not an empty greeting. The interface is
+closer to an instrument than to a messenger: a quiet panel, and a live signal on it.
+
 ## Principles
 
-1. **Calm and monochrome.** Surfaces, text and borders are neutral. There is exactly one accent.
-2. **The accent means activity.** The accent is solid white on dark and solid black on light. It
-   is not decoration: it marks what Kova is doing right now — the running spinner, the streaming caret, the active step, an unread result. If nothing is
-   happening, no accent is on screen.
-3. **Every value is a token.** No hex codes, no magic pixel numbers, no `12px` written inline. If a
-   value is missing, add a token in `design/tokens.json`; don't hard-code it.
-4. **Every opinion is a setting with a sensible default.** Density, motion, transcript detail and
-   theme are preferences, not opinions baked into a component.
-5. **Motion explains change.** Animation shows where something came from or went. It never
-   decorates, never loops for attention, and can always be turned off.
-6. **One product, four surfaces.** Web, desktop, phone and the TUI share one look and the same
-   semantic tokens. The terminal is a renderer, not a separate design.
-7. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is not
-   shipped — including themes from the gallery.
+1. **Colour is data.** The chrome (sidebar, header, message box, dialogs) is monochrome.
+   Colour appears only where the agent did something, and each colour names a kind of
+   step. If a colour is on screen, you can say what happened.
+2. **The trace is the signature.** Every reply hangs from a vertical spine. Thinking, tool
+   calls, approvals, plans, sub-agents and the answer are nodes on it, in order. The node
+   that is running now is the only thing on screen that moves.
+3. **Your words are instructions.** What you typed is set larger than the reply and flush
+   with the spine, so a long conversation reads as a list of jobs and what was done for each.
+4. **Every value is a token.** No hex codes, no magic pixel numbers. If a value is missing,
+   add a token in `design/tokens.json`; don't hard-code it.
+5. **Every opinion is a setting with a sensible default.** Density, motion, transcript detail
+   and theme are preferences, not opinions baked into a component.
+6. **Motion explains change.** The live node breathes while it runs; everything else moves
+   only in answer to what you did. Motion can always be turned off.
+7. **One product, four surfaces.** Web, desktop, phone and the TUI share the same semantic
+   tokens. The terminal is a renderer, not a separate design.
+8. **Accessible in every theme.** Contrast is measured, not eyeballed. A theme that fails is
+   not shipped, including themes from the gallery.
 
-Shell decisions live in
-[archive/redesign-backlog.md](archive/redesign-backlog.md). Each section there is
-one issue: the layout question, why it is a question, what done looks like, and whether it
-is still open.
+## Design plan (2026 redesign)
+
+### Palette
+
+Two themes, each a monochrome panel plus four *step channels*. The channels borrow from the
+probe colours of a bench oscilloscope: each kind of step is a channel with its own trace colour.
+
+| Role | Token | Dark ("Scope") | Light ("Bench") |
+|---|---|---|---|
+| Panel: page | `bg.base` | Graphite `#17191C` | Chalk `#F7F8F9` |
+| Panel: raised | `bg.raised` | Slate `#282C30` | Steel `#E4E7EA` |
+| Ink | `fg.default` | Signal white `#E6E9EC` | Ink `#15181B` |
+| Channel: thinking | `step.think` | Lilac `#B8A6FF` | Violet `#5B41CF` |
+| Channel: tool call | `step.tool` | Probe cyan `#4CCFDF` | Teal `#00707E` |
+| Channel: needs you | `step.ask` | Amber `#F3C14B` | Ochre `#875A00` |
+| Channel: sub-agent | `step.agent` | Magenta `#F27FC2` | Plum `#AD2370` |
+
+The accent (`accent.*`) stays monochrome — signal white on dark, ink on light — and means
+focus, selection and the one primary button. Status colours (`status.*`) mean outcome
+(done, failed, warning) and never stand in for a channel.
+
+### Type
+
+- **Geologica** (OFL, variable 100–900, Latin + Cyrillic) for everything people read: the
+  interface, replies and the start screen. A grotesk with sharp terminals and an open
+  aperture; it holds up at 12px in the trace and has character at 36px.
+- **Martian Mono** (OFL, variable width and weight, Latin + Cyrillic) only for literal
+  machine text: commands, paths, tool arguments and output, code. Set semi-condensed
+  (`font-stretch: 87.5%`) so a command line fits the trace. Never for timestamps, labels or
+  decoration.
+- Both are bundled under `web_assets/fonts/`; nothing is fetched (Kova works offline).
+
+Scale (Bringhurst's classic steps): 12 · 14 · 16 · 18 · 21 · 24 · 36.
+
+| Token | Size | Use |
+|---|---|---|
+| `--type-size-label` | 12 | durations, captions, trace metadata |
+| `--type-size-body` | 14 | interface text, trace rows |
+| `--type-size-body-comfortable` | 16 | replies, the message box |
+| `--type-size-title` | 18 | dialog titles |
+| `--type-size-lead` | 21 | your instruction at the head of a turn |
+| `--type-size-heading` | 24 | settings sections |
+| `--type-size-display` | 36 | the start screen statement |
+
+Weights: 400 body, 560 labels and tool names, 680 display. Display text tracks at −0.02em.
+Sentence case everywhere; no all-caps labels.
+
+### Layout
+
+Left-aligned throughout. The conversation is a single reading column (`--column`), and
+inside it everything aligns to one vertical line: the spine.
+
+Desktop (1440):
+
+```
++-----------------+--------------------------------------------------------------+
+| [K] Kova        |  Why are the tests slow?                           (1)   ... |
+|                 |                                                              |
+| [+] New chat    |  Why are the tests slow?                <- your instruction  |
+| [/] Search      |  [K] Kova                                                    |
+|                 |   |                                                          |
+| Today           |   <> Thought for 2s                      <- lilac node       |
+| | Why are the.. |   o  Read 3 files            0.2s        <- cyan node        |
+| | Plan the tr.. |   #  Plan  2 of 3                                            |
+|                 |   *  The slow part is one file ...       <- the answer       |
+|                 |                                                              |
+|                 |  Clear the cache and run them again                          |
+|                 |  [K] Kova                                                    |
+|                 |   o  Run command  rm -rf .pytest_cache   (running)           |
+|                 |   !  Run this command?                   <- amber, waits     |
+|                 |      rm -rf .pytest_cache build && ...                       |
+|                 |      [Allow once] [Allow for session] [Deny]                 |
+| [=] Settings    |  +--------------------------------------------------------+  |
+|                 |  | +  Message Kova                       local-model v [^]|  |
++-----------------+--------------------------------------------------------------+
+```
+
+Start screen: no greeting and no centred question. It states what makes Kova useful, then shows the
+four channels as a short legend you can read once and recognise forever, then the box.
+
+```
+   [K]
+   Kova shows its work.                                 <- display, 36px
+   Follow each step as it happens. Stop a reply
+   whenever you need to.
+
+    |  <> Thinking         Read the reasoning when your model shares it.
+    |  o  Tool calls       See what ran and inspect its result.
+    |  !  Approvals        Allow or deny actions that need your OK.
+    |  #  Parallel tasks   Follow each branch and stop individual tasks.
+
+   Plan a small project with me    Summarise a file I send   (your suggestions)
+   +-----------------------------------------------------------+
+   | +  Message Kova                          local-model v [^]|
+   +-----------------------------------------------------------+
+```
+
+Phone (390): the same column, full width; the sidebar is a drawer; the spine moves to the
+left edge with a 24px gutter, and approval buttons stack full width.
+
+### The signature: the live step trace
+
+- A 2px spine (`--border-subtle`) runs down the left of every reply, from the speaker's mark.
+- Each step is a node on the spine, shaped and coloured by kind: thinking is a lilac diamond,
+  a tool call a cyan ring, a request for approval an amber triangle, a sub-agent group a
+  magenta square, the answer a solid ink dot, a plan a hollow ink square.
+- A running node pulses in opacity without shifting the trace.
+- An approval that waits for you turns its stretch of spine amber, so a long reply shows where
+  it stopped from across the room.
+- In a group chat each bot's trace hangs from that bot's own mark and colour (`--speaker`).
+
+### Review against generic defaults
+
+The first draft had a centred hero, one accent colour and the existing Inter/JetBrains Mono
+pairing: the template every chat app ships. Changes made after review:
+
+- *Centred greeting and suggestion chips* were replaced by a left-aligned statement and a
+  legend of the four step channels, because the start screen should teach how to read the
+  trace, not ask a question.
+- *One accent on near-black* became a monochrome panel with four channel colours that each
+  mean a kind of step; no colour is decorative.
+- *Inter + JetBrains Mono* (the most common pairing) became Geologica + Martian Mono, both
+  with Cyrillic, because many people write in more than one script.
+- *Rounded cards for every tool call* became rows on the spine; only the approval keeps a
+  card, because it is the one step that needs a decision.
+- No all-caps eyebrows, no middot-joined meta strings, no arrows appended to buttons, no
+  gradients or glows. Monospace is used only for text a machine would read.
 
 ## Tokens
 
@@ -82,6 +220,7 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 | Decorative divider | `--border-subtle` |
 | Input border, focus ring, control boundary | `--border-strong` |
 | Error / success / warning text | `--status-danger` / `--status-success` / `--status-warning` |
+| A step on the trace: thinking, tool call, needs you, sub-agent | `--step-think` / `--step-tool` / `--step-ask` / `--step-agent` |
 
 `--border-subtle` is decorative and deliberately low-contrast. Anything a user must be able to
 *find* (an input, a focus ring, a selected control) uses `--border-strong`, which is held to the
@@ -89,7 +228,7 @@ In CSS the semantic layer is resolved to theme-free custom properties, so a comp
 
 ### Type, space, shape, motion
 
-- Type scale: 12 / 14 / 16 / 18 / 24px. Body is 14px compact, 16px comfortable. Never below 12px.
+- Type scale: 12 / 14 / 16 / 18 / 21 / 24 / 36px. Body is 14px, replies 16px. Never below 12px.
 - Reading measure: `--type-measure-prose` (66ch) for prose, `--type-measure-chat` (80ch) for chat.
 - Spacing is a 4px grid: `--space-1` … `--space-12`. Use `--space-0-5` for hairlines.
 - Radii: `--radius-sm` (controls), `--radius-md` (panels), `--radius-lg` (sheets), `--radius-pill`.
@@ -143,7 +282,7 @@ offers the action that fills it.
 Before you call a screen done, check it is not doing any of these:
 
 - [ ] Random gradients, glows or coloured shadows
-- [ ] More than one accent colour on screen, or accent used for decoration
+- [ ] A colour that does not name a step channel or a status, or a channel colour used for decoration
 - [ ] Mixed corner radii (a 4px chip next to a 16px card with no rule behind it)
 - [ ] Emoji standing in for an icon
 - [ ] Everything centred; nothing with a clear reading order

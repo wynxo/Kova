@@ -394,7 +394,7 @@ def test_save_refuses_invalid_documents_without_writing(http, home, editable_the
 
 
 def test_contrast_failure_names_the_pair_on_preview_and_save(http, home, editable_theme):
-    editable_theme["tokens"]["fg"] = {"default": "#14121c"}
+    editable_theme["tokens"]["fg"] = {"default": "#17191c"}
     for suffix in ("?validate_only=true", ""):
         response = http.post(f"/themes{suffix}", json=editable_theme)
         assert response.status_code == 422

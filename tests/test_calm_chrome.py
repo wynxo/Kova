@@ -175,17 +175,22 @@ def test_options_and_extras_sit_behind_the_plus_and_the_chip() -> None:
         assert gone not in parser.by_id, f"#{gone} is back"
 
 
-def test_start_screen_is_mark_greeting_question_and_message_box() -> None:
-    """The idle screen is the mark, one greeting line, the question and quiet
-    suggestions (#194). Choosing a suggestion only fills the message box."""
+def test_start_screen_is_mark_statement_legend_and_message_box() -> None:
+    """The idle screen is the mark, what Kova is, the four step channels it will
+    show (docs/DESIGN.md), and your own suggestions (#194). Choosing a
+    suggestion only fills the message box."""
     parser, html = _shell()
-    welcome = re.search(r'<div id="welcome".*?</div>', html, re.S).group(0)
-    assert "What are you working on?" in welcome and "welcome-mark" in welcome
-    assert "welcome-greeting" in parser.by_id, "the greeting carries the assistant's name"
-    assert "starters" in parser.by_id, "suggestions sit under the question"
+    welcome = re.search(r'<div id="welcome".*?<div id="messages"', html, re.S).group(0)
+    assert "shows its work." in welcome and "welcome-mark" in welcome
+    assert "welcome-title" in parser.by_id, "the statement carries the assistant's name"
+    assert "welcome-greeting" in parser.by_id
+    steps = re.findall(r'<li data-step="([a-z]+)"', welcome)
+    assert steps == ["think", "tool", "ask", "agent"], "the legend names each step channel once"
+    assert "starters" in parser.by_id, "suggestions sit under the legend"
     assert "hidden" in parser.by_id["starters"], "nothing shows until the client has the list"
     assert "starters-edit" in _ids_inside(parser, "welcome", "button")
     assert "data-prompt" not in html, "suggestion text comes from the preference, not markup"
+    assert "What are you working on?" not in html, "the start screen states, it does not ask"
 
 
 # ---------------------------------------------------------------- conversation
@@ -198,10 +203,11 @@ def _section(css: str, start: str, end: str) -> str:
 
 
 def test_start_screen_has_no_decorative_accent() -> None:
-    """The accent means activity; an idle start screen shows none of it."""
+    """Colour is data: the statement has no tinted fragment, and the only colour
+    on the idle screen is the legend of step channels."""
     _, html = _shell()
-    welcome = re.search(r'<div id="welcome".*?</div>', html, re.S).group(0)
-    assert "<span>" not in welcome, "no accent-coloured fragment in the greeting"
+    welcome = re.search(r'<div id="welcome".*?<ul', html, re.S).group(0)
+    assert "<span>" not in welcome, "no accent-coloured fragment in the statement"
     for tint in ("suggestion-icon", "mint", "peach", "welcome-foot"):
         assert tint not in html, f"{tint!r} is back on the start screen"
 
