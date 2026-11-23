@@ -78,8 +78,12 @@ def test_header_is_toggle_title_and_actions_only() -> None:
     parser, html = _shell()
     header = re.search(r'<header class="topbar">(.*?)</header>', html, re.S).group(1)
     ids = re.findall(r'\bid="([^"]+)"', header)
-    assert ids == ["menu", "chat-title", "bot-chat-header", "activity", "activity-dot", "activity-count",
-                   "activity-panel", "chat-menu", "compact-now"], ids
+    assert ids == ["menu", "chat-title", "bot-chat-header",
+                   # Chat | Work for a new chat, and the fork menu once a chat has started.
+                   "mode-top", "mode-switch", "mode-fork", "mode-fork-button", "mode-fork-label", "mode-fork-menu",
+                   "mode-fork-note", "mode-fork-go", "mode-fork-title", "mode-fork-desc",
+                   "activity", "activity-dot", "activity-count", "activity-panel", "chat-menu", "compact-now"], ids
+    assert "hidden" in parser.by_id["mode-fork"], "the fork menu appears only once a chat has started"
     assert "hidden" in parser.by_id["bot-chat-header"], "the bot replaces the title only in a direct chat"
     assert "hidden" in parser.by_id["chat-menu"], "chat actions appear only once a chat is open"
     assert "hidden" in parser.by_id["activity"], "activity says nothing while nothing runs"
@@ -132,7 +136,9 @@ def test_sidebar_is_new_chat_search_list_and_settings() -> None:
     parser, html = _shell()
     sidebar = re.search(r'<aside id="sidebar".*?</aside>', html, re.S).group(0)
     buttons = _ids_inside(parser, "sidebar", "button")
-    assert buttons == ["sidebar-close", "new-chat", "open-settings"], buttons
+    # The list opens with the app switch: Kova, Kova Code, Kova Bots.
+    assert buttons == ["app-switch", "sidebar-close", "new-chat", "open-settings"], buttons
+    assert "hidden" in parser.by_id["app-menu"]
     assert _ids_inside(parser, "sidebar", "input") == ["search"], "one search field"
     assert "<kbd" not in sidebar, "no shortcut badges in the sidebar"
     for gone in ("open-palette", "chat-count", "Search or run a command", "Incognito chat"):
@@ -166,7 +172,8 @@ def test_options_and_extras_sit_behind_the_plus_and_the_chip() -> None:
     parser, _ = _shell()
     for element in ("attach", "commands", "new-incognito"):
         assert "compose-menu" in parser.ancestors[element], f"#{element} belongs in the + menu"
-    for element in ("model-slot", "reasoning-effort-slot", "mode-switch", "model-make-default",
+    # Chat | Work moved to the top bar (test_header_is_toggle_title_and_actions_only).
+    for element in ("model-slot", "reasoning-effort-slot", "model-make-default",
                     "permission-slot", "cwd", "web"):
         assert "chat-options-panel" in parser.ancestors[element], f"#{element} belongs behind the chip"
     assert "hidden" in parser.by_id["compose-menu"] and "hidden" in parser.by_id["chat-options-panel"]

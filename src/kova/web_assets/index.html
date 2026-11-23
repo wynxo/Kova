@@ -76,12 +76,17 @@
        draws a node for, before the phone layout. -->
   <link rel="stylesheet" href="/app/assets/trace.css">
   <link rel="stylesheet" href="/app/assets/bots.css">
+  <!-- The chat-app look: one column, folded steps, the app switch and the top
+       Chat | Work toggle. After every component sheet, before the phone layout. -->
+  <link rel="stylesheet" href="/app/assets/shell.css">
   <link rel="stylesheet" href="/app/assets/mobile.css">
   <script defer src="/app/assets/mobile.js"></script>
   <script defer src="/app/assets/thinking.js"></script>
   <script defer src="/app/assets/focus-trap.js"></script>
   <script defer src="/app/assets/model-picker.js"></script>
+  <script defer src="/app/assets/characters.js"></script>
   <script defer src="/app/assets/bots.js"></script>
+  <script defer src="/app/assets/shell.js"></script>
   <script defer src="/app/assets/app.js"></script>
   <script defer src="/app/assets/theme-editor.js"></script>
   <script defer src="/app/assets/theme-gallery.js"></script>
@@ -98,10 +103,17 @@
   <button id="backdrop" aria-label="Close sidebar" tabindex="-1" hidden></button>
   <aside id="sidebar" aria-label="Conversations">
     <div class="sidebar-head">
-      <a class="brand" href="/app" aria-label="Kova home"><span class="kova-mark" aria-hidden="true"></span><span>Kova</span></a>
+      <div class="app-switch">
+        <button id="app-switch" type="button" class="brand app-switch-button" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu"><span id="app-switch-label">Kova</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
+        <div id="app-menu" class="app-menu" role="menu" aria-label="Switch app" hidden>
+          <a class="app-menu-item" role="menuitemradio" aria-checked="true" href="/app" data-app="kova"><span><span class="app-menu-name">Kova</span><span class="app-menu-desc">Chat and get things done</span></span><span class="icon i-check" aria-hidden="true"></span></a>
+          <button type="button" class="app-menu-item" role="menuitem" data-app="code" aria-disabled="true"><span><span class="app-menu-name">Kova Code</span><span class="app-menu-desc">Coming soon</span></span></button>
+          <button type="button" class="app-menu-item" role="menuitemradio" aria-checked="false" data-app="bots"><span><span class="app-menu-name">Kova Bots</span><span class="app-menu-desc">Your bots and group chats</span></span><span class="icon i-check" aria-hidden="true"></span></button>
+        </div>
+      </div>
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
-    <button id="new-chat" type="button" class="new-chat" data-shortcut="new-conversation" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-square-pen" aria-hidden="true"></span><span>New chat</span></button>
+    <button id="new-chat" type="button" class="new-chat" data-shortcut="new-conversation" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-plus" aria-hidden="true"></span><span>New chat</span></button>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <nav id="chat-list" aria-label="Chat history"></nav>
     <div class="sidebar-footer">
@@ -125,6 +137,19 @@
       <button id="menu" type="button" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" data-shortcut="toggle-sidebar" aria-expanded="true" aria-controls="sidebar"><span class="icon i-panel-left" aria-hidden="true"></span></button>
       <strong id="chat-title" class="chat-title">New chat</strong>
       <div id="bot-chat-header" hidden></div>
+      <div id="mode-top" class="mode-top">
+        <div id="mode-switch" class="segmented mode-switch" role="radiogroup" aria-label="Mode">
+          <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files">Chat</button>
+          <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools">Work</button>
+        </div>
+        <div id="mode-fork" class="mode-fork" hidden>
+          <button id="mode-fork-button" type="button" class="mode-fork-button" aria-haspopup="menu" aria-expanded="false" aria-controls="mode-fork-menu"><span id="mode-fork-label">Work</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
+          <div id="mode-fork-menu" class="mode-fork-menu" role="menu" hidden>
+            <p id="mode-fork-note" class="mode-fork-note">This chat is in Work. To switch, fork it.</p>
+            <button id="mode-fork-go" type="button" role="menuitem" class="mode-fork-item"><span class="icon i-copy" aria-hidden="true"></span><span><span id="mode-fork-title" class="mode-fork-title">Fork into Chat</span><span id="mode-fork-desc" class="mode-fork-desc">A new chat with this conversation, without tools</span></span></button>
+          </div>
+        </div>
+      </div>
       <div class="activity-wrap">
         <button id="activity" type="button" class="icon-button activity-button" aria-label="Activity" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-panel" hidden><span id="activity-dot" class="activity-dot" aria-hidden="true"></span><span id="activity-count" class="activity-count" hidden></span></button>
         <div id="activity-panel" class="activity-panel" role="dialog" aria-label="Activity" hidden></div>
@@ -173,6 +198,7 @@
           </div>
           <label id="prompt-label" class="sr-only" for="prompt">Message Kova</label>
           <textarea id="prompt" rows="1" placeholder="Message Kova" maxlength="100000" aria-autocomplete="list" aria-expanded="false" aria-controls="mention-list"></textarea>
+          <button id="context-ring" type="button" class="context-ring" hidden aria-label="Context used"><svg viewBox="0 0 18 18" aria-hidden="true"><circle class="context-ring-track" cx="9" cy="9" r="7"/><circle id="context-ring-fill" class="context-ring-fill" cx="9" cy="9" r="7" pathLength="100" stroke-dasharray="0 100"/></svg><span id="context-ring-text">0%</span></button>
           <div class="chat-options-wrap">
             <button id="chat-options" type="button" class="model-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="chat-options-panel"><span id="local-only-status" class="chip-lock" title="Local only" hidden><span class="icon i-lock" aria-hidden="true"></span><span class="sr-only">Local only.</span></span><span id="chat-options-label" class="model-chip-label">No model</span><span id="chat-options-effort" class="model-chip-effort" hidden></span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
             <div id="chat-options-panel" class="chat-options" role="dialog" aria-label="Chat options" hidden>
@@ -180,12 +206,6 @@
               <select id="model" hidden tabindex="-1" aria-hidden="true"><option>Loading models…</option></select>
               <div id="reasoning-effort-row" class="chat-option" hidden><span id="reasoning-effort-label" class="chat-option-label">Reasoning effort</span><span id="reasoning-effort-slot" class="chat-option-control"></span></div>
               <select id="reasoning-effort" hidden tabindex="-1" aria-hidden="true"></select>
-              <div class="chat-option"><span id="mode-label" class="chat-option-label">Mode</span>
-                <div id="mode-switch" class="segmented" role="radiogroup" aria-labelledby="mode-label">
-                  <button type="button" role="radio" aria-checked="true" data-value="work" title="Work: Kova can use files, commands and tools"><span class="icon i-square-terminal" aria-hidden="true"></span>Work</button>
-                  <button type="button" role="radio" aria-checked="false" data-value="chat" tabindex="-1" title="Chat: conversation only, no tools on your files"><span class="icon i-message-square" aria-hidden="true"></span>Chat</button>
-                </div>
-              </div>
               <select id="mode" hidden tabindex="-1" aria-hidden="true"><option value="work">Work</option><option value="chat">Chat</option></select>
               <div class="chat-option work-only"><span id="permission-label" class="chat-option-label">Permissions</span><span id="permission-slot" class="chat-option-control"></span></div>
               <select id="permission" hidden tabindex="-1" aria-hidden="true"><option value="manual">Manual</option><option value="auto">Auto</option><option value="full">Full access</option></select>
@@ -223,6 +243,7 @@
     <button id="open-shortcuts" type="button">Keyboard shortcuts</button>
     <div id="shortcut-remap"></div>
     <button id="open-sounds" type="button">Sounds</button>
+    <button id="context-ring-toggle" type="button" class="switch" role="switch" aria-checked="true" aria-label="Show context usage"><span class="switch-thumb" aria-hidden="true"></span></button>
     <button id="disconnect" type="button" aria-label="Sign out of this window">Sign out</button>
     <button id="add-provider" type="button">Connect a provider</button>
     <div id="providers-panel" class="providers-panel" aria-label="Connected providers"></div>

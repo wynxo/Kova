@@ -72,6 +72,8 @@
          keywords: 'document bubble compact density layout', control: 'message_style'},
         {title: 'Avatars', help: 'Show the avatar beside each reply, or keep the name alone.',
          keywords: 'avatar picture face icon label name reading', control: 'avatars'},
+        {title: 'Context usage', help: 'A small ring next to the model shows how full this chat is. When it fills up, compact the chat.',
+         keywords: 'context ring tokens window full meter usage', host: 'context-ring-toggle'},
         {title: 'Message timestamps', help: 'Show when each message was sent, on hover and focus only, or not at all.',
          keywords: 'timestamp clock time date hover', control: 'message_timestamps'},
         {title: 'Zen mode', help: 'Hide the sidebar, top bar and status bar for this window.',

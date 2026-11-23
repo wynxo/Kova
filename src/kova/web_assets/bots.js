@@ -121,7 +121,10 @@
       mark.setAttribute('aria-hidden', 'true');
       const look = window.KovaChatAppearance?.appearanceOf(bot);
       if (look?.colour) mark.dataset.chatColour = look.colour;
+      // No icon and no picture: the bot gets its character face (characters.js).
+      const face = !look?.icon && !(preview ?? bot.image) && window.KovaCharacters?.face(bot.id || name || '');
       if (look?.icon) mark.append(icon(look.icon));
+      else if (face) { mark.classList.add('has-character'); mark.append(face); }
       else mark.textContent = Array.from((name || bot.id || '').trim())[0]?.toUpperCase() || '?';
       const image = preview ?? (bot.image && bot.id ? `${botPath(bot.id)}/avatar?v=${avatarVersion.get(bot.id) || 0}` : '');
       if (image) {

@@ -1,0 +1,191 @@
+/* The chat-app look (redesign/chat-app-look): one calm column, a darker side
+   list, the app switch (Kova / Kova Code / Kova Bots), Chat | Work at the top
+   of a new chat (a running chat forks instead of switching), a pill message
+   box and the context ring. Semantic tokens only, so every theme carries it. */
+
+/* Side list: a step darker than the conversation, no hard edge. */
+/* Only on plain themes: a theme with a background image keeps its own panels. */
+html:not([data-background]) #sidebar {
+  background:color-mix(in srgb, var(--bg-base) 62%, var(--fg-inverse));
+  border-right-color:transparent;
+}
+.sidebar-head { padding-bottom:var(--space-3); }
+
+.app-switch { position:relative; }
+.app-switch-button {
+  display:inline-flex; align-items:center; gap:var(--space-1);
+  height:var(--space-10); padding:0 var(--space-2); border:0; border-radius:var(--radius-md);
+  background:none; color:var(--fg-default); font:inherit; font-size:var(--type-size-title); font-weight:620;
+  cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.app-switch-button .icon { width:14px; height:14px; color:var(--fg-faint); }
+.app-switch-button:hover { background:var(--bg-surface); }
+.app-menu {
+  position:absolute; top:calc(100% + var(--space-1)); left:0; z-index:30; width:280px; padding:var(--space-1);
+  border:1px solid var(--border-subtle); border-radius:var(--radius-lg); background:var(--bg-surface);
+  box-shadow:0 12px 32px color-mix(in srgb, var(--bg-overlay) 70%, transparent);
+}
+.app-menu-item {
+  display:flex; align-items:center; gap:var(--space-3); width:100%; padding:var(--space-2) var(--space-3);
+  border:0; border-radius:var(--radius-md); background:none; color:var(--fg-default); font:inherit;
+  text-align:left; text-decoration:none; cursor:pointer; box-sizing:border-box;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.app-menu-item:hover:not([aria-disabled="true"]) { background:var(--bg-raised); }
+.app-menu-item[aria-disabled="true"] { cursor:default; }
+.app-menu-item[aria-disabled="true"] .app-menu-name { color:var(--fg-muted); }
+.app-menu-item > span:first-child { flex:1; display:flex; flex-direction:column; gap:2px; }
+.app-menu-name { font-size:var(--type-size-body); font-weight:560; }
+.app-menu-desc { font-size:var(--type-size-label); color:var(--fg-muted); }
+.app-menu-item .icon { width:16px; height:16px; visibility:hidden; }
+.app-menu-item[aria-checked="true"] .icon { visibility:visible; }
+
+/* New chat reads as a plain row, like the rest of the list. */
+.new-chat { border-color:transparent; font-weight:500; }
+.new-chat:hover:not(:disabled) { border-color:transparent; }
+
+/* Top bar: the mode sits in the middle. */
+.topbar { position:relative; }
+.mode-top { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); z-index:5; }
+.mode-switch.segmented {
+  display:inline-flex; gap:2px; padding:3px; border:0; border-radius:var(--radius-pill); background:var(--bg-surface);
+}
+.mode-switch.segmented [role="radio"] {
+  height:30px; padding:0 var(--space-4); border:0; border-radius:var(--radius-pill);
+  background:none; color:var(--fg-muted); font:inherit; font-size:var(--type-size-body); font-weight:500;
+  cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
+}
+.mode-switch.segmented [role="radio"][aria-checked="true"] {
+  background:var(--bg-base); color:var(--fg-default);
+  box-shadow:0 1px 3px color-mix(in srgb, var(--bg-overlay) 60%, transparent);
+}
+.mode-switch.segmented [role="radio"]:hover:not([aria-checked="true"]) { color:var(--fg-default); }
+.mode-fork { position:relative; }
+.mode-fork-button {
+  display:inline-flex; align-items:center; gap:var(--space-1); height:34px; padding:0 var(--space-3);
+  border:0; border-radius:var(--radius-pill); background:none; color:var(--fg-default);
+  font:inherit; font-size:var(--type-size-body); font-weight:560; cursor:pointer;
+  transition:background-color var(--motion-fast) var(--motion-ease-standard);
+}
+.mode-fork-button:hover { background:var(--bg-surface); }
+.mode-fork-button .icon { width:14px; height:14px; color:var(--fg-faint); }
+.mode-fork-menu {
+  position:absolute; top:calc(100% + var(--space-2)); left:50%; transform:translateX(-50%); z-index:30; width:300px;
+  padding:var(--space-1); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); background:var(--bg-surface);
+  box-shadow:0 12px 32px color-mix(in srgb, var(--bg-overlay) 70%, transparent);
+}
+.mode-fork-note { margin:0; padding:var(--space-2) var(--space-3) var(--space-1); font-size:var(--type-size-label); color:var(--fg-muted); }
+.mode-fork-item {
+  display:flex; align-items:flex-start; gap:var(--space-3); width:100%; padding:var(--space-2) var(--space-3);
+  border:0; border-radius:var(--radius-md); background:none; color:var(--fg-default); font:inherit; text-align:left; cursor:pointer;
+}
+.mode-fork-item:hover:not(:disabled) { background:var(--bg-raised); }
+.mode-fork-item:disabled { opacity:.5; cursor:default; }
+.mode-fork-item .icon { width:16px; height:16px; margin-top:2px; color:var(--fg-muted); }
+.mode-fork-title { display:block; font-size:var(--type-size-body); font-weight:560; }
+.mode-fork-desc { display:block; font-size:var(--type-size-label); color:var(--fg-muted); }
+/* A bot chat has its own header; the mode belongs to Kova chats. */
+body.bot-chat .mode-top { display:none; }
+
+/* Start screen: one question, the box under it. No legend, no mark. */
+.welcome-mark, .trace-legend { display:none !important; }
+.is-empty .welcome { text-align:center; align-items:center; }
+#welcome-title { font-size:30px; font-weight:500; letter-spacing:-.015em; line-height:1.2; }
+#welcome-greeting { display:none; }
+.welcome .starters { justify-content:center; }
+
+/* The message box: one rounded pill. */
+.composer {
+  border-radius:28px; border-color:var(--border-subtle); background:var(--bg-surface);
+  box-shadow:0 1px 2px color-mix(in srgb, var(--bg-overlay) 40%, transparent);
+}
+.composer:focus-within { border-color:var(--border-strong); }
+.composer .send { border-radius:var(--radius-pill); }
+.model-chip { border-radius:var(--radius-pill); }
+.model-chip-effort { color:var(--fg-muted); }
+
+/* Context ring: how full this chat is, next to the model. */
+.context-ring {
+  display:inline-flex; align-items:center; gap:6px; flex:none; height:var(--space-8); padding:0 var(--space-2);
+  border:0; border-radius:var(--radius-pill); background:none; color:var(--fg-muted);
+  font:inherit; font-size:var(--type-size-label); font-variant-numeric:tabular-nums; cursor:default;
+}
+.context-ring svg { width:18px; height:18px; transform:rotate(-90deg); }
+.context-ring circle { fill:none; stroke-width:2.4; }
+.context-ring-track { stroke:var(--border-subtle); }
+.context-ring-fill { stroke:var(--fg-default); stroke-linecap:round; transition:stroke-dasharray var(--motion-base) var(--motion-ease-standard); }
+.context-ring.is-high .context-ring-fill { stroke:var(--status-warning); }
+.context-ring.is-high { color:var(--status-warning); }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-switch-button, .app-menu-item, .mode-switch.segmented [role="radio"], .mode-fork-button, .context-ring-fill { transition:none; }
+}
+@media (max-width: 760px) {
+  .mode-top { position:static; transform:none; margin-left:auto; }
+  /* Touch targets: 44px on a phone. */
+  .mode-switch.segmented [role="radio"], .mode-fork-button, .context-ring { min-height:44px; }
+  .mode-switch.segmented [role="radio"] { padding-inline:var(--space-3); }
+}
+
+/* Bots live in their own app now: the Kova list hides the contacts, Kova Bots shows them above the chats. */
+body:not(.app-bots) .bot-contacts { display:none; }
+body.app-bots #new-chat { display:none; }
+
+/* Suggestions: quiet pills under the question, not underlined links. */
+.welcome .starters > button {
+  padding:var(--space-1) var(--space-3); border:1px solid var(--border-subtle); border-radius:var(--radius-pill);
+  color:var(--fg-muted); text-decoration:none; background:none;
+}
+.welcome .starters > button:hover { color:var(--fg-default); background:var(--bg-surface); }
+
+/* Messages: your words in a bubble on the right, Kova's answer as plain text.
+   (Bubbles is the default message style now; Document and Compact remain.) */
+[data-message-style="bubbles"] .messages .message.user .message-body {
+  padding:10px 18px; border-radius:22px; background:var(--bg-raised);
+}
+[data-message-style="bubbles"] .messages .message.assistant > .message-body {
+  padding:0; border-radius:0; background:none;
+}
+
+/* The steps fold into the reply: no spine, no coloured nodes. Kova's own name
+   above every reply is dropped; a bot keeps its name and face. */
+.message.assistant > .message-body::before,
+.message.assistant > .message-body > *::before,
+.message.assistant > .message-body > .approval-card::after { display:none !important; }
+.message.assistant > .message-body > * { padding-left:0 !important; margin-left:0 !important; }
+.message.assistant:not(.bot-reply) > .message-label { display:none; }
+.message.assistant .reasoning > summary,
+.message.assistant .tool-card-summary { color:var(--fg-muted); }
+
+/* Bot characters (characters.js): the face replaces the letter tile. */
+.bot-avatar.has-character { overflow:visible; border-radius:0; background:none; box-shadow:none; }
+.bot-avatar.has-character > .character { width:100%; height:100%; overflow:visible; }
+#bot-welcome > .bot-avatar.has-character { --bot-avatar-size:88px; }
+.bot-chat-identity .bot-avatar.has-character { --bot-avatar-size:var(--space-10); }
+.bot-contacts .bot-avatar.has-character { --bot-avatar-size:var(--space-10); }
+html[data-motion="full"] .character-body {
+  transform-box:fill-box; transform-origin:50% 100%;
+  animation:character-float 3.6s ease-in-out var(--character-delay, 0s) infinite;
+}
+html[data-motion="full"] .character-eyes {
+  transform-box:fill-box; transform-origin:center;
+  animation:character-blink 5.2s var(--character-delay, 0s) infinite;
+}
+@keyframes character-float { 0%, 100% { transform:translateY(0) scale(1.025, .975); } 50% { transform:translateY(-4%) scale(.985, 1.015); } }
+@keyframes character-blink { 0%, 93%, 100% { transform:scaleY(1); } 96% { transform:scaleY(.08); } }
+
+/* A bot's replies read like a messenger: its colour tints the bubble. */
+.message.assistant.bot-reply > .message-body {
+  padding:8px 14px !important; border-radius:20px 20px 20px 6px !important;
+  background:color-mix(in srgb, var(--chat-colour, var(--bg-raised)) 34%, var(--bg-raised)) !important;
+  width:fit-content; max-width:min(62ch, 100%);
+}
+
+/* Kova Bots with no chat open: pick a bot, nothing else. */
+body.app-bots .mode-top { display:none; }
+body.bots-idle .compose-wrap, body.bots-idle #starters, body.bots-idle #starters-edit { display:none !important; }
+
+/* Keyboard focus on every new control, in the accent like the rest of the app. */
+:is(.app-switch-button, .app-menu-item, .mode-switch [role="radio"], .mode-fork-button, .mode-fork-item, .context-ring):focus-visible {
+  outline:2px solid var(--accent-default); outline-offset:2px;
+}
