@@ -95,3 +95,29 @@ dialog.message-sheet .message-details-list { position:static; width:100%; max-wi
 [data-motion="reduced"] .message-action-note,
 [data-motion="reduced"] .message-details-list { animation:none; }
 [data-motion="reduced"] .message-details-toggle { transition:none; }
+
+/* The one "More" button: an icon like copy, no label. Its panel lists the extra
+   actions as menu rows, then the answer's details under a hairline. */
+.message-more-toggle { width:28px; justify-content:center; padding:0; color:var(--fg-muted); }
+.message-more-toggle .icon { width:16px; height:16px; }
+.message-more-panel { display:block; min-width:220px; padding:var(--space-1); }
+.message-more-actions { display:grid; gap:1px; }
+.message-more-actions > button {
+  display:flex; align-items:center; gap:var(--space-2); width:100%; height:auto;
+  min-height:var(--space-8); padding:0 var(--space-2);
+  border-radius:var(--radius-sm); color:var(--fg-default); font-size:var(--type-size-label);
+  text-align:start;
+}
+.message-more-actions > button:hover { background:var(--bg-surface); }
+.message-more-actions > button:focus-visible { outline:2px solid var(--accent-default); outline-offset:-2px; }
+.message-more-actions .icon { width:14px; height:14px; color:var(--fg-muted); }
+.message-more-facts {
+  display:grid; grid-template-columns:auto minmax(0, 1fr); gap:var(--space-1) var(--space-3);
+  margin:0; padding:var(--space-2);
+}
+.message-more-actions + .message-more-facts { margin-top:var(--space-1); border-top:1px solid var(--border-subtle); }
+.message-more-facts dt { color:var(--fg-muted); }
+.message-more-facts dd { margin:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+dialog.message-sheet .message-more-toggle { display:none; }
+dialog.message-sheet .message-more-actions > button { min-height:var(--space-12); font-size:var(--type-size-body); }
+dialog.message-sheet .message-more-actions > button::after { content:none; }

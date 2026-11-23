@@ -141,6 +141,10 @@ body.app-bots #new-chat { display:none; }
 [data-message-style="bubbles"] .messages .message.user .message-body {
   padding:10px 18px; border-radius:22px; background:var(--bg-raised);
 }
+/* Your bubble keeps to the right even on a phone, where the reading measure is
+   wider than the screen, and its time sits under it on the same side. */
+[data-message-style="bubbles"] .messages .message.user { max-width:min(82%, var(--type-measure-prose)); }
+[data-message-style="bubbles"] .messages .message.user > .message-timestamp { text-align:end; }
 [data-message-style="bubbles"] .messages .message.assistant > .message-body {
   padding:0; border-radius:0; background:none;
 }
@@ -174,6 +178,13 @@ html[data-motion="full"] .bot-open:hover .character-eyes {
   max-width:var(--type-measure-prose);
   padding:0 !important;
   background:none !important;
+}
+/* With the Bubbles style a bot answers like a messenger contact: a bubble tinted
+   with its own colour, the tail toward its face. Document and Compact stay plain. */
+[data-message-style="bubbles"] .messages .message.assistant.bot-reply > .message-body {
+  width:fit-content; max-width:min(var(--type-measure-prose), 100%);
+  padding:10px 16px !important; border-radius:20px 20px 20px 6px !important;
+  background:color-mix(in oklab, var(--chat-colour, var(--bg-raised)) 22%, var(--bg-raised)) !important;
 }
 
 /* Kova Bots with no conversation open shows its directory. */

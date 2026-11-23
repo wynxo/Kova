@@ -75,19 +75,37 @@
     return rows;
   }
 
-  function detailsAction(info) {
-    const rows = detailRows(info);
-    // An answer with no recorded usage and no model has nothing to open; a
-    // lone "Tools 0" is noise, not detail.
-    if (!rows.length || (!info.usage && !info.model && !info.toolCount)) return null;
-    const card = node('details', 'message-details');
-    const summary = node('summary', 'message-details-toggle');
-    summary.append(icon('info'), document.createTextNode('Details'));
-    const list = node('dl', 'message-details-list');
-    for (const [label, value] of rows) {
-      list.append(node('dt', '', label), node('dd', '', value));
+  // Everything past copy lives behind one icon-only "More" button: the extra
+  // actions first, then what the server recorded for the answer. The row under
+  // a message stays quiet, and nothing is shown twice.
+  function moreAction(items, info) {
+    const rows = info ? detailRows(info) : [];
+    // An answer with no recorded usage and no model has no details; a lone
+    // "Tools 0" is noise, not detail.
+    const hasDetails = rows.length && (info.usage || info.model || info.toolCount);
+    if (!items.length && !hasDetails) return null;
+    const card = node('details', 'message-details message-more');
+    const summary = node('summary', 'message-details-toggle message-more-toggle');
+    summary.title = 'More';
+    summary.setAttribute('aria-label', 'More actions and details');
+    summary.append(icon('ellipsis'));
+    const panel = node('div', 'message-details-list message-more-panel');
+    if (items.length) {
+      const menu = node('div', 'message-more-actions');
+      menu.setAttribute('role', 'group');
+      menu.setAttribute('aria-label', 'More actions');
+      for (const item of items) {
+        item.addEventListener('click', () => { card.open = false; });
+        menu.append(item);
+      }
+      panel.append(menu);
     }
-    card.append(summary, list);
+    if (hasDetails) {
+      const list = node('dl', 'message-more-facts');
+      for (const [label, value] of rows) list.append(node('dt', '', label), node('dd', '', value));
+      panel.append(list);
+    }
+    card.append(summary, panel);
     return card;
   }
 
@@ -119,6 +137,11 @@
     return group;
   }
 
+  function labelled(button, text) {
+    button.append(node('span', 'message-more-label', text));
+    return button;
+  }
+
   function copyAction(text, note, label, onError, format = '') {
     const glyph = icon('copy');
     const button = node('button', `message-action-copy message-action${format}`);
@@ -126,7 +149,6 @@
     button.title = label;
     button.setAttribute('aria-label', label);
     button.append(glyph);
-    if (format) button.append(node('span', '', 'Plain text'));
     let timer = null;
     button.onclick = async () => {
       try {
@@ -172,19 +194,22 @@
     const bar = node('div', 'message-actions');
     const note = node('span', 'message-action-note');
     note.setAttribute('role', 'status');
+    // At rest: copy (and edit on your own message), the alternatives switcher when
+    // there is one, and a single "More" button for everything else.
     bar.append(copyAction(text, note, role === 'user' ? 'Copy your message' : 'Copy as Markdown', onError));
-    if (role === 'assistant' && plainText) bar.append(copyAction(plainText, note, 'Copy as plain text', onError, ' message-action-copy-plain'));
     if (role === 'user' && onEdit) bar.append(action('pencil', editLabel, 'message-action-edit', onEdit));
-    if (role === 'assistant' && onRetry) bar.append(action('refresh', 'Retry this reply', 'message-action-retry', onRetry));
-    if (onRetryModel) bar.append(action('sliders-horizontal', 'Retry with another model', 'message-action-retry', onRetryModel));
-    if (onBranch) bar.append(action('external-link', 'Branch from here', 'message-action-branch', onBranch));
-    if (onOutline) bar.append(action('menu', 'Open reply outline', 'message-action-outline', onOutline));
     const alternativesNode = alternativesControl(alternatives, onAlternative);
     if (alternativesNode) bar.append(alternativesNode);
-    if (role === 'assistant') {
-      const details = detailsAction({usage, model, toolCount});
-      if (details) bar.append(details);
+    const more = [];
+    if (role === 'assistant' && plainText) {
+      more.push(labelled(copyAction(plainText, note, 'Copy as plain text', onError, ' message-action-copy-plain'), 'Copy as plain text'));
     }
+    if (role === 'assistant' && onRetry) more.push(labelled(action('refresh', 'Retry this reply', 'message-action-retry', onRetry), 'Retry'));
+    if (onRetryModel) more.push(labelled(action('sliders-horizontal', 'Retry with another model', 'message-action-retry', onRetryModel), 'Retry with another model'));
+    if (onBranch) more.push(labelled(action('external-link', 'Branch from here', 'message-action-branch', onBranch), 'Branch from here'));
+    if (onOutline) more.push(labelled(action('menu', 'Open reply outline', 'message-action-outline', onOutline), 'Reply outline'));
+    const menu = moreAction(more, role === 'assistant' ? {usage, model, toolCount} : null);
+    if (menu) bar.append(menu);
     bar.append(note);
     return bar;
   }
@@ -217,6 +242,9 @@
         sheet.close();
         restore();
       }, true);
+      // In the sheet the extra actions are simply listed: there is room, and a
+      // second tap to open "More" inside a menu would be one menu too many.
+      for (const more of bar.querySelectorAll('details.message-more')) more.open = true;
       sheet.showModal();
       bar.querySelector('button')?.focus();
     }
@@ -243,6 +271,9 @@
     globalThis.__kovaMessageDetails = true;
     document.addEventListener('click', event => {
       for (const open of document.querySelectorAll('details.message-details[open]')) {
+        // In the phone sheet the menu is the sheet's content, not a popover: the
+        // tap that opened the sheet must not close it again.
+        if (open.closest('dialog.message-sheet')) continue;
         if (!open.contains(event.target)) open.open = false;
       }
     });
