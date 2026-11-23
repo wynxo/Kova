@@ -91,7 +91,7 @@ same commit as the route.
 | `GET /app` | public | the packaged web app shell |
 | `GET /app/assets/*` | public | CSS, JS, icons and vendored libraries (a `StaticFiles` mount) |
 | `GET /app/manifest.webmanifest` | public | persona-named install manifest |
-| `GET /app/sw.js` | public | app-shell-only service worker |
+| `GET /app/sw.js` | public | app-shell-only service worker: network first (revalidated), cached shell only when the server is away |
 | `GET /app/custom.css` | browser session | optional user stylesheet, served only while the setting is on |
 | `GET /app/gallery` | public | dev-only component gallery, served only with `KOVA_GALLERY=1` |
 | `POST /app/share` | browser session | bounded multipart share: text/link draft and native attachments |

@@ -1,10 +1,13 @@
 """PWA HTTP contract, one-use shares and native attachment handoff."""
 import json
 import re
+import shutil
+import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from kova import attachments
 from kova.config import ensure_token, load_config
@@ -47,6 +50,61 @@ def test_the_worker_declares_its_cache_name() -> None:
     shell = re.search(r"^const SHELL = \[(.*?)\];$", source, re.MULTILINE | re.DOTALL)
     assert shell, "the SHELL list moved"
     assert "kova-shell-" not in shell.group(1), "a cache name is not a request path"
+
+
+WORKER_RUN = r"""
+const fs = require('fs');
+const listeners = {};
+const store = new Map();
+const self = globalThis.self = {location: {origin: 'http://kova.test'},
+  addEventListener: (type, fn) => { listeners[type] = fn; }, clients: {claim() {}}};
+globalThis.caches = {
+  open: async () => ({put: async (req, res) => store.set(req.url, res), addAll: async () => {}}),
+  match: async req => store.get(req.url), keys: async () => [], delete: async () => true,
+};
+let online = true;
+globalThis.fetch = async (req, init) => {
+  if (!online) throw new TypeError('offline');
+  return {ok: true, body: 'fresh', cache: init && init.cache, clone() { return {body: 'cached copy'}; }};
+};
+eval(fs.readFileSync(process.argv[1], 'utf8'));
+async function get(path) {
+  let answer; const waits = [];
+  listeners.fetch({request: {url: 'http://kova.test' + path, method: 'GET'},
+    respondWith: p => { answer = p; }, waitUntil: p => waits.push(p)});
+  const response = await answer; await Promise.all(waits); return response;
+}
+(async () => {
+  store.set('http://kova.test/app', {body: 'stale'});
+  const first = await get('/app');
+  online = false;
+  const away = await get('/app');
+  console.log(JSON.stringify({first: first.body, revalidate: first.cache, away: away.body}));
+})();
+"""
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node is not installed")
+def test_the_worker_serves_the_server_first_and_the_cache_only_offline() -> None:
+    """After ``kova update`` the very next load must show the new build.
+
+    A cache-first worker answered the restarted window with the old files and
+    only swapped them one load later, so updates looked like they did nothing.
+    """
+    out = subprocess.run(["node", "-e", WORKER_RUN, str(SW)], capture_output=True,
+                         text=True, check=True).stdout
+    result = json.loads(out)
+    assert result["first"] == "fresh", "an online load must not come from the old cache"
+    assert result["revalidate"] == "no-cache", "the worker must revalidate, not trust the HTTP cache"
+    assert result["away"] == "cached copy", "offline, the shell refreshed by the last load answers"
+
+
+def test_an_open_window_reloads_once_when_a_new_version_takes_over() -> None:
+    app_js = SW.with_name("app.js").read_text(encoding="utf-8")
+    hook = re.search(r"addEventListener\?\.\('controllerchange'.*?\}\);", app_js, re.DOTALL)
+    assert hook, "the page must listen for a new service worker taking over"
+    assert "location.reload()" in hook.group(0)
+    assert "state.busy" in hook.group(0), "a streaming reply must not be cut off by the reload"
 
 
 def login(app, client, name="demo"):

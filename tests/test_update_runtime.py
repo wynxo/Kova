@@ -221,3 +221,23 @@ def test_background_server_detects_same_version_new_build_and_web_cache_is_versi
     with TestClient(server.create_app(cfg)) as client:
         assert "kova-shell-" + "b" * 24 in client.get("/app/sw.js").text
         assert not client.get("/health?probe=false").json()["restart_available"]
+
+
+def test_update_clears_only_the_desktop_web_caches(tmp_path):
+    """The reopened desktop must not be served old files by the old build's worker,
+    but a refresh must not sign the user out or drop window settings."""
+    from kova.updater import DESKTOP_WEB_CACHES, clear_desktop_web_cache
+
+    profile = tmp_path / "desktop-data"
+    for name in (*DESKTOP_WEB_CACHES, "Local Storage", "Cookies-dir"):
+        (profile / name).mkdir(parents=True)
+        (profile / name / "data").write_text("x")
+    (profile / "Cookies").write_text("session")
+
+    clear_desktop_web_cache(tmp_path)
+
+    assert not any((profile / name).exists() for name in DESKTOP_WEB_CACHES)
+    assert (profile / "Local Storage" / "data").exists()
+    assert (profile / "Cookies").read_text() == "session"
+    clear_desktop_web_cache(tmp_path)  # a second run (or no desktop yet) is fine
+    clear_desktop_web_cache(tmp_path / "no-desktop")
