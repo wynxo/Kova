@@ -385,7 +385,6 @@
       const stamp = module.timestamp(options.created);
       if (stamp) article.append(stamp);
       article.append(bar);
-      if (usage) bar.append(usageMeter(usage));
       module.touchActions(article, bar);
       return;
     }
@@ -1805,7 +1804,8 @@
         } else if (kind === 'egress') {
           const remote = (event.items || []).filter(item => !item.local);
           const hosts = [...new Set(remote.map(item => item.host))];
-          body.insertBefore(el('div', 'turn-status', hosts.length ? `Network: ${hosts.join(', ')} · ${remote.reduce((n, item) => n + item.bytes_out, 0)} body bytes prepared.` : 'Network: loopback only for this answer.'), activity);
+          // Staying on this computer is the default and says nothing; leaving it is news.
+          if (hosts.length) body.insertBefore(el('div', 'turn-status', `Network: ${hosts.join(', ')} · ${remote.reduce((n, item) => n + item.bytes_out, 0)} body bytes prepared.`), activity);
         } else if (kind === 'privacy') {
           current = null;
           const count = Number(event.count) || 0;
