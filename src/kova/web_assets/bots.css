@@ -69,17 +69,15 @@ html body.app-bots #sidebar {
   place-items: center;
   width: var(--bot-avatar-size, var(--space-6));
   height: var(--bot-avatar-size, var(--space-6));
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--fg-default);
-  box-shadow: inset 0 calc(-1 * var(--space-0-5)) var(--chat-colour, var(--border-strong));
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--chat-colour, var(--fg-muted)) 18%, var(--bg-raised));
+  color: var(--chat-colour, var(--fg-default));
   font-size: var(--type-size-label);
   font-weight: 680;
   line-height: 1;
 }
 
-.bot-avatar > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bot-avatar > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 .history-title > .bot-avatar {
   --bot-avatar-size: var(--space-5);
   margin-inline-end: var(--space-2);
@@ -114,7 +112,8 @@ html body.app-bots #sidebar {
 }
 
 .message.assistant.bot-reply { --speaker: var(--chat-colour, var(--fg-default)); }
-.message.assistant.bot-reply > .message-label > .bot-avatar { background: var(--bg-raised); }
+.message.assistant.bot-reply > .message-label > .bot-avatar:not(.has-character) { background: var(--bg-raised); }
+.message.assistant.bot-reply > .message-label > .bot-avatar.has-character { background: none; }
 .bot-author-name { overflow-wrap: anywhere; }
 
 /* The editor takes over the reading pane, never a modal or a nested form. */
@@ -285,15 +284,11 @@ html body.app-bots #sidebar {
   overflow: auto;
 }
 
-.bot-directory-content { max-width: var(--type-measure-prose); text-align: center; }
-.bot-directory-heading { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); }
-.bot-directory-heading h1 { font-size: var(--type-size-heading); line-height: var(--type-leading-tight); }
-.bot-directory-body { margin-block-start: var(--space-4); color: var(--fg-muted); }
 
 .bot-work-actions { display: flex; flex: none; gap: var(--space-1); align-items: center; }
-.bot-work-actions .btn { gap: var(--space-2); margin: 0; white-space: nowrap; }
-.bot-work-toggle { border: 1px solid var(--border-subtle); }
-.app-bots.panel-open .bot-work-toggle { background: var(--bg-raised); }
+.bot-work-toggle { position: relative; }
+.app-bots.panel-open .bot-work-toggle,
+.bot-focus-button[aria-pressed="true"] { background: var(--bg-raised); color: var(--fg-default); }
 .app-bots .bot-chat-identity { gap: var(--space-3); }
 .app-bots .bot-chat-identity .bot-avatar { --bot-avatar-size: var(--space-10); }
 .app-bots .bot-chat-name { font-size: var(--type-size-body-comfortable); }
@@ -344,7 +339,7 @@ html body.app-bots #sidebar {
 .bot-work-preview pre {
   margin: 0;
   padding: var(--space-4);
-  max-height: calc(var(--space-12) * 4);
+  max-height: min(48vh, calc(var(--space-12) * 8));
   overflow: auto;
   color: var(--fg-muted);
   font: var(--type-size-label)/var(--type-leading-body) var(--font-mono, monospace);
@@ -353,7 +348,7 @@ html body.app-bots #sidebar {
 }
 .bot-work-preview-button {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
   min-height: var(--space-6);
@@ -364,7 +359,7 @@ html body.app-bots #sidebar {
 .bot-work-list { padding: 0; margin: var(--space-4) 0 0; list-style: none; }
 .bot-work-step, .bot-work-file {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   min-width: 0;
   gap: var(--space-2);
   padding-block: var(--space-3);
@@ -377,16 +372,30 @@ html body.app-bots #sidebar {
 .bot-work-label strong { font-weight: 620; }
 .bot-work-label > span, .bot-work-state { color: var(--fg-muted); font-size: var(--type-size-label); }
 .bot-work-indicator {
+  display: inline-grid;
   flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
+  place-items: center;
+  align-self: center;
+  width: var(--space-5);
+  height: var(--space-5);
   border-radius: var(--radius-pill);
-  background: var(--fg-faint);
+  color: var(--fg-muted);
 }
-.bot-work-step[data-state="running"] .bot-work-indicator { background: var(--step-tool); }
-.bot-work-step[data-state="done"] .bot-work-indicator { background: var(--status-success); }
-.bot-work-step[data-state="waiting"] .bot-work-indicator { background: var(--step-ask); }
-.bot-work-step[data-state="failed"] .bot-work-indicator { background: var(--status-danger); }
+.bot-work-indicator .icon { width: 14px; height: 14px; }
+.bot-work-step[data-state="done"] .bot-work-indicator { color: var(--status-success); }
+.bot-work-step[data-state="waiting"] .bot-work-indicator { color: var(--step-ask); }
+.bot-work-step[data-state="failed"] .bot-work-indicator { color: var(--status-danger); }
+/* Running: a small ring that turns (a still ring without full motion). */
+.bot-work-step[data-state="running"] .bot-work-indicator::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in oklab, var(--step-tool) 30%, transparent);
+  border-block-start-color: var(--step-tool);
+  border-radius: var(--radius-pill);
+}
+html[data-motion="full"] .bot-work-step[data-state="running"] .bot-work-indicator::before { animation: bot-spin .9s linear infinite; }
+@keyframes bot-spin { to { transform: rotate(1turn); } }
 
 @media (min-width: 721px) {
   body.app-bots.bot-focus { grid-template-columns: minmax(0, 1fr); }
@@ -419,4 +428,225 @@ html body.app-bots #sidebar {
 @media (prefers-reduced-motion: reduce) {
   .bot-contact .bot-actions,
   .bot-work-actions .btn { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Kova Bots: the chrome stays monochrome and each bot carries the colour.
+   A bot's face is also its presence: it looks around while the bot works and
+   wears a badge when it needs you.
+   --------------------------------------------------------------------------- */
+.i-maximize-2 { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'/%3E%3C/svg%3E"); }
+.i-minimize-2 { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'/%3E%3C/svg%3E"); }
+.i-users { --i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E"); }
+
+/* Inbox rows */
+.bot-contacts-body { gap: 0; }
+.bot-open {
+  gap: var(--space-3);
+  min-height: calc(var(--space-12) + var(--space-3));
+  padding: var(--space-2) var(--space-2);
+  transition: background-color var(--motion-fast, 120ms) var(--motion-ease-standard, ease-out);
+}
+.bot-open .bot-avatar { --bot-avatar-size: calc(var(--space-10) + var(--space-1)); }
+.bot-open:hover { background: color-mix(in oklab, var(--bg-raised) 60%, transparent); }
+.bot-open[aria-current] { background: var(--bg-raised); }
+.bot-contact-name { font-weight: 640; letter-spacing: -0.005em; }
+.bot-contact-time { font-variant-numeric: tabular-nums; }
+/* Only a running row needs a flex line (for the dots); idle previews keep their ellipsis. */
+.bot-contact[data-state] .bot-contact-preview { display: flex; align-items: baseline; min-width: 0; }
+.bot-contact[data-state] .bot-contact-preview { color: var(--fg-default); font-weight: 560; }
+
+/* Typing dots after "Working" */
+.bot-typing { display: inline-flex; align-items: center; gap: 3px; margin-inline-start: var(--space-1); }
+.bot-typing > i { width: 3px; height: 3px; border-radius: var(--radius-pill); background: currentColor; }
+html[data-motion="full"] .bot-typing > i { animation: bot-dot 1.2s var(--motion-ease-standard, ease-in-out) infinite; }
+html[data-motion="full"] .bot-typing > i:nth-child(2) { animation-delay: .15s; }
+html[data-motion="full"] .bot-typing > i:nth-child(3) { animation-delay: .3s; }
+@keyframes bot-dot { 0%, 60%, 100% { opacity: .35; } 30% { opacity: 1; } }
+
+/* Presence badge on the face */
+.bot-presence { display: none; }
+:is(.bot-contact, .bot-chat-identity)[data-state] .bot-presence {
+  position: absolute;
+  inset-block-end: -1px;
+  inset-inline-end: -1px;
+  display: block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--bg-surface);
+  border-radius: var(--radius-pill);
+}
+.bot-chat-identity[data-state] .bot-presence { border-color: var(--bg-base); }
+:is(.bot-contact, .bot-chat-identity)[data-state="working"] .bot-presence { background: var(--step-tool); }
+:is(.bot-contact, .bot-chat-identity)[data-state="blocked-on-approval"] .bot-presence { background: var(--step-ask); }
+.bot-chat-identity .bot-presence { display: none; }
+.bot-chat-identity[data-state] > .bot-avatar { position: relative; }
+
+/* A working bot looks around; one that waits on you looks at you. */
+html[data-motion="full"] :is(.bot-contact, .bot-chat-identity)[data-state="working"] .character-eyes {
+  animation: bot-look 2.4s var(--motion-ease-standard, ease-in-out) infinite;
+}
+@keyframes bot-look {
+  0%, 18%, 100% { transform: translateX(0); }
+  30%, 46% { transform: translateX(-3px); }
+  58%, 76% { transform: translateX(3px); }
+}
+
+/* Group chats: a soft tile holding the members' faces */
+.bot-group-avatar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 1px;
+  place-items: center;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+}
+.bot-open[aria-current] .bot-group-avatar { background: var(--bg-base); }
+.bot-group-avatar > .bot-avatar { --bot-avatar-size: 100%; background: none; }
+.bot-group-avatar > .bot-avatar:not(.has-character) { background: color-mix(in oklab, var(--chat-colour, var(--fg-muted)) 18%, var(--bg-surface)); font-size: 9px; }
+/* Two members sit on the diagonal; three put the third centred underneath. */
+.bot-group-avatar[data-count="2"] > .bot-avatar:nth-child(2) { grid-area: 2 / 2; }
+.bot-group-avatar[data-count="3"] > .bot-avatar:nth-child(3) { grid-column: 1 / -1; width: 50%; }
+.bot-group-avatar[data-count="1"] { grid-template-columns: 1fr; }
+.bot-group-more {
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thread header */
+.app-bots .bot-chat-identity .bot-avatar { --bot-avatar-size: var(--space-9, 36px); }
+.bot-chat-identity[data-state] .bot-chat-model { display: flex; align-items: baseline; }
+.bot-chat-identity[data-state] .bot-chat-model { color: var(--fg-default); }
+.bot-work-actions { gap: var(--space-0-5, 2px); }
+.bot-work-count {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: -4px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--fg-default);
+  color: var(--bg-base);
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.bot-work-count:empty { display: none; }
+
+/* With nothing open: the roster */
+/* The heading takes focus so screen readers land here. It is not a control, so its
+   ring is transparent: invisible normally, drawn by the system in forced colours. */
+#bot-directory-title:focus-visible { outline: var(--space-0-5) solid transparent; outline-offset: var(--space-2); }
+#bot-directory { place-items: start center; padding: clamp(var(--space-8), 12vh, calc(var(--space-12) * 3)) var(--space-6) var(--space-8); }
+.bot-directory-content { width: min(100%, 760px); }
+.bot-directory-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.bot-directory-heading h1 {
+  font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2.25rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.bot-directory-body { margin-block-start: var(--space-3); max-width: 52ch; color: var(--fg-muted); line-height: var(--type-leading-body); }
+.bot-roster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.bot-roster-open {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: var(--space-1);
+  width: 100%;
+  height: 100%;
+  padding: var(--space-4) var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  color: var(--fg-default);
+  text-align: start;
+  transition: background-color var(--motion-fast, 120ms) var(--motion-ease-standard, ease-out);
+}
+.bot-roster-open .bot-avatar {
+  --bot-avatar-size: 64px;
+  margin-block-end: var(--space-2);
+  font-size: var(--type-size-title);
+  transition: transform var(--motion-base, 200ms) cubic-bezier(.2, .8, .2, 1);
+}
+.bot-roster-open:hover:not(:disabled) { background: var(--bg-surface); }
+html[data-motion="full"] .bot-roster-open:hover:not(:disabled) .bot-avatar { transform: translateY(-3px) rotate(-3deg); }
+html[data-motion="full"] .bot-roster-open:hover .character-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: character-blink var(--motion-slow) var(--motion-ease-standard);
+}
+.bot-roster-name { font-weight: 640; }
+.bot-roster-about {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--fg-muted);
+  font-size: var(--type-size-label);
+  line-height: var(--type-leading-body);
+}
+.bot-roster-plus {
+  background: none;
+  border: 1.5px dashed var(--border-strong);
+  color: var(--fg-muted);
+}
+.bot-roster-plus .icon { width: 22px; height: 22px; }
+.bot-roster-new:hover:not(:disabled) .bot-roster-plus { border-color: var(--fg-muted); color: var(--fg-default); }
+.bot-roster-open:focus-visible {
+  outline: var(--space-0-5) solid var(--accent-default);
+  outline-offset: calc(-1 * var(--space-0-5));
+}
+
+/* Personality, only with Motion = Full: idle blinks, a slow float on the roster,
+   one staggered arrival, and each bot's name in a deepened shade of its colour. */
+html[data-motion="full"] .bot-avatar .character-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bot-idle-blink var(--blink-every, 6s) var(--blink-delay, 0s) infinite;
+}
+@keyframes bot-idle-blink {
+  0%, 95%, 100% { transform: scaleY(1); }
+  97% { transform: scaleY(.12); }
+}
+html[data-motion="full"] .bot-roster-open:not(.bot-roster-new) .character {
+  animation: bot-float 4.8s var(--blink-delay, 0s) ease-in-out infinite;
+}
+@keyframes bot-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+html[data-motion="full"] .bot-roster-item {
+  animation: bot-arrive 520ms calc(var(--i, 0) * 45ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes bot-arrive {
+  from { transform: translateY(10px) scale(.97); }
+  to { transform: none; }
+}
+.bot-reply .bot-author-name { color: color-mix(in oklab, var(--chat-colour, var(--fg-default)) 55%, var(--fg-default)); }
+
+@media (max-width: 720px) {
+  #bot-directory { padding: var(--space-6) var(--space-4); }
+  .bot-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-block-start: var(--space-6); }
+  .bot-roster-open .bot-avatar { --bot-avatar-size: 56px; }
+  .bot-contact-time { visibility: visible; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-typing > i,
+  :is(.bot-contact, .bot-chat-identity) .character-eyes,
+  .bot-roster-open .bot-avatar, .bot-roster-item, .bot-roster-open .character,
+  .bot-avatar .character-eyes, .bot-work-indicator::before { animation: none !important; transition: none; }
 }
