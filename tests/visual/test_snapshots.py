@@ -485,10 +485,15 @@ def test_chat_layouts_reply_outline_and_zen_shortcut(chromium, kova):
         reply = page.locator("#messages .assistant")
         expect(reply.locator("math")).to_be_visible()
         expect(reply.get_by_text("example.js", exact=True)).to_be_visible()
+        # Past copy, everything sits behind the one icon-only More button.
+        more = reply.locator(".message-more-toggle")
+        expect(more).to_have_attribute("aria-label", "More actions and details")
+        more.click()
         reply.get_by_role("button", name="Copy as plain text").click()
         copied = page.evaluate("navigator.clipboard.readText()")
         assert "A short introduction" in copied and "**" not in copied and "Wrap" not in copied
 
+        more.click()
         reply.get_by_role("button", name="Open reply outline").click()
         panel = page.get_by_role("complementary", name="Reply outline")
         panel.get_by_role("button", name="Configure").click()

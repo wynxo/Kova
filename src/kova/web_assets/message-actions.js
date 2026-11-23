@@ -271,6 +271,9 @@
     globalThis.__kovaMessageDetails = true;
     document.addEventListener('click', event => {
       for (const open of document.querySelectorAll('details.message-details[open]')) {
+        // In the phone sheet the menu is the sheet's content, not a popover: the
+        // tap that opened the sheet must not close it again.
+        if (open.closest('dialog.message-sheet')) continue;
         if (!open.contains(event.target)) open.open = false;
       }
     });

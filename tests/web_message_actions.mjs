@@ -37,8 +37,9 @@ sandbox.globalThis = sandbox;
 sandbox.window = sandbox;
 vm.runInNewContext(readFileSync(new URL('../src/kova/web_assets/message-actions.js', import.meta.url), 'utf8'), sandbox);
 const {bar, detailRows} = sandbox.KovaMessageActions;
-const byClass = (node, cls) => node.children.find(child => child.className === cls || child.className?.split(' ').includes(cls));
 const walk = node => [node, ...node.children.flatMap(child => child.className === '#text' ? [] : walk(child))];
+// Actions past copy live inside the "More" menu, so look anywhere in the bar.
+const byClass = (node, cls) => walk(node).slice(1).find(child => child.className === cls || child.className?.split(' ').includes(cls));
 
 // Copy keeps the Markdown the reader actually has, then says Copied briefly.
 {
@@ -91,6 +92,20 @@ const walk = node => [node, ...node.children.flatMap(child => child.className ==
   const actions = bar({role: 'assistant', text: 'plain'});
   assert.equal(byClass(actions, 'message-details'), undefined);
   assert.ok(byClass(actions, 'message-action-copy'));
+}
+
+// At rest a reply shows copy and one icon-only "More" button, nothing else (no
+// second copy, no "Details" or "Plain text" words); the rest is inside More.
+{
+  const actions = bar({role: 'assistant', text: 'x', plainText: () => 'x', usage: {prompt_tokens: 10},
+    model: 'demo', onRetry: () => {}, onBranch: () => {}});
+  const visible = actions.children.filter(child => child.className !== 'message-action-note');
+  assert.deepEqual(visible.map(child => child.className.split(' ')[0]), ['message-action-copy', 'message-details']);
+  const more = byClass(actions, 'message-more-toggle');
+  assert.equal(more.tagName, 'summary');
+  assert.equal(more.getAttribute('aria-label'), 'More actions and details');
+  assert.ok(!walk(more).some(node => node.className === '#text' && node.textContent.trim()), 'More has no text label');
+  assert.ok(byClass(actions, 'message-action-copy-plain') && byClass(actions, 'message-action-retry'));
 }
 
 // Retry and edit are offered only when app.js says they are possible.
