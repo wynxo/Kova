@@ -127,8 +127,6 @@ body.bot-chat .mode-top { display:none; }
   .mode-switch.segmented [role="radio"] { padding-inline:var(--space-3); }
 }
 
-/* Bots live in their own app now: the Kova list hides the contacts, Kova Bots shows them above the chats. */
-body:not(.app-bots) .bot-contacts { display:none; }
 body.app-bots #new-chat { display:none; }
 
 /* Suggestions: quiet pills under the question, not underlined links. */
@@ -160,30 +158,29 @@ body.app-bots #new-chat { display:none; }
 /* Bot characters (characters.js): the face replaces the letter tile. */
 .bot-avatar.has-character { overflow:visible; border-radius:0; background:none; box-shadow:none; }
 .bot-avatar.has-character > .character { width:100%; height:100%; overflow:visible; }
-#bot-welcome > .bot-avatar.has-character { --bot-avatar-size:88px; }
-.bot-chat-identity .bot-avatar.has-character { --bot-avatar-size:var(--space-10); }
-.bot-contacts .bot-avatar.has-character { --bot-avatar-size:var(--space-10); }
-html[data-motion="full"] .character-body {
-  transform-box:fill-box; transform-origin:50% 100%;
-  animation:character-float 3.6s ease-in-out var(--character-delay, 0s) infinite;
+html[data-motion="full"] .bot-open:hover .character-eyes {
+  transform-box:fill-box;
+  transform-origin:center;
+  animation:character-blink var(--motion-slow) var(--motion-ease-standard);
 }
-html[data-motion="full"] .character-eyes {
-  transform-box:fill-box; transform-origin:center;
-  animation:character-blink 5.2s var(--character-delay, 0s) infinite;
+@keyframes character-blink {
+  0%, 100% { transform:scaleY(1); }
+  50% { transform:scaleY(.15); }
 }
-@keyframes character-float { 0%, 100% { transform:translateY(0) scale(1.025, .975); } 50% { transform:translateY(-4%) scale(.985, 1.015); } }
-@keyframes character-blink { 0%, 93%, 100% { transform:scaleY(1); } 96% { transform:scaleY(.08); } }
 
-/* A bot's replies read like a messenger: its colour tints the bubble. */
+/* Bot replies keep the author in view while prose uses the full reading line. */
 .message.assistant.bot-reply > .message-body {
-  padding:8px 14px !important; border-radius:20px 20px 20px 6px !important;
-  background:color-mix(in srgb, var(--chat-colour, var(--bg-raised)) 34%, var(--bg-raised)) !important;
-  width:fit-content; max-width:min(62ch, 100%);
+  width:100%;
+  max-width:var(--type-measure-prose);
+  padding:0 !important;
+  background:none !important;
 }
 
-/* Kova Bots with no chat open: pick a bot, nothing else. */
+/* Kova Bots with no conversation open shows its directory. */
 body.app-bots .mode-top { display:none; }
-body.bots-idle .compose-wrap, body.bots-idle #starters, body.bots-idle #starters-edit { display:none !important; }
+body.bots-idle :is(#composer, #starters, #starters-edit, #jump, #queue-strip),
+body.bots-idle .compose-wrap:not(:has(#notice:not([hidden]), #zen-exit:not([hidden]))) { display:none !important; }
+body.app-bots #compare-open { display:none; }
 
 /* Keyboard focus on every new control, in the accent like the rest of the app. */
 :is(.app-switch-button, .app-menu-item, .mode-switch [role="radio"], .mode-fork-button, .mode-fork-item, .context-ring):focus-visible {

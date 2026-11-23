@@ -155,6 +155,29 @@ def test_search_results_keep_the_pin(store):
     assert [result["pinned"] for result in results] == [True, False]
 
 
+def test_bot_inbox_preview_is_plain_text(store):
+    bot = store.create_chat("Research", kind="bot", bot_id="researcher")
+    store.add_message(bot["id"], "assistant",
+                      "## Plan\n\n**Start small.** Read [the notes](https://example.com) "
+                      "and run `check.py` *twice*.\n\n- one\n- two")
+    [row] = [chat for chat in store.list_chats() if chat["id"] == bot["id"]]
+    assert row["message_preview"] == "Plan Start small. Read the notes and run check.py twice. one two"
+
+
+def test_search_workspace_filters_before_limit(store):
+    kova = store.create_chat("Plan")
+    bot = store.create_chat("Research", kind="bot", bot_id="researcher")
+    group = store.create_chat("Review", kind="group", members=["researcher"])
+    for chat in (kova, bot, group):
+        store.add_message(chat["id"], "user", "a matching note")
+    store.update_chat(bot["id"], pinned=True)
+
+    [regular] = store.search_chats("matching", limit=1, workspace="kova")
+    assert (regular["id"], regular["kind"]) == (kova["id"], "chat")
+    assert [row["kind"] for row in store.search_chats("matching", workspace="bots")] == ["bot", "group"]
+    assert len(store.search_chats("matching")) == 3
+
+
 def test_list_newest_first(store):
     first = store.create_chat("first")
     time.sleep(0.001)

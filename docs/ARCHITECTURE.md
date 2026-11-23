@@ -128,7 +128,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /chats/{chat_id}/files` | token or session | names in that chat's working folder, for the composer's `@` list (`?q=`) |
 | `POST /chats/{chat_id}/attachments` | token or session | upload a local attachment |
 | `DELETE /chats/{chat_id}/attachments/{ident}` | token or session | remove a local attachment |
-| `GET /chats/search` | token or session | full-text chat search (`?q=`) |
+| `GET /chats/search` | token or session | full-text chat search (`?q=`), optionally limited to `workspace=kova` or `workspace=bots` |
 | `GET/PATCH/DELETE /chats/{chat_id}` | token or session | read, rename/mode/web/permission/cwd/pin/colour/icon, edit `group`/apply a `preset`, move to a project (`project_id` on its own), delete |
 | `POST /chats/{chat_id}/members` | token or session | add a bot to a group by `bot_id`; a paired phone needs `settings:write` |
 | `PATCH /chats/{chat_id}/members/{bot_id}` | token or session | reorder, mute or patch group member overrides; a paired phone needs `settings:write` |
@@ -428,6 +428,13 @@ is written. A daemon thread (`_watch_reminders`) listens on `/events` and
 prints reminder pop-ups while you chat.
 
 ### Desktop and web app
+
+The app switch leads to two workspaces. **Kova Chat** lists regular Chat and
+Work conversations and projects. **Kova Bots** uses a bot inbox with one row per
+bot and a separate section for groups and earlier threads. On desktop it
+resumes a recent bot conversation. The Work panel reads saved and streamed tool
+activity and links changed files to checkpoint review. The workspace follows
+the saved conversation type when a conversation opens.
 
 `src/kova/app.py` holds both launchers. The Python package includes the Electron
 source. Installers, `kova update` and `kova app` refresh the staged copy under

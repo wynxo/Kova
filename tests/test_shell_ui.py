@@ -44,7 +44,7 @@ def test_new_scripts_and_styles_are_loaded_and_cached_offline():
     assert HTML.index("characters.js") < HTML.index("bots.js") < HTML.index("shell.js") < HTML.index("app.js")
 
 
-def test_characters_float_only_with_full_motion():
+def test_character_motion_requires_full_motion():
     css = (ASSETS / "shell.css").read_text(encoding="utf-8")
     animated = re.findall(r"([^{}]+)\{[^}]*animation:character-", css)
     assert animated and all('html[data-motion="full"]' in rule for rule in animated)
