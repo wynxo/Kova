@@ -292,7 +292,7 @@
     available: () => state.connected && !state.busy,
     onEditorOpen: () => { ++state.navigationVersion; sidebar(false); options(false); toggleZen(false, {fromTheme: true}); },
     onChange: () => { paintBotChat(); syncComposerModel(); history(state.chats); },
-    openChat: openBotChat, toolLabel, toolHint, changeFiles, reviewChanges,
+    openChat: openBotChat, openThread: id => openChat(id), toolLabel, toolHint, changeFiles, reviewChanges,
     focusChat: () => (state.chat ? $('prompt') : $('bot-directory-title'))?.focus()});
   shell = isQuick ? null : globalThis.KovaShell?.create({state, forkChat, chatSetting, safe, controls, switchApp: changeWorkspace}) || null;
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
@@ -805,9 +805,10 @@
     if (inBots()) {
       foundBots = bots?.renderContacts(list, chats, query);
       if (!searching) {
-        chats = chats.filter(chat => chat.kind === 'group' || !bots?.hasBot(chat.bot_id)
-          || (chat.bot_id === state.chat?.bot_id && chat.id !== KovaChatList.latestDirectChat(chats, chat.bot_id)?.id));
-        if (chats.length) list.append(el('h2', 'bot-history-title', 'Other threads'));
+        // Groups and each bot's latest thread live in the inbox; older threads list here.
+        chats = chats.filter(chat => chat.kind !== 'group' && (!bots?.hasBot(chat.bot_id)
+          || (chat.bot_id === state.chat?.bot_id && chat.id !== KovaChatList.latestDirectChat(chats, chat.bot_id)?.id)));
+        if (chats.length) list.append(el('h2', 'bot-history-title', 'Earlier threads'));
       }
     }
     if (focused?.closest('.bot-contacts') && list.contains(focused)) focused.focus({preventScroll: true});
@@ -1303,11 +1304,10 @@
     setChat(null);
     renderActivity();
     if (wasSearching || wasIncognito) await refreshChats();
+    // Kova Bots opens on its roster; the inbox beside it holds every conversation.
     if (app === 'bots') {
-      if (!(await resumeBots(version))) {
-        $('bot-directory-title').focus();
-        if (!wide?.matches) sidebar(true);
-      }
+      $('bot-directory-title').focus();
+      if (!wide?.matches) sidebar(true);
     } else $('prompt').focus();
   }
 
@@ -1320,12 +1320,6 @@
       bots?.close(); setChat(null); $('prompt').value = ''; $('prompt').focus();
       if (wasIncognito) await refreshChats();
     }
-  }
-  async function resumeBots(version) {
-    if (!inBots() || state.chat || version !== state.navigationVersion || !wide?.matches) return false;
-    const recent = state.chats.find(chat => chat.kind === 'bot' && bots?.hasBot(chat.bot_id))
-      || state.chats.find(chat => chat.kind === 'group');
-    return Boolean(recent && await openChat(recent.id));
   }
   let startingBotChat = false;
   async function openBotChat(bot, fresh = false) {
@@ -2941,7 +2935,7 @@
         const draft = local || await json(`/app/share/${encodeURIComponent(share)}`, {method: 'POST'});
         await applyShare(draft);
       }
-      if (inBots() && !state.chat && !(await resumeBots(state.navigationVersion))) {
+      if (inBots() && !state.chat) {
         $('bot-directory-title').focus();
         if (!wide?.matches) sidebar(true, $('search'));
       } else if (!inBots()) $('prompt').focus();

@@ -98,7 +98,7 @@
     </div>`;
 
   function create({el, icon, json, write, safe, models, activeModel, chat, available,
-                   onChange, onEditorOpen, openChat, focusChat, toolLabel, toolHint, changeFiles, reviewChanges, directory, editor, header, welcome}) {
+                   onChange, onEditorOpen, openChat, openThread, focusChat, toolLabel, toolHint, changeFiles, reviewChanges, directory, editor, header, welcome}) {
     const records = new Map();
     const avatarVersion = new Map();
     let listState = 'loading', listVersion = 0, editing = null;
@@ -147,43 +147,82 @@
     const when = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit'});
     const day = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric'});
 
+    // A group is a tile of its members: up to four faces in a 2x2 grid, "+N" for the rest.
+    function groupAvatar(group) {
+      const mark = el('span', 'bot-avatar bot-group-avatar avatar');
+      mark.setAttribute('aria-hidden', 'true');
+      const members = (group.members || []).map(member => get(member.bot_id) || {id: member.bot_id, name: member.bot_id});
+      const shown = members.length > 4 ? members.slice(0, 3) : members.slice(0, 4);
+      for (const member of shown) mark.append(avatar(member));
+      if (members.length > 4) mark.append(el('span', 'bot-group-more', `+${members.length - 3}`));
+      mark.dataset.count = String(Math.min(members.length, 4));
+      if (!members.length) mark.append(icon('users'));
+      return mark;
+    }
+
+    const isRunning = state => state === 'working' || state === 'blocked-on-approval';
+    function previewNode(activity, text) {
+      const node = el('span', 'bot-contact-preview');
+      if (activity === 'working') {
+        const dots = el('span', 'bot-typing');
+        dots.setAttribute('aria-hidden', 'true');
+        dots.append(el('i'), el('i'), el('i'));
+        node.append(el('span', '', 'Working'), dots);
+      } else node.textContent = activity === 'blocked-on-approval' ? 'Needs your approval' : text;
+      return node;
+    }
+    function timeNode(recent) {
+      const date = new Date(recent?.last_message || '');
+      if (!recent?.message_count || !Number.isFinite(date.getTime())) return null;
+      const node = el('time', 'bot-contact-time',
+        (window.KovaChatList.bucket(recent) === 'today' ? when : day).format(date));
+      node.dateTime = date.toISOString();
+      return node;
+    }
+
     function renderContacts(list, chats, query) {
-      const term = query.toLocaleLowerCase();
+      const term = query.toLocaleLowerCase().replace(/^@/, '');
       const people = ordered().filter(bot => !term || [bot.name, bot.id, bot.handle].some(
-        name => name?.toLocaleLowerCase().includes(term.replace(/^@/, ''))));
-      const rows = people.map(bot => [bot, window.KovaChatList.latestDirectChat(chats, bot.id)]);
-      rows.sort((a, b) => Number(!!b[1]?.pinned) - Number(!!a[1]?.pinned)
-        || (b[1]?.last_message || '').localeCompare(a[1]?.last_message || ''));
+        name => name?.toLocaleLowerCase().includes(term)));
+      // One inbox: direct bots and group chats sorted together by their last message.
+      // While searching, groups come back through the message search results instead.
+      const rows = people.map(bot => ({bot, recent: window.KovaChatList.latestDirectChat(chats, bot.id)}));
+      if (!term) for (const group of chats.filter(item => item.kind === 'group')) rows.push({group, recent: group});
+      const last = row => (row.recent?.message_count ? row.recent.last_message : '') || '';
+      rows.sort((a, b) => Number(!!b.recent?.pinned) - Number(!!a.recent?.pinned) || last(b).localeCompare(last(a)));
       const key = JSON.stringify([listState, rows, [...avatarVersion], chat()?.id]);
       if (key !== contactsKey) {
         contactsKey = key;
         body.replaceChildren();
-        for (const [bot, recent] of rows) {
-          const name = bot.name || bot.id;
-          const row = el('div', 'bot-contact');
-          row.dataset.botId = bot.id;
+        for (const {bot, group, recent} of rows) {
+          const name = group ? group.title || 'Group chat' : bot.name || bot.id;
+          const row = el('div', group ? 'bot-contact bot-group-row' : 'bot-contact');
+          if (bot) row.dataset.botId = bot.id; else row.dataset.chatId = group.id;
           const open = button('', 'bot-open');
-          open.setAttribute('aria-label', name);
-          if (bot.id === chat()?.bot_id) open.setAttribute('aria-current', 'true');
+          const current = group ? chat()?.id === group.id : chat()?.kind === 'bot' && bot.id === chat()?.bot_id;
+          if (current) open.setAttribute('aria-current', 'true');
           const details = el('span', 'bot-contact-details');
           const top = el('span', 'bot-contact-line');
           top.append(el('strong', 'bot-contact-name', name));
-          const date = new Date(recent?.last_message || '');
-          if (recent?.message_count && Number.isFinite(date.getTime())) {
-            top.append(el('time', 'bot-contact-time',
-              (window.KovaChatList.bucket(recent) === 'today' ? when : day).format(date)));
-          }
-          const activity = recent?.state;
-          if (activity === 'working' || activity === 'blocked-on-approval') row.dataset.state = activity;
-          const preview = activity === 'working' ? 'Working…'
-            : activity === 'blocked-on-approval' ? 'Waiting for your approval'
+          const time = timeNode(recent);
+          if (time) top.append(time);
+          const activity = isRunning(recent?.state) ? recent.state : '';
+          if (activity) row.dataset.state = activity;
+          const text = group
+            ? recent?.message_preview || `${(group.members || []).length} bots`
             : bot.state !== 'ok' ? 'Unavailable'
-            : recent?.message_preview || (recent?.message_count ? recent.title : bot.description) || 'Start a conversation';
-          details.append(top, el('span', 'bot-contact-preview', preview));
-          open.append(avatar(bot), details);
-          open.onclick = () => safe(() => openChat(bot));
+            : recent?.message_preview || (recent?.message_count ? recent.title : bot.description) || 'Say hello';
+          const preview = previewNode(activity, text);
+          details.append(top, preview);
+          const mark = group ? groupAvatar(group) : avatar(bot);
+          const presence = el('span', 'bot-presence');
+          presence.setAttribute('aria-hidden', 'true');
+          mark.append(presence);
+          open.append(mark, details);
+          open.setAttribute('aria-label', [name, activity ? preview.textContent : ''].filter(Boolean).join(', '));
+          open.onclick = group ? () => safe(() => openThread(group.id)) : () => safe(() => openChat(bot));
           row.append(open);
-          if (bot.state === 'ok') {
+          if (bot?.state === 'ok') {
             const actions = el('details', 'bot-actions history-actions');
             const more = el('summary', 'icon-button');
             more.setAttribute('aria-label', `Actions for ${name}`);
@@ -205,16 +244,48 @@
     const inboxAction = directory.querySelector('.bot-inbox-action');
     const inboxNote = directory.querySelector('.bot-directory-body');
     const inboxTitle = directory.querySelector('h1');
+    // With nothing open, the reading pane is the roster: every bot as itself.
+    const roster = el('ul', 'bot-roster');
+    roster.setAttribute('aria-label', 'Your bots');
+    inboxNote.after(roster);
+    let rosterKey;
     function renderDirectory() {
-      const bot = ordered().find(item => item.state === 'ok');
-      inboxTitle.textContent = !bot && listState === 'ready' ? 'Create your first bot' : 'Pick up a conversation';
+      const bots = ordered().filter(item => item.state === 'ok');
+      const ready = listState === 'ready';
+      inboxTitle.textContent = ready && !bots.length ? 'Make your first bot' : 'Who do you want to talk to?';
       inboxNote.textContent = {
-        loading: 'Loading bots…', error: 'Could not load bots.', offline: 'Bots are offline.',
-      }[listState] || (bot ? 'Pick a bot from your inbox.' : 'Give a bot its own instructions and model.');
-      inboxAction.hidden = listState === 'loading' || listState === 'offline';
-      inboxAction.textContent = listState === 'error' ? 'Retry' : bot ? `Open ${bot.name}` : 'New bot';
-      inboxAction.onclick = listState === 'error' ? () => safe(refresh)
-        : bot ? () => safe(() => openChat(bot)) : () => openEditor(null, inboxAction);
+        loading: 'Loading bots…', error: 'Could not load your bots.', offline: 'Bots are offline.',
+      }[listState] || (bots.length ? '' : 'A bot is a saved assistant with its own name, look, instructions and model.');
+      inboxNote.hidden = !inboxNote.textContent;
+      inboxAction.hidden = !(listState === 'error' || (ready && !bots.length));
+      inboxAction.textContent = listState === 'error' ? 'Try again' : 'New bot';
+      inboxAction.onclick = listState === 'error' ? () => safe(refresh) : () => openEditor(null, inboxAction);
+      roster.hidden = !ready || !bots.length;
+      const key = JSON.stringify([roster.hidden, bots, [...avatarVersion]]);
+      if (key === rosterKey) return;
+      rosterKey = key;
+      roster.replaceChildren();
+      for (const [index, bot] of bots.entries()) {
+        const item = el('li', 'bot-roster-item');
+        item.style.setProperty('--i', String(index));
+        const open = button('', 'bot-roster-open');
+        open.append(avatar(bot), el('strong', 'bot-roster-name', bot.name),
+          el('span', 'bot-roster-about', bot.description || `@${bot.handle}`));
+        open.setAttribute('aria-label', `Chat with ${bot.name}`);
+        open.onclick = () => safe(() => openChat(bot));
+        item.append(open);
+        roster.append(item);
+      }
+      const item = el('li', 'bot-roster-item');
+      item.style.setProperty('--i', String(bots.length));
+      const add = button('', 'bot-roster-open bot-roster-new');
+      const plus = el('span', 'bot-avatar bot-roster-plus');
+      plus.setAttribute('aria-hidden', 'true');
+      plus.append(icon('plus'));
+      add.append(plus, el('strong', 'bot-roster-name', 'New bot'), el('span', 'bot-roster-about', 'Name it, give it a look and a job'));
+      add.onclick = () => openEditor(null, add);
+      item.append(add);
+      roster.append(item);
     }
 
     function decorateHistory(title, chat) {
@@ -225,8 +296,9 @@
     function refreshControls() {
       const enabled = available();
       inboxAction.disabled = !enabled;
+      for (const open of roster.querySelectorAll('button')) open.disabled = !enabled;
       for (const row of body.querySelectorAll('.bot-contact')) {
-        row.firstElementChild.disabled = !enabled || get(row.dataset.botId)?.state !== 'ok';
+        row.firstElementChild.disabled = !enabled || (!row.dataset.chatId && get(row.dataset.botId)?.state !== 'ok');
         for (const action of row.querySelectorAll('.bot-actions button')) action.disabled = !enabled;
       }
       editHeader.disabled = !enabled;
@@ -284,10 +356,22 @@
     workPreview.setAttribute('aria-label', 'Tool result preview');
     const workActions = el('div', 'bot-work-actions');
     workActions.hidden = true;
-    const workToggle = button('Work panel', 'btn quiet bot-work-toggle', 'columns-2');
-    const focusButton = button('Open bot', 'btn quiet bot-focus-button', 'external-link');
+    // Icon buttons with names, so the header keeps the bot's name in charge.
+    const workToggle = button('', 'icon-button bot-work-toggle', 'panel-right');
+    const workCount = el('span', 'bot-work-count');
+    workCount.setAttribute('aria-hidden', 'true');
+    workToggle.append(workCount);
+    const focusButton = button('', 'icon-button bot-focus-button', 'maximize-2');
     workToggle.setAttribute('aria-controls', 'side-panel');
     workToggle.setAttribute('aria-label', 'Work panel');
+    workToggle.title = 'Work panel';
+    function labelFocus() {
+      const label = focused ? 'Show inbox' : 'Hide inbox';
+      focusButton.setAttribute('aria-label', label);
+      focusButton.title = label;
+      focusButton.setAttribute('aria-pressed', String(focused));
+      focusButton.querySelector('.icon').className = `icon i-${focused ? 'minimize-2' : 'maximize-2'}`;
+    }
     workTabs.append(activityTab, filesTab);
     workNode.append(workTabs, workPreview, workContent);
     workActions.append(focusButton, workToggle);
@@ -307,6 +391,8 @@
     function paintWork() {
       paintWorkPreview();
       activityTab.setAttribute('aria-pressed', String(!showingFiles));
+      workCount.textContent = workTools.size ? String(workTools.size) : '';
+      workToggle.setAttribute('aria-label', workTools.size ? `Work panel, ${workTools.size} steps` : 'Work panel');
       filesTab.setAttribute('aria-pressed', String(showingFiles));
       const list = el('ol', 'bot-work-list');
       if (showingFiles) {
@@ -333,7 +419,13 @@
             target.onclick = () => { selectedStep = id; paintWorkPreview(); };
             row.append(target);
           }
-          target.append(el('span', 'bot-work-indicator'), label, el('span', 'bot-work-state', status));
+          // The icon carries the state; the word stays for screen readers and for anything unfinished.
+          const indicator = el('span', 'bot-work-indicator');
+          indicator.setAttribute('aria-hidden', 'true');
+          const glyph = {done: 'check', failed: 'x', waiting: 'triangle-alert', stopped: 'x'}[step.state];
+          if (glyph) indicator.append(icon(glyph));
+          const word = el('span', step.state === 'done' ? 'bot-work-state sr-only' : 'bot-work-state', status);
+          target.append(indicator, label, word);
           list.append(row);
         }
       }
@@ -390,8 +482,7 @@
       workChatId = id;
       workActions.hidden = !id;
       focusButton.hidden = current?.kind !== 'bot';
-      focusButton.querySelector('span:last-child').textContent = focused ? 'Back to inbox' : 'Open bot';
-      focusButton.setAttribute('aria-label', focused ? 'Back to inbox' : 'Open bot');
+      labelFocus();
       workTools.clear();
       if (id !== previousId) workFiles.clear();
       if (!id) return;
@@ -446,12 +537,13 @@
       }
       paintWork();
       panel.open({key: 'bot-work', title: 'Work panel', node: workNode, returnFocus: workToggle});
+      // Land on the view switch rather than outlining the whole panel body.
+      requestAnimationFrame(() => (showingFiles ? filesTab : activityTab).focus({preventScroll: true}));
     };
     focusButton.onclick = () => {
       focused = !focused;
       document.body.classList.toggle('bot-focus', focused);
-      focusButton.querySelector('span:last-child').textContent = focused ? 'Back to inbox' : 'Open bot';
-      focusButton.setAttribute('aria-label', focused ? 'Back to inbox' : 'Open bot');
+      labelFocus();
     };
 
     function renderChat(current, title, empty) {
@@ -460,12 +552,15 @@
       header.hidden = !bot;
       title.hidden = !!bot;
       welcome.hidden = !direct || !empty;
-      const key = JSON.stringify([current?.bot_id, bot, avatarVersion.get(bot?.id)]);
+      const activity = isRunning(current?.state) ? current.state : '';
+      const key = JSON.stringify([current?.bot_id, bot, avatarVersion.get(bot?.id), activity]);
       if (key !== headerKey) {
         headerKey = key;
+        if (activity) identity.dataset.state = activity; else delete identity.dataset.state;
         if (bot) {
           const name = el('strong', 'bot-chat-name', bot.name);
-          const model = el('span', 'bot-chat-model', bot.description || `@${bot.handle}`);
+          const model = previewNode(activity, bot.description || `@${bot.handle}`);
+          model.className = 'bot-chat-model';
           const details = el('div', 'bot-chat-details');
           name.title = bot.name; model.title = model.textContent;
           details.append(name, model);

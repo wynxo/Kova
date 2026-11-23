@@ -71,6 +71,23 @@ def _clean_snippet(text: str) -> str:
     return " ".join((text or "").split())
 
 
+_PREVIEW_FENCE = re.compile(r"```[^\n]*\n?")
+_PREVIEW_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_PREVIEW_LINE_MARK = re.compile(r"(?m)^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)")
+_PREVIEW_STRONG = re.compile(r"(\*\*|__|~~)(.+?)\1")
+_PREVIEW_EMPHASIS = re.compile(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])")
+
+
+def _plain_preview(text: str) -> str:
+    """A message as one plain line for an inbox row: Markdown marks removed."""
+    text = _PREVIEW_FENCE.sub(" ", text or "")
+    text = _PREVIEW_LINK.sub(r"\1", text)
+    text = _PREVIEW_LINE_MARK.sub("", text)
+    text = _PREVIEW_STRONG.sub(r"\2", text)
+    text = _PREVIEW_EMPHASIS.sub(r"\1", text)
+    return _clean_snippet(text.replace("`", ""))
+
+
 def _fts5_available(conn: sqlite3.Connection) -> bool:
     """Whether this SQLite build has the FTS5 extension compiled in."""
     try:
@@ -1023,7 +1040,7 @@ class Store:
                 "pinned": bool(r["pinned"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
-                **({"message_preview": _clean_snippet(r["message_preview"])}
+                **({"message_preview": _plain_preview(r["message_preview"])}
                    if r["message_preview"] else {}),
                 **self._group_fields(r["id"], r["kind"], json.loads(r["group_settings"])),
             }

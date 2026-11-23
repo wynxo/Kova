@@ -279,7 +279,11 @@ def test_bot_workspace_keeps_histories_separate(chromium, kova):
 
             page.locator("#app-switch").click()
             page.get_by_role("menuitemradio", name=re.compile(r"^Kova Bots")).click()
-            expect(page.locator("#bot-chat-header")).to_contain_text("Workspace Bot")
+            # Kova Bots opens on its roster rather than reopening the last conversation.
+            roster = page.locator("#bot-directory")
+            expect(roster).to_be_visible()
+            expect(roster.get_by_role("button", name="Chat with Workspace Bot")).to_be_visible()
+            expect(page.locator("#bot-chat-header")).to_be_hidden()
             expect(history).not_to_contain_text("Regular conversation")
             expect(history.get_by_role("button", name="Workspace Bot", exact=True)).to_be_visible()
             expect(history).to_contain_text("Team conversation")
@@ -295,9 +299,9 @@ def test_bot_workspace_keeps_histories_separate(chromium, kova):
             expect(panel.get_by_text("Tool calls and approvals will appear here")).to_be_visible()
             panel.get_by_role("button", name="Files", exact=True).click()
             expect(panel.get_by_text("Files attached or changed in this thread will appear here")).to_be_visible()
-            page.get_by_role("button", name="Open bot").click()
+            page.get_by_role("button", name="Hide inbox").click()
             expect(history).to_be_hidden()
-            page.get_by_role("button", name="Back to inbox").click()
+            page.get_by_role("button", name="Show inbox").click()
             expect(history).to_be_visible()
 
             page.locator("#app-switch").click()

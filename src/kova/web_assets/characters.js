@@ -44,6 +44,10 @@
     svg.setAttribute('viewBox', '0 0 64 64');
     svg.setAttribute('class', 'character');
     svg.setAttribute('aria-hidden', 'true');
+    // Each face blinks on its own beat, so a list of bots never blinks in unison.
+    const beat = hash(`${id}:beat`);
+    svg.style.setProperty('--blink-delay', `${-(beat % 6000)}ms`);
+    svg.style.setProperty('--blink-every', `${5200 + (beat >>> 13) % 2600}ms`);
     const eye = left => `<rect x="${left}" y="${eyeY + y - 5}" width="5" height="${lid ? 5 : 10}" rx="2.5"/>`;
     svg.innerHTML = `
       <g style="fill:${BODY}">${body}</g>
