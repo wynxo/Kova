@@ -1052,6 +1052,12 @@ dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
   /* Phones: the chip keeps its place and gives up width first. */
   .model-chip { max-width:132px; padding-left:var(--space-2); }
   .chat-options { width:min(300px, calc(100vw - var(--space-6))); }
+  /* The message gets its own full-width line; + sits under it on the left and
+     the context ring, model chip and send button on the right. On one line the
+     chip and ring left the text about 55px on a 375px phone. */
+  .compose-row { flex-wrap:wrap; row-gap:var(--space-1); }
+  #prompt { order:-1; flex:1 0 100%; }
+  .compose-more { margin-right:auto; }
 }
 @media (max-width:560px) {
   dialog { padding:16px; }
