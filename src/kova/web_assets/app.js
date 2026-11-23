@@ -2920,7 +2920,18 @@
       globalThis.KovaMotion?.sync?.(); globalThis.KovaReasoning?.sync?.();
       globalThis.KovaThinking?.sync?.(); globalThis.KovaStarters?.sync?.();
       globalThis.KovaShortcuts?.current?.sync?.();
-      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        // A window that stayed open across `kova update` reloads once when the new
+        // worker takes over, unless a reply is streaming (the next open is fresh anyway).
+        const updating = !!navigator.serviceWorker.controller;
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener?.('controllerchange', () => {
+          if (!updating || reloaded || state.busy) return;
+          reloaded = true;
+          location.reload();
+        });
+        navigator.serviceWorker.register('/app/sw.js', {scope: '/app'}).catch(() => {});
+      }
       await setupIdentity();
       renderStarters();
       const [models, providers, status] = await Promise.all([json('/models'), json('/providers'), json('/health')]);

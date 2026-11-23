@@ -42,6 +42,20 @@ def _target(ref: str, source: str) -> build.Build | None:
     return build.Build(version, commit)
 
 
+# Electron keeps the web app's service worker and HTTP caches in its profile. A
+# worker from the old build can answer the reopened window with old files, so an
+# update clears them while the desktop is closed. Cookies and settings stay.
+DESKTOP_WEB_CACHES = ("Service Worker", "Cache", "Code Cache")
+
+
+def clear_desktop_web_cache(home: Path) -> None:
+    profile = home / "desktop-data"
+    for name in DESKTOP_WEB_CACHES:
+        target = profile / name
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+
+
 def _command(args, env, verbose, *, label, timeout=300) -> str:
     try:
         result = subprocess.run(args, env=env, check=True, encoding="utf-8", errors="replace",
@@ -284,6 +298,7 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
                      lambda: new_python("register", detail="Desktop integration"))
             else:
                 skipped("Refresh app-menu entry, icons and caches", "previous desktop kept")
+            step("Clear the desktop app's cached web files", lambda: clear_desktop_web_cache(home))
         else:
             skipped("Re-stage Electron and refresh app menu", "old app is still active" if desktop else "desktop not installed")
 

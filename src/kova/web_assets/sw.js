@@ -1,5 +1,5 @@
 /* Only public shell resources belong here. Never cache authenticated API data. */
-const CACHE = 'kova-shell-v36';
+const CACHE = 'kova-shell-v37';
 const SHELL = ['/app/assets/blur.js', '/app/assets/focus-trap.js', '/app/assets/tool-cards.js', '/app/assets/tool-cards.css', '/app/assets/trace.css', '/app/assets/bots.js', '/app/assets/bots.css', '/app/assets/shell.js', '/app/assets/characters.js', '/app/assets/shell.css', '/app/assets/agent-tree.js', '/app/assets/agent-tree.css', '/app/assets/code-header.js', '/app/assets/code-header.css', '/app', '/app/assets/app.css', '/app/assets/model-picker.js', '/app/assets/toast.css', '/app/assets/status-bar.css', '/app/assets/desktop.js', '/app/assets/app.js', '/app/assets/starters.js', '/app/assets/theme.js', '/app/assets/toast.js', '/app/assets/status-bar.js', '/app/assets/sounds.js', '/app/assets/diff.js', '/app/assets/diff.css', '/app/assets/thinking.css', '/app/assets/reasoning.css', '/app/assets/reasoning.js', '/app/assets/bolt.svg', '/app/assets/chat-appearance.css', '/app/assets/chat-appearance.js', '/app/assets/chat_list.css', '/app/assets/chat_list.js', '/app/assets/shortcuts.js', '/app/assets/typography.js', '/app/assets/motion.js', '/app/assets/composer-history.js', '/app/assets/composer-mentions.js', '/app/assets/markdown.css', '/app/assets/markdown-view.js', '/app/assets/panes.js', '/app/assets/panes.css', '/app/assets/plan-card.js', '/app/assets/plan-card.css', '/app/assets/drafts.js', '/app/assets/mobile.js', '/app/assets/mobile.css', '/app/assets/projects.js', '/app/assets/projects.css', '/app/assets/tokens.css', '/app/assets/palette.js', '/app/assets/palette.css', '/app/assets/settings.js', '/app/assets/settings.css', '/app/assets/theme-editor.js', '/app/assets/theme-editor.css', '/app/assets/message-actions.js', '/app/assets/message-actions.css', '/app/assets/diff-panel.js', '/app/assets/diff-panel.css', '/app/assets/compare.js', '/app/assets/compare.css', '/app/assets/theme-gallery.js', '/app/assets/theme-gallery.css', '/app/assets/theme-preview.js', '/app/assets/theme-preview.css', '/app/assets/quick.css', '/app/assets/thinking.js', '/app/assets/custom_css.js',
   '/app/assets/vendor/marked.js', '/app/assets/vendor/purify.js', '/app/assets/vendor/highlight.js',
   '/app/assets/vendor/katex.js', '/app/assets/vendor/katex.js.LICENSE',
@@ -86,12 +86,21 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.search || !SHELL.includes(url.pathname)) return;
-  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).catch(async () => {
+  // Network first: the server is the source of truth, so an update shows up on the
+  // next load instead of one load later. `no-cache` revalidates, so unchanged files
+  // come back as cheap 304s. The cached copy only answers when the server is away.
+  event.respondWith(fetch(event.request, {cache: 'no-cache'}).then(response => {
+    if (response.ok) {
+      const copy = response.clone();
+      event.waitUntil(caches.open(CACHE).then(cache => cache.put(event.request, copy)).catch(() => {}));
+    }
+    return response;
+  }).catch(async () => {
     // A cached shell is safe; it contains no chats. APIs still require a live server.
     const cached = await caches.match(event.request);
     if (cached) return cached;
     return new Response('<h1>Kova is offline</h1><p>Reconnect to your computer, then reopen Kova. Chats and reminders need the server.</p>', {status: 503, headers: {'Content-Type': 'text/html'}});
-  })));
+  }));
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();
