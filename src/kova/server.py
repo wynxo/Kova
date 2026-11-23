@@ -1303,9 +1303,10 @@ def create_app(
         return folder
 
     @api.get("/chats/search")
-    async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100)) -> list[dict]:
+    async def search_chats(q: str = "", limit: int = Query(20, ge=1, le=100),
+                           workspace: Literal["kova", "bots"] | None = None) -> list[dict]:
         """Chats with a user/assistant message matching ``q``, newest first."""
-        chats = await asyncio.to_thread(app.state.store.search_chats, q, limit)
+        chats = await asyncio.to_thread(app.state.store.search_chats, q, limit, workspace=workspace)
         return [{**chat, "state": app.state.conversation_states.get(chat["id"])} for chat in chats]
 
     @api.post("/chats/{chat_id}/fork")
