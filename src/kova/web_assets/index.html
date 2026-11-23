@@ -106,7 +106,7 @@
       <div class="app-switch">
         <button id="app-switch" type="button" class="brand app-switch-button" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu"><span id="app-switch-label">Kova</span><span class="icon i-chevron-down" aria-hidden="true"></span></button>
         <div id="app-menu" class="app-menu" role="menu" aria-label="Switch app" hidden>
-          <a class="app-menu-item" role="menuitemradio" aria-checked="true" href="/app" data-app="kova"><span><span class="app-menu-name">Kova</span><span class="app-menu-desc">Chat and get things done</span></span><span class="icon i-check" aria-hidden="true"></span></a>
+          <button type="button" class="app-menu-item" role="menuitemradio" aria-checked="true" data-app="kova"><span><span class="app-menu-name">Kova Chat</span><span class="app-menu-desc">Chat and Work</span></span><span class="icon i-check" aria-hidden="true"></span></button>
           <button type="button" class="app-menu-item" role="menuitem" data-app="code" aria-disabled="true"><span><span class="app-menu-name">Kova Code</span><span class="app-menu-desc">Coming soon</span></span></button>
           <button type="button" class="app-menu-item" role="menuitemradio" aria-checked="false" data-app="bots"><span><span class="app-menu-name">Kova Bots</span><span class="app-menu-desc">Your bots and group chats</span></span><span class="icon i-check" aria-hidden="true"></span></button>
         </div>
@@ -114,6 +114,7 @@
       <button id="sidebar-close" type="button" class="icon-button" aria-label="Close sidebar"><span class="icon i-x" aria-hidden="true"></span></button>
     </div>
     <button id="new-chat" type="button" class="new-chat" data-shortcut="new-conversation" aria-keyshortcuts="Control+Shift+K Meta+Shift+K"><span class="icon i-plus" aria-hidden="true"></span><span>New chat</span></button>
+    <div id="bot-inbox-heading" hidden><strong>Inbox</strong><button id="new-workspace-bot" type="button" class="icon-button" aria-label="New bot" title="New bot"><span class="icon i-plus" aria-hidden="true"></span></button></div>
     <label class="search"><span class="icon i-search" aria-hidden="true"></span><input id="search" placeholder="Search" aria-label="Search conversations" type="search" autocomplete="off"></label>
     <nav id="chat-list" aria-label="Chat history"></nav>
     <div class="sidebar-footer">
@@ -157,6 +158,15 @@
       <details id="chat-menu" class="chat-menu" hidden><summary class="icon-button" aria-label="Chat actions" title="Chat actions"><span class="icon i-ellipsis" aria-hidden="true"></span></summary><div class="chat-menu-list"><button id="compact-now" type="button" class="nav-row">Compact now</button></div></details>
     </header>
     <p id="incognito-note" class="incognito-note" role="status" hidden><span class="icon i-eye-off" aria-hidden="true"></span>Incognito: not saved on this PC. Your provider still receives messages, and tools and attachments are off.</p>
+    <section id="bot-directory" aria-labelledby="bot-directory-title" hidden>
+      <div class="bot-directory-content">
+        <header class="bot-directory-heading">
+          <h1 id="bot-directory-title" tabindex="-1">Choose a bot</h1>
+          <button type="button" class="btn primary bot-inbox-action">New bot</button>
+        </header>
+        <p class="bot-directory-body" role="status"></p>
+      </div>
+    </section>
     <section id="scroll-area" aria-label="Conversation">
       <div id="welcome" class="welcome">
         <span class="kova-mark welcome-mark" aria-hidden="true"></span>
@@ -193,7 +203,6 @@
               <button id="commands" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-slash" aria-hidden="true"></span><span>Slash commands</span></button>
               <button id="compare-open" type="button" role="menuitem" class="compose-menu-item" tabindex="-1"><span class="icon i-columns-2" aria-hidden="true"></span><span>Compare answers</span></button>
               <button id="new-incognito" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" data-shortcut="new-incognito" aria-keyshortcuts="Control+Shift+N Meta+Shift+N"><span class="icon i-eye-off" aria-hidden="true"></span><span>Incognito chat</span></button>
-              <button id="new-bot" type="button" role="menuitem" class="compose-menu-item" tabindex="-1" hidden><span class="icon i-plus" aria-hidden="true"></span><span>New bot</span></button>
             </div>
           </div>
           <label id="prompt-label" class="sr-only" for="prompt">Message Kova</label>

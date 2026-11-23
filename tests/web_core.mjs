@@ -120,7 +120,7 @@ const sandbox = {
       '/mcp': [{name: 'github', transport: 'stdio', state: 'connected', enabled: true,
                 tools: [{name: 'search', enabled: true}, {name: 'issue', enabled: false}]}],
       '/extensions/plugins': [{name: 'notes', version: '1.2.0', enabled: false, description: 'Notes helpers'}],
-      '/chats/search?q=quarterly&limit=20': [{id: 'found-chat', title: 'Old notes', role: 'user',
+      '/chats/search?workspace=kova&q=quarterly&limit=20': [{id: 'found-chat', title: 'Old notes', role: 'user',
         snippet: 'the quarterly numbers', created: '', last_message: ''}],
       '/providers': [{id: 'openai', name: 'OpenAI', kind: 'openai',
                       base_url: 'https://api.openai.com/v1', authenticated: true}],
@@ -1090,7 +1090,8 @@ console.log('Sidebar pin and unpin through the chat settings PATCH passed');
 // and keeps a short recently-finished list (#191).
 state.activity.clear(); state.finishedActivity = []; state.activityStarted = {};
 state.chats = [];
-sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.noteChatState('background-bot', 'working', 'Bot reply', false, 'bot');
+sandbox.test.noteChatState('background-1', 'working', 'Background reply', false, 'chat');
 sandbox.test.renderActivity();
 assert.equal($('activity').hidden, false, 'a running reply shows the indicator');
 assert.equal($('activity').dataset.active, 'true');
@@ -1114,11 +1115,11 @@ assert.equal(buttons($('activity-panel')).find(button => button.textContent === 
 activityStop.onclick();
 await tick(); await tick();
 assert.ok(requests.slice(-3).some(row => row.path === '/chats/background-1/stop'), 'Stop reaches the server');
-sandbox.test.noteChatState('background-1', 'working', 'Background reply');
+sandbox.test.noteChatState('background-1', 'working', 'Background reply', false, 'chat');
 sandbox.test.renderActivity();
 sandbox.test.activityPanel(true);
 // An approval that waits is said in words, because it needs the person.
-sandbox.test.noteChatState('background-2', 'blocked-on-approval', 'Needs a decision');
+sandbox.test.noteChatState('background-2', 'blocked-on-approval', 'Needs a decision', false, 'chat');
 sandbox.test.renderActivity();
 assert.equal($('activity-count').textContent, '2');
 assert.ok($('activity-panel').textContent.includes('Needs your answer'));
@@ -1139,7 +1140,7 @@ for (const row of state.finishedActivity) row.at -= 121000;
 assert.equal(typeof activityTick, 'function', 'recent items expire even with the panel closed');
 activityTick();
 assert.equal($('activity').hidden, true, 'nothing running and nothing recent hides it again');
-sandbox.test.noteChatState('incognito-demo', 'working', 'Private title', true);
+sandbox.test.noteChatState('incognito-demo', 'working', 'Private title', true, 'chat');
 sandbox.test.activityPanel(true);
 assert.ok($('activity-panel').textContent.includes('Incognito'));
 assert.ok(!$('activity-panel').textContent.includes('Private title'));

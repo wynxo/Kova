@@ -993,6 +993,12 @@ class Store:
             rows = self._conn.execute(
                 "SELECT c.id, c.title, c.created, c.mode, c.web, c.permission, c.cwd, "
                 "c.colour, c.icon, c.pinned, c.project_id, c.kind, c.bot_id, c.group_settings, "
+                "CASE WHEN c.kind IN ('bot', 'group') THEN ("
+                " SELECT substr(recent.content, 1, 180) FROM messages AS recent"
+                " WHERE recent.chat_id = c.id AND recent.active = 1"
+                " AND recent.role IN ('user', 'assistant') AND length(trim(recent.content)) > 0"
+                " AND (recent.tool_calls IS NULL OR recent.tool_calls = '[]')"
+                " ORDER BY recent.id DESC LIMIT 1) END AS message_preview, "
                 "COUNT(m.id) AS message_count, "
                 "COALESCE(MAX(m.created), c.created) AS last_message "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id AND m.active = 1 "
@@ -1017,6 +1023,8 @@ class Store:
                 "pinned": bool(r["pinned"]),
                 "last_message": r["last_message"],
                 "message_count": r["message_count"],
+                **({"message_preview": _clean_snippet(r["message_preview"])}
+                   if r["message_preview"] else {}),
                 **self._group_fields(r["id"], r["kind"], json.loads(r["group_settings"])),
             }
             for r in rows
@@ -1388,14 +1396,15 @@ class Store:
 
     # -- search -----------------------------------------------------------
     def search_chats(self, query: str, limit: int = 20,
-                     exclude_chat_id: str | None = None) -> list[dict]:
+                     exclude_chat_id: str | None = None, *,
+                     workspace: str | None = None) -> list[dict]:
         """Chats with a user/assistant message matching ``query``, newest first.
 
         Each result carries the surrounding ``snippet`` and the role of the
         message it came from. FTS5 is used when it is compiled in; otherwise
         this falls back to a case-insensitive LIKE scan of the same messages.
         ``exclude_chat_id`` drops one chat (typically the current one) before
-        the result cap is applied.
+        the result cap is applied. A workspace limits matches to its chat kinds.
         """
         terms = _search_terms(query)
         if not terms:
@@ -1439,6 +1448,9 @@ class Store:
             chat = chats.get(row["chat_id"])
             if chat is None:
                 continue
+            bot_chat = chat["kind"] in {"bot", "group"}
+            if workspace is not None and bot_chat != (workspace == "bots"):
+                continue
             snippet = row["snippet"] or ""
             if not self.fts_enabled:
                 snippet = _like_snippet(snippet, terms)
@@ -1452,6 +1464,8 @@ class Store:
                     "last_message": chat["last_message"],
                     "message_count": chat["message_count"],
                     "pinned": chat["pinned"],
+                    "kind": chat["kind"],
+                    "bot_id": chat["bot_id"],
                     "message_id": row["message_id"],
                     "role": row["role"],
                     "author": row["author"],

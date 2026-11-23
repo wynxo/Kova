@@ -14,13 +14,15 @@
   const read = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
   const store = (key, value) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 
-  function create({state, forkChat, chatSetting, safe, controls}) {
+  function create({state, forkChat, chatSetting, safe, controls, switchApp}) {
     const appButton = $('app-switch'), appMenu = $('app-menu');
     const forkBox = $('mode-fork'), forkButton = $('mode-fork-button'), forkMenu = $('mode-fork-menu');
     const modeSwitch = $('mode-switch');
     if (!appButton || !appMenu || !forkBox || !modeSwitch) return null;
 
+    let currentApp;
     function setApp(app) {
+      currentApp = app;
       document.body.classList.toggle('app-bots', app === 'bots');
       $('app-switch-label').textContent = app === 'bots' ? 'Kova Bots' : 'Kova';
       for (const item of appMenu.querySelectorAll('[data-app]')) {
@@ -30,15 +32,26 @@
     }
     function appOpen(open) {
       appMenu.hidden = !open; appButton.setAttribute('aria-expanded', String(open));
-      if (open) appMenu.querySelector('[aria-checked="true"]')?.focus();
+      if (open) (appMenu.querySelector('[aria-checked="true"]:not(:disabled)') || appButton).focus();
     }
     appButton.addEventListener('click', () => appOpen(appMenu.hidden));
     appMenu.addEventListener('click', event => {
       const item = event.target.closest('[data-app]');
       if (!item || item.getAttribute('aria-disabled') === 'true') return;
-      if (item.dataset.app === 'kova' && !document.body.classList.contains('app-bots')) return;
+      appOpen(false);
+      appButton.focus();
+      if (item.dataset.app !== currentApp) safe(() => switchApp(item.dataset.app));
+    });
+    appMenu.addEventListener('keydown', event => {
+      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      const items = [...appMenu.querySelectorAll('[role="menuitemradio"]:not(:disabled)')];
+      if (!items.length) return;
       event.preventDefault();
-      setApp(item.dataset.app); appOpen(false); appButton.focus(); refresh();
+      const current = items.indexOf(document.activeElement);
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+        : (current + step + items.length) % items.length;
+      items[next].focus();
     });
     setApp(read(APP_KEY, 'kova') === 'bots' ? 'bots' : 'kova');
 
@@ -70,6 +83,14 @@
     });
 
     function refresh() {
+      const bots = currentApp === 'bots';
+      for (const item of appMenu.querySelectorAll('[data-app][role="menuitemradio"]')) {
+        item.disabled = !!state.busy;
+      }
+      $('chat-list').setAttribute('aria-label', bots ? 'Bot conversations' : 'Chat history');
+      $('search').setAttribute('aria-label', bots ? 'Search bot conversations' : 'Search conversations');
+      $('bot-inbox-heading').hidden = !bots;
+      $('new-workspace-bot').disabled = !!state.busy || !state.connected;
       const chat = state.chat;
       const botChat = !!($('bot-chat-header') && !$('bot-chat-header').hidden);
       const started = !!chat;
@@ -86,14 +107,13 @@
         : 'A new chat with this conversation that can use tools';
       $('mode-fork-go').disabled = !!state.busy;
       const title = $('welcome-title');
-      const bots = document.body.classList.contains('app-bots');
-      // Kova Bots with nothing open: just the prompt to pick a bot, no message box.
-      document.body.classList.toggle('bots-idle', bots && !started && !botChat);
-      if (title && !started) title.textContent = bots ? 'Pick a bot to chat with'
-        : mode === 'chat' ? 'What’s on your mind?' : 'What should we get done?';
+      const directory = bots && !started;
+      $('bot-directory').hidden = !directory;
+      document.body.classList.toggle('bots-idle', directory);
+      if (title && !started) title.textContent = mode === 'chat' ? 'What’s on your mind?' : 'What should we get done?';
     }
 
-    return {refresh, setApp};
+    return {refresh, setApp, app: () => currentApp};
   }
 
   /* The ring reads the same figures the status bar shows. */

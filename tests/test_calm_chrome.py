@@ -137,7 +137,8 @@ def test_sidebar_is_new_chat_search_list_and_settings() -> None:
     sidebar = re.search(r'<aside id="sidebar".*?</aside>', html, re.S).group(0)
     buttons = _ids_inside(parser, "sidebar", "button")
     # The list opens with the app switch: Kova, Kova Code, Kova Bots.
-    assert buttons == ["app-switch", "sidebar-close", "new-chat", "open-settings"], buttons
+    assert buttons == ["app-switch", "sidebar-close", "new-chat", "new-workspace-bot", "open-settings"], buttons
+    assert _hidden_by(parser, "new-workspace-bot"), "the new-bot action belongs to the Bots workspace"
     assert "hidden" in parser.by_id["app-menu"]
     assert _ids_inside(parser, "sidebar", "input") == ["search"], "one search field"
     assert "<kbd" not in sidebar, "no shortcut badges in the sidebar"

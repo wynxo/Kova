@@ -201,6 +201,9 @@
     }
   }
   let shell = null;
+  const inBots = () => shell?.app() === 'bots';
+  const botConversation = chat => chat?.kind === 'bot' || chat?.kind === 'group';
+  const inCurrentWorkspace = chat => botConversation(chat) === inBots();
   function controls() {
     const busy = state.busy;
     for (const button of activityOpenButtons) button.disabled = busy;
@@ -222,7 +225,7 @@
     $('send').hidden = busy && !offers('steering'); $('stop').hidden = !busy;
     // Queue and Steer only make sense once there is something to send.
     $('queue').hidden = !busy || nothingToSend || state.comparing; $('steer').hidden = !busy || nothingToSend || state.comparing;
-    $('compare-open').disabled = busy || pickerSaving || !state.connected || !!bots?.contact(state.chat);
+    $('compare-open').disabled = busy || pickerSaving || !state.connected || inBots();
     $('send').disabled = readingAttachments || pickerSaving || !state.connected || (!$('prompt').value.trim() && !attachmentCount);
     $('attach').disabled = !!state.chat?.ephemeral || state.busy || pickerSaving || readingAttachments || !state.connected;
     $('attach').classList.toggle('text-only', !offers('vision'));
@@ -259,6 +262,7 @@
     paintBotChat();
     renderActivity();
     $('chat-list').replaceChildren(); $('chat-list').removeAttribute?.('aria-busy');
+    bots?.renderDirectory();
     notice(message || (onPhone() ? 'This phone is not connected. On your computer, run kova pair (or choose Connect your phone in Kova) and scan the code.'
       : 'Open kova web on this computer to connect. No token or account needed.'));
     controls();
@@ -283,13 +287,14 @@
   const projects = globalThis.KovaProjects?.create({el, json, write, safe, refresh: refreshChats, newChat: newProjectChat,
     models: () => state.models || []});
   const bots = isQuick ? null : globalThis.KovaBots?.create({el, icon, json, write, safe,
-    editor: $('bot-editor'), header: $('bot-chat-header'), welcome: $('bot-welcome'),
+    directory: $('bot-directory'), editor: $('bot-editor'), header: $('bot-chat-header'), welcome: $('bot-welcome'),
     models: () => state.models, activeModel: () => defaultModel, chat: () => state.chat,
     available: () => state.connected && !state.busy,
     onEditorOpen: () => { ++state.navigationVersion; sidebar(false); options(false); toggleZen(false, {fromTheme: true}); },
     onChange: () => { paintBotChat(); syncComposerModel(); history(state.chats); },
-    openChat: openBotChat, focusChat: () => $('prompt').focus()});
-  shell = isQuick ? null : globalThis.KovaShell?.create({state, forkChat, chatSetting, safe, controls}) || null;
+    openChat: openBotChat, toolLabel, toolHint, changeFiles, reviewChanges,
+    focusChat: () => (state.chat ? $('prompt') : $('bot-directory-title'))?.focus()});
+  shell = isQuick ? null : globalThis.KovaShell?.create({state, forkChat, chatSetting, safe, controls, switchApp: changeWorkspace}) || null;
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.
@@ -576,9 +581,10 @@
     const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
     return seconds < 90 ? `${Math.max(1, seconds)}s` : `${Math.round(seconds / 60)} min`;
   }
-  function noteChatState(id, next, title = '', ephemeral = false) {
+  function noteChatState(id, next, title = '', ephemeral = false, kind) {
     if (typeof id !== 'string' || !id) return;
     const previous = state.activity.get(id);
+    kind ||= previous?.kind;
     const isPrivate = ephemeral || previous?.ephemeral || id.startsWith('incognito-');
     const wasRunning = previous && (previous.state === 'working' || previous.state === 'blocked-on-approval');
     const running = next === 'working' || next === 'blocked-on-approval';
@@ -588,12 +594,12 @@
     }
     if (!running && wasRunning) {
       if (!isPrivate) {
-        state.finishedActivity.unshift({id, title: title || previous.title || 'Conversation', at: Date.now()});
+        state.finishedActivity.unshift({id, title: title || previous.title || 'Conversation', kind, at: Date.now()});
         state.finishedActivity = state.finishedActivity.slice(0, 3);
       }
       delete state.activityStarted[id];
     }
-    state.activity.set(id, {title: isPrivate ? '' : title || previous?.title || '', state: next, ephemeral: Boolean(isPrivate)});
+    state.activity.set(id, {title: isPrivate ? '' : title || previous?.title || '', state: next, ephemeral: Boolean(isPrivate), kind});
   }
   function removeActivity(id) {
     state.activity.delete(id);
@@ -648,9 +654,11 @@
     if (!button || !count || !panel) return;
     const now = Date.now();
     state.finishedActivity = state.finishedActivity.filter(item => now - item.at < ACTIVITY_RECENT_MS);
-    const rows = activityRows();
-    reportTrayState(rows);
-    button.hidden = !rows.length && !state.finishedActivity.length;
+    const running = activityRows();
+    reportTrayState(running);
+    const rows = running.filter(row => row.kind && inCurrentWorkspace(row));
+    const finished = state.finishedActivity.filter(row => row.kind && inCurrentWorkspace(row));
+    button.hidden = !rows.length && !finished.length;
     button.dataset.active = String(rows.length > 0);
     button.setAttribute('aria-label', rows.length ? `Activity: ${rows.length} running` : 'Activity: recent results');
     count.hidden = !rows.length;
@@ -690,9 +698,9 @@
       const actions = el('div', 'activity-actions'); actions.append(activityOpenButton(row.id, activityName(row)), stopButton);
       item.append(info, actions); panel.append(item);
     }
-    if (state.finishedActivity.length) {
+    if (finished.length) {
       panel.append(el('div', 'activity-group', 'Recently finished'));
-      for (const item of state.finishedActivity) {
+      for (const item of finished) {
         const row = el('div', 'activity-row');
         const info = el('div', 'activity-info');
         info.append(el('strong', 'activity-name', item.title), el('span', 'activity-state', 'Finished'));
@@ -730,7 +738,7 @@
   // A pin/search only changes the sidebar list; activity keeps the last state
   // of every chat it has seen, so filtering cannot hide a running reply.
   function absorbChatState(chat) {
-    noteChatState(chat.id, chat.state, chat.title, chat.ephemeral);
+    noteChatState(chat.id, chat.state, chat.title, chat.ephemeral, chat.kind || 'chat');
   }
   // A short, still skeleton while the first list arrives (#199). It is
   // decoration: the polite status line says what is happening, and a failed
@@ -790,15 +798,26 @@
     const focused = bots && list.contains(document.activeElement) ? document.activeElement : null;
     list.replaceChildren();
     list.removeAttribute?.('aria-busy');
-    const searching = !!$('search').value.trim();
-    bots?.renderContacts(list, chats, searching);
+    const query = $('search').value.trim(), searching = !!query;
+    let foundBots = false;
+    if (!searching) bots?.renderDirectory();
+    chats = chats.filter(inCurrentWorkspace);
+    if (inBots()) {
+      foundBots = bots?.renderContacts(list, chats, query);
+      if (!searching) {
+        chats = chats.filter(chat => chat.kind === 'group' || !bots?.hasBot(chat.bot_id)
+          || (chat.bot_id === state.chat?.bot_id && chat.id !== KovaChatList.latestDirectChat(chats, chat.bot_id)?.id));
+        if (chats.length) list.append(el('h2', 'bot-history-title', 'Other threads'));
+      }
+    }
     if (focused?.closest('.bot-contacts') && list.contains(focused)) focused.focus({preventScroll: true});
-    const {sections, ungrouped} = projects?.render(list, chats, {
+    const {sections, ungrouped} = (inBots() ? null : projects)?.render(list, chats, {
       searching, disabled: state.busy || !state.connected,
     }) ?? {sections: [], ungrouped: chats};
     if (!chats.length && !sections.length) {
       const empty = el('div', 'history-empty');
-      if (searching) { empty.append(el('span', '', 'No chats found.')); list.append(empty); return; }
+      if (searching) { if (!foundBots) { empty.append(el('span', '', 'No chats found.')); list.append(empty); } controls(); return; }
+      if (inBots()) { controls(); return; }
       empty.append(el('span', '', 'No chats yet.'));
       const begin = el('button', 'btn quiet', 'Start a chat'); begin.type = 'button';
       begin.onclick = () => { bots?.close(); $('prompt').focus(); };
@@ -847,7 +866,7 @@
         actions.append(more); actions.setAttribute('aria-label', `Actions for ${title}`);
         const items = [['pin', chat.pinned ? 'Unpin' : 'Pin', () => togglePin(chat)], ['copy', 'Fork conversation', () => forkChat(chat.id)], ['pencil', 'Rename', () => editChat(chat, false)]];
         if (chatAppearance()) items.push(['sliders-horizontal', 'Colour & icon', () => editAppearance(chat)]);
-        if (!chat.ephemeral && (chat.project_id || projects?.hasProjects())) items.push(['folder', 'Move to project', () => projects.move(chat)]);
+        if (!inBots() && !chat.ephemeral && (chat.project_id || projects?.hasProjects())) items.push(['folder', 'Move to project', () => projects.move(chat)]);
         items.push(['trash-2', 'Delete', () => editChat(chat, true)]);
         for (const [symbol, name, fn] of items) {
           if (chat.ephemeral && symbol === 'copy') continue;
@@ -880,7 +899,7 @@
     const version = ++state.searchVersion;
     const query = $('search').value.trim();
     const [chats, projectRows] = await Promise.all([
-      json(query ? `/chats/search?q=${encodeURIComponent(query)}` : '/chats'),
+      json(query ? `/chats/search?workspace=${inBots() ? 'bots' : 'kova'}&q=${encodeURIComponent(query)}` : '/chats'),
       query ? null : projects?.load(),
     ]);
     if (version !== state.searchVersion) return;
@@ -1057,7 +1076,7 @@
     chatAppearance()?.decorateTopbar?.(state.chat);
     $('incognito-note').hidden = !state.chat?.ephemeral;
     $('chat-menu').hidden = !state.chat;
-    $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || 'New chat';
+    $('chat-title').textContent = state.chat?.ephemeral ? 'Incognito' : state.chat?.title || (inBots() ? 'Kova Bots' : 'New chat');
     paintBotChat();
     document.title = state.chat?.ephemeral ? `Incognito · ${state.persona.name}` : state.chat?.title ? `${state.chat.title} · ${state.persona.name}` : state.persona.name;
     // The optional themed desktop title bar shows the same window title as the
@@ -1067,7 +1086,7 @@
   function paintBotChat() {
     if (!bots) return;
     const chat = state.chat, empty = document.body.classList.contains('is-empty');
-    const bot = bots.renderChat(chat, $('chat-title'), modelByName(composerModel().model)?.model, empty);
+    const bot = bots.renderChat(chat, $('chat-title'), empty);
     const label = `Message ${bot?.name || state.persona.name}`;
     $('prompt').placeholder = label;
     $('prompt-label').textContent = label;
@@ -1126,7 +1145,9 @@
   function setChat(chat) {
     compare?.dismiss();
     rememberDraft();
+    bots?.setWorkChat(chat);
     state.chat = chat;
+    if (chat) shell?.setApp(botConversation(chat) ? 'bots' : 'kova');
     composerModules.history?.reset();
     composerModules.mentions?.close();
     // A chat keeps its own model. The welcome screen remembers the model last
@@ -1191,6 +1212,7 @@
     const version = state.navigationVersion;
     const checkpoints = await json(`/chats/${chatId}/checkpoints`);
     if (version !== state.navigationVersion || state.chat?.id !== chatId || !checkpoints.length) return;
+    bots?.addCheckpoints(chatId, checkpoints);
     document.querySelector('.changes-view')?.remove(); // one list, even when a chat opens twice
     const section = el('section', 'changes-view');
     section.setAttribute('aria-label', 'Changes Kova made');
@@ -1245,7 +1267,11 @@
       if (state.chat?.id !== id) await discardIncognito();
       if (version !== state.navigationVersion || state.busy) return;
       if (!keepEditor) bots?.close();
+      const resetSearch = !inCurrentWorkspace(chat) && !!$('search').value.trim();
+      if (resetSearch) $('search').value = '';
       setChat(chat); background = null;
+      if (resetSearch) safe(refreshChats);
+      renderActivity();
       if (chat.state && chat.state !== 'done') {
         background = id;
         $('messages').append(el('div', 'turn-status background-turn', chat.state === 'blocked-on-approval'
@@ -1264,7 +1290,43 @@
       $('prompt').value = ''; resize();
     }
   }
-  async function newChat() { if (!state.busy) { ++state.navigationVersion; const wasIncognito = !!state.chat?.ephemeral; await discardIncognito(); bots?.close(); setChat(null); $('prompt').value = ''; $('prompt').focus(); if (wasIncognito) await refreshChats(); } }
+  async function changeWorkspace(app) {
+    if (state.busy || bots?.saving()) return;
+    const version = ++state.navigationVersion;
+    const wasIncognito = !!state.chat?.ephemeral;
+    await discardIncognito();
+    if (state.busy || version !== state.navigationVersion) return;
+    bots?.close();
+    const wasSearching = !!$('search').value.trim();
+    $('search').value = '';
+    shell?.setApp(app);
+    setChat(null);
+    renderActivity();
+    if (wasSearching || wasIncognito) await refreshChats();
+    if (app === 'bots') {
+      if (!(await resumeBots(version))) {
+        $('bot-directory-title').focus();
+        if (!wide?.matches) sidebar(true);
+      }
+    } else $('prompt').focus();
+  }
+
+  async function newChat() {
+    if (inBots()) return changeWorkspace('kova');
+    if (!state.busy) {
+      ++state.navigationVersion;
+      const wasIncognito = !!state.chat?.ephemeral;
+      await discardIncognito();
+      bots?.close(); setChat(null); $('prompt').value = ''; $('prompt').focus();
+      if (wasIncognito) await refreshChats();
+    }
+  }
+  async function resumeBots(version) {
+    if (!inBots() || state.chat || version !== state.navigationVersion || !wide?.matches) return false;
+    const recent = state.chats.find(chat => chat.kind === 'bot' && bots?.hasBot(chat.bot_id))
+      || state.chats.find(chat => chat.kind === 'group');
+    return Boolean(recent && await openChat(recent.id));
+  }
   let startingBotChat = false;
   async function openBotChat(bot, fresh = false) {
     if (state.busy || !state.connected || startingBotChat || bot.state !== 'ok') return;
@@ -1310,6 +1372,8 @@
   }
   async function newIncognito() {
     if (state.busy || !state.connected) return;
+    if (inBots()) await changeWorkspace('kova');
+    if (inBots() || state.busy) return;
     ++state.navigationVersion;
     await discardIncognito();
     setChat(await json('/chats', write('POST', {ephemeral: true, title: 'Incognito', mode: 'chat', web: false, ...modelForNewChat()})));
@@ -1861,7 +1925,7 @@
     } else if (name === 'incognito' && !args) await newIncognito();
     else if (name === 'new' && !args) await newChat();
     else if (name === 'fork') {
-      const chats = args ? await json('/chats') : null;
+      const chats = args ? (await json('/chats')).filter(inCurrentWorkspace) : null;
       const n = Number(args);
       if (args && (!/^\d+$/.test(args) || n < 1 || !chats[n - 1])) throw new Error('Use /fork [n], with a conversation number from history (newest first).');
       await forkChat(args ? chats[n - 1].id : state.chat?.id);
@@ -1918,6 +1982,7 @@
   }
   async function sendText(text, sendOptions = {}) {
     if ((!text && !sendOptions.action) || state.busy || pickerSaving || !state.connected) return;
+    if (inBots() && !state.chat) return;
     ++state.navigationVersion;
     compare?.dismiss();
     state.busy = true; state.turnReady = false; state.stopRequested = false; controls();
@@ -1948,6 +2013,7 @@
       }
       $('messages').querySelectorAll('.message-action-retry').forEach(button => button.remove());
       composerModules.history?.reset(); composerModules.mentions?.close();
+      bots?.beginWork(outgoing);
       const reply = message('assistant', undefined, undefined, [], {author: bots?.contact(state.chat)?.id});
       nearBottom = true; turn = turnView(reply, model); follow();
       const response = replacement || await stream();
@@ -1963,6 +2029,7 @@
           if (entry) entry.last_local_speed = data.usage;
         }
         terminal = ['done', 'error', 'stopped'].includes(data.type);
+        bots?.workEvent(data);
         turn.accept(data);
       });
       if (!terminal) throw new Error('Reply connection interrupted. Reopen this conversation to check saved messages; it may still be running.');
@@ -1983,6 +2050,7 @@
           if (state.chat) {
             const previous = composerModel();
             state.chat = await json(`/chats/${state.chat.id}`); pageTitle();
+            bots?.setWorkChat(state.chat);
             const current = composerModel();
             if (current.model !== previous.model || current.reasoning_effort !== previous.reasoning_effort) syncComposerModel();
           }
@@ -2039,6 +2107,7 @@
   // the server fallback has already saved them and hands back ready rows.
   async function applyShare(draft) {
     await discardIncognito();
+    shell?.setApp('kova');
     pendingAttachments.length = 0;
     if (draft.chat) {
       const accepted = [];
@@ -2194,10 +2263,7 @@
   $('compare-open').hidden = !compare;
   $('compare-open').onclick = () => compare?.choose();
   $('stop').onclick = stop; $('new-chat').onclick = newChat; $('new-incognito').onclick = () => safe(newIncognito);
-  if (bots) {
-    $('new-bot').hidden = false;
-    $('new-bot').onclick = () => bots.openEditor(null, $('compose-more'));
-  }
+  $('new-workspace-bot').onclick = () => bots?.openEditor(null, $('new-workspace-bot'));
   $('queue').onclick = () => safe(() => queueMessage($('prompt').value.trim()));
   $('steer').onclick = () => safe(steerMessage);
   $('menu').onclick = () => toggleSidebar();
@@ -2230,10 +2296,13 @@
     const add = (group, item) => items.push({group, ...item});
     const current = state.chat && !state.chat.ephemeral ? state.chat : null;
     const panel = (button, title, hint, keywords) => ({title, hint, keywords, run: () => $(button).onclick?.()});
-    add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
-    for (const item of bots?.paletteActions() || []) add('Contacts', item);
-    if (compare && !bots?.contact(state.chat)) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
-    add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
+    if (!inBots()) add('Actions', {title:'New chat', hint:'Start with an empty message box', keywords:'create start fresh compose', shortcut:shortcutKeys('new-conversation'), run:() => safe(newChat)});
+    if (bots) add('Actions', {title: inBots() ? 'Open Kova Chat' : 'Open Kova Bots',
+      hint: inBots() ? 'Go to Chat and Work' : 'Browse your bots and their conversations',
+      keywords: 'switch workspace', run: () => safe(() => changeWorkspace(inBots() ? 'kova' : 'bots'))});
+    if (inBots()) for (const item of bots?.paletteActions() || []) add('Bots', item);
+    if (compare && !inBots()) add('Actions', {title:'Compare answers', hint:'Ask several models and keep one', keywords:'side by side models versus', run:() => { if (!state.busy) compare.choose(); }});
+    if (!inBots()) add('Actions', {title:'New incognito chat', hint:'Not saved on this PC', keywords:'private ephemeral temporary', shortcut:shortcutKeys('new-incognito'), run:() => safe(newIncognito)});
     add('Actions', {title:'Search conversations', hint:'Filter the conversation list', keywords:'find history chats', shortcut:shortcutKeys('search-conversations'), run:searchConversations});
     add('Actions', {title:'Previous conversation', hint:'Move up the conversation list', keywords:'chat history navigate up previous older', shortcut:shortcutKeys('previous-conversation'), run:() => stepConversation(-1)});
     add('Actions', {title:'Next conversation', hint:'Move down the conversation list', keywords:'chat history navigate down next newer', shortcut:shortcutKeys('next-conversation'), run:() => stepConversation(1)});
@@ -2350,7 +2419,7 @@
     }
     // Content hits come first in their group and inside a conversation title
     // never repeats them: the snippet is the point.
-    const shown = paletteMatches.slice(0, 20);
+    const shown = paletteMatches.filter(inCurrentWorkspace).slice(0, 20);
     const matched = new Set(shown.map(row => row.id));
     for (const row of shown) {
       const snippet = String(row.snippet || '').replace(/\s+/g, ' ').trim();
@@ -2362,7 +2431,7 @@
         run: () => safe(() => openChat(row.id)),
       });
     }
-    for (const chat of paletteChats.slice(0, 50)) {
+    for (const chat of paletteChats.filter(inCurrentWorkspace).slice(0, 50)) {
       if (state.busy) break;
       if (matched.has(chat.id)) continue;
       add('Conversations', {
@@ -2391,7 +2460,7 @@
   let paletteSearchTimer, paletteSearchVersion = 0, paletteMatchQuery = '';
   async function paletteRunSearch(query, version) {
     let rows = [];
-    try { rows = await json(`/chats/search?q=${encodeURIComponent(query)}&limit=20`); }
+    try { rows = await json(`/chats/search?workspace=${inBots() ? 'bots' : 'kova'}&q=${encodeURIComponent(query)}&limit=20`); }
     catch (_) { return; }
     if (version !== paletteSearchVersion || !commandPalette?.isOpen()) return;
     paletteMatches = (Array.isArray(rows) ? rows : []).filter(row => !isQuickChat(row));
@@ -2421,7 +2490,7 @@
   const typingIn = node => Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable);
   // #200: move through the sidebar's conversation list, wrapping at the ends.
   function stepConversation(direction) {
-    const chats = (state.chats || []).filter(chat => !chat.ephemeral);
+    const chats = (state.chats || []).filter(chat => !chat.ephemeral && inCurrentWorkspace(chat));
     if (!chats.length || state.busy) return;
     const index = chats.findIndex(chat => chat.id === state.chat?.id);
     const next = index < 0
@@ -2795,7 +2864,7 @@
         if (chat) { chat.state = next; history(state.chats); }
         else safe(refreshChats);
         if (current) { current.state = next; chatStateChanged(id, next, previous); }
-        noteChatState(id, next, (chat || current)?.title, (chat || current)?.ephemeral);
+        noteChatState(id, next, (chat || current)?.title, (chat || current)?.ephemeral, (chat || current)?.kind);
         renderActivity();
       } catch (_) {}
     });
@@ -2872,7 +2941,10 @@
         const draft = local || await json(`/app/share/${encodeURIComponent(share)}`, {method: 'POST'});
         await applyShare(draft);
       }
-      $('prompt').focus();
+      if (inBots() && !state.chat && !(await resumeBots(state.navigationVersion))) {
+        $('bot-directory-title').focus();
+        if (!wide?.matches) sidebar(true, $('search'));
+      } else if (!inBots()) $('prompt').focus();
     } catch (error) { disconnected(error instanceof TypeError ? 'Kova is offline. Reconnect to your computer to load chats and reminders.' : error.message); }
     finally { state.starting = false; }
   }
@@ -4039,7 +4111,7 @@
     empty: 'No model is set up yet. Add a provider, then choose one of its models here.',
     actions: [
       {glyph: 'sliders-horizontal', label: 'Model settings…', when: () => !!$('model').value, run: () => safe(openModelSettings)},
-      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy && !bots?.contact(state.chat), run: () => { options(false); compare?.choose(); }},
+      {glyph: 'columns-2', label: 'Compare answers…', when: () => !state.busy && !inBots(), run: () => { options(false); compare?.choose(); }},
       {glyph: 'plus', label: 'Add provider…', run: () => { options(false); $('add-provider').onclick(); }},
       {glyph: 'settings', label: 'Manage providers…', run: () => { options(false); openProvidersSettings(); }},
     ]});

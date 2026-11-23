@@ -256,6 +256,61 @@ def test_visual_snapshot(chromium, kova, screen, theme, width, height):
     compare_snapshot(image, f"{screen}-{theme}-{width}", max_changed=0 if screen == "tokens" else 40)
 
 
+def test_bot_workspace_keeps_histories_separate(chromium, kova):
+    from playwright.sync_api import expect
+
+    kova.bot_create({"id": "workspace-bot", "name": "Workspace Bot"})
+    normal = kova.create_chat("Regular conversation")
+    direct = kova.create_chat("Bot conversation", bot_id="workspace-bot")
+    group = kova._request("POST", "/chats", json={
+        "title": "Team conversation", "members": ["workspace-bot"],
+    }).json()
+    try:
+        with chromium.new_context(viewport={"width": 1280, "height": 900},
+                                  service_workers="block") as context:
+            page = context.new_page()
+            open_screen(page, kova, "start", "dark")
+            history = page.locator("#chat-list")
+            expect(history).to_contain_text("Regular conversation")
+            expect(history).not_to_contain_text("Bot conversation")
+            expect(history).not_to_contain_text("Team conversation")
+            history.get_by_role("button", name="Regular conversation", exact=True).click()
+            expect(page.locator("#chat-title")).to_have_text("Regular conversation")
+
+            page.locator("#app-switch").click()
+            page.get_by_role("menuitemradio", name=re.compile(r"^Kova Bots")).click()
+            expect(page.locator("#bot-chat-header")).to_contain_text("Workspace Bot")
+            expect(history).not_to_contain_text("Regular conversation")
+            expect(history.get_by_role("button", name="Workspace Bot", exact=True)).to_be_visible()
+            expect(history).to_contain_text("Team conversation")
+            history.get_by_role("button", name="Team conversation", exact=True).click()
+            expect(page.locator("#chat-title")).to_have_text("Team conversation")
+            expect(page.locator("#app-switch-label")).to_have_text("Kova Bots")
+            history.get_by_role("button", name="Workspace Bot", exact=True).click()
+            expect(page.locator("#bot-chat-header")).to_be_visible()
+            expect(page.locator("#bot-chat-header")).to_contain_text("Workspace Bot")
+            page.get_by_role("button", name="Work panel").click()
+            panel = page.locator("#side-panel")
+            expect(panel).to_be_visible()
+            expect(panel.get_by_text("Tool calls and approvals will appear here")).to_be_visible()
+            panel.get_by_role("button", name="Files", exact=True).click()
+            expect(panel.get_by_text("Files attached or changed in this thread will appear here")).to_be_visible()
+            page.get_by_role("button", name="Open bot").click()
+            expect(history).to_be_hidden()
+            page.get_by_role("button", name="Back to inbox").click()
+            expect(history).to_be_visible()
+
+            page.locator("#app-switch").click()
+            page.get_by_role("menuitemradio", name=re.compile(r"^Kova Chat")).click()
+            expect(page.locator("#bot-chat-header")).to_be_hidden()
+            expect(history).to_contain_text("Regular conversation")
+            expect(history).not_to_contain_text("Bot conversation")
+    finally:
+        for chat in (normal, direct, group):
+            kova.delete_chat(chat["id"])
+        kova.bot_delete("workspace-bot")
+
+
 @pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("width,height", [(390, 844), (1280, 900)], ids=["phone", "desktop"])
 def test_bot_contact_snapshots(chromium, kova, theme, width, height):
@@ -264,9 +319,15 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
 
     def snapshot(page, name):
         page.mouse.move(-1, -1)
-        # The status bar's speed comes from wall-clock timing of the stub reply.
+        # The stub's wall-clock speed varies in both usage readouts.
         page.add_style_tag(content="#status-bar-speed { display: none !important; }")
-        page.evaluate("""async () => {
+        page.evaluate(r"""async () => {
+            for (const meter of document.querySelectorAll('.usage-meter')) {
+                meter.textContent = meter.textContent.replace(/ · [\d.]+ tok\/s$/, '');
+            }
+            for (const time of document.querySelectorAll('.bot-contact-time')) {
+                time.textContent = '10:24 AM';
+            }
             document.activeElement.blur();
             await document.fonts.ready;
             await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
@@ -293,17 +354,25 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             # Contacts live in the Kova Bots app (the switch at the top of the list).
             page.locator("#app-switch").click()
             page.get_by_role("menuitemradio", name=re.compile(r"^Kova Bots")).click()
-            contacts.get_by_role("button", name="New bot", exact=True).click()
+            contact = contacts.get_by_role("button", name="Scribe", exact=True)
+            expect(contact).to_be_visible()
+            colours = contact.evaluate("""row => [
+                getComputedStyle(row.querySelector('.bot-contact-preview')).color,
+                getComputedStyle(row.closest('#sidebar')).backgroundColor,
+            ]""")
+            assert contrast_ratio(*colours) >= 4.5
+            snapshot(page, "inbox")
+            page.locator("#new-workspace-bot").click()
             editor = page.get_by_role("region", name="New bot")
             expect(editor.get_by_role("heading", name="New bot")).to_be_focused()
             editor.get_by_label("Name", exact=True).fill("Atlas")
+            editor.get_by_label("Description", exact=True).fill("Plans small experiments.")
             expect(editor.get_by_label("Handle")).to_have_value("atlas")
             editor.get_by_role("textbox", name="Persona", exact=True).fill(
                 "Help plan small experiments. State assumptions, suggest one check, and keep replies short.")
             editor.get_by_label("Model", exact=True).select_option("research")
             expect(editor.get_by_label("Enable tools")).to_be_checked()
             expect(editor.get_by_label("Approval limit")).to_have_value("manual")
-            expect(editor.get_by_label("Approval limit")).to_be_in_viewport()
             # Measure the rendered roles, including the small avatar initial
             # and the input boundary against the actual page it sits on.
             pairs = editor.evaluate("""editor => {
@@ -322,6 +391,8 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             for foreground, background, minimum in pairs:
                 assert contrast_ratio(foreground, background) >= minimum
             snapshot(page, "editor")
+            editor.get_by_label("Approval limit").scroll_into_view_if_needed()
+            expect(editor.get_by_label("Approval limit")).to_be_in_viewport()
 
             photo = BytesIO()
             tile = Image.new("RGB", (64, 64), "#405b71")
@@ -336,7 +407,7 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             expect(editor).to_be_hidden()
             header = page.locator("#bot-chat-header")
             expect(header.locator(".bot-chat-name")).to_have_text("Atlas")
-            expect(header.locator(".bot-chat-model")).to_have_text("demo-research")
+            expect(header.locator(".bot-chat-model")).to_have_text("Plans small experiments.")
             expect(header.locator("img")).to_be_visible()
             page.wait_for_function("document.querySelector('#bot-chat-header img')?.naturalWidth > 0")
 
@@ -356,7 +427,7 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
                 menu.click()
             expect(contacts.get_by_role("button", name="Atlas", exact=True)).to_be_visible()
             # The title arrives after the reply; don't capture the placeholder.
-            expect(page.locator("#chat-list")).to_contain_text("How should I check")
+            expect(page.locator("#chat-list")).to_contain_text("Start with a small, repeatable check.")
             snapshot(page, "contacts")
 
             # An API-side edit reaches the open header without a reload. The
@@ -377,6 +448,7 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             expect(editor).to_be_hidden()
             expect(header.locator("img")).to_have_count(0)
             bot = kova.bot_get("atlas")
+            assert bot["description"] == "Plans small experiments."
             assert bot["ceiling"] == "auto"
             assert "*" in bot["definition"]["permissions"]["deny"]
             assert bot["image"] is None
