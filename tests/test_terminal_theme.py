@@ -50,16 +50,16 @@ def test_rich_surfaces_use_the_light_palette(source, surface, terminal_home, mon
     if surface != "status":
         # The chat's speaker tile fills its one cell with the accent and writes the
         # initial in the on-accent ink, so the token may appear as a background there.
-        assert "21;24;27" in raw  # kova-light's accent token, not the near-white dark-theme accent
+        assert "17;17;17" in raw  # kova-light's accent token, not the near-white dark-theme accent
     else:
-        assert "38;2;75;83;91" in raw  # kova-light's fg.muted
+        assert "38;2;85;85;79" in raw  # kova-light's fg.muted
     assert "38;2;246;246;248" not in raw
     assert "38;2;138;143;152" not in raw
 
 
 def test_environment_overrides_config_and_changes_without_reimport(terminal_home, monkeypatch):
     (terminal_home / "config.toml").write_text('[tui]\ntheme = "light"\n')
-    assert "38;2;21;24;27" in capture(brand.heading("Theme"))
+    assert "38;2;17;17;17" in capture(brand.heading("Theme"))
     monkeypatch.setenv("KOVA_THEME", "dark")
     assert "38;2;246;246;248" in capture(brand.heading("Theme"))
     monkeypatch.delenv("KOVA_THEME")
@@ -70,9 +70,9 @@ def test_environment_overrides_config_and_changes_without_reimport(terminal_home
 def test_default_palette_and_setup_picker_respect_config(terminal_home):
     (terminal_home / "config.toml").write_text('[tui]\ntheme = "light"\n')
     p = Palette(3)
-    assert p.paint(ACCENT, "x") == "\x1b[38;2;21;24;27mx\x1b[0m"
+    assert p.paint(ACCENT, "x") == "\x1b[38;2;17;17;17mx\x1b[0m"
     rows = "\n".join(_List("Provider", ["Demo"], multi=False).render(60, p))
-    assert "38;2;21;24;27" in rows
+    assert "38;2;17;17;17" in rows
     assert Palette(0).paint(ACCENT, "x") == "x"
     assert Palette(1).paint(ACCENT, "x") == "\x1b[30mx\x1b[0m"
 
@@ -83,8 +83,8 @@ def test_setup_banner_and_gradient_follow_light_theme(monkeypatch):
     console = Console(file=out, force_terminal=True, color_system="truecolor", width=120)
     brand.setup_banner(console, "1.0")
     raw = out.getvalue()
-    assert "38;2;21;24;27" in raw  # first gradient stop: the light accent token
-    assert "38;2;75;83;91" in raw
+    assert "38;2;17;17;17" in raw  # first gradient stop: the light accent token
+    assert "38;2;85;85;79" in raw
     assert "38;2;255;255;255" not in raw
 
 
@@ -97,7 +97,7 @@ def test_help_resolves_theme_at_invocation(args, source, terminal_home, monkeypa
     # Windows auto-detection may downsample despite COLORTERM/TERM overrides.
     monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "truecolor")
     monkeypatch.setattr(cli, "console", Console(force_terminal=True, color_system="truecolor", width=120))
-    for name, expected in [("light", "38;2;211;216;220"), ("dark", "38;2;58;61;69")]:
+    for name, expected in [("light", "38;2;224;224;221"), ("dark", "38;2;58;61;69")]:
         if source == "env":
             monkeypatch.setenv("KOVA_THEME", name)
         else:
@@ -126,9 +126,9 @@ def test_status_command_themes_the_whole_card(up, terminal_home, monkeypatch):
     monkeypatch.setattr(cli, "console", Console(force_terminal=True, color_system="truecolor", width=120))
     result = CliRunner().invoke(cli.app, ["status"], color=True)
     assert result.exit_code == 0, result.output
-    assert "38;2;75;83;91" in result.output
+    assert "38;2;85;85;79" in result.output
     assert "38;2;138;143;152" not in result.output
-    assert "38;2;21;24;27" in result.output if up else "38;2;179;38;47" in result.output
+    assert "38;2;17;17;17" in result.output if up else "38;2;179;38;47" in result.output
 
 
 def test_light_output_is_still_plain_when_piped(monkeypatch):
@@ -146,7 +146,7 @@ def test_prompt_styles_resolve_foregrounds_and_backgrounds_at_session_start(monk
     prompt = style.get_attrs_for_style_str("class:prompt", DEFAULT_ATTRS)
     menu = style.get_attrs_for_style_str("class:completion-menu.completion.current", DEFAULT_ATTRS)
     assert prompt.color == "1d6b62"
-    assert menu.bgcolor == "15181b"
+    assert menu.bgcolor == "111111"
     assert menu.color == "ffffff"
     monkeypatch.setenv("KOVA_THEME", "dark")
     menu = ui._chat_style().get_attrs_for_style_str("class:completion-menu.completion.current", DEFAULT_ATTRS)

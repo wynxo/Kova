@@ -55,7 +55,8 @@ def test_ui_draws_the_mark_with_the_theme_colour() -> None:
     html = (ASSETS / "index.html").read_text(encoding="utf-8")
     js = (ASSETS / "app.js").read_text(encoding="utf-8")
     css = (ASSETS / "app.css").read_text(encoding="utf-8")
-    assert html.count('class="kova-mark') == 3
+    # The title bar and the start screen; the side list now opens with the app switch.
+    assert html.count('class="kova-mark') == 2
     assert "'kova-mark avatar'" in js
     rule = re.search(r"^\.kova-mark \{(.*?)\}", css, re.S | re.M).group(1)
     assert "var(--fg-default)" in rule and "mark.svg" in rule

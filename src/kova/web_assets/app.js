@@ -95,6 +95,8 @@
     if (edit) edit.hidden = false;
   }
   function renderWelcome() {
+    // The chat-app shell asks a mode-specific question instead.
+    if (shell) { shell.refresh(); return; }
     const title = $('welcome-title');
     if (title && state.persona?.name) title.textContent = `${state.persona.name} shows its work.`;
   }
@@ -198,6 +200,7 @@
       if (version === capabilitiesVersion) { state.offered = null; controls(); }
     }
   }
+  let shell = null;
   function controls() {
     const busy = state.busy;
     for (const button of activityOpenButtons) button.disabled = busy;
@@ -231,6 +234,7 @@
     $('composer').setAttribute('aria-busy', String(busy));
     syncMenus();
     refreshStatusBar();
+    shell?.refresh();
   }
   // First slice of #204: the optional status bar reads what the server already
   // sent (chat messages, the model list, the active model) and reuses the same
@@ -285,6 +289,7 @@
     onEditorOpen: () => { ++state.navigationVersion; sidebar(false); options(false); toggleZen(false, {fromTheme: true}); },
     onChange: () => { paintBotChat(); syncComposerModel(); history(state.chats); },
     openChat: openBotChat, focusChat: () => $('prompt').focus()});
+  shell = isQuick ? null : globalThis.KovaShell?.create({state, forkChat, chatSetting, safe, controls}) || null;
   // Markdown belongs to markdown-view.js (#189): footnotes, task lists, tables
   // and streaming code need more than one sanitize call. The inline fallback
   // keeps a shell that did not ship the module readable instead of blank.

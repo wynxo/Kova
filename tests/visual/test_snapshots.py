@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 from io import BytesIO
@@ -289,6 +290,9 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             contacts = page.locator(".bot-contacts")
             if width == 390:
                 menu.click()
+            # Contacts live in the Kova Bots app (the switch at the top of the list).
+            page.locator("#app-switch").click()
+            page.get_by_role("menuitemradio", name=re.compile(r"^Kova Bots")).click()
             contacts.get_by_role("button", name="New bot", exact=True).click()
             editor = page.get_by_role("region", name="New bot")
             expect(editor.get_by_role("heading", name="New bot")).to_be_focused()
@@ -306,9 +310,11 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
                 const styles = selector => getComputedStyle(editor.querySelector(selector));
                 const input = styles('#bot-name'), mark = styles('#bot-preview .bot-avatar');
                 const page = getComputedStyle(editor.parentElement).backgroundColor;
+                // A bot with no icon or picture shows its character face, not a letter on a tile.
+                const letter = !editor.querySelector('#bot-preview .bot-avatar.has-character');
                 return [
                     [input.color, input.backgroundColor, 4.5],
-                    [mark.color, mark.backgroundColor, 4.5],
+                    ...(letter ? [[mark.color, mark.backgroundColor, 4.5]] : []),
                     [styles('.bot-photo-actions .bot-note').color, page, 4.5],
                     [input.borderColor, page, 3],
                 ];
@@ -320,8 +326,8 @@ def test_bot_contact_snapshots(chromium, kova, theme, width, height):
             photo = BytesIO()
             tile = Image.new("RGB", (64, 64), "#405b71")
             line = ImageDraw.Draw(tile)
-            line.line([(10, 44), (27, 25), (38, 38), (46, 30), (55, 44)], fill="#e6e9ec", width=4)
-            line.ellipse((41, 15, 49, 23), fill="#e6e9ec")
+            line.line([(10, 44), (27, 25), (38, 38), (46, 30), (55, 44)], fill="#ececec", width=4)
+            line.ellipse((41, 15, 49, 23), fill="#ececec")
             tile.save(photo, "PNG")
             page.locator("#bot-image").set_input_files(
                 {"name": "atlas.png", "mimeType": "image/png", "buffer": photo.getvalue()})

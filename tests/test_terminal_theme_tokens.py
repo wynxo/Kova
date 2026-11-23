@@ -88,7 +88,7 @@ def test_a_theme_only_moves_the_roles_whose_tokens_it_changes(home):
 def test_translucent_tokens_are_composited_over_the_page(home):
     install(home, "veil", {"fg": {"muted": "rgba(255, 255, 255, 0.5)"}})
     veil = theme.terminal_theme("veil")
-    base = themes.base_tokens("kova-dark")["bg.base"]  # #17191c
+    base = themes.base_tokens("kova-dark")["bg.base"]  # #1a1a1a
     expected = "#" + "".join(f"{round((255 * .5 + int(base[i:i + 2], 16) * .5)):02x}" for i in (1, 3, 5))
     assert veil.roles["MUTED"] == expected
     assert veil.roles["ACCENT_SOFT"] != theme.ACCENT_SOFT

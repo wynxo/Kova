@@ -288,6 +288,11 @@
 
   const api = {
     update(snapshot) {
+      // The context ring next to the model reads the same figures, shown or not.
+      if (globalThis.KovaShell) {
+        const s = snapshot || {};
+        globalThis.KovaShell.paintRing({used: usedTokens(s.messages), windowSize: Number(s.windowTokens) || 0});
+      }
       if (!isShown()) return;
       const bar = $('status-bar');
       if (bar) {
