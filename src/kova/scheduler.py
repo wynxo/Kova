@@ -107,7 +107,7 @@ def _daily(spec: str, now: datetime) -> tuple[int, int] | None:
     clock = match.group(1).strip()
     if not clock:
         return DEFAULT_DAILY
-    if clock.isdigit() and 0 <= int(clock) <= 23:
+    if clock.isdecimal() and 0 <= int(clock) <= 23:
         return int(clock), 0  # "every day at 9"
     try:
         when = parse_when(clock, now)

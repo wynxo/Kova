@@ -458,7 +458,7 @@ class Choice:
 
     def pick(self, key: str):
         """The value for a pressed key, or None when it answers nothing."""
-        if key.isdigit() and 1 <= int(key) <= len(self.options):
+        if key.isdecimal() and 1 <= int(key) <= len(self.options):
             return self.options[int(key) - 1][1]
         for _label, value, hotkey in self.options:
             if hotkey and key.lower() == hotkey:

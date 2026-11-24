@@ -531,7 +531,7 @@ def _compare(client: KovaClient, console: Console, ensure_chat, active: str, res
     if not pick:
         console.print("Nothing kept.", style=colour('MUTED'))
         return
-    if not (pick.isdigit() and 1 <= int(pick) <= len(keepable)):
+    if not (pick.isdecimal() and 1 <= int(pick) <= len(keepable)):
         console.print(f"Not an answer: {pick}. Nothing kept.", style=colour('ERROR'))
         return
     chosen = keepable[int(pick) - 1].model
@@ -574,7 +574,7 @@ def _checkpoint_at(client: KovaClient, console: Console, chat_id: str, rest: str
         return None
     if not rest:
         return checkpoints[0]
-    if rest.isdigit():
+    if rest.isdecimal():
         found = next((entry for entry in checkpoints if entry["id"] == int(rest)), None)
         if found is not None:
             return found
@@ -907,7 +907,7 @@ def _run_chat(client: KovaClient, chat_id: str | None = None, no_think: bool = F
                     console.print(exc.message, style=colour('ERROR'))
             elif command == "/resume":
                 chats = [c for c in client.list_chats() if not c.get("ephemeral")][:15]
-                if args and args[0].isdigit() and 1 <= int(args[0]) <= len(chats):
+                if args and args[0].isdecimal() and 1 <= int(args[0]) <= len(chats):
                     close_incognito()
                     incognito = False
                     chat_id = chats[int(args[0]) - 1]["id"]

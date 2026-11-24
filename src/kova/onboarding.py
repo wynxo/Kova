@@ -72,7 +72,7 @@ def _select(title: str, choices: list[str], *, default: int | None = 0) -> int:
                      str(default + 1) if default is not None else None)
         if not value:
             raise SetupError('Setup cancelled. Nothing saved.')
-        if value.isdigit() and 1 <= int(value) <= len(choices):
+        if value.isdecimal() and 1 <= int(value) <= len(choices):
             return int(value) - 1
         console.print('Choose one of the numbers above.')
 

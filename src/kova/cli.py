@@ -2518,7 +2518,7 @@ def _relative_when(iso: str | None) -> str:
 
 def _resolve_chat(client: KovaClient, ref: str) -> dict:
     """A chat by its display number or its id, or a friendly exit."""
-    if ref.isdigit():
+    if ref.isdecimal():
         chats = client.list_chats()
         number = int(ref)
         if 1 <= number <= len(chats):

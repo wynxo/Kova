@@ -123,7 +123,7 @@ def _run(state: _List, out=None):
                         text = key.text
                         if state.multi and text == " ":
                             state.marked ^= {state.selected}
-                        elif text.isdigit() and not state.query and not state.multi \
+                        elif text.isdecimal() and not state.query and not state.multi \
                                 and 1 <= int(text) <= len(state.choices) <= 9:
                             state.selected = int(text) - 1
                         else:
