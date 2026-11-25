@@ -344,3 +344,20 @@ def test_a_definition_is_frozen():
     bot = BotDefinition(id="researcher", name="Researcher", handle="researcher")
     with pytest.raises(Exception):
         bot.name = "Other"  # type: ignore[misc]
+
+
+def test_a_working_folder_reaching_kova_home_through_a_linked_parent_is_refused(tmp_path):
+    """#404: only the last part was checked for links, so an alias of the
+    Kova home as a parent folder slipped past the containment check."""
+    home = tmp_path / "kova-home"
+    (home / "private-data").mkdir(parents=True)
+    alias = tmp_path / "alias"
+    try:
+        os.symlink(home, alias, target_is_directory=True)
+    except (OSError, NotImplementedError):  # pragma: no cover - platform without links
+        pytest.skip("this platform cannot create symlinks")
+    with pytest.raises(BotError, match="outside the Kova home"):
+        validate(data(permissions={"folder": str(alias / "private-data")}),
+                 kova_home=home, models=MODELS)
+    with pytest.raises(BotError, match="link"):  # the alias itself is the last part
+        validate(data(permissions={"folder": str(alias)}), kova_home=home, models=MODELS)
