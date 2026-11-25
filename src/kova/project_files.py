@@ -1,7 +1,7 @@
 """Read-only project paths for the browser's ``@`` mentions (issue #197).
 
-The terminal chat lists project paths with ``tui.editor.FileIndex``; the web
-composer asks the server instead. Both want the same answer: filenames only,
+The terminal chat (``tui.editor.FileIndex``) and the web composer (through
+the server) both use this module, so they give the same answer: filenames only,
 never file contents, relative to one folder and confined to it. git's view is
 used when the folder is a repository; otherwise a bounded walk skips the
 folders that only hold generated files.

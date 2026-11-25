@@ -30,3 +30,12 @@ def test_every_ancestor_folder_is_listed(tmp_path):
     found = project_files.paths(_repo(tmp_path))
     assert "a/" in found
     assert "a/b/" in found
+
+
+def test_terminal_picker_uses_the_same_listing(tmp_path):
+    from kova.tui.editor import FileIndex
+
+    found = FileIndex(str(_repo(tmp_path)))()
+    assert "café.txt" in found
+    assert "a/" in found
+    assert not any(path.startswith('"') for path in found)
