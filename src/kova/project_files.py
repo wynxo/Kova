@@ -64,8 +64,10 @@ def _from_git(base: Path) -> list[str]:
         result = subprocess.run(
             ["git", "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others",
              "--exclude-standard"],
-            cwd=base, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=3, check=True,
+            cwd=base, stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=True,
+            # git writes paths as UTF-8; text=True alone would decode them with the
+            # Windows code page and turn "café" into "cafÃ©".
+            text=True, encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return []
