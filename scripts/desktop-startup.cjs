@@ -98,7 +98,14 @@ async function verify(contents) {
   `);
   item(view, 'Command palette…').click();
   item(trayMenu, 'New chat').click();
-  assert.deepEqual(await contents.executeJavaScript('window.received'), ['palette', 'new-conversation']);
+  // The clicks reach the page over IPC, so the actions arrive a moment later.
+  let received = [];
+  for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
+    received = await contents.executeJavaScript('window.received');
+    if (received.length >= 2) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.deepEqual(received, ['palette', 'new-conversation']);
   assert.ok(item(trayMenu, 'Waiting for approval'));
   if (process.platform !== 'darwin') {
     assert.deepEqual(overlay, themed ? {color: '#242424', symbolColor: '#eeeeee', height: 40} : undefined);
