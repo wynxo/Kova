@@ -105,7 +105,7 @@ def parse_meminfo(text: str) -> tuple[int, int] | None:
     for line in text.splitlines():
         key, separator, rest = line.partition(":")
         fields = rest.split()
-        if not separator or not fields or not fields[0].isdigit():
+        if not separator or not fields or not fields[0].isdecimal():
             continue
         values[key.strip()] = int(fields[0]) * 1024
     total = values.get("MemTotal")
@@ -138,7 +138,7 @@ def parse_boottime(text: str) -> int | None:
         return None
     digits = ""
     for char in text[index + len(marker):].lstrip():
-        if not char.isdigit():
+        if not char.isdecimal():
             break
         digits += char
     return int(digits) if digits else None
@@ -162,7 +162,7 @@ def parse_nvidia_smi(text: str) -> list[tuple[str, int | None]]:
         name, separator, memory = line.rpartition(",")
         name = " ".join(name.split())
         amount, _, unit = memory.strip().partition(" ")
-        if not separator or not name or not amount.isdigit():
+        if not separator or not name or not amount.isdecimal():
             continue
         size = int(amount)
         if unit.strip().lower().startswith("gib"):
@@ -198,7 +198,7 @@ def parse_windows_gpus(text: str) -> list[tuple[str, int | None]]:
         if not separator or not name:
             continue
         amount, _, _ = memory.strip().partition(".")
-        size = int(amount) if amount.isdigit() else 0
+        size = int(amount) if amount.isdecimal() else 0
         gpus.append((name, size if size > 0 else None))
     return gpus
 
@@ -286,7 +286,7 @@ def _ram() -> tuple[int, int | None] | None:
             pass
     elif sys.platform == "darwin":
         total = _run(["sysctl", "-n", "hw.memsize"]).strip()
-        if total.isdigit() and int(total):
+        if total.isdecimal() and int(total):
             return int(total), None
 
     # Any POSIX system can at least report the installed total.

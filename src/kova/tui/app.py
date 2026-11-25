@@ -1290,7 +1290,7 @@ class ChatApp:
             return None
         if not rest:
             return checkpoints[0]
-        if rest.isdigit():
+        if rest.isdecimal():
             found = next((entry for entry in checkpoints if entry["id"] == int(rest)), None)
             if found is not None:
                 return found
@@ -1631,7 +1631,7 @@ class ChatApp:
         self._chats = chats
         chat = None
         if rest:
-            if rest.isdigit() and 1 <= int(rest) <= len(chats):
+            if rest.isdecimal() and 1 <= int(rest) <= len(chats):
                 chat = chats[int(rest) - 1]
             else:
                 chat = next((c for c in chats if c["id"] == rest), None) \
@@ -1679,7 +1679,7 @@ class ChatApp:
                          actions={"ctrl-s": ("fork", self._fork_chat)})
             return
         chat = None
-        if rest.isdigit() and 1 <= int(rest) <= len(chats):
+        if rest.isdecimal() and 1 <= int(rest) <= len(chats):
             chat = chats[int(rest) - 1]
         else:
             chat = next((c for c in chats if c["id"] == rest), None) \

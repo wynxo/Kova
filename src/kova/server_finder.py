@@ -131,7 +131,7 @@ def expand(text: str) -> list[str]:
     else:
         host, _, port = host_port.partition(":")
         port = port or None
-    if not host or (port is not None and not port.isdigit()):
+    if not host or (port is not None and not port.isdecimal()):
         raise ValueError(f"{text!r} doesn't look like a server address")
     host = f"[{host}]" if ":" in host else host
     number = int(port) if port else None
