@@ -188,3 +188,40 @@ def test_live_group_patch_does_not_change_running_snapshot(group_api):
 
     client.portal.call(scenario)
     assert seen == [{}, {"answer": {"mode": "everyone"}}]
+
+
+def test_every_published_member_setting_can_be_saved(group_api):
+    """#406 #408: the member route accepts what GET /group-settings advertises."""
+    client, _, _ = group_api
+    assert client.post("/bots", json={"id": "coder", "name": "Coder"}).status_code == 200
+    chat = create(client, members=["coder", "kova"])
+    path = f"/chats/{chat['id']}/members/coder"
+    schema = client.get("/group-settings").json()["member_settings"]
+    keys = {setting["key"] for setting in schema}
+    assert {"answers", "muted"} <= keys
+    for value in next(s for s in schema if s["key"] == "answers")["values"]:
+        response = client.patch(path, json={"settings": {"answers": value}})
+        assert response.status_code == 200, (value, response.text)
+    always = client.patch(path, json={"settings": {"answers": "always"}}).json()
+    assert always["settings"]["answers"] == "always"
+    same = client.patch(path, json={"settings": {"answers": "same"}}).json()
+    assert "answers" not in same["settings"]
+    assert client.patch(path, json={"settings": {"answers": True}}).status_code == 422
+    muted = client.patch(path, json={"settings": {"muted": True}})
+    assert muted.status_code == 200, muted.text
+    assert muted.json()["muted"] is True and "muted" not in muted.json()["settings"]
+    assert client.patch(path, json={"settings": {"muted": None}}).json()["muted"] is False
+    assert client.patch(path, json={"settings": {"max_rounds": 99}}).status_code == 422
+    assert client.patch(path, json={"settings": {"nonsense": 1}}).status_code == 422
+
+
+@pytest.mark.parametrize(("cost", "status"), [(0, 200), (0.5, 200), (-1, 422)])
+def test_group_cost_ceiling_accepts_zero(group_api, cost, status):
+    """#407: the schema's minimum for limits.max_cost_usd is 0."""
+    client, _, _ = group_api
+    chat = create(client)
+    response = client.patch(f"/chats/{chat['id']}",
+                            json={"group": {"limits": {"max_cost_usd": cost}}})
+    assert response.status_code == status, response.text
+    if status == 200:
+        assert response.json()["group"]["limits"]["max_cost_usd"] == cost

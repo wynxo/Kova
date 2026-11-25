@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from kova import (__version__, bots, build, checkpoints, hunks, pairing, plugins, egress,
-                  reasoning_effort, ui_prefs, project_files, project_pins)
+                  reasoning_effort, ui_prefs, project_files, project_pins, group_settings)
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
 from kova.bot_routes import actor_for_chat, grants_host_access, install_bot_routes
@@ -127,17 +127,37 @@ _GROUP_RANGES = {
     "limits.max_seconds": (30, 3_600), "max_rounds": (1, 11),
     "max_output_tokens": (100, 32_000),
 }
-_MEMBER_OVERRIDES = dict(approvals="ask", answers=False, max_rounds=6,
-                         max_output_tokens=4000, project_memory=False)
 
 
-def _validate_group_patch(patch: dict, *, member: bool = False) -> None:
+def _member_settings_patch(patch: dict) -> tuple[dict, bool | None]:
+    """A member PATCH checked against ``group_settings.MEMBER_SETTINGS``.
+
+    Returns the overrides to merge (``None`` = reset; ``"same"`` is the default,
+    so it resets too) and ``muted`` when the patch sets it: muted lives in its
+    own column, but the published schema lists it with the other settings.
+    """
+    try:
+        clean = group_settings.member_validate(patch)
+    except group_settings.SettingsError as exc:
+        raise HTTPException(422, f"Invalid group setting: {exc}") from None
+    merged: dict = {}
+    for key, value in patch.items():
+        if key == "muted":
+            continue
+        merged[key] = None if value is None or value == "same" else clean[key]
+    muted = None
+    if "muted" in patch:
+        muted = bool(clean.get("muted", False))
+    return merged, muted
+
+
+def _validate_group_patch(patch: dict) -> None:
     def check(values: dict, defaults: dict, prefix: str = "") -> None:
         for key, value in values.items():
             name = prefix + key
             if key not in defaults:
                 raise HTTPException(422, f"Unknown group setting: {name}")
-            if value is None or (member and name == "approvals" and value == "same"):
+            if value is None:
                 continue
             default = defaults[key]
             if isinstance(default, dict) and isinstance(value, dict):
@@ -152,7 +172,8 @@ def _validate_group_patch(patch: dict, *, member: bool = False) -> None:
                 valid = isinstance(value, list) and len(value) <= 8 and all(
                     isinstance(bot_id, str) and bot_id for bot_id in value)
             elif name == "limits.max_cost_usd":
-                valid = type(value) in (int, float) and 0 < value < float("inf")
+                # 0 is a real ceiling (free models only); null means no limit.
+                valid = type(value) in (int, float) and 0 <= value < float("inf")
             elif name in {"answer.lead", "folder_path", "instructions"}:
                 valid = isinstance(value, str) and len(value) <= 2000
             else:
@@ -160,7 +181,7 @@ def _validate_group_patch(patch: dict, *, member: bool = False) -> None:
             if not valid:
                 raise HTTPException(422, f"Invalid group setting: {name}")
 
-    check(patch, _MEMBER_OVERRIDES if member else _GROUP_DEFAULTS)
+    check(patch, _GROUP_DEFAULTS)
 
 
 def _merge_group_settings(base: dict, patch: dict) -> dict:
@@ -1431,18 +1452,18 @@ def create_app(
         if member is None:
             raise HTTPException(404, "group member not found")
         settings = None
+        muted = body.muted
         if body.settings is not None:
-            _validate_group_patch(body.settings, member=True)
-            patch = body.settings
-            if patch.get("approvals") == "same":
-                patch = {**patch, "approvals": None}
+            patch, settings_muted = _member_settings_patch(body.settings)
+            if muted is None:
+                muted = settings_muted
             settings = _merge_group_settings(member["settings"], patch)
             default = chat["group_settings"].get("approvals", "ask")
             policy = settings.get("approvals", default)
             if policy != member["settings"].get("approvals", default):
                 guard_group_approval(request, policy, [bot_id])
         try:
-            updated = app.state.store.update_chat_member(chat_id, bot_id, muted=body.muted,
+            updated = app.state.store.update_chat_member(chat_id, bot_id, muted=muted,
                                                          position=body.position, settings=settings)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None

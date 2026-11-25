@@ -319,8 +319,17 @@ def _working_folder(value: str, *, bot_folder: Path | None, kova_home: Path | No
         raise BotError("Working folder must not be a link or junction.")
     if kova_home is not None:
         home = Path(kova_home).expanduser()
-        if path == home or path.is_relative_to(home) or home.is_relative_to(path):
-            raise BotError("Working folder must be outside the Kova home.")
+        # Compare where the paths really lead as well as how they are written:
+        # a linked parent ("/tmp/alias/x" with alias -> the Kova home) passes
+        # the lexical check but resolves inside the home (#404).
+        pairs = [(path, home)]
+        try:
+            pairs.append((path.resolve(), home.resolve()))
+        except (OSError, RuntimeError):
+            raise BotError("Working folder must be a path Kova can resolve.") from None
+        for folder, kova in pairs:
+            if folder == kova or folder.is_relative_to(kova) or kova.is_relative_to(folder):
+                raise BotError("Working folder must be outside the Kova home.")
     if bot_folder is not None:
         try:
             if path.resolve().is_relative_to(Path(bot_folder).resolve()):
