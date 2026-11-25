@@ -1,7 +1,7 @@
 """Read-only project paths for the browser's ``@`` mentions (issue #197).
 
-The terminal chat lists project paths with ``tui.editor.FileIndex``; the web
-composer asks the server instead. Both want the same answer: filenames only,
+The terminal chat (``tui.editor.FileIndex``) and the web composer (through
+the server) both use this module, so they give the same answer: filenames only,
 never file contents, relative to one folder and confined to it. git's view is
 used when the folder is a repository; otherwise a bounded walk skips the
 folders that only hold generated files.
@@ -62,16 +62,19 @@ def _from_git(base: Path) -> list[str]:
         # fsmonitor would run a program named in the folder's own .git/config;
         # listing files must never execute anything.
         result = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "ls-files", "--cached", "--others",
+            ["git", "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others",
              "--exclude-standard"],
-            cwd=base, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=3, check=True,
+            cwd=base, stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=True,
+            # git writes paths as UTF-8; text=True alone would decode them with the
+            # Windows code page and turn "café" into "cafÃ©".
+            text=True, encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return []
-    files = [line for line in result.stdout.splitlines() if line]
-    folders = {str(Path(path).parent).replace(os.sep, "/") + "/" for path in files
-               if str(Path(path).parent) != "."}
+    # -z: names arrive verbatim, not C-quoted ("caf\303\251.txt") like plain output.
+    files = [name for name in result.stdout.split("\0") if name]
+    folders = {"/".join(parts[:end]) + "/" for parts in (name.split("/") for name in files)
+               for end in range(1, len(parts))}
     return files + sorted(folders)
 
 

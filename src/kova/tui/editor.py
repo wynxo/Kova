@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -295,30 +294,10 @@ class FileIndex:
         return self._paths
 
     def _scan(self) -> list[str]:
-        try:
-            listed = subprocess.run(
-                # fsmonitor would run a program named in the folder's own
-                # .git/config; listing files must never execute anything.
-                ["git", "-c", "core.fsmonitor=false", "ls-files", "--cached", "--others",
-                 "--exclude-standard"],
-                cwd=self.root, capture_output=True, text=True, timeout=3, check=True).stdout
-            paths = [line for line in listed.splitlines() if line][:self.LIMIT]
-            if paths:
-                folders = sorted({str(Path(path).parent) + "/" for path in paths
-                                  if str(Path(path).parent) != "."})
-                return sorted(paths + folders, key=lambda path: (path.count("/"), path))
-        except (OSError, subprocess.SubprocessError):
-            pass
-        found: list[str] = []
-        for base, folders, names in os.walk(self.root):
-            folders[:] = sorted(f for f in folders if f not in self.SKIP and not f.startswith("."))
-            relative = os.path.relpath(base, self.root)
-            prefix = "" if relative == "." else relative + "/"
-            found += [prefix + folder + "/" for folder in folders]
-            found += [prefix + name for name in sorted(names)]
-            if len(found) >= self.LIMIT:
-                break
-        return sorted(found[:self.LIMIT], key=lambda path: (path.count("/"), path))
+        # Same listing as the web composer: git's view read as UTF-8 (not
+        # C-quoted, not the Windows code page), every ancestor folder, "/" paths.
+        from kova import project_files
+        return project_files.paths(self.root, self.LIMIT)
 
 
 def expand_mentions(text: str, root: str) -> tuple[str, list[tuple[str, int]]]:
