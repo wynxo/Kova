@@ -146,7 +146,7 @@ cookie, so a route added to the router is authenticated by construction.
 | `POST /chats/{chat_id}/checkpoints/{checkpoint_id}/file/undo` | token or session | revert every remaining hunk in one file, keeping later edits elsewhere and refusing the whole undo if any hunk was edited since; recorded as a new change set |
 | `POST /chats/{chat_id}/compact` | token or session | summarize older turns now (`compact_skipped` if there is nothing to do) |
 | `POST /chats/{chat_id}/fork` | token or session | copy this chat, messages and compacted context, into a new one |
-| `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it |
+| `POST /chats/{chat_id}/messages` | token or session | run one turn, stream SSE events; `queued: <id>` sends that queued message under the limits of whoever queued it; in a group, `answer` overrides who answers for this message |
 | `POST /chats/{chat_id}/retry` | token or session | run the last user turn again as a new alternative; the previous reply stays stored |
 | `POST /chats/{chat_id}/edit` | token or session | replace the last user message (its files stay on it) and run it again as a new alternative |
 | `POST /chats/{chat_id}/alternatives` | token or session | show one stored attempt of the newest turn by `turn_id` and 1-based `index`; nothing is deleted |
@@ -732,6 +732,24 @@ deterministic part the who-answers chip shows; `tests/fixtures/group_routing.jso
 is shared with the browser's twin so the two cannot drift. Commands, storage
 and the runner are separate modules that consume these two.
 
+`src/kova/group.py` is the group runner. A new message in a group chat goes
+through `GroupRunner.run` instead of a single `Agent.run_turn`: it routes the
+message with `mentions.route` (an optional `answer` override on
+`POST /chats/{id}/messages` applies to that message only), then runs the picked
+members one at a time, each through `Agent.run_turn` with `group=` set so the
+history is that member's own `group_context.view_for` view and the prompt names
+the other members, the `(pass)` rule and the group's instructions. The user's
+message is stored once. After each reply `replies.mode` decides what follows:
+nothing (`off`), the members it @mentions as hand-offs (`mentioned`), or
+everyone again in order (`turns`) until all pass. Before every bot turn the
+guards run in the order of design 4.4 (hops, bot turns, ping-pong, tokens,
+cost, time; a repeated reply also ends the chain), and the first that fires
+emits `group_limit` with the bots still queued. Events: `group_plan`,
+`group_route`, `bot_turn_start`, `bot_turn_end` (`done`, `passed`, `error`),
+`group_limit`, and one final `done` with `bot_turns` and the summed usage. A
+member's error ends only its own turn. The `auto` routing call is not built
+yet, so the lead answers; retry and edit in a group still give one answer.
+
 ## Store
 
 `src/kova/store.py` wraps one SQLite file, `config.home / "kova.db"`, opened
@@ -1225,6 +1243,7 @@ with `KOVA_LIVE=1`.
 | `src/kova/bots.py` | bot definitions: format, validation, file I/O |
 | `src/kova/group_settings.py` | group and member settings: schema, validation, presets, resolution |
 | `src/kova/mentions.py` | `@mention` parsing and the who-answers router for every group mode |
+| `src/kova/group.py` | the group runner: members answer one at a time, hand-offs, take-turns and the loop guards |
 | `src/kova/actors.py` | who answers: the default assistant or one bot in one chat |
 | `src/kova/bot_routes.py` | the `/bots` router, avatars and the phone capability guard |
 | `src/kova/memory.py` | Markdown notes and Obsidian mode |

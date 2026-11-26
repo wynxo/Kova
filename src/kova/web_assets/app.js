@@ -1175,7 +1175,10 @@
         if (msg.model_switch) modelSwitch(msg.model_switch);
       }
       else if (msg.role === 'assistant') {
-        if (!turn) turns.push(turn = {body: message('assistant', undefined, undefined, [], msg), parts: [], tools: 0, retry: retryable});
+        // In a group, each bot's reply to the same message is its own bubble.
+        if (turn && (msg.author || null) !== turn.author) { turn = null; savedTools = null; }
+        if (!turn) turns.push(turn = {body: message('assistant', undefined, undefined, [], msg), parts: [], tools: 0,
+                                      retry: retryable && chat?.kind !== 'group', author: msg.author || null});
         if (msg.content) { savedTools = null; const md = el('div', 'markdown'); markdown(md, msg.content, true); turn.body.append(md); turn.parts.push(msg.content); }
         if (msg.content && !msg.tool_calls?.length) turn.reply = msg;
         if (msg.usage) turn.usage = msg.usage;
@@ -1843,6 +1846,9 @@
           const error = el('div', 'turn-error'); error.append(icon('triangle-alert'), el('span', '', event.message));
           body.insertBefore(error, activity);
           announce(`Error: ${event.message}`);
+        } else if (kind === 'group_status' || (kind === 'notice' && ['group_nobody', 'bot_limit'].includes(event.kind))) {
+          current = null;
+          body.insertBefore(el('div', 'turn-status', event.text || event.notice), activity);
         } else if (kind === 'steer') {
           current = null;
           body.insertBefore(el('div', 'turn-status', `Steering: ${event.text}`), activity);
@@ -2008,7 +2014,8 @@
       $('messages').querySelectorAll('.message-action-retry').forEach(button => button.remove());
       composerModules.history?.reset(); composerModules.mentions?.close();
       bots?.beginWork(outgoing);
-      const reply = message('assistant', undefined, undefined, [], {author: bots?.contact(state.chat)?.id});
+      let reply = message('assistant', undefined, undefined, [], {author: bots?.contact(state.chat)?.id});
+      let groupTurns = 0;
       nearBottom = true; turn = turnView(reply, model); follow();
       const response = replacement || await stream();
       submittedChat = null;
@@ -2022,6 +2029,30 @@
           const entry = modelByName(data.model);
           if (entry) entry.last_local_speed = data.usage;
         }
+        // A group answers one bot at a time: each bot gets its own reply.
+        if (data.type === 'bot_turn_start') {
+          // The first placeholder was made before the server said who answers:
+          // swap it for one under this bot, so its name and colour show live.
+          const placeholder = !groupTurns++ ? reply.closest('article') : null;
+          turn.finish();
+          const next = message('assistant', undefined, undefined, [], {author: data.author});
+          if (placeholder) { placeholder.replaceWith(next.closest('article')); }
+          reply = next;
+          turn = turnView(reply, model); follow();
+          return;
+        }
+        if (data.type === 'bot_turn_end' && data.status === 'error') {
+          turn.accept({type: 'group_status', text: `@${data.author} could not answer: ${data.message || 'error'}`});
+          return;
+        }
+        if (data.type === 'group_limit') {
+          const labels = {max_hops: 'reply limit', max_bot_turns: 'bot turn limit', ping_pong: 'back-and-forth limit',
+            max_tokens: 'token limit', max_cost_usd: 'cost limit', max_seconds: 'time limit', repeat: 'repeated reply'};
+          const left = (data.dropped || []).map(id => '@' + id).join(', ');
+          turn.accept({type: 'group_status', text: `The group stopped at its ${labels[data.limit] || data.limit}${left ? `; still waiting: ${left}` : ''}.`});
+          return;
+        }
+        if (['group_plan', 'group_route', 'bot_turn_end'].includes(data.type)) return;
         terminal = ['done', 'error', 'stopped'].includes(data.type);
         bots?.workEvent(data);
         turn.accept(data);
