@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import unicodedata
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import aclosing
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -16,7 +16,7 @@ from uuid import uuid4
 import httpx
 
 from kova import delegation, egress, parallel, plugins, providers, sandbox
-from kova.actors import Actor
+from kova.actors import DEFAULT_ACTOR_ID, Actor
 from kova.checkpoints import BlobStore, ChangeTracker
 from kova.compact import compact
 from kova.config import Config, load_config
@@ -36,6 +36,7 @@ from kova.project_instructions import project_instructions
 from kova.review import MemoryReview, ReviewSettings
 from kova.skills import Skills
 from kova.usage import TurnMeter, summarize, window_start
+from kova.group_context import view_for
 
 
 _IDENTITIES = {
@@ -70,6 +71,21 @@ def select_tools(mode: str, web: bool, tools: dict[str, Tool], *, local_only: bo
     if local_only:
         allowed = {name for name in allowed if '__' not in name and name != 'run_command'}
     return {name: tool for name, tool in tools.items() if name in allowed}
+
+
+def group_prompt(group: Mapping) -> str:
+    """How a member speaks in a group chat: who is here and how to hand off."""
+    lines = [f"- {line}" for line in group.get('members') or ()]
+    text = ("\n\nYou are one member of a group chat. Other members:\n"
+            + ("\n".join(lines) if lines else "- nobody else")
+            + "\nMessages from the user start with @you:, other members' replies "
+              "start with their @handle. Reply as yourself, without your own "
+              "@handle in front. To hand work to another member, @mention them "
+              "in your reply. If you have nothing to add, reply exactly (pass).")
+    instructions = str((group.get('settings') or {}).get('instructions') or '').strip()
+    if instructions:
+        text += f"\n\nGroup instructions:\n{instructions}"
+    return text
 
 
 def build_system_prompt(now: datetime, tool_names: list[str], memories: list[Note],
@@ -369,7 +385,8 @@ class Agent:
                 'skipped': skipped}
 
     def _turn_context(self, chat_id: str, user_message_id: int | None, model_text: str,
-                      attached: list[dict]) -> list[dict]:
+                      attached: list[dict], *, actor: Actor | None = None,
+                      group: Mapping | None = None) -> list[dict]:
         """Stored history with this turn's extracted attachment text applied.
 
         The stored user message stays exactly what the user wrote. For the
@@ -378,6 +395,9 @@ class Agent:
         without the transcript ever containing it. A retry wrote no new
         message, so it lends the text to the last user message already stored.
         """
+        if group is not None:
+            return self._group_context(chat_id, user_message_id, model_text, attached,
+                                       actor=actor, group=group)
         entries = self.store.get_context_entries(chat_id)
         if attached:
             for ident, message in entries:
@@ -392,12 +412,29 @@ class Agent:
                             break
         return [message for _, message in entries]
 
+    def _group_context(self, chat_id: str, user_message_id: int | None, model_text: str,
+                       attached: list[dict], *, actor: Actor | None,
+                       group: Mapping) -> list[dict]:
+        """One group member's own view of the shared transcript (design 4.3)."""
+        summary, _, entries = self.store.context_snapshot(chat_id, attributed=True)
+        rows = [message for _, message in entries]
+        if attached:
+            target = next((message for ident, message in entries if ident == user_message_id), None)
+            if target is None:
+                target = next((message for message in reversed(rows)
+                               if message.get('role') == 'user'), None)
+            if target is not None:
+                target['content'] = model_text
+        speaker = actor.id if actor is not None else DEFAULT_ACTOR_ID
+        return view_for(speaker, rows, group.get('settings') or {},
+                        handles=group.get('handles') or {}, summary=summary)
+
     async def run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
                        variant: int | None = None, actor: Actor | None = None,
-                       hop: int = 0) -> AsyncIterator[dict]:
+                       hop: int = 0, group: Mapping | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn under its home and chat privacy policy.
 
         A chat a paired phone wrote in keeps that phone's limits here, for every
@@ -410,26 +447,32 @@ class Agent:
         ``bot_turn_id``, so a client can put a reply and its tool calls in the
         right lane without changing anything for the default assistant.
         ``hop`` is 0 for a reply to the user and 1+ for a hand-off between bots.
+        ``group`` is set by the group runner: ``settings`` (resolved group
+        settings), ``handles`` (bot id to handle) and ``members`` (one line
+        each for the prompt). The history is then this member's own view.
         """
         capabilities = narrow(capabilities, self.store.chat_capabilities(chat_id))
-        bot_turn_id = (uuid4().hex if actor is not None and not actor.is_default else None)
+        bot_turn_id = (uuid4().hex if (actor is not None and not actor.is_default)
+                       or group is not None else None)
         with egress.scope(config=self.config, store=self.store, chat_id=chat_id):
             async for event in self._run_turn(chat_id, text, model, steering=steering,
                                               attachment_ids=attachment_ids, capabilities=capabilities,
                                               record_user=record_user, turn_id=turn_id,
                                               variant=variant, actor=actor,
-                                              bot_turn_id=bot_turn_id, hop=hop):
+                                              bot_turn_id=bot_turn_id, hop=hop, group=group):
                 if bot_turn_id is None:
                     yield event
                 else:
-                    yield {**event, 'author': actor.id, 'bot_turn_id': bot_turn_id}
+                    author = actor.id if actor is not None else DEFAULT_ACTOR_ID
+                    yield {**event, 'author': author, 'bot_turn_id': bot_turn_id}
 
     async def _run_turn(self, chat_id: str, text: str, model: str | None = None, *,
                        steering: Steering | None = None, attachment_ids: list[str] | None = None,
                        capabilities: frozenset[str] | None = None,
                        record_user: bool = True, turn_id: str | None = None,
                        variant: int | None = None, actor: Actor | None = None,
-                       bot_turn_id: str | None = None, hop: int = 0) -> AsyncIterator[dict]:
+                       bot_turn_id: str | None = None, hop: int = 0,
+                       group: Mapping | None = None) -> AsyncIterator[dict]:
         """Persist and stream a turn, executing at most ten rounds of tools.
 
         ``model`` overrides the saved chat model for one turn; unset chats use the default.
@@ -696,6 +739,8 @@ class Agent:
             prompt += ("\nIncognito: this conversation lives only in server memory. "
                        "Do not save memories, use tools, or claim it will be remembered. "
                        "The configured model provider still receives messages.")
+        if group is not None:
+            prompt += group_prompt(group)
         if mode != 'chat':
             prompt += f"\nWorking folder: {cwd}\nPermission mode: {permission}"
         if mode != 'chat' or project:
@@ -781,7 +826,8 @@ class Agent:
                         self.store.add_message(chat_id, 'user', message,
                                                turn_id=turn_id, variant=variant)
                         yield {'type': 'steer', 'text': message}
-                history = self._turn_context(chat_id, user_message_id, model_text, attached)
+                history = self._turn_context(chat_id, user_message_id, model_text, attached,
+                                                   actor=actor, group=group)
                 threshold = max(0.1, min(float(self.config.compact_threshold), 1.0))
                 size = len(prompt) + sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
                 if not attempted_compaction and size > entry.context * 4 * threshold:
@@ -790,7 +836,8 @@ class Agent:
                                           reserved_chars=len(prompt), threshold=threshold)
                     if event:
                         yield event
-                        history = self._turn_context(chat_id, user_message_id, model_text, attached)
+                        history = self._turn_context(chat_id, user_message_id, model_text, attached,
+                                                   actor=actor, group=group)
                 history = trim_history(repair_tool_pairs(history), entry.context, len(prompt))
                 messages = [{'role': 'system', 'content': prompt}, *history]
                 if entry.vision and providers.supports(entry._provider, 'vision'):

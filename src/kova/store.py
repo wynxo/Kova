@@ -1837,13 +1837,19 @@ class Store:
         return messages
 
     @_chat_scoped
-    def context_snapshot(self, chat_id: str) -> tuple[str | None, int, list[tuple[int, dict]]]:
-        """Return the stored summary and uncompressed messages with stable IDs."""
+    def context_snapshot(self, chat_id: str, *, attributed: bool = False
+                         ) -> tuple[str | None, int, list[tuple[int, dict]]]:
+        """Return the stored summary and uncompressed messages with stable IDs.
+
+        ``attributed`` also returns each row's ``author`` and ``bot_turn_id``
+        (when set), which a group chat needs to build each bot's own view.
+        They are never sent to a model as they are.
+        """
         with self._lock:
             compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
             cutoff, summary = (compact[0], compact[1]) if compact else (0, None)
             rows = self._conn.execute(
-                "SELECT id, role, content, tool_calls, tool_call_id FROM messages "
+                "SELECT id, role, content, tool_calls, tool_call_id, author, bot_turn_id FROM messages "
                 "WHERE chat_id = ? AND active = 1 AND id > ? ORDER BY id",
                 (chat_id, cutoff),
             ).fetchall()
@@ -1854,8 +1860,21 @@ class Store:
                 message["tool_calls"] = json.loads(row[3])
             if row[4] is not None:
                 message["tool_call_id"] = row[4]
+            if attributed:
+                if row[5] is not None:
+                    message["author"] = row[5]
+                if row[6] is not None:
+                    message["bot_turn_id"] = row[6]
             messages.append((row[0], message))
         return summary, cutoff, messages
+
+    @_chat_scoped
+    def turn_has_user_message(self, chat_id: str, turn_id: str) -> bool:
+        """Whether the user's message of this turn is stored (a group writes it once)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT 1 FROM messages WHERE chat_id = ? AND turn_id = ? AND role = 'user' LIMIT 1",
+                (chat_id, turn_id)).fetchone() is not None
 
     @_chat_scoped
     def get_context_entries(self, chat_id: str) -> list[tuple[int | None, dict]]:

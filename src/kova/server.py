@@ -21,6 +21,7 @@ from kova import (__version__, bots, build, checkpoints, hunks, pairing, plugins
                   reasoning_effort, ui_prefs, project_files, project_pins, group_settings)
 from kova.chat_appearance import normalize_colour, normalize_icon
 from kova.agent import Agent, Steering, derive_title
+from kova.group import GroupRunner
 from kova.bot_routes import actor_for_chat, grants_host_access, install_bot_routes
 from kova.config import Config, ModelEntry, ensure_token, load_config, save_config
 from kova.events import EventBus, ConversationStates
@@ -49,6 +50,8 @@ class TurnBody(BaseModel):
     attachments: list[str] = Field(default_factory=list, max_length=3)
     #: Send this queued message (its id), bound to the limits of whoever queued it.
     queued: int | None = None
+    #: Group chats only: who answers this one message, e.g. {"mode": "everyone"}.
+    answer: dict | None = None
 
 
 class ChatBody(BaseModel):
@@ -642,6 +645,9 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = memory
     app.state.tool_context = tool_context
     app.state.agent = agent
+    app.state.group_runner = GroupRunner(
+        agent, config, lambda bot_id: bots.get_bot(
+            config.home, bot_id, models=[entry.name for entry in config.models]))
     app.state.mcp = mcp
     # MCP servers connect in the background (npx may download first), so the
     # server answers at once; their tools join the registry when ready.
@@ -883,7 +889,8 @@ def create_app(
     def turn_stream(chat_id: str, text: str, *, model: str | None,
                     attachments: list[str], capabilities: frozenset[str] | None,
                     record_user: bool = True, turn_id: str | None = None,
-                    variant: int | None = None) -> StreamingResponse:
+                    variant: int | None = None,
+                    answer: dict | None = None) -> StreamingResponse:
         """Run one turn in its own task and stream its events to this client.
 
         The task outlives the HTTP stream, so a reload or a closed tab never
@@ -910,12 +917,22 @@ def create_app(
                         app.state.steering[chat_id] = steering
                         if chat["kind"] == "group":
                             group_turn_events[chat_id] = queue
+                        # A new message in a group goes through its members; a
+                        # retry or edit there keeps today's single answer until
+                        # retry in groups lands (task 2.10).
+                        if chat["kind"] == "group" and record_user and turn_id is None:
+                            events = app.state.group_runner.run(
+                                chat_id, text, model=model, steering=steering,
+                                attachment_ids=attachments, capabilities=capabilities,
+                                override=answer)
+                        else:
+                            events = app.state.agent.run_turn(
+                                chat_id, text, model=model, steering=steering,
+                                attachment_ids=attachments, capabilities=capabilities,
+                                record_user=record_user, turn_id=turn_id, variant=variant,
+                                actor=actor)
                         try:
-                            async for event in app.state.agent.run_turn(
-                                    chat_id, text, model=model, steering=steering,
-                                    attachment_ids=attachments, capabilities=capabilities,
-                                    record_user=record_user, turn_id=turn_id, variant=variant,
-                                    actor=actor):
+                            async for event in events:
                                 app.state.conversation_states.transition(chat_id, event.get("type", ""))
                                 if event.get('type') in {'done', 'error'} and records:
                                     queue.put_nowait({'type': 'egress', 'items': list(records)})
@@ -1694,8 +1711,15 @@ def create_app(
         # whoever queued this message) and nothing else.
         capabilities = pairing.narrow(pairing.request_capabilities(request),
                                       app.state.store.chat_capabilities(chat_id))
+        if body.answer is not None:
+            if chat["kind"] != "group":
+                raise HTTPException(422, "Only group chats take an answer override.")
+            try:
+                group_settings.validate({"answer": body.answer})
+            except group_settings.SettingsError as exc:
+                raise HTTPException(422, f"Invalid answer override: {exc}") from None
         return turn_stream(chat_id, body.text, model=body.model, attachments=body.attachments,
-                           capabilities=capabilities)
+                           capabilities=capabilities, answer=body.answer)
 
     def validate_turn_model(chat: dict, model: str | None, attachments: list[str]) -> None:
         selected = model if model is not None else chat.get("model")
