@@ -87,7 +87,7 @@ def test_group_patch_merges_and_resets_nested_settings(group_api):
 def test_switching_preset_resets_old_values_but_preserves_safety_settings(group_api):
     client, _, _ = group_api
     chat = create(client, preset="debate", group={"approvals": "deny",
-                  "folder": "own", "memory": "group", "limits": {"max_bot_turns": 4}})
+                  "folder": "own", "limits": {"max_bot_turns": 4}})
     response = client.patch(f"/chats/{chat['id']}", json={"preset": "panel"})
     assert response.status_code == 200
     group = response.json()["group"]
@@ -95,9 +95,43 @@ def test_switching_preset_resets_old_values_but_preserves_safety_settings(group_
     assert group["replies"]["max_hops"] == 3
     assert group["instructions"] == ""
     assert group["see_earlier_replies"] is False
-    assert (group["approvals"], group["folder"], group["memory"]) == ("deny", "own", "group")
+    assert (group["approvals"], group["folder"]) == ("deny", "own")
     assert group["limits"]["max_bot_turns"] == 4
-    assert response.json()["preset"] == "custom"
+    # Approvals, folders and limits never hide the preset the group runs.
+    assert response.json()["preset"] == "panel"
+
+
+def test_safety_settings_keep_the_preset_label(group_api):
+    client, _, _ = group_api
+    chat = create(client, preset="team")
+    path = f"/chats/{chat['id']}"
+    edit = client.patch(path, json={"group": {"approvals": "deny", "limits": {"max_seconds": 120}}})
+    assert edit.status_code == 200
+    assert edit.json()["preset"] == "team"
+    assert client.get(path).json()["preset"] == "team"
+
+
+@pytest.mark.parametrize("group", [{"retry": "stale"}, {"memory": "group"}])
+def test_settings_that_do_not_work_yet_are_refused(group_api, group):
+    client, _, _ = group_api
+    assert client.post("/chats", json={"members": ["kova"], "group": group}).status_code == 422
+
+
+def test_older_stored_keys_are_ignored_not_fatal(group_api):
+    client, app, _ = group_api
+    chat = create(client, preset="panel")
+    store = app.state.store
+    store._conn.execute("UPDATE chats SET group_settings = ? WHERE id = ?",
+                        ('{"answer": {"mode": "everyone"}, "replies": {"mode": "off"}, '
+                         '"see_earlier_replies": false, "retry": "rerun", "memory": "group"}',
+                         chat["id"]))
+    store._conn.commit()
+    read = client.get(f"/chats/{chat['id']}").json()
+    assert read["preset"] == "panel"
+    assert "retry" not in read["group"] and "memory" not in read["group"]
+    edit = client.patch(f"/chats/{chat['id']}", json={"group": {"approvals": "deny"}})
+    assert edit.status_code == 200
+    assert "memory" not in edit.json()["group_settings"]
 
 
 def test_member_routes_reorder_patch_overrides_and_keep_history(group_api):

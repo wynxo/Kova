@@ -86,49 +86,6 @@ class EditMemberBody(BaseModel):
     settings: dict | None = None
 
 
-# TODO(2.1 integration): use group_settings.validate/resolve/matching_preset
-# and its preset data here once that module lands. Keep the routes independent
-# of the schema work in progress; these are the wire defaults from the spec.
-_GROUP_DEFAULTS = {
-    "answer": {"mode": "lead", "lead": None, "bots": [], "count": 2,
-               "auto_max": 2, "mentions": "replace"},
-    "replies": {"mode": "mentioned", "max_hops": 3, "ping_pong": 2, "allow_pass": True},
-    "limits": {"max_bot_turns": 8, "max_tokens": 40_000,
-               "max_cost_usd": None, "max_seconds": 600},
-    "approvals": "ask", "folder": "shared", "folder_path": None, "share_work": "replies",
-    "see_earlier_replies": True, "retry": "rerun", "memory": "private", "instructions": "",
-}
-_GROUP_PRESETS = {
-    "ask-one": {},
-    "panel": {"answer": {"mode": "everyone"}, "replies": {"mode": "off"},
-              "see_earlier_replies": False},
-    "team": {"answer": {"mode": "auto"}},
-    "debate": {"answer": {"mode": "everyone"}, "replies": {"mode": "turns", "max_hops": 4},
-               "instructions": "Answer the other participants' points directly. "
-                               "Say plainly when you have been convinced. "
-                               "Reply (pass) when you have nothing new."},
-}
-_PRESET_PRESERVED = {"approvals", "folder", "folder_path", "memory", "limits"}
-_APPROVAL_POLICIES = ("ask", "once", "allow", "deny")
-_GROUP_CHOICES = {
-    "answer.mode": ("mentioned", "lead", "auto", "everyone", "subset", "count", "random", "lead_only"),
-    "answer.mentions": ("replace", "add"),
-    "replies.mode": ("off", "mentioned", "turns"),
-    "approvals": _APPROVAL_POLICIES,
-    "folder": ("shared", "own"),
-    "share_work": ("replies", "tools", "everything"),
-    "retry": ("rerun", "stale"),
-    "memory": ("private", "read_others", "group"),
-}
-_GROUP_RANGES = {
-    "answer.count": (1, 8), "answer.auto_max": (1, 8),
-    "replies.max_hops": (0, 8), "replies.ping_pong": (1, 8),
-    "limits.max_bot_turns": (1, 16), "limits.max_tokens": (1_000, 400_000),
-    "limits.max_seconds": (30, 3_600), "max_rounds": (1, 11),
-    "max_output_tokens": (100, 32_000),
-}
-
-
 def _member_settings_patch(patch: dict) -> tuple[dict, bool | None]:
     """A member PATCH checked against ``group_settings.MEMBER_SETTINGS``.
 
@@ -151,39 +108,6 @@ def _member_settings_patch(patch: dict) -> tuple[dict, bool | None]:
     return merged, muted
 
 
-def _validate_group_patch(patch: dict) -> None:
-    def check(values: dict, defaults: dict, prefix: str = "") -> None:
-        for key, value in values.items():
-            name = prefix + key
-            if key not in defaults:
-                raise HTTPException(422, f"Unknown group setting: {name}")
-            if value is None:
-                continue
-            default = defaults[key]
-            if isinstance(default, dict) and isinstance(value, dict):
-                check(value, default, name + ".")
-                continue
-            if name in _GROUP_CHOICES:
-                valid = value in _GROUP_CHOICES[name]
-            elif name in _GROUP_RANGES:
-                low, high = _GROUP_RANGES[name]
-                valid = type(value) is int and low <= value <= high
-            elif name == "answer.bots":
-                valid = isinstance(value, list) and len(value) <= 8 and all(
-                    isinstance(bot_id, str) and bot_id for bot_id in value)
-            elif name == "limits.max_cost_usd":
-                # 0 is a real ceiling (free models only); null means no limit.
-                valid = type(value) in (int, float) and 0 <= value < float("inf")
-            elif name in {"answer.lead", "folder_path", "instructions"}:
-                valid = isinstance(value, str) and len(value) <= 2000
-            else:
-                valid = type(value) is type(default)
-            if not valid:
-                raise HTTPException(422, f"Invalid group setting: {name}")
-
-    check(patch, _GROUP_DEFAULTS)
-
-
 def _merge_group_settings(base: dict, patch: dict) -> dict:
     """Merge partial tables; a null key removes the stored override."""
     result = dict(base)
@@ -201,10 +125,36 @@ def _merge_group_settings(base: dict, patch: dict) -> dict:
     return result
 
 
-def _resolve_group_settings(stored: dict) -> dict:
-    answer = {"count": 1} if stored.get("answer", {}).get("mode") == "random" else {}
-    defaults = {**_GROUP_DEFAULTS, "answer": {**_GROUP_DEFAULTS["answer"], **answer}}
-    return _merge_group_settings(defaults, stored)
+def _group_error(exc: group_settings.SettingsError) -> HTTPException:
+    return HTTPException(422, f"Invalid group setting: {exc}")
+
+
+def _stored_group_settings(stored: dict | None) -> dict:
+    """Stored overrides the schema still knows, without no-op values.
+
+    Builds before the schema landed accepted ``retry`` and ``memory``; those
+    keys do nothing yet, so a row that still has them is read without them
+    instead of failing every request for that chat.
+    """
+    known: dict = {}
+    for key, value in (stored or {}).items():
+        items = value.items() if isinstance(value, dict) else [(None, value)]
+        for leaf, item in items:
+            entry = {key: {leaf: item}} if leaf is not None else {key: item}
+            try:
+                group_settings.validate(entry)
+            except group_settings.SettingsError:
+                continue
+            known = _merge_group_settings(known, entry)
+    return group_settings.changed(known)
+
+
+def _resolve_group_settings(stored: dict | None) -> dict:
+    return group_settings.resolve(_stored_group_settings(stored))
+
+
+def _group_preset(stored: dict | None) -> str:
+    return group_settings.matching_preset(_stored_group_settings(stored))
 
 
 def _group_changes(before: dict, after: dict) -> dict:
@@ -220,18 +170,21 @@ def _group_changes(before: dict, after: dict) -> dict:
 
 
 def _patched_group_settings(stored: dict, patch: dict, preset: str | None) -> dict:
-    _validate_group_patch(patch)
-    if preset is not None:
-        if preset not in _GROUP_PRESETS:
-            raise HTTPException(422, "Unknown group preset.")
-        stored = {**{key: value for key, value in stored.items() if key in _PRESET_PRESERVED},
-                  **_GROUP_PRESETS[preset]}
-    merged = _merge_group_settings(stored, patch)
-    # Strip no-op overrides, using the effective mode's default count.
-    mode = merged.get("answer", {}).get("mode", "lead")
-    defaults = _resolve_group_settings({"answer": {"mode": mode}})
-    defaults["answer"]["mode"] = _GROUP_DEFAULTS["answer"]["mode"]
-    return _group_changes(defaults, _resolve_group_settings(merged))
+    """Apply a preset, then a partial patch (``None`` resets a key), via the schema."""
+    if not isinstance(patch, dict):
+        raise HTTPException(422, "Group settings must be a table.")
+    try:
+        group_settings.validate(patch)
+        settings = _stored_group_settings(stored)
+        if preset is not None:
+            try:
+                group_settings.preset(preset)
+            except group_settings.SettingsError:
+                raise HTTPException(422, "Unknown group preset.") from None
+            settings = group_settings.apply_preset(settings, preset)
+        return group_settings.changed(_merge_group_settings(settings, patch))
+    except group_settings.SettingsError as exc:
+        raise _group_error(exc) from None
 
 
 class ProjectBody(BaseModel):
@@ -1175,8 +1128,7 @@ def create_app(
                 bot_cache[bot_id] = member_bot(bot_id)
             members.append(public_member(member, bot_cache[bot_id]))
         group = _resolve_group_settings(chat["group_settings"])
-        preset = next((name for name, values in _GROUP_PRESETS.items()
-                       if _resolve_group_settings(values) == group), "custom")
+        preset = _group_preset(chat["group_settings"])
         return {**chat, "members": members, "group": group, "preset": preset}
 
     def get_group(chat_id: str) -> dict:
@@ -1243,7 +1195,7 @@ def create_app(
         ephemeral = bool(body and body.ephemeral)
         bot_id = (body.bot_id if body else None) or None
         members = body.members if body else None
-        group_settings = None
+        new_group = None
         if members is not None:
             if ephemeral or bot_id is not None:
                 raise HTTPException(422, "A group cannot be incognito or a direct bot chat.")
@@ -1251,9 +1203,9 @@ def create_app(
                 raise HTTPException(422, "Group members must be unique.")
             preset = body.preset
             if preset is None:
-                preset = config.groups_preset if config.groups_preset in _GROUP_PRESETS else "ask-one"
-            group_settings = _patched_group_settings({}, body.group or {}, preset)
-            validate_group_access(request, {}, group_settings, members)
+                preset = config.groups_preset if config.groups_preset in {p.id for p in group_settings.PRESETS} else "ask-one"
+            new_group = _patched_group_settings({}, body.group or {}, preset)
+            validate_group_access(request, {}, new_group, members)
             for member_id in members:
                 require_member_bot(member_id)
         elif body and (body.group is not None or body.preset is not None):
@@ -1304,7 +1256,7 @@ def create_app(
                 kind="group" if members is not None else "bot" if bot is not None else "chat",
                 bot_id=bot.id if bot is not None else None,
                 members=members,
-                group_settings=group_settings,
+                group_settings=new_group,
                 **model_settings,
             )
         except LookupError as exc:
