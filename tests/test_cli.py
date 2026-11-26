@@ -1032,6 +1032,24 @@ def test_bots_refusals_are_one_clear_line(runner, tmp_path):
     assert server_says.exit_code == 1 and "permissions.ceiling" in server_says.output
 
 
+def test_plain_bots_command_lists_like_bots_list(runner):
+    cli_runner, client, _, _ = runner
+    empty = cli_runner.invoke(cli.app, ["bots"])
+    assert empty.exit_code == 0, empty.output
+    assert "No bots yet" in empty.output and "[]" not in empty.output
+    _make_bot(client)
+    listed = cli_runner.invoke(cli.app, ["bots"])
+    assert listed.exit_code == 0, listed.output
+    assert "@researcher" in listed.output and '"definition"' not in listed.output
+
+
+def test_plain_skills_command_lists_skills(runner):
+    cli_runner, _, _, _ = runner
+    result = cli_runner.invoke(cli.app, ["skills"])
+    assert result.exit_code == 0, result.output
+    assert "Usage" not in result.output
+
+
 def test_bots_broken_file_is_listed_and_can_be_removed(runner, tmp_path):
     cli_runner, client, _, _ = runner
     folder = tmp_path / "bots" / "broken"
