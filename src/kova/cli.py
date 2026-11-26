@@ -342,7 +342,7 @@ app.add_typer(_plugins, name="plugin")
 _catalog = typer.Typer(no_args_is_help=True, help="Browse and install plugins and skills from the extensions catalog.")
 app.add_typer(_catalog, name="catalog")
 
-_skills = typer.Typer(no_args_is_help=True, help="See, read and delete the skills Kova uses.")
+_skills = typer.Typer(no_args_is_help=False, help="See, read and delete the skills Kova uses.")
 app.add_typer(_skills, name="skills")
 
 _chats = typer.Typer(no_args_is_help=False, help="Browse and manage chat history.")
@@ -371,7 +371,14 @@ def chats_root(ctx: typer.Context):
 def bots_root(ctx: typer.Context):
     """List your bots. Add one with ``kova bots create``, chat with ``kova chat --bot <handle>``."""
     if ctx.invoked_subcommand is None:
-        bots_list()
+        bots_list(as_json=False)
+
+
+@_skills.callback(invoke_without_command=True)
+def skills_root(ctx: typer.Context):
+    """List the skills Kova uses. Read one with ``kova skills show <name>``."""
+    if ctx.invoked_subcommand is None:
+        skills_list(as_json=False)
 
 
 def get_client() -> KovaClient:
@@ -1697,6 +1704,7 @@ def _origin_label(note: dict) -> str:
 def memory_list(q: str | None = typer.Argument(None),
                 project: str | None = typer.Option(None, "--project",
                                                     help="List one project's own memory by ID.")):
+    """List memory notes, or only those matching a word."""
     notes = get_client().memory_list(q, project_id=project)
     if not notes:
         if q:
@@ -1920,7 +1928,10 @@ def memory_undo(revision_id: int | None = typer.Argument(None),
 
 
 @_memory.command("use")
-def memory_use(path: str, obsidian: bool = typer.Option(False, "--obsidian")):
+def memory_use(path: str = typer.Argument(..., help="The folder that holds the notes."),
+               obsidian: bool = typer.Option(False, "--obsidian",
+                                             help="An Obsidian vault: Kova writes only in its Kova/ folder.")):
+    """Keep memory notes in another folder, such as an Obsidian vault."""
     cfg = load_config()
     cfg.memory_path = Path(path).expanduser().resolve()
     cfg.memory_write_subdir = "Kova" if obsidian else None
