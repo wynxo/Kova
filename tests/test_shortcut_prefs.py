@@ -1,6 +1,8 @@
 """The shared shortcut map (#200): known actions, sane chords, bounded size."""
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +10,8 @@ from fastapi.testclient import TestClient
 from kova import ui_prefs
 from kova.config import ensure_token, load_config
 from kova.server import create_app
+
+SHORTCUTS_JS = Path(__file__).resolve().parents[1] / "src" / "kova" / "web_assets" / "shortcuts.js"
 
 
 @pytest.fixture
@@ -56,6 +60,24 @@ def test_every_known_action_is_accepted(http):
 
     assert saved.status_code == 200
     assert saved.json()["shortcuts"] == every
+
+
+def test_the_client_registry_and_the_server_list_are_the_same_actions(http):
+    """shortcuts.js is what the reader can rebind; this list is what saves.
+
+    Every action the registry offers must be accepted here, and nothing else:
+    an action missing from the list is recorded in the browser and then refused
+    by the server, so the key silently never reaches the other devices.
+    """
+    source = SHORTCUTS_JS.read_text(encoding="utf-8")
+    registry = source[source.index("const REGISTRY"):]
+    registry = registry[:registry.index("]);")]
+    offered = set(re.findall(r"\{id: '([a-z0-9-]+)'", registry))
+
+    assert offered, "shortcuts.js has no registry entries"
+    assert offered == set(ui_prefs.SHORTCUT_ACTIONS)
+    for action in sorted(offered):
+        assert http.put("/preferences", json={"shortcuts": {action: "mod+alt+k"}}).status_code == 200, action
 
 
 @pytest.mark.parametrize("binding", [
