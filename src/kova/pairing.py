@@ -136,9 +136,36 @@ class Devices:
         self.items: list[dict] = []
         if self.path.exists():
             try:
-                self.items = [d for d in json.loads(self.path.read_text()) if isinstance(d, dict)]
+                stored = json.loads(self.path.read_text())
             except (OSError, ValueError):
-                self.items = []
+                stored = []
+            if not isinstance(stored, list):
+                stored = []
+            self.items = [device for record in stored
+                          if (device := self._record(record)) is not None]
+
+    @staticmethod
+    def _record(record) -> dict | None:
+        """One stored device, or None when the record cannot be used.
+
+        A phone paired by an older build, or a hand-edited file, can hold a
+        record without the token hash or without a field the app shows. Such a
+        record can never authenticate, so it is dropped here instead of
+        raising on every LAN request that looks a cookie up.
+        """
+        if not isinstance(record, dict):
+            return None
+        identifier, token = record.get("id"), record.get("token_sha256")
+        if not isinstance(identifier, str) or not identifier:
+            return None
+        if not isinstance(token, str) or not token or not token.isascii():
+            return None  # compare_digest takes ASCII only, and a hash always is
+        return {
+            **record,
+            "name": record["name"] if isinstance(record.get("name"), str) and record["name"] else "Phone",
+            "created": record["created"] if isinstance(record.get("created"), str) else "",
+            "last_seen": record["last_seen"] if isinstance(record.get("last_seen"), str) else "",
+        }
 
     def _save(self) -> None:
         private_write(self.path, json.dumps(self.items, indent=2))
@@ -166,7 +193,8 @@ class Devices:
         digest = _hash(token)
         match = None
         for device in self.items:
-            if hmac.compare_digest(device["token_sha256"], digest):
+            stored = device.get("token_sha256")
+            if isinstance(stored, str) and stored and hmac.compare_digest(stored, digest):
                 match = device
         return match
 
@@ -200,7 +228,7 @@ class Devices:
 
     @staticmethod
     def public(device: dict) -> dict:
-        record = {key: device[key] for key in ("id", "name", "created", "last_seen")}
+        record = {key: device.get(key, "") for key in ("id", "name", "created", "last_seen")}
         return {**record, "capabilities": sorted(device_capabilities(device))}
 
     def list(self) -> list[dict]:
@@ -234,6 +262,8 @@ class PairCode:
     secret: str
     expires: float
     device: dict | None = None
+    #: Spent the moment a claim accepts it, before any device record exists.
+    claimed: bool = False
 
 
 @dataclass
@@ -278,8 +308,9 @@ class Pairing:
         """Consume a secret once; None (and a recorded failure) when it is wrong or old."""
         self._prune()
         for code in self.codes.values():
-            if code.device is None and code.expires > time.monotonic() \
+            if not code.claimed and code.expires > time.monotonic() \
                     and hmac.compare_digest(code.secret, secret):
+                code.claimed = True
                 return code
         self.failures.setdefault(client, []).append(time.monotonic())
         return None
