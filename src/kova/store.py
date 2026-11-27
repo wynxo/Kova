@@ -1841,15 +1841,16 @@ class Store:
                          ) -> tuple[str | None, int, list[tuple[int, dict]]]:
         """Return the stored summary and uncompressed messages with stable IDs.
 
-        ``attributed`` also returns each row's ``author`` and ``bot_turn_id``
-        (when set), which a group chat needs to build each bot's own view.
-        They are never sent to a model as they are.
+        ``attributed`` also returns each row's ``author``, ``bot_turn_id`` and
+        ``turn_id`` (when set), which a group chat needs to build each bot's own
+        view and to know where the turn a steer continued began. They are never
+        sent to a model as they are.
         """
         with self._lock:
             compact = self._conn.execute("SELECT cutoff, summary FROM chat_compactions WHERE chat_id = ?", (chat_id,)).fetchone()
             cutoff, summary = (compact[0], compact[1]) if compact else (0, None)
             rows = self._conn.execute(
-                "SELECT id, role, content, tool_calls, tool_call_id, author, bot_turn_id FROM messages "
+                "SELECT id, role, content, tool_calls, tool_call_id, author, bot_turn_id, turn_id FROM messages "
                 "WHERE chat_id = ? AND active = 1 AND id > ? ORDER BY id",
                 (chat_id, cutoff),
             ).fetchall()
@@ -1865,6 +1866,8 @@ class Store:
                     message["author"] = row[5]
                 if row[6] is not None:
                     message["bot_turn_id"] = row[6]
+                if row[7] is not None:
+                    message["turn_id"] = row[7]
             messages.append((row[0], message))
         return summary, cutoff, messages
 
