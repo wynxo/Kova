@@ -71,6 +71,10 @@ SHORTCUT_ACTIONS = frozenset({
     "palette", "new-conversation", "new-incognito", "search-conversations",
     "toggle-sidebar", "toggle-theme", "focus-composer", "stop-reply",
     "shortcuts", "next-conversation", "previous-conversation", "toggle-zen",
+    # The side panel and pane navigation (#182). shortcuts.js has bound these
+    # since the panes shipped; the list here has to name every action the
+    # registry offers, or saving a key for one of them is refused.
+    "toggle-panel", "next-pane", "previous-pane",
 })
 MAX_BINDING_LENGTH = 40
 _BINDING_MODIFIERS = ("mod", "ctrl", "meta", "alt", "shift")
