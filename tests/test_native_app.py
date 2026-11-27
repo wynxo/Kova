@@ -76,8 +76,7 @@ def test_a_bad_checksum_installs_nothing_and_keeps_the_old_app(tmp_path, linux):
 def test_a_missing_build_or_release_says_so(tmp_path, linux, monkeypatch):
     with pytest.raises(native_app.NativeAppError, match="HTTP 404"):
         native_app.install(tmp_path, transport=serve({}))
-    with pytest.raises(native_app.NativeAppError, match="has no"):
-        native_app.install(tmp_path, transport=serve({native_app.SUMS: b""}))
+    assert "no build for this system" in native_app.install(tmp_path, transport=serve({native_app.SUMS: b""}))
     monkeypatch.setattr(native_app, "target", lambda: None)
     assert "classic app" in native_app.install(tmp_path, transport=serve({}))
 

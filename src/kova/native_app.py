@@ -112,7 +112,7 @@ def install(home: Path, *, transport: httpx.BaseTransport | None = None) -> str:
             raise NativeAppError(f"Could not reach GitHub for the native app: {type(exc).__name__}.") from None
         expected = sums.get(name)
         if expected is None:
-            raise NativeAppError(f"The native release has no {name}.")
+            return "The latest native release has no build for this system yet; the classic app stays in use."
         if expected == installed_sha(home) and binary(home):
             return "Native app is up to date."
         try:

@@ -72,6 +72,9 @@ jobs:
   publish:
     name: Publish native-latest
     needs: build
+    # Publish whatever built: one system's failed or unavailable runner must not
+    # hold back the others. `kova update` keeps the classic app where a build is missing.
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,7 +86,9 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum kova-app-* > SHA256SUMS && cat SHA256SUMS
+        run: |
+          ls kova-app-* >/dev/null 2>&1 || { echo "No build succeeded; nothing to publish."; exit 1; }
+          sha256sum kova-app-* > SHA256SUMS && cat SHA256SUMS
 
       - name: Replace the release
         env:
