@@ -71,6 +71,16 @@ EXPECTED = {
     ("GET", "/local-models"): "models:read",
     ("POST", "/local-models/install"): "models:write",
     ("DELETE", "/local-models/{provider_id}"): "models:write",
+    # Images (#421): seeing what fits is a read, downloading or removing a model a write;
+    # drawing and the gallery are chat, like asking for anything else.
+    ("GET", "/images"): "models:read",
+    ("POST", "/images/models/{model_id}/install"): "models:write",
+    ("DELETE", "/images/models/{model_id}"): "models:write",
+    ("PUT", "/images/active"): "models:write",
+    ("POST", "/images/generate"): "chat",
+    ("GET", "/images/gallery"): "chat",
+    ("GET", "/images/files/{name}"): "chat",
+    ("DELETE", "/images/files/{name}"): "chat",
     ("POST", "/providers/validate"): "providers:write",
     ("POST", "/providers"): "providers:write",
     ("DELETE", "/providers/{identifier}"): "providers:write",
