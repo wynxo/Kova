@@ -2397,8 +2397,7 @@
       ['open-settings', 'Settings', 'Every setting, in one place', 'preferences options configure'],
       ['open-memory', 'Memory', 'Browse and search remembered notes', 'notes recall remember'],
       ['open-reminders', 'Reminders', 'Everything scheduled to remind you', 'alarms schedule'],
-      ['open-marketplace', 'Marketplace', 'Find plugins, skills and bots to add', 'store catalog browse install bots plugins skills add-ons'],
-      ['open-extensions', 'Extensions', 'Installed plugins, skills and bots', 'plugins skills bots add-ons'],
+      ['open-extensions', 'Extensions', 'Installed plugins and skills', 'plugins skills add-ons'],
       ['open-privacy', 'Privacy', 'What left this computer, and Local only', 'report local only network'],
       ['open-mcp', 'MCP servers', 'Tools from Model Context Protocol servers', 'mcp tools servers'],
       ['open-sounds', 'Sounds', 'Quiet cues for replies and reminders', 'sound audio cue volume chime'],
@@ -3605,26 +3604,23 @@
       });
     };
   }
-  // Marketplace (#420) and Extensions (#137): the catalog of plugins, skills and
-  // bots (#419), and everything that is
+  // Extensions (#137): the catalog of plugins, skills and bots (#419), and everything that is
   // installed. Installing is preview, then confirm: the server downloads the
   // source, checks its pinned checksum and shows exactly what it adds; nothing
   // is written until Install. Skills show where they came from and, unless a
   // plugin owns them, can be read, edited and deleted here.
   {
-    const launch = $('open-extensions'), market = $('open-marketplace'), enc = encodeURIComponent;
-    const dialog = el('dialog', 'panel ext-dialog'); dialog.setAttribute('aria-label', 'Marketplace');
-    const head = el('div', 'dialog-head'), close = iconButton('x', 'Close marketplace');
-    close.onclick = () => dialog.close(); head.append(el('h2', '', 'Marketplace'), close);
+    const launch = $('open-extensions'), enc = encodeURIComponent;
+    const dialog = el('dialog', 'panel ext-dialog'); dialog.setAttribute('aria-label', 'Extensions');
+    const head = el('div', 'dialog-head'), close = iconButton('x', 'Close extensions');
+    close.onclick = () => dialog.close(); head.append(el('h2', '', 'Extensions'), close);
     const intro = el('p', 'panel-intro', 'Add abilities to Kova. Nothing runs until you have seen what it adds and said yes.');
-    const tabs = el('div', 'segmented ext-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Marketplace');
-    const search = el('input'); search.type = 'search'; search.placeholder = 'Search the marketplace'; search.setAttribute('aria-label', 'Search the marketplace');
+    const tabs = el('div', 'segmented ext-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Extensions');
+    const search = el('input'); search.type = 'search'; search.placeholder = 'Search extensions'; search.setAttribute('aria-label', 'Search extensions');
     const list = el('div', 'panel-list ext-list'), footer = el('p', 'panel-meta ext-source');
     let tab = 'installed', data = {catalog: null, plugins: [], skills: []}, version = 0;
     const buttons = {};
-    // The catalog kinds Discover shows, in this order, with their headings.
-    const KINDS = [['bot', 'Bots'], ['plugin', 'Plugins'], ['skill', 'Skills']];
-    for (const [key, label] of [['discover', 'Discover'], ['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['bot', 'Bots'], ['theme', 'Themes']]) {
+    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['bot', 'Bots'], ['theme', 'Themes']]) {
       const button = el('button', '', label); button.type = 'button'; button.setAttribute('role', 'tab');
       button.onclick = () => {
         if (tab === key) return;
@@ -3761,9 +3757,7 @@
       const item = el('section', 'panel-item'), text = el('div'), actions = el('div', 'mcp-actions');
       text.append(el('strong', '', `${entry.name} ${entry.version}`));
       if (entry.description) text.append(el('p', '', entry.description));
-      const kind = {plugin: 'Plugin', skill: 'Skill', bot: 'Bot'}[entry.kind] || entry.kind;
-      const state = entry.status !== 'available' ? 'Coming soon' : entry.update_available ? 'Update available' : entry.installed_version ? 'Installed' : '';
-      text.append(el('p', 'panel-meta', [kind, entry.author ? `by ${entry.author}` : '', state, entry.tags.filter(tag => tag !== 'first-party').join(', ')].filter(Boolean).join(' · ')));
+      text.append(el('p', 'panel-meta', [entry.author ? `by ${entry.author}` : '', entry.tags.join(', ')].filter(Boolean).join(' · ')));
       section(text, 'What it may do', entry.permissions);
       if (entry.status === 'available') text.append(el('p', 'panel-meta ext-code', `Source: ${entry.source.url}`));
       const button = el('button', 'btn quiet'); button.type = 'button';
@@ -3822,19 +3816,7 @@
         return;
       }
       if (!data.catalog) { list.append(el('p', 'panel-empty', 'Loading the catalog…')); return; }
-      const found = entry => matches(entry.name, entry.description, entry.tags, entry.author, entry.kind);
-      if (tab === 'discover') {
-        let shown = 0;
-        for (const [kind, label] of KINDS) {
-          const entries = data.catalog.entries.filter(entry => entry.kind === kind && found(entry));
-          if (!entries.length) continue;
-          heading(label); entries.forEach(renderEntry); shown += entries.length;
-        }
-        if (!shown) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'The catalog is empty.'));
-        footer.textContent = data.catalog.warning || (data.catalog.bundled ? 'Catalog bundled with Kova. Themes have their own tab.' : `Catalog: ${data.catalog.source}`);
-        return;
-      }
-      const entries = data.catalog.entries.filter(entry => entry.kind === tab && found(entry));
+      const entries = data.catalog.entries.filter(entry => entry.kind === tab && matches(entry.name, entry.description, entry.tags, entry.author));
       if (!entries.length) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'The catalog has nothing here yet.'));
       entries.forEach(renderEntry);
       footer.textContent = data.catalog.warning || (data.catalog.bundled ? 'Catalog bundled with Kova.' : `Catalog: ${data.catalog.source}`);
@@ -3845,18 +3827,7 @@
       if (current !== version) return;
       data = {plugins, skills, catalog}; render();
     }
-    function openAt(where, query = '') {
-      return safe(async () => {
-        if (where && buttons[where]) tab = where;
-        search.value = query;
-        sidebar(false);
-        if (!dialog.open) dialog.showModal();
-        render(); search.focus(); await refresh();
-      });
-    }
-    launch.onclick = () => openAt('installed');
-    if (market) market.onclick = () => openAt('discover');
-    window.KovaMarketplace = {open: openAt};
+    launch.onclick = () => safe(async () => { sidebar(false); dialog.showModal(); render(); await refresh(); });
   }
   {
     let installPrompt = null;

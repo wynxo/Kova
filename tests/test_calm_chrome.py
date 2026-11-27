@@ -132,13 +132,12 @@ MOVED_TO_SETTINGS = ("open-memory", "open-reminders", "add-provider", "open-exte
                      "theme", "disconnect", "open-shortcuts")
 
 
-def test_sidebar_is_new_chat_search_list_marketplace_and_settings() -> None:
+def test_sidebar_is_new_chat_search_list_and_settings() -> None:
     parser, html = _shell()
     sidebar = re.search(r'<aside id="sidebar".*?</aside>', html, re.S).group(0)
     buttons = _ids_inside(parser, "sidebar", "button")
     # The list opens with the app switch: Kova, Kova Code, Kova Bots.
-    assert buttons == ["app-switch", "sidebar-close", "new-chat", "new-workspace-bot",
-                       "open-marketplace", "open-settings"], buttons
+    assert buttons == ["app-switch", "sidebar-close", "new-chat", "new-workspace-bot", "open-settings"], buttons
     assert _hidden_by(parser, "new-workspace-bot"), "the new-bot action belongs to the Bots workspace"
     assert "hidden" in parser.by_id["app-menu"]
     assert _ids_inside(parser, "sidebar", "input") == ["search"], "one search field"
@@ -146,9 +145,7 @@ def test_sidebar_is_new_chat_search_list_marketplace_and_settings() -> None:
     for gone in ("open-palette", "chat-count", "Search or run a command", "Incognito chat"):
         assert gone not in sidebar, f"{gone!r} is back in the sidebar"
     footer = re.search(r'<div class="sidebar-footer">(.*?)</div>', sidebar, re.S).group(1)
-    # Settings, and the Marketplace (#420): the one place to find things to add.
-    assert footer.count("<button") == 2 and "Settings" in footer and "i-settings" in footer
-    assert "Marketplace" in footer and "i-puzzle" in footer
+    assert footer.count("<button") == 1 and "Settings" in footer and "i-settings" in footer
 
 
 def test_moved_rows_live_in_settings_not_the_sidebar() -> None:
