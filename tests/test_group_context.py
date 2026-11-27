@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from kova.group_context import view_for
+from kova.store import Store
 
 
 def user(content, **meta):
@@ -75,6 +76,26 @@ def test_hidden_current_replies_hide_the_work_but_keep_historical_and_own_replie
             reply("coder", "My reply", turn_id="new"),
             reply("critic", "(pass)", turn_id="new")]
     assert view_for("coder", rows, {"see_earlier_replies": False, "share_work": "everything"}) == [
+        user("@you: Old\n\n@critic: Old critic\n\n@you: New\n\n@you: Steer"),
+        {"role": "assistant", "content": "My reply"}]
+
+
+def test_a_stored_snapshot_keeps_the_turn_id_a_steer_needs(tmp_path):
+    # The attributed snapshot is the only source of rows in a group, so it must
+    # carry turn ids: without them a steer looks like a new turn and a Panel
+    # bot sees the replies it is meant to answer independently of.
+    store = Store(tmp_path / "kova.db")
+    chat_id = store.create_chat()["id"]
+    store.add_message(chat_id, "user", "Old", turn_id="old")
+    store.add_message(chat_id, "assistant", "Old critic", author="critic", turn_id="old")
+    store.add_message(chat_id, "user", "New", turn_id="new")
+    store.add_message(chat_id, "assistant", "Early critic", author="critic", turn_id="new")
+    store.add_message(chat_id, "user", "Steer", turn_id="new")
+    store.add_message(chat_id, "assistant", "My reply", author="coder", turn_id="new")
+    _, _, entries = store.context_snapshot(chat_id, attributed=True)
+    rows = [message for _, message in entries]
+    assert [row["turn_id"] for row in rows] == ["old", "old", "new", "new", "new", "new"]
+    assert view_for("coder", rows, {"see_earlier_replies": False}) == [
         user("@you: Old\n\n@critic: Old critic\n\n@you: New\n\n@you: Steer"),
         {"role": "assistant", "content": "My reply"}]
 
