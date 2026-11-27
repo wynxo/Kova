@@ -91,6 +91,15 @@ assert.equal(elements.get('status-bar-compact').hidden, true, 'quiet well below 
 assert.ok(elements.get('status-bar').attrs['aria-label'].includes('lab'));
 console.log('opt-in model and meter passed');
 
+// The percentage is exact for whole figures: 29 of 100 is 29%, not the 28 that
+// floor(0.29 * 100) = floor(28.999999999999996) gives.
+bar.update({model: 'lab', windowTokens: 100, messages: [{role: 'user', content: 'x'.repeat(116)}]});
+assert.equal(elements.get('status-bar-context').textContent, '29 of 100 · 29%');
+assert.equal(elements.get('status-bar-fill').style.width, '29%');
+bar.update({model: 'lab', windowTokens: 100, messages: [{role: 'user', content: 'x'.repeat(228)}]});
+assert.equal(elements.get('status-bar-context').textContent, '57 of 100 · 57%');
+console.log('exact percentage passed');
+
 // Past 80% the bar offers the existing Compact action, reusing its button.
 bar.update({model: 'lab', windowTokens: 1000, messages: [{role: 'user', content: 'z'.repeat(3600)}]});
 assert.equal(elements.get('status-bar-context').textContent, '900 of 1k · 90%');
