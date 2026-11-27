@@ -12,6 +12,7 @@ mod api;
 mod art;
 mod data;
 mod gfx;
+mod images;
 mod market;
 mod style;
 
@@ -82,6 +83,7 @@ pub struct State {
     pub detail: Option<String>,
     pub install: Install,
     pub hovered: Option<String>,
+    pub images: images::Images,
     api: Option<Api>,
     handle: Option<AppHandle<State>>,
 }
@@ -97,6 +99,7 @@ impl State {
             detail: None,
             install: Install::Idle,
             hovered: None,
+            images: images::Images::default(),
             api: Api::discover(),
             handle: None,
         }
@@ -158,6 +161,13 @@ pub fn cancel(s: &mut State) {
 // -------------------------------------------------------------------------------------------------
 // Shell
 
+fn open_tab(s: &mut State, tab: Tab) {
+    s.tab = tab;
+    if tab == Tab::Images {
+        images::refresh(s);
+    }
+}
+
 fn nav_item(s: &State, tab: Tab, label: &str, glyph: &str, ready: bool) -> El {
     let on = s.tab == tab;
     let mut item = row().key(format!("nav-{label}")).w_full().h(38.0).px(12.0).gap(12.0).center_y().radius(10.0)
@@ -167,7 +177,7 @@ fn nav_item(s: &State, tab: Tab, label: &str, glyph: &str, ready: bool) -> El {
         .child(t(label, 14.0, if on { 600.0 } else { 500.0 }, if on { TEXT } else if ready { MUTED } else { FAINT }))
         .child(spacer());
     if ready {
-        item = item.hover_fill(ca(0xffffff, 0.05)).press_scale(0.98).on_press(move |s: &mut State| s.tab = tab);
+        item = item.hover_fill(ca(0xffffff, 0.05)).press_scale(0.98).on_press(move |s: &mut State| open_tab(s, tab));
     } else {
         item = item.child(row().h(20.0).px(8.0).center_y().radius(10.0).fill(ca(0xffffff, 0.05)).child(t("Soon", 10.5, 600.0, FAINT)));
     }
@@ -186,7 +196,7 @@ fn sidebar(s: &State) -> El {
         .child(logo.mb(22.0))
         .child(t("BROWSE", 10.5, 650.0, FAINT).px(12.0).mb(4.0))
         .child(nav_item(s, Tab::Market, "Marketplace", "◆", true))
-        .child(nav_item(s, Tab::Images, "Images", "◐", false))
+        .child(nav_item(s, Tab::Images, "Images", "◐", true))
         .child(nav_item(s, Tab::Bots, "Bots", "☺", false))
         .child(spacer())
         .child(status)
@@ -195,7 +205,8 @@ fn sidebar(s: &State) -> El {
 fn view(s: &State, _cx: &mut Cx<State>) -> El {
     let page = match s.tab {
         Tab::Market => market::view(s),
-        Tab::Images | Tab::Bots => col().w_full().h_full().center().child(t("Coming soon", 16.0, 600.0, MUTED)),
+        Tab::Images => images::view(s),
+        Tab::Bots => col().w_full().h_full().center().child(t("Coming soon", 16.0, 600.0, MUTED)),
     };
     row().w_full().h_full().fill(c(CANVAS))
         .child(sidebar(s))
@@ -245,6 +256,51 @@ fn scene_bots(s: &mut State) {
     s.filter = Filter::Bot;
 }
 
+const DEMO_IMAGES: &str = r#"{
+  "hardware": {"gpu": "Graphics card, 8 GB", "vram_bytes": 8589934592, "ram_bytes": 34359738368, "free_disk": 214748364800, "os": "Linux"},
+  "recommended": "z-image-turbo-q4", "cpu": false, "active": null,
+  "engine": {"ready": true, "source": "configured", "help": null, "managed": false},
+  "models": [
+    {"id": "sdxs-512", "name": "SDXS 512", "about": "Tiny one-step model: a rough picture in seconds, even without a GPU.", "download_bytes": 682847200, "license": "OpenRAIL++", "installed": false, "rating": "fits-comfortably", "reason": "Expect seconds on a GPU.", "sizes": ["512x512", "512x768", "768x512"]},
+    {"id": "sd15", "name": "Stable Diffusion 1.5", "about": "The classic all-rounder at 512 px; huge community know-how for prompts.", "download_bytes": 1763578176, "license": "CreativeML OpenRAIL-M", "installed": true, "rating": "fits-comfortably", "reason": "Expect a few seconds on a GPU.", "sizes": ["512x512", "512x768", "768x512"]},
+    {"id": "z-image-turbo-q4", "name": "Z-Image Turbo (compact)", "about": "Sharp, modern 1024 px pictures that follow long prompts and draw text.", "download_bytes": 6696836812, "license": "Apache-2.0", "installed": false, "rating": "fits-tightly", "reason": "Little room to spare.", "sizes": ["1024x1024", "768x1024", "1024x768", "768x768", "512x512"]},
+    {"id": "z-image-turbo-q8", "name": "Z-Image Turbo (full quality)", "about": "The same model at near-full precision, for GPUs with room to spare.", "download_bytes": 11193150692, "license": "Apache-2.0", "installed": false, "rating": "too-big", "reason": "Needs more graphics memory than this PC has.", "sizes": ["1024x1024"]}
+  ]
+}"#;
+
+fn scene_images(s: &mut State) {
+    demo(s);
+    s.tab = Tab::Images;
+    s.images.status = serde_json::from_str(DEMO_IMAGES).ok();
+}
+
+fn scene_downloading(s: &mut State) {
+    scene_images(s);
+    s.images.installing = Some(("z-image-turbo-q4".into(), 2_600_000_000, 6_696_836_812));
+}
+
+/// Pictures from `KOVA_APP_PICTURES` (a folder of PNGs), to check the gallery's layout.
+fn scene_gallery(s: &mut State) {
+    scene_images(s);
+    if let Some(status) = s.images.status.as_mut() {
+        status["active"] = Value::from("sd15");
+    }
+    let folder = std::env::var("KOVA_APP_PICTURES").unwrap_or_default();
+    let mut names: Vec<_> = std::fs::read_dir(&folder).into_iter().flatten().flatten()
+        .map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "png")).collect();
+    names.sort();
+    for path in names {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if let Some((w, h, rgba)) = std::fs::read(&path).ok().and_then(|b| images::decode(&b)) {
+            let pixels = rune::Pixels::new();
+            pixels.set(w, h, rgba);
+            s.images.thumbs.insert(name.clone(), pixels);
+            s.images.gallery.push(serde_json::json!({"name": name, "prompt": name.trim_end_matches(".png").replace('-', " "),
+                                                     "width": w, "height": h, "seed": 7, "model": "sd15"}));
+        }
+    }
+}
+
 fn scene_offline(s: &mut State) {
     s.online = false;
     s.api = None;
@@ -260,6 +316,9 @@ fn main() {
             ("preview", scene_preview),
             ("bots", scene_bots),
             ("offline", scene_offline),
+            ("images", scene_images),
+            ("downloading", scene_downloading),
+            ("gallery", scene_gallery),
         ],
         fonts: rune_theme_opencode::FONTS,
         families: rune_theme_opencode::FAMILIES,

@@ -120,7 +120,8 @@ impl Compositor<crate::State> for Gfx {
     fn render(&mut self, f: &mut Frame<'_, crate::State>) {
         let (device, queue, size) = (f.device, f.queue, f.size);
         let now = f.rt.t as f32;
-        self.held = match (f.rt.state.detail.is_some(), self.held) {
+        let covered = f.rt.state.detail.is_some() || f.rt.state.images.open.is_some();
+        self.held = match (covered, self.held) {
             (true, Some(t)) => Some(t),
             (true, None) => Some(now),
             (false, _) => None,

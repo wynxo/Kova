@@ -44,7 +44,7 @@ jobs:
       - name: Render every scene headless
         run: |
           mkdir -p snaps
-          for scene in market hover detail confirm bots offline; do
+          for scene in market hover detail confirm bots offline images downloading; do
             ./target/release/kova-app --scene "$scene" --snap "snaps/$scene.png" --size 1440x900 --at 1
           done
 

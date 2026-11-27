@@ -117,6 +117,75 @@ impl Api {
     }
 }
 
+impl Api {
+    pub fn images(&self) -> Result<Value, String> {
+        self.get("/images")
+    }
+
+    pub fn gallery(&self) -> Result<Vec<Value>, String> {
+        Ok(self.get("/images/gallery")?.as_array().cloned().unwrap_or_default())
+    }
+
+    /// One saved picture's PNG bytes.
+    pub fn picture(&self, name: &str) -> Result<Vec<u8>, String> {
+        let mut response = Self::agent().get(&format!("{}/images/files/{}", self.base, encode(name)))
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .call()
+            .map_err(|e| e.to_string())?;
+        if response.status().as_u16() != 200 {
+            return Err(format!("Kova answered HTTP {}.", response.status().as_u16()));
+        }
+        response.body_mut().with_config().limit(64 * 1024 * 1024).read_to_vec().map_err(|e| e.to_string())
+    }
+
+    pub fn generate(&self, prompt: &str, size: Option<&str>) -> Result<Value, String> {
+        let mut body = serde_json::json!({"prompt": prompt});
+        if let Some(size) = size {
+            body["size"] = Value::from(size);
+        }
+        self.post("/images/generate", &body)
+    }
+
+    pub fn choose(&self, model: &str) -> Result<(), String> {
+        let response = Self::agent().put(&format!("{}/images/active", self.base))
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Content-Type", "application/json")
+            .send(serde_json::json!({"model": model}).to_string())
+            .map_err(|e| e.to_string())?;
+        Self::read(response).map(|_| ())
+    }
+
+    /// Download a model, calling `progress(completed, total)` for each event; ends at `done` or the
+    /// first `error`.
+    pub fn install_model(&self, model: &str, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
+        use std::io::BufRead;
+        let mut response = ureq::Agent::config_builder().timeout_global(None).http_status_as_error(false).build()
+            .new_agent()
+            .post(&format!("{}/images/models/{}/install", self.base, encode(model)))
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .send_empty()
+            .map_err(|_| "Kova isn't running. Start it with: kova serve".to_string())?;
+        if response.status().as_u16() != 200 {
+            return Self::read(response).map(|_| ());
+        }
+        let reader = std::io::BufReader::new(response.body_mut().with_config().limit(u64::MAX).reader());
+        for line in reader.lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            let Some(data) = line.strip_prefix("data: ") else { continue };
+            let event: Value = serde_json::from_str(data).unwrap_or(Value::Null);
+            match event.get("type").and_then(Value::as_str) {
+                Some("progress") => progress(
+                    event.get("completed").and_then(Value::as_u64).unwrap_or(0),
+                    event.get("total").and_then(Value::as_u64).unwrap_or(0)),
+                Some("error") => return Err(event.get("message").and_then(Value::as_str).unwrap_or("Download failed.").to_owned()),
+                Some("done") => return Ok(()),
+                _ => {}
+            }
+        }
+        Err("The download stopped before it finished. Try again: it resumes.".into())
+    }
+}
+
 /// Catalog names are already a safe slug; this only guards the path against anything else.
 fn encode(name: &str) -> String {
     name.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect()
