@@ -1,0 +1,96 @@
+name: Native app release
+
+# Builds the native app for each supported system and publishes the archives
+# and SHA256SUMS as the `native-latest` release. `kova update` installs from it
+# (src/kova/native_app.py) and refuses any archive whose checksum differs.
+on:
+  push:
+    branches: [main]
+    paths: ["native/**", "src/kova/catalog_data/**", ".github/workflows/native-release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu keeps the glibc requirement low.
+          - { target: linux-x64, os: ubuntu-22.04 }
+          - { target: macos-arm64, os: macos-14 }
+          - { target: windows-x64, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: native
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev libfontconfig1-dev
+
+      - name: Toolchain (from native/rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: native-release-${{ matrix.target }}-${{ hashFiles('native/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir -p ../dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/kova-app.exe ../dist/
+            (cd ../dist && 7z a -tzip "kova-app-${{ matrix.target }}.zip" kova-app.exe >/dev/null && rm kova-app.exe)
+          else
+            cp target/release/kova-app ../dist/
+            (cd ../dist && tar czf "kova-app-${{ matrix.target }}.tar.gz" kova-app && rm kova-app)
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kova-app-${{ matrix.target }}
+          path: dist/
+
+  publish:
+    name: Publish native-latest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum kova-app-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Replace the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete native-latest --yes --cleanup-tag || true
+          gh release create native-latest dist/* --prerelease --target "$GITHUB_SHA" \
+            --title "Native app (latest main)" \
+            --notes "Built from ${GITHUB_SHA}. Installed and checksum-verified by \`kova update\`."

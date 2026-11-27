@@ -302,6 +302,8 @@ def _update_locked(ref, home, launcher, env, emit, verbose, progress) -> None:
         else:
             skipped("Re-stage Electron and refresh app menu", "old app is still active" if desktop else "desktop not installed")
 
+        step("Install the native app", lambda: new_python("native", detail="Native app", timeout=600))
+
         enabled = step("Check whether start-at-login is enabled", lambda: (_login_enabled(login),),
                        "kova autostart status") if login else None
         if enabled and enabled[0]:
@@ -394,6 +396,14 @@ def _defer_windows(ref, verbose):
         raise
 
 
+def _native_best_effort(home: Path) -> None:
+    from kova import native_app
+    try:
+        print(native_app.install(home))
+    except (native_app.NativeAppError, OSError) as exc:
+        print(f"Native app not updated: {exc}", file=sys.stderr)
+
+
 def main() -> None:
     action, *args = sys.argv[1:]
     try:
@@ -412,6 +422,16 @@ def main() -> None:
         launcher = Path(env["UV_TOOL_BIN_DIR"]) / ("kova.exe" if os.name == "nt" else "kova")
         if action == "migrate":
             _migrate(home)
+            # Older updaters run only this action of the new code, so the native app is
+            # fetched here too. Best effort: it never fails the update.
+            _native_best_effort(home)
+        elif action == "native":
+            from kova import native_app
+            try:
+                print(native_app.install(home))
+            except native_app.NativeAppError as exc:
+                print(str(exc), file=sys.stderr)
+                raise SystemExit(1) from None
         elif action == "stage":
             stage_desktop(home)
         elif action in ("register", "login"):
