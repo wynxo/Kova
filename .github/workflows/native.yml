@@ -55,3 +55,25 @@ jobs:
         with:
           name: native-snapshots
           path: native/snaps/
+
+  macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (from native/rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: native-macos-${{ hashFiles('native/Cargo.lock') }}
+      - name: Unit tests
+        run: cargo test --release
+      - name: Build the app
+        run: cargo build --release

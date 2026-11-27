@@ -138,4 +138,11 @@ function windowState(saved, displays, fallback = DEFAULT_WINDOW) {
   result.maximized = saved.maximized === true;
   return result;
 }
-module.exports = {settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK};
+// Tray icon size in points, or null to let the OS scale it. macOS draws a
+// tray image at its pixel size in points, so the 64 px asset showed at 64 pt in
+// the menu bar; 18 pt is the menu bar's standard icon height.
+function trayPoints(platform) {
+  return platform === 'darwin' ? 18 : null;
+}
+
+module.exports = {trayPoints, settings, executable, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK};

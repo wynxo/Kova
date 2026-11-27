@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {settings, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK} = require('./core');
+const {trayPoints, settings, external, panelWindow, permissionAllowed, serverCommand, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId, DEFAULT_QUICK_ASK} = require('./core');
 test('isolated home and top-level port only', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kova-electron-test-'));
   try {
@@ -37,6 +37,10 @@ test('the app-action allowlist admits only the palette actions', () => {
 
 test('tray status turns a page state into a tooltip and menu label', () => {
   assert.deepEqual(trayStatus('Kova', 'idle'), {label: 'Idle', tooltip: 'Kova · Idle'});
+  // macOS draws the tray image at its pixel size in points: it must be sized to the menu bar.
+  assert.equal(trayPoints('darwin'), 18);
+  assert.equal(trayPoints('linux'), null);
+  assert.equal(trayPoints('win32'), null);
   assert.deepEqual(trayStatus('Kova', 'working'), {label: 'Working', tooltip: 'Kova · Working'});
   assert.deepEqual(trayStatus('Alex', 'waiting'),
     {label: 'Waiting for approval', tooltip: 'Alex · Waiting for approval'});
