@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -15,6 +16,15 @@ if TYPE_CHECKING:
     from kova.bots import BotDefinition
 
 _SHARED_CHARS = 2_000
+#: How a final reply says "nothing to add". The runner accepts ``(pass)`` in any
+#: case and with trailing punctuation, and the view shares that one rule, so a
+#: pass is hidden from the other members exactly when the runner counts it as one.
+_PASS_WORDS = frozenset({"(pass)", "pass"})
+
+
+def is_pass(text: str) -> bool:
+    """Whether a bot's final reply is the ``(pass)`` marker, however it is typed."""
+    return re.sub(r"\s+", " ", text or "").strip().casefold().strip(".!") in _PASS_WORDS
 
 
 def _quote(label: str, text: str) -> str:
@@ -121,9 +131,9 @@ def view_for(bot: str | Actor | BotDefinition, rows: Iterable[Mapping], settings
 
         author = row.get("author") or DEFAULT_ACTOR_ID
         is_reply = role == "assistant" and not row.get("tool_calls") and bool(content.strip())
-        is_pass = is_reply and content.strip() == "(pass)"
+        passing = is_reply and is_pass(content)
         if author == bot_id:
-            if role != "reasoning" and not is_pass:
+            if role != "reasoning" and not passing:
                 messages.append({key: deepcopy(row[key]) for key in
                                  ("role", "content", "tool_calls", "tool_call_id") if key in row})
             continue
@@ -137,7 +147,7 @@ def view_for(bot: str | Actor | BotDefinition, rows: Iterable[Mapping], settings
         work.add(row, share_work)
         if is_reply:
             del pending[key]
-            if not is_pass:
+            if not passing:
                 handle = handles.get(author, author)
                 messages.append(_as_user("\n".join([f"@{handle}: {content}",
                                                     *work.describe(handle, share_work)])))
