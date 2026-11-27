@@ -79,6 +79,11 @@ test('the themed title bar accepts only theme-shaped colours and a sane height',
     {background: '#14121c'}, {background: 'url(x)', symbolColor: '#fff'},
     {background: '#14121c', symbolColor: 'var(--fg-default)'}, 'nonsense'])
     assert.equal(titleBarColours(value), null, JSON.stringify(value));
+  for (const colour of ['#abc', '#abcd', '#14121c', '#14121c7f'])
+    assert.ok(titleBarColours({background: colour, symbolColor: '#fff'}), `${colour} is a theme colour`);
+  for (const colour of ['#12345', '#1234567', '#123456789'])
+    assert.equal(titleBarColours({background: colour, symbolColor: '#fff'}), null,
+      `${colour} is not a hex length the theme engine accepts`);
   assert.equal(titleBarColours({background: '#14121c', symbolColor: '#fff', height: 4}).height,
     undefined, 'an impossible height is dropped, not trusted');
   assert.equal(titleBarColours({background: '#14121c', symbolColor: '#fff', height: 999}).height,

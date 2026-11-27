@@ -24,7 +24,7 @@
   const BUILTIN = {'kova-dark': 'dark', 'kova-light': 'light'};
   const ID = /^[a-z0-9][a-z0-9-]{1,39}$/;
   const TOKEN = /^(bg|fg|border|accent|status|step|syntax)\.[a-z0-9-]+$/;
-  const COLOUR = /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s/]+\))$/;
+  const COLOUR = /^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)|rgba?\([0-9.,%\s/]+\))$/;
   const BACKGROUND_FILE = /^[a-z0-9][a-z0-9._-]{0,63}\.(?:png|jpg|webp)$/;
   const CHAT_TOKENS = {
     'chat.width': ['narrow', 'normal', 'wide'],

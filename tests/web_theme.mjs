@@ -187,6 +187,30 @@ function boot({stored = {}, server = {theme: 'system'}, prefersLight = false, th
   assert.equal(page.properties.get('--accent-on'), '#04201c', 'the server copy then replaces it');
 }
 
+// ---- A colour is a hex length the server accepts, nothing else -------------
+{
+  const page = boot({});
+  await settle();
+  // The server's _COLOUR and the theme editor's field take 3, 4, 6 or 8 digits.
+  // Anything between them is dropped here too, so a theme that reaches the page
+  // by way of a stale cache cannot paint a colour the server would refuse.
+  const accepted = ['#abc', '#abcd', '#112233', '#11223344'];
+  const refused = ['#12345', '#1234567', '#123456789', '#1234567890'];
+  page.api.previewPalette({appearance: 'dark',
+    tokens: Object.fromEntries(accepted.map((colour, i) => [`fg.c${i}`, colour])
+      .concat(refused.map((colour, i) => [`fg.bad${i}`, colour])))});
+  for (const [i, colour] of accepted.entries())
+    assert.equal(page.properties.get(`--fg-c${i}`), colour, `${colour} is a theme colour`);
+  for (let i = 0; i < refused.length; i += 1)
+    assert.equal(page.properties.has(`--fg-bad${i}`), false, `${refused[i]} is not a theme colour`);
+  // A gradient's stops are CSS too: a bad length is dropped from the count.
+  page.api.previewPalette({appearance: 'dark', tokens: {},
+    background: {kind: 'gradient', stops: ['#1234567', '#000', '#111']}});
+  assert.equal(page.properties.get('--theme-background'), 'linear-gradient(160deg, #000, #111)',
+    'a refused stop never reaches the stylesheet');
+  page.api.clearPalettePreview();
+}
+
 // ---- A theme file missing on this PC falls back to the device --------------
 {
   const page = boot({prefersLight: true, stored: {'kova-theme-synced': '1'}, server: {theme: 'gone-theme'}});

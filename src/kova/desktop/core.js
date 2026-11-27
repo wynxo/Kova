@@ -100,7 +100,7 @@ function titleBar(configText) {
 // The page reports the active theme's own colours, so the native window controls
 // sit on the same surface as the title bar. Only plain CSS colours the theme
 // engine already accepts, plus a small title-bar height, pass through.
-const CSS_COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,%\s/]+\))$/i;
+const CSS_COLOUR = /^(#(?:[0-9a-f]{3,4}|[0-9a-f]{6}(?:[0-9a-f]{2})?)|rgba?\([0-9.,%\s/]+\))$/i;
 function titleBarColours(value) {
   if (!value || typeof value !== 'object') return null;
   const {background, symbolColor, height} = value;
