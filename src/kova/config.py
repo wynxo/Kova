@@ -31,6 +31,7 @@ TOP_LEVEL_CONFIG_KEYS = frozenset({
     'schema_version', 'oauth_host_id', 'active', 'port', 'compact_threshold',
     'files_path', 'memory', 'tui', 'persona', 'privacy', 'providers', 'models', 'bind',
     'mcp', 'local', 'catalog', 'usage', 'pricing', 'voice', 'desktop', 'updates', 'groups',
+    'images',
 })
 CONFIG_SECTION_KEYS = {
     'memory': frozenset({
@@ -43,6 +44,7 @@ CONFIG_SECTION_KEYS = {
     'privacy': frozenset({'secrets', 'local_only'}),
     'local': frozenset({'idle_unload_minutes'}),
     'catalog': frozenset({'url'}),
+    'images': frozenset({'server', 'engine'}),
     'usage': frozenset({'monthly_budget_usd'}),
     'voice': frozenset({'stt', 'tts', 'language', 'max_seconds'}),
     #: Desktop shell options read by the Electron app, not the server.
@@ -238,6 +240,11 @@ class Config:
     privacy_local_only: bool = False
     #: Extensions catalog index (``[catalog] url``); empty means the default.
     catalog_url: str = ""
+    #: Image generation (``[images]``, #421): an OpenAI-compatible images server
+    #: to use instead of the managed one, and/or a local ``sd-server`` program
+    #: for Kova to run. Both empty means the managed engine (see kova.image_gen).
+    images_server: str = ""
+    images_engine: str = ""
     #: Warn (never block) once a day when this month's estimated spend passes 80%.
     #: ``0`` means no budget.
     usage_monthly_budget_usd: float = 0.0
@@ -361,6 +368,8 @@ def load_config(home: Path | None = None, *, read_only: bool = False) -> Config:
                  privacy_local_only=(privacy.get('local_only', False) is not False) if isinstance(privacy, Mapping) else False,
                  local_idle_unload_minutes=max(0, int(data.get('local', {}).get('idle_unload_minutes', 5))),
                  catalog_url=_catalog_url(data.get('catalog')),
+                 images_server=_images_value(data.get('images'), 'server'),
+                 images_engine=_images_value(data.get('images'), 'engine'),
                  usage_monthly_budget_usd=_budget(data.get('usage')),
                  pricing=parse_pricing(data.get('pricing')),
                  voice_stt=str(voice.get('stt') or 'local'),
@@ -386,6 +395,13 @@ def _budget(table: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return value if value > 0 and value != float('inf') else 0.0
+
+
+def _images_value(table: Any, key: str) -> str:
+    if not isinstance(table, Mapping):
+        return ''
+    value = table.get(key)
+    return value.strip() if isinstance(value, str) else ''
 
 
 def _catalog_url(table: Any) -> str:
@@ -596,6 +612,12 @@ def save_config(cfg: Config) -> None:
         _put(catalog, 'url', cfg.catalog_url.strip() or _UNSET)
         if not catalog:
             del doc['catalog']
+    if cfg.images_server or cfg.images_engine or 'images' in doc:
+        images = _section(doc, 'images')
+        _put(images, 'server', cfg.images_server.strip() or _UNSET)
+        _put(images, 'engine', cfg.images_engine.strip() or _UNSET)
+        if not images:
+            del doc['images']
     if (cfg.voice_stt != 'local' or cfg.voice_tts != 'espeak-ng' or \
             cfg.voice_language or 'voice' in doc):
         voice = _section(doc, 'voice')
