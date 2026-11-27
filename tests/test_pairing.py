@@ -70,6 +70,28 @@ def test_devices_store_only_hashes_and_survive_reload(tmp_path):
     assert Devices(path).revoke() == 1 and Devices(path).list() == []
 
 
+def test_stale_device_records_are_skipped_instead_of_crashing(tmp_path):
+    path = tmp_path / "devices.json"
+    phone, token = Devices(path).add("iPhone")
+    original = json.loads(path.read_text())
+    path.write_text(json.dumps([
+        {"id": "ancient", "name": "phone from an older build"},   # no token hash
+        {"name": "no id", "token_sha256": "a" * 64},              # cannot be revoked
+        {"id": "bad-token", "token_sha256": "é" * 32},            # not a comparable hash
+        "not a record",
+        {"id": "bare", "token_sha256": "b" * 64},                 # only what auth needs
+        *original,
+    ]))
+    devices = Devices(path)
+    # Unusable records are dropped; one with only the two fields that matter is kept.
+    assert [d["id"] for d in devices.list()] == ["bare", phone["id"]]
+    assert devices.find(token)["id"] == phone["id"]
+    assert devices.find("anything") is None, "a stale record must not raise on lookup"
+    assert devices.list()[0]["name"] == "Phone"
+    assert devices.list()[0]["created"] == "" and devices.list()[0]["last_seen"] == ""
+    assert devices.revoke("bare") == 1 and [d["id"] for d in devices.list()] == [phone["id"]]
+
+
 def test_pairing_codes_are_one_use_expire_and_limit_failures(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(pairing.time, "monotonic", lambda: clock[0])
@@ -92,6 +114,20 @@ def test_pairing_codes_are_one_use_expire_and_limit_failures(monkeypatch):
     for _ in range(pairing.MAX_OPEN_CODES + 3):
         codes.start()
     assert len(codes.codes) <= pairing.MAX_OPEN_CODES + 1
+
+
+def test_a_claimed_code_is_spent_before_its_device_is_written(monkeypatch):
+    clock = [2000.0]
+    monkeypatch.setattr(pairing.time, "monotonic", lambda: clock[0])
+    codes = Pairing()
+    code = codes.start()
+    assert codes.claim(code.secret, "phone") is code
+    assert code.claimed and code.device is None
+    # The route writes the device after claiming. A write that failed must not
+    # leave the secret usable again, and a successful one still shows paired.
+    assert codes.claim(code.secret, "phone") is None, "the secret is spent when it is accepted"
+    code.device = {"id": "d1"}
+    assert codes.status(code.id)[0] == "paired"
 
 
 def test_bind_setting_round_trips(tmp_path):
