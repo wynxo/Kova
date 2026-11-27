@@ -46,7 +46,7 @@ Install as a normal user. Node.js 22+ with npm enables the desktop app and app-m
 
 ### Update Kova
 
-Run **`kova update`** to refresh the CLI, terminal chat, and web UI. If you use the desktop app, the same command replaces its files and Electron dependencies and refreshes the app-menu entry and icons. It also updates an enabled start-at-login entry and migrates existing config and data. A running server is restarted and checked; an open desktop app is reopened. Finish any active work before updating. An open browser tab may need a refresh, or a new session via `kova web`.
+Run **`kova update`** to refresh the CLI, terminal chat, web UI and the native app (the GPU-rendered Marketplace and Images; `kova app` opens it, `kova app --classic` the previous desktop app). If you use the desktop app, the same command replaces its files and Electron dependencies and refreshes the app-menu entry and icons. It also updates an enabled start-at-login entry and migrates existing config and data. A running server is restarted and checked; an open desktop app is reopened. Finish any active work before updating. An open browser tab may need a refresh, or a new session via `kova web`.
 
 - `kova update --check` compares the installed version and commit with GitHub without changing your installation or data. The full update shows a short changelog when GitHub has both commits.
 - `kova update --verbose` shows the full uv/npm output. If a step fails, the summary names it and gives a repair command. An unsuccessful uv install keeps the old CLI.

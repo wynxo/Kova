@@ -84,6 +84,8 @@ pub struct State {
     pub install: Install,
     pub hovered: Option<String>,
     pub images: images::Images,
+    /// Why the Chat button could not open the classic app, if it could not.
+    pub chat_note: Option<String>,
     api: Option<Api>,
     handle: Option<AppHandle<State>>,
 }
@@ -100,6 +102,7 @@ impl State {
             install: Install::Idle,
             hovered: None,
             images: images::Images::default(),
+            chat_note: None,
             api: Api::discover(),
             handle: None,
         }
@@ -184,6 +187,33 @@ fn nav_item(s: &State, tab: Tab, label: &str, glyph: &str, ready: bool) -> El {
     item
 }
 
+/// Chat still lives in the classic app: open it with the same Kova this app was launched from.
+fn open_chat(s: &mut State) {
+    let cli = std::env::var_os("KOVA_CLI").map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| std::path::PathBuf::from(if cfg!(windows) { "kova.exe" } else { "kova" }));
+    let started = std::process::Command::new(cli).args(["app", "--classic"])
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .spawn();
+    s.chat_note = started.err().map(|_| "Couldn't open chat. Run: kova app --classic".to_string());
+}
+
+fn chat_item(s: &State) -> El {
+    let mut item = col().key("nav-chat").w_full().gap(4.0)
+        .child(row().w_full().h(38.0).px(12.0).gap(12.0).center_y().radius(10.0)
+            .fill(ca(0xffffff, 0.0)).hover_fill(ca(0xffffff, 0.05)).press_scale(0.98)
+            .role("link").label("Chat").focusable(true)
+            .on_press(|s: &mut State| open_chat(s))
+            .child(t("✦", 15.0, 500.0, FAINT).w(18.0))
+            .child(t("Chat", 14.0, 500.0, MUTED))
+            .child(spacer())
+            .child(t("↗", 13.0, 500.0, FAINT)));
+    if let Some(note) = &s.chat_note {
+        item = item.child(t(note.clone(), 11.5, 480.0, DANGER).px(12.0).w_full().wrap());
+    }
+    item
+}
+
 fn sidebar(s: &State) -> El {
     let logo = row().gap(10.0).center_y().px(8.0)
         .child(fx(MESH, [4.0, 0.3, 11.0, 0.2]).size(30.0, 30.0).radius(9.0))
@@ -194,7 +224,8 @@ fn sidebar(s: &State) -> El {
     col().key("sidebar").w(236.0).h_full().padding(14.0).pt(22.0).gap(4.0).fill(c(SIDEBAR))
         .border_sides([0.0, 1.0, 0.0, 0.0], hair())
         .child(logo.mb(22.0))
-        .child(t("BROWSE", 10.5, 650.0, FAINT).px(12.0).mb(4.0))
+        .child(chat_item(s))
+        .child(t("BROWSE", 10.5, 650.0, FAINT).px(12.0).mt(14.0).mb(4.0))
         .child(nav_item(s, Tab::Market, "Marketplace", "◆", true))
         .child(nav_item(s, Tab::Images, "Images", "◐", true))
         .child(nav_item(s, Tab::Bots, "Bots", "☺", false))

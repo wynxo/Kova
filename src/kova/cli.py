@@ -206,6 +206,7 @@ app = typer.Typer(
 def desktop_app(
     ctx: typer.Context,
     browser: bool = typer.Option(False, "--browser", help="Open the web UI instead (same as kova web)."),
+    classic: bool = typer.Option(False, "--classic", help="Open the classic desktop app, not the native one."),
     prepare: bool = typer.Option(False, "--prepare", hidden=True),
     register: bool = typer.Option(False, "--register", hidden=True),
     data_home: str | None = typer.Option(None, "--data-home", hidden=True),
@@ -222,6 +223,8 @@ def desktop_app(
         args += ["--data-home", data_home]
     if browser:
         args.append("--browser")
+    if classic:
+        args.append("--classic")
     app_main(args + list(ctx.args))
 
 

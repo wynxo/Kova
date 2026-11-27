@@ -264,6 +264,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="kova app", description="Open the Kova desktop app.")
     parser.add_argument("--browser", action="store_true",
                         help="Open the web UI in your browser instead (same as kova web).")
+    parser.add_argument("--classic", action="store_true",
+                        help="Open the classic desktop app even when the native app is installed.")
     parser.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--register", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--data-home", type=Path, help=argparse.SUPPRESS)
@@ -280,7 +282,26 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Kova: could not prepare the desktop app: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         return
-    raise SystemExit(open_in_browser() if args.browser else launch_desktop(extra))
+    if args.browser:
+        raise SystemExit(open_in_browser())
+    if not args.classic and not extra and _launch_native():
+        raise SystemExit(0)
+    raise SystemExit(launch_desktop(extra))
+
+
+def _launch_native() -> bool:
+    """Open the native app when it is installed; ``False`` sends ``kova app`` to the classic one."""
+    from kova import native_app
+    from kova.config import kova_home
+    home = kova_home().resolve()
+    if native_app.binary(home) is None:
+        return False
+    cli = Path(sys.executable).with_name("kova.exe" if os.name == "nt" else "kova")
+    if native_app.launch(home, cli):
+        return True
+    print(f"Kova: the native app did not start (see {native_app.root(home) / 'app.log'}); "
+          "opening the classic app.", file=sys.stderr)
+    return False
 
 
 if __name__ == "__main__":

@@ -371,7 +371,7 @@ def test_update_uses_new_package_even_if_the_desktop_manifest_is_missing(lifecyc
     calls = fake_install(lifecycle, monkeypatch)
     result = CliRunner().invoke(app, ["update"])
     assert result.exit_code == 0, result.output
-    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "stage", "register", "verify-desktop"]
+    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "stage", "register", "native", "verify-desktop"]
     for args, options in calls[2:]:
         assert args[:3] == [str(build.tool_python()), "-m", "kova.updater"]
         assert options["env"]["KOVA_HOME"] == str(home)
@@ -448,7 +448,7 @@ def test_update_preserves_the_menu_data_home_without_an_env_override(
     calls = fake_install(lifecycle, monkeypatch)
     result = CliRunner().invoke(app, ["update"])
     assert result.exit_code == 0, result.output
-    assert [args[-1] for args, _ in calls[2:]] == ["migrate", "stage", "register", "verify-desktop"]
+    assert [args[-1] for args, _ in calls[2:]] == ["migrate", "stage", "register", "native", "verify-desktop"]
     assert all(options["env"]["KOVA_HOME"] == str(data) for _, options in calls[2:])
 
 
@@ -475,7 +475,7 @@ def test_update_failure_in_desktop_still_refreshes_login_and_restarts(lifecycle,
     assert start_server.call_args.args[1].version == "0.2.0"
     assert verify.call_args.args[1].fingerprint == start_server.call_args.args[1].fingerprint
     start_desktop.assert_called_once()
-    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "login", "verify-desktop"]
+    assert [args[-1] for args, _ in calls[1:]] == ["--version", "migrate", "native", "login", "verify-desktop"]
     assert "npm ci failed" in result.output and "previous desktop kept" in result.output
     assert "✓ Restart server and wait for /health" in result.output
 
