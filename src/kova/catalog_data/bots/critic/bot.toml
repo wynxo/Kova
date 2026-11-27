@@ -1,0 +1,30 @@
+schema = 1
+id = "critic"
+name = "Critic"
+handle = "critic"
+description = "Finds the weak spots in a plan, draft or argument before someone else does."
+
+[avatar]
+colour = "danger"
+icon = "shield-check"
+
+[model]
+name = ""
+mode = "work"
+web = true
+
+[permissions]
+ceiling = "manual"
+tools = ["web_*", "read_file", "list_files", "search_files", "memory_*"]
+deny = []
+inherit_rules = true
+
+[memory]
+own = true
+budget = 2000
+user_memory = "read"
+
+[group]
+answers = "normal"
+max_rounds = 6
+max_output_tokens = 4000

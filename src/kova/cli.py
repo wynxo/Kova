@@ -339,7 +339,7 @@ app.add_typer(_jobs, name="jobs")
 _plugins = typer.Typer(no_args_is_help=True, help="Install plugin bundles of skills, commands and MCP servers.")
 app.add_typer(_plugins, name="plugin")
 
-_catalog = typer.Typer(no_args_is_help=True, help="Browse and install plugins and skills from the extensions catalog.")
+_catalog = typer.Typer(no_args_is_help=True, help="Browse and install plugins, skills and bots from the extensions catalog.")
 app.add_typer(_catalog, name="catalog")
 
 _skills = typer.Typer(no_args_is_help=False, help="See, read and delete the skills Kova uses.")
@@ -2282,6 +2282,29 @@ def _catalog_summary(staged) -> None:
     info = staged.describe()
     if staged.plugin is not None:
         _plugin_summary(staged.plugin)
+    elif staged.bot is not None:
+        bot = info["bot"]
+        console.print()
+        console.print(Text(f"{bot['name']} (bot @{bot['handle']}) {info['version']}",
+                           style=f"bold {colour('ACCENT')}"))
+        if bot["description"]:
+            console.print(Text(bot["description"], style=colour('MUTED')))
+        console.print()
+        _plugin_section("Tools it may use", bot["tools"])
+        if bot["deny"]:
+            _plugin_section("Tools it may never use", bot["deny"])
+        memory = bot["memory"]
+        _plugin_section("Settings", [
+            f"approval: {bot['ceiling']} (asks before each action)" if bot["ceiling"] == "manual"
+            else f"approval: {bot['ceiling']}",
+            f"mode: {bot['mode']}, web search {'on' if bot['web'] else 'off'}",
+            f"model: {bot['model'] or 'the active model'}",
+            f"own notes: {'on' if memory['own'] else 'off'}, your memory: {memory['user_memory']}",
+        ])
+        if info.get("notes"):
+            _plugin_section("Changed for this computer", info["notes"])
+        _plugin_section("Persona (its instructions)", bot["persona"].splitlines())
+        console.print()
     else:
         skill = info["skill"]
         console.print()
@@ -2331,6 +2354,9 @@ def _catalog_install(spec: str, *, yes: bool, kind: str | None = None, upgrade: 
         _muted("Cancelled.")
         return
     _ok(f"Installed {result}.")
+    if entry.kind == "bot":
+        _muted(f"Chat with it: kova chat --bot {entry.name}")
+        return
     _muted("Its skills apply from your next message.")
     _reload_mcp()
 
@@ -2338,12 +2364,12 @@ def _catalog_install(spec: str, *, yes: bool, kind: str | None = None, upgrade: 
 @_catalog.command("search")
 def catalog_search(
     query: str = typer.Argument("", help="Words to look for in names, descriptions and tags."),
-    kind: str = typer.Option(None, "--kind", help="Only plugin or skill."),
+    kind: str = typer.Option(None, "--kind", help="Only plugin, skill or bot."),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON array for scripts."),
 ):
     """Search the extensions catalog."""
-    if kind not in (None, "plugin", "skill"):
-        _fail("--kind must be plugin or skill.")
+    if kind not in (None, "plugin", "skill", "bot"):
+        _fail("--kind must be plugin, skill or bot.")
     loaded = _load_catalog()
     entries = loaded.search(query, kind)
     home = load_config().home
@@ -2412,7 +2438,7 @@ def catalog_install(
     yes: bool = typer.Option(False, "--yes", "-y", help="Install without asking; still shows what it adds."),
     upgrade: bool = typer.Option(False, "--upgrade", help="Replace an installed older version."),
 ):
-    """Install a plugin or skill: verify its checksum, show what it adds, then ask."""
+    """Install a plugin, skill or bot: verify its checksum, show what it adds, then ask."""
     _catalog_install(spec, yes=yes, upgrade=upgrade)
 
 

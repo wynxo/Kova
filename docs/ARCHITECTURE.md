@@ -1195,7 +1195,7 @@ What a plugin contributes, and how it is wired in:
 
 ## Extensions catalog
 
-`src/kova/catalog.py` reads a JSON index of plugins and skills from
+`src/kova/catalog.py` reads a JSON index of plugins, skills and bots from
 `[catalog] url` (an https URL or a local file) and falls back to the index
 bundled in `src/kova/catalog_data/`, which also holds the first-party
 extensions. Every available entry pins one `version` and a `source` with a
@@ -1210,8 +1210,12 @@ with regular files only. The CLI then prints the same screen as
 `POST /extensions/catalog/{name}/preview` with a one-use ticket and only
 `POST /extensions/install` writes. Plugins are installed through
 `plugins.install` with the source recorded as `catalog:<name>`; skills land in
-`skills/catalog/`. `kova catalog search|show|install` and `kova plugin install
-<name>` use it.
+`skills/catalog/`. A bot (#419) is validated by `bots.load_bot` after the
+download is trimmed to `bot.toml`, `persona.md` and the avatar it names; its
+ceiling is capped at `manual` and `permissions.folder` dropped before the
+preview, and `bots.save_bot` writes it to `bots/<id>/`, refusing a taken id or
+handle. Bot versions are kept in `bots/.catalog.json`. `kova catalog
+search|show|install` and `kova plugin install <name>` use it.
 
 `src/kova/extensions.py` lists every skill the model sees with its origin:
 `learned` (Kova wrote it, `skills/Kova/`), `catalog`, `yours` (a file you put

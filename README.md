@@ -76,7 +76,7 @@ Kova runs on your computer. Your chat history and memory stay on your machine; m
 - Reminders that pop in while you chat, with desktop notifications
 - Memory notes as plain Markdown, with an Obsidian mode
 - Connect API-key providers, a ChatGPT subscription, an installed login, or your own model server
-- Extensions: browse and install plugins and skills from a checksum-pinned catalog (`kova catalog`, or **Extensions** in the app); see [docs/EXTENSIONS.md](docs/EXTENSIONS.md)
+- Extensions: browse and install plugins, skills and ready-made bots from a checksum-pinned catalog (`kova catalog`, or **Extensions** in the app); see [docs/EXTENSIONS.md](docs/EXTENSIONS.md)
 
 ## Desktop app
 
