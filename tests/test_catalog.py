@@ -513,3 +513,194 @@ def test_routes_use_the_configured_index(http, monkeypatch):
     listing = client.get("/extensions/catalog", params={"refresh": True}).json()
     assert seen == [INDEX_URL] and listing["source"] == INDEX_URL
     assert [row["name"] for row in listing["entries"]] == ["demo"]
+
+
+# -- bots (#419) -------------------------------------------------------------------
+
+from kova import bots  # noqa: E402
+
+BOT_TOML = """\
+schema = 1
+id = "{id}"
+name = "Demo bot"
+handle = "{handle}"
+description = "A demo bot."
+
+[avatar]
+colour = "info"
+{image}
+[permissions]
+ceiling = "{ceiling}"
+tools = ["web_*", "run_command"]
+{folder}
+"""
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+
+
+def tar_bot(id="demobot", handle="demobot", ceiling="full", folder="", image="",
+            extra: dict[str, bytes] | None = None) -> bytes:
+    files = {"demobot/bot.toml": BOT_TOML.format(id=id, handle=handle, ceiling=ceiling,
+                                                folder=folder, image=image).encode(),
+             "demobot/persona.md": b"You help with demos.\n", **(extra or {})}
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def bot_index(data: bytes, name="demobot", version="0.1.0"):
+    return remote([entry(name, kind="bot", version=version, url="demobot.tar.gz", digest=sha(data))],
+                      {"demobot.tar.gz": data})
+
+
+def test_bundled_bots_install_as_working_bots(tmp_path):
+    loaded = catalog.load("bundled")
+    names = [item.name for item in loaded.search(kind="bot")]
+    assert names == ["critic", "translator", "tutor"]
+    for name in names:
+        staged = catalog.stage(loaded.get(name))
+        info = staged.describe()
+        assert info["bot"]["ceiling"] == "manual" and info["bot"]["persona"].strip()
+        assert info["bot"]["model"] == "" and not info["notes"]
+        catalog.install_staged(staged, tmp_path)
+    records = bots.list_bots(tmp_path)
+    assert sorted(record.id for record in records if record.ok) == names
+    assert catalog.installed_version(loaded.get("tutor"), tmp_path) == "0.1.0"
+    # The state file is a dot file, never listed as a broken bot.
+    assert (bots.bot_root(tmp_path) / catalog.BOT_STATE).is_file()
+    assert all(record.error is None for record in records)
+
+
+def test_bundled_bot_tools_are_real(tmp_path):
+    from fnmatch import fnmatchcase
+    cfg = load_config(tmp_path)
+    app = create_app(cfg, transport=FakeModel([]).transport)
+    with TestClient(app):
+        registry = set(app.state.agent.tools)
+    for item in catalog.load("bundled").search(kind="bot"):
+        staged = catalog.stage(item)
+        try:
+            for pattern in staged.bot.permissions.tools:
+                assert any(fnmatchcase(tool, pattern) for tool in registry), (item.name, pattern)
+                assert "run_command" not in pattern, item.name
+        finally:
+            staged.cleanup()
+
+
+def test_a_downloaded_bot_is_capped_and_trimmed(tmp_path):
+    data = tar_bot(ceiling="full", folder='folder = "/home/you/projects/demo"',
+                   image='image = "avatar.png"',
+                   extra={"demobot/avatar.png": PNG, "demobot/run.sh": b"#!/bin/sh\necho hi\n",
+                          "demobot/sub/notes.md": b"x"})
+    loaded, client = bot_index(data)
+    staged = catalog.stage(loaded.get("demobot"), client=client)
+    info = staged.describe()
+    assert info["bot"]["ceiling"] == "manual"
+    assert staged.bot.permissions.folder is None
+    assert len(info["notes"]) == 2 and any("full" in note for note in info["notes"])
+    assert sorted(path.name for path in staged.path.iterdir()) == ["avatar.png", "bot.toml", "persona.md"]
+    catalog.install_staged(staged, tmp_path)
+    folder = bots.bot_root(tmp_path) / "demobot"
+    assert sorted(path.name for path in folder.iterdir()) == ["avatar.png", "bot.toml", "persona.md"]
+    bot = bots.get_bot(tmp_path, "demobot")
+    assert bot.permissions.ceiling == "manual" and bot.avatar.image == "avatar.png"
+
+
+def test_a_fake_avatar_is_dropped(tmp_path):
+    data = tar_bot(image='image = "avatar.png"', extra={"demobot/avatar.png": b"not an image"})
+    loaded, client = bot_index(data)
+    staged = catalog.stage(loaded.get("demobot"), client=client)
+    try:
+        assert staged.bot.avatar.image is None
+        assert any("avatar" in note for note in staged.notes)
+    finally:
+        staged.cleanup()
+
+
+@pytest.mark.parametrize("data, reason", [
+    (tar_bot(id="other"), "the bot 'other'"),
+    (tar_bot(id="kova", handle="kova"), "the bot 'kova'"),
+])
+def test_bot_identity_must_match_the_index(tmp_path, data, reason):
+    loaded, client = bot_index(data)
+    with pytest.raises(catalog.CatalogError, match=reason):
+        catalog.stage(loaded.get("demobot"), client=client)
+
+
+def test_a_bot_archive_without_a_definition_is_refused(tmp_path):
+    data = tar_plugin()
+    loaded, client = bot_index(data)
+    with pytest.raises(catalog.CatalogError, match="no bot.toml"):
+        catalog.stage(loaded.get("demobot"), client=client)
+
+
+def test_bot_install_never_replaces_your_own_bot(tmp_path):
+    mine = bots.validate({"id": "demobot", "name": "Mine", "handle": "mine"})
+    bots.save_bot(tmp_path, mine, persona="Mine.")
+    data = tar_bot()
+    loaded, client = bot_index(data)
+    for upgrade in (False, True):
+        with pytest.raises(catalog.CatalogError, match="already exists"):
+            catalog.install("demobot", tmp_path, catalog=loaded, client=client, upgrade=upgrade)
+    assert bots.get_bot(tmp_path, "demobot").name == "Mine"
+
+
+def test_a_taken_handle_installs_nothing(tmp_path):
+    bots.save_bot(tmp_path, bots.validate({"id": "mine", "name": "Mine", "handle": "demobot"}), persona="x")
+    loaded, client = bot_index(tar_bot())
+    with pytest.raises(catalog.CatalogError, match="@demobot"):
+        catalog.install("demobot", tmp_path, catalog=loaded, client=client)
+    assert not (bots.bot_root(tmp_path) / "demobot").exists()
+    assert catalog.installed_bots(tmp_path) == {}
+
+
+def test_bot_upgrade_keeps_your_approval_choice(tmp_path):
+    loaded, client = bot_index(tar_bot())
+    catalog.install("demobot", tmp_path, catalog=loaded, client=client)
+    bot = bots.get_bot(tmp_path, "demobot")
+    import dataclasses
+    raised = dataclasses.replace(bot, permissions=dataclasses.replace(bot.permissions, ceiling="auto"))
+    bots.save_bot(tmp_path, raised)
+    loaded, client = bot_index(tar_bot(), version="0.2.0")
+    catalog.install("demobot", tmp_path, catalog=loaded, client=client, upgrade=True)
+    assert bots.get_bot(tmp_path, "demobot").permissions.ceiling == "auto"
+    assert catalog.installed_bots(tmp_path)["demobot"]["version"] == "0.2.0"
+
+
+def test_a_removed_bot_is_no_longer_installed(tmp_path):
+    loaded = catalog.load("bundled")
+    catalog.install("tutor", tmp_path, catalog=loaded)
+    assert bots.delete_bot(tmp_path, "tutor")
+    assert catalog.installed_version(loaded.get("tutor"), tmp_path) is None
+    assert catalog.install("tutor", tmp_path, catalog=loaded) == "tutor 0.1.0"
+
+
+def test_cli_installs_a_bot(home):
+    listed = run("catalog", "search", "--kind", "bot")
+    assert listed.exit_code == 0, listed.output
+    assert "translator" in listed.output and "clipboard" not in listed.output
+    declined = run("catalog", "install", "critic", input="n\n")
+    assert "Persona" in declined.output and "Cancelled" in declined.output
+    assert bots.list_bots(home) == []
+    done = run("catalog", "install", "critic", "--yes")
+    assert done.exit_code == 0, done.output
+    assert "Installed critic 0.1.0" in done.output and "kova chat --bot critic" in done.output
+    assert bots.get_bot(home, "critic") is not None
+
+
+def test_routes_preview_and_install_a_bot(http):
+    client, app, cfg = http
+    rows = client.get("/extensions/catalog", params={"kind": "bot"}).json()["entries"]
+    assert {row["name"] for row in rows} == {"critic", "translator", "tutor"}
+    preview = client.post("/extensions/catalog/tutor/preview", json={}).json()
+    assert preview["bot"]["handle"] == "tutor" and "reminder_*" in preview["bot"]["tools"]
+    assert client.get("/bots").json() == []  # a preview writes nothing
+    done = client.post("/extensions/install", json={"ticket": preview["ticket"]})
+    assert done.status_code == 200, done.text
+    assert [row["id"] for row in client.get("/bots").json()] == ["tutor"]
+    row = client.get("/extensions/catalog", params={"kind": "bot", "q": "tutor"}).json()["entries"][0]
+    assert row["installed_version"] == "0.1.0" and not row["update_available"]

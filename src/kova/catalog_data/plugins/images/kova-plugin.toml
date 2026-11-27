@@ -1,0 +1,16 @@
+# First-party Kova plugin: draw pictures on this computer (issue #421).
+# Turning it on gives the model the generate_image tool, which runs the local
+# image engine (stable-diffusion.cpp's sd-server) and asks before each picture.
+# Pick and download a model that fits this PC in the app's Images page or with
+# GET /images; nothing is downloaded by installing the plugin.
+name = "images"
+version = "0.1.0"
+description = "Draw pictures on your own computer: Kova picks the best image model for your hardware and generates in chat."
+author = "Kova"
+homepage = "https://github.com/wynxo/Kova"
+skills = ["skills"]
+
+[[commands]]
+name = "imagine"
+description = "Draw a picture from a description"
+prompt = "Draw a picture of what I describe next with generate_image (follow the Images skill). If I gave no description, ask me what to draw in one short question."

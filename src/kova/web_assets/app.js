@@ -3604,7 +3604,7 @@
       });
     };
   }
-  // Extensions (#137): the catalog of plugins and skills, and everything that is
+  // Extensions (#137): the catalog of plugins, skills and bots (#419), and everything that is
   // installed. Installing is preview, then confirm: the server downloads the
   // source, checks its pinned checksum and shows exactly what it adds; nothing
   // is written until Install. Skills show where they came from and, unless a
@@ -3620,7 +3620,7 @@
     const list = el('div', 'panel-list ext-list'), footer = el('p', 'panel-meta ext-source');
     let tab = 'installed', data = {catalog: null, plugins: [], skills: []}, version = 0;
     const buttons = {};
-    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['theme', 'Themes']]) {
+    for (const [key, label] of [['installed', 'Installed'], ['plugin', 'Plugins'], ['skill', 'Skills'], ['bot', 'Bots'], ['theme', 'Themes']]) {
       const button = el('button', '', label); button.type = 'button'; button.setAttribute('role', 'tab');
       button.onclick = () => {
         if (tab === key) return;
@@ -3683,6 +3683,20 @@
       wrap.append(box, el('span', '', label)); return wrap;
     }
     function heading(text) { list.append(el('h3', 'ext-heading', text)); }
+    // What a catalog bot would be allowed to do, and its full persona.
+    function botAdds(parent, bot, notes) {
+      parent.append(el('p', 'ext-label', `${bot.name} · @${bot.handle}`));
+      section(parent, 'Tools it may use', bot.tools);
+      section(parent, 'Tools it may never use', bot.deny);
+      section(parent, 'Settings', [
+        bot.ceiling === 'manual' ? 'Asks before each action' : `Approval: ${bot.ceiling}`,
+        `Mode: ${bot.mode}, web search ${bot.web ? 'on' : 'off'}`,
+        `Model: ${bot.model || 'the active model'}`,
+        `Own notes ${bot.memory.own ? 'on' : 'off'}; your memory: ${bot.memory.user_memory}`,
+      ]);
+      section(parent, 'Changed for this computer', notes || []);
+      parent.append(el('p', 'ext-label', 'Persona (its instructions)'), el('pre', 'ext-body', bot.persona));
+    }
     function renderPlugin(plugin) {
       const item = el('section', 'panel-item'), text = el('div'), actions = el('div', 'mcp-actions');
       text.append(el('strong', '', `${plugin.name} ${plugin.version}`));
@@ -3760,13 +3774,19 @@
         box.append(el('p', 'ext-label', `Checksum verified · SHA-256 ${preview.sha256.slice(0, 16)}…`), el('p', 'panel-meta ext-code', `Source: ${preview.source}`));
         if (preview.plugin) pluginAdds(box, preview.plugin);
         if (preview.skill) { box.append(el('p', 'ext-label', 'Instructions it adds')); box.append(el('pre', 'ext-body', preview.skill.body)); }
+        if (preview.bot) botAdds(box, preview.bot, preview.notes);
         const yes = el('button', 'btn primary', upgrade ? 'Update' : 'Install'); yes.type = 'button';
         const no = el('button', 'btn quiet', 'Cancel'); no.type = 'button';
         const row = el('div', 'dialog-actions'); row.append(no, yes); box.append(row);
         no.onclick = () => { api(`/extensions/catalog/preview/${enc(preview.ticket)}`, {method: 'DELETE'}).catch(() => {}); render(); };
         yes.onclick = () => safe(async () => {
           yes.disabled = true; no.disabled = true; yes.textContent = 'Installing…';
-          try { const done = await json('/extensions/install', write('POST', {ticket: preview.ticket, upgrade})); toastSuccess(`Installed ${done.installed}.`, 'Extensions'); await refresh(); }
+          try {
+            const done = await json('/extensions/install', write('POST', {ticket: preview.ticket, upgrade}));
+            toastSuccess(preview.bot ? `Installed ${done.installed}. Chat with @${preview.bot.handle} in Kova Bots.` : `Installed ${done.installed}.`, 'Extensions');
+            if (preview.bot) bots?.refresh();
+            await refresh();
+          }
           catch (error) { await refresh(); throw error; }
         });
         text.append(box); button.remove(); yes.focus();
@@ -3791,7 +3811,7 @@
         const shownSkills = data.skills.filter(skill => matches(skill.name, skill.description, skill.origin, skill.plugin));
         if (shownPlugins.length) { heading('Plugins'); shownPlugins.forEach(renderPlugin); }
         if (shownSkills.length) { heading('Skills'); shownSkills.forEach(renderSkill); }
-        if (!shownPlugins.length && !shownSkills.length) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'Nothing installed yet. Browse Plugins or Skills, or let Kova learn a skill while you work.'));
+        if (!shownPlugins.length && !shownSkills.length) list.append(el('p', 'panel-empty', filtered ? 'Nothing matches that search.' : 'Nothing installed yet. Browse Plugins, Skills or Bots, or let Kova learn a skill while you work.'));
         footer.textContent = 'Skills learned by Kova live in your skills folder; plugin skills go with their plugin.';
         return;
       }

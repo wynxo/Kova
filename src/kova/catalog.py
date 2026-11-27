@@ -1,7 +1,7 @@
-"""The extensions catalog: browse, verify and install plugins and skills.
+"""The extensions catalog: browse, verify and install plugins, skills and bots.
 
 The catalog is one JSON index (see ``docs/EXTENSIONS.md``). Each entry names a
-plugin or a skill, pins exactly one ``version`` and points at its ``source``
+plugin, a skill or a bot, pins exactly one ``version`` and points at its ``source``
 with a ``sha256`` checksum. Kova reads the index from ``[catalog] url`` and
 falls back to the copy bundled in this package, so browsing works offline and
 the first-party extensions shipped under ``catalog_data/`` always install.
@@ -15,7 +15,13 @@ Installing is two steps, and nothing runs in between:
    after they confirm does :func:`install_staged` write anything.
 
 A checksum is the SHA-256 of the downloaded bytes (an archive or a skill's
-Markdown file), or :func:`tree_sha256` for a plugin folder bundled with Kova.
+Markdown file), or :func:`tree_sha256` for a plugin or bot folder bundled with Kova.
+
+A bot is data, never code: only its ``bot.toml``, ``persona.md`` and one avatar
+image are taken from the download, and :func:`kova.bots.load_bot` validates
+them exactly as it validates a bot the user wrote. A catalog bot never arrives
+with more than ``manual`` approval or with a working folder from someone
+else's machine (see :func:`_catalog_bot`).
 """
 
 from __future__ import annotations
@@ -29,17 +35,19 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import tomllib
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
+import tomli_w
 
 from kova import egress
 
-from kova import plugins
+from kova import bots, plugins
 from kova.config import kova_home
 from kova.skills import Skill, load_skills
 
@@ -53,12 +61,17 @@ BUNDLED_SCHEME = "bundled:"
 #: The index format this Kova reads.
 SCHEMA = 1
 
-KINDS = ("plugin", "skill")
+KINDS = ("plugin", "skill", "bot")
 STATUSES = ("available", "coming-soon")
 #: Catalog-installed skills live in this folder of the skills root.
 SKILL_SUBDIR = "catalog"
 #: Version and source of each catalog skill, next to the skills.
 SKILL_STATE = ".installed.json"
+#: Version and source of each catalog bot, in the bots folder (a dot file, so
+#: :func:`kova.bots.list_bots` never mistakes it for a bot).
+BOT_STATE = ".catalog.json"
+#: The most a downloaded bot may run without asking; the user can raise it.
+BOT_CEILING = "manual"
 
 #: Downloads are small text bundles; anything bigger is refused.
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -402,6 +415,9 @@ class Staged:
     path: Path
     plugin: plugins.Plugin | None = None
     skill: Skill | None = None
+    bot: bots.BotDefinition | None = None
+    #: What :func:`_catalog_bot` changed, in plain words, for the confirmation.
+    notes: list[str] = field(default_factory=list)
 
     def describe(self) -> dict:
         """What installing adds, plus where it came from and its checksum."""
@@ -414,6 +430,9 @@ class Staged:
         if self.skill is not None:
             info["skill"] = {"name": self.skill.name, "description": self.skill.description,
                              "body": self.skill.body}
+        if self.bot is not None:
+            info["bot"] = describe_bot(self.bot)
+            info["notes"] = list(self.notes)
         return info
 
     def cleanup(self) -> None:
@@ -455,6 +474,83 @@ def read_theme(entry: Entry, index: Catalog, *, limit: int) -> bytes:
             raise CatalogError("Catalog theme exceeds the download limit.")
     _check(entry, sha256_bytes(data))
     return data
+
+
+def describe_bot(bot: bots.BotDefinition) -> dict:
+    """Everything a bot would be allowed to do, for the confirmation screen."""
+    return {"id": bot.id, "name": bot.name, "handle": bot.handle,
+            "description": bot.description, "colour": bot.avatar.colour,
+            "icon": bot.avatar.icon, "image": bot.avatar.image,
+            "model": bot.model.name, "mode": bot.model.mode, "web": bot.model.web,
+            "ceiling": bot.permissions.ceiling, "tools": list(bot.permissions.tools),
+            "deny": list(bot.permissions.deny), "inherit_rules": bot.permissions.inherit_rules,
+            "memory": {"own": bot.memory.own, "budget": bot.memory.budget,
+                       "user_memory": bot.memory.user_memory},
+            "persona": bot.persona}
+
+
+def _catalog_bot(folder: Path, entry: Entry) -> tuple[bots.BotDefinition, list[str]]:
+    """Validate a downloaded bot and make it safe to install; returns it and what changed.
+
+    Only the definition, the persona and the avatar the definition names are
+    kept; any other file in the download is deleted. ``permissions.folder`` is
+    dropped (a path on the author's machine means nothing here) and the
+    approval ceiling is capped at :data:`BOT_CEILING`.
+    """
+    definition = folder / bots.DEFINITION
+    if not definition.is_file():
+        raise CatalogError(f"{entry.name}: the download has no {bots.DEFINITION}.")
+    try:
+        data = tomllib.loads(definition.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise CatalogError(f"{entry.name}: {bots.DEFINITION} is not valid TOML ({exc}).") from None
+    notes: list[str] = []
+    permissions = data.get("permissions")
+    if isinstance(permissions, dict):
+        if permissions.pop("folder", None):
+            notes.append("Its working folder is left out; it uses its own folder in Kova Files.")
+        ceiling = str(permissions.get("ceiling") or "manual").strip().lower()
+        if ceiling in bots.CEILINGS and ceiling != BOT_CEILING:
+            permissions["ceiling"] = BOT_CEILING
+            notes.append(f"It asks before each action (it wanted '{ceiling}'); "
+                         "you can raise this in the bot's settings.")
+    avatar = data.get("avatar") if isinstance(data.get("avatar"), dict) else {}
+    keep = {bots.DEFINITION, bots.PERSONA}
+    image = avatar.get("image")
+    if isinstance(image, str) and image:
+        mime = next((kind for kind, suffix in bots.AVATAR_TYPES.items()
+                     if image.lower().endswith(suffix)), None)
+        path = folder / image
+        try:
+            ok = (mime is not None and Path(image).name == image and path.is_file()
+                  and not path.is_symlink() and path.stat().st_size <= bots.MAX_AVATAR_BYTES)
+            if ok:
+                bots._check_image(path.read_bytes(), mime)
+        except (OSError, bots.BotError):
+            ok = False
+        if ok:
+            keep.add(image)
+        else:
+            avatar.pop("image", None)
+            notes.append("Its avatar image is left out: it is missing, too big or not a PNG, JPEG or WebP.")
+    for child in list(folder.iterdir()):
+        if child.name not in keep:
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    definition.write_text(tomli_w.dumps(data), encoding="utf-8")
+    if data.get("id") != entry.name:
+        raise CatalogError(f"The download is the bot {data.get('id')!r}, but the catalog lists "
+                           f"{entry.name}. Nothing was installed.")
+    target = folder.parent / entry.name
+    if folder != target:
+        folder.rename(target)
+    try:
+        bot = bots.load_bot(target)
+    except bots.BotError as exc:
+        raise CatalogError(f"{entry.name}: {exc}") from None
+    return bot, notes
 
 
 def _fetch_into(entry: Entry, workdir: Path, client: httpx.Client | None) -> Path:
@@ -514,6 +610,16 @@ def stage(entry: Entry, *, version: str | None = None,
                     f"The download is {plugin.name} {plugin.version}, but the catalog lists "
                     f"{entry.name} {entry.version}. Nothing was installed.")
             staged.path, staged.plugin = found.parent, plugin
+        elif entry.kind == "bot":
+            found = _find_bot(path)
+            if found is None:
+                raise CatalogError(f"{entry.name}: the download has no {bots.DEFINITION}.")
+            # Move it to its own clean folder, named for its id, for validation.
+            folder = workdir / "bot" / "candidate"
+            folder.parent.mkdir()
+            shutil.move(str(found), folder)
+            staged.bot, staged.notes = _catalog_bot(folder, entry)
+            staged.path = staged.bot.path
         else:
             loaded = load_skills([path])
             if not loaded or not loaded[0].description or not loaded[0].body:
@@ -523,6 +629,16 @@ def stage(entry: Entry, *, version: str | None = None,
     except BaseException:
         shutil.rmtree(workdir, ignore_errors=True)
         raise
+
+
+def _find_bot(root: Path) -> Path | None:
+    """The folder holding ``bot.toml``: the root, or its single top folder."""
+    if (root / bots.DEFINITION).is_file():
+        return root
+    children = [child for child in root.iterdir() if child.is_dir() and not child.is_symlink()]
+    if len(children) == 1 and (children[0] / bots.DEFINITION).is_file():
+        return children[0]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -554,9 +670,28 @@ def installed_skills(home: Path | None = None) -> dict[str, dict]:
             if isinstance(info, dict) and (skills_dir(home) / f"{name}.md").is_file()}
 
 
+def _bot_state(home: Path) -> dict:
+    try:
+        data = json.loads((bots.bot_root(home) / BOT_STATE).read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def installed_bots(home: Path | None = None) -> dict[str, dict]:
+    """Catalog bots whose folder still exists, keyed by name: ``{version, source, sha256}``."""
+    home = Path(home) if home else kova_home()
+    root = bots.bot_root(home)
+    return {name: info for name, info in _bot_state(home).items()
+            if isinstance(info, dict) and (root / name / bots.DEFINITION).is_file()}
+
+
 def installed_version(entry: Entry, home: Path | None = None) -> str | None:
     """The installed version of an entry, or ``None`` when it is not installed."""
     home = Path(home) if home else kova_home()
+    if entry.kind == "bot":
+        info = installed_bots(home).get(entry.name)
+        return str(info.get("version") or "?") if info else None
     if entry.kind == "plugin":
         for plugin in plugins.installed(home):
             if plugin.name == entry.name:
@@ -588,6 +723,8 @@ def install_staged(staged: Staged, home: Path | None = None, *, upgrade: bool = 
                     plugins.install(staged.path, home, source_label=source)
             except plugins.PluginError as exc:
                 raise CatalogError(str(exc)) from exc
+        elif entry.kind == "bot":
+            _install_bot(staged, home, upgrade=upgrade)
         else:
             target_dir = skills_dir(home)
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -606,6 +743,50 @@ def install_staged(staged: Staged, home: Path | None = None, *, upgrade: bool = 
         return f"{entry.name} {entry.version}"
     finally:
         staged.cleanup()
+
+
+def _install_bot(staged: Staged, home: Path, *, upgrade: bool) -> None:
+    """Write a confirmed catalog bot to ``bots/<id>/``.
+
+    A new install never replaces a bot the user already has. An upgrade only
+    replaces a bot that came from the catalog, and keeps the user's own
+    choices of approval ceiling and working folder, and its notes.
+    """
+    entry, bot = staged.entry, staged.bot
+    assert bot is not None
+    root = bots.bot_root(home)
+    if root.is_symlink():
+        raise CatalogError("The bots folder must not be a link.")
+    folder = root / bot.id
+    state = _bot_state(home)
+    exists = folder.exists() or folder.is_symlink()
+    if exists and not (upgrade and bot.id in installed_bots(home)):
+        raise CatalogError(
+            f"A bot with the id {bot.id} already exists. Rename or remove it first "
+            f"(kova bots rm {bot.id}).")
+    if exists:
+        current = bots.load_bot(folder, kova_home=home) if (folder / bots.DEFINITION).is_file() else None
+        if current is not None:
+            bot = replace(bot, permissions=replace(
+                bot.permissions, ceiling=current.permissions.ceiling,
+                folder=current.permissions.folder))
+    created = not exists
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        folder.mkdir(exist_ok=True)
+        if bot.avatar.image:
+            shutil.copyfile(staged.path / bot.avatar.image, folder / bot.avatar.image)
+        bots.save_bot(home, replace(bot, path=folder))
+    except bots.BotError as exc:
+        if created:
+            bots.delete_bot(home, bot.id)
+        raise CatalogError(f"{entry.name}: {exc}") from None
+    except BaseException:
+        if created:
+            bots.delete_bot(home, bot.id)
+        raise
+    state[entry.name] = {"version": entry.version, "source": entry.url, "sha256": entry.sha256}
+    plugins._atomic_json(root / BOT_STATE, state)
 
 
 def remove_skill(name: str, home: Path | None = None) -> bool:

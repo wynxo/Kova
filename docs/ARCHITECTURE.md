@@ -205,6 +205,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /local-models` | token or session | opt-in hardware/backend check and rated local-model catalog |
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
+| `GET /images` | token or session | this PC's hardware, every image model rated for it with the recommended one, the engine and the active model |
+| `POST /images/models/{model_id}/install` | token or session | download and verify an image model (and a pinned engine, when one exists), stream SSE |
+| `DELETE /images/models/{model_id}` | token or session | delete an image model's files, keeping files another model shares |
+| `PUT /images/active` | token or session | choose which installed image model draws |
+| `POST /images/generate` | token or session | draw one picture locally and save it in Kova Files/Images |
+| `GET /images/gallery` | token or session | saved pictures, newest first, with their prompts and settings |
+| `GET /images/files/{name}` | token or session | one saved picture, confined to the Images folder |
+| `DELETE /images/files/{name}` | token or session | delete one saved picture and its settings file |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
 | `GET /providers/{identifier}/models` | token or session | the models a connected provider offers (cached for a minute) |
 | `POST /providers/{identifier}/models` | token or session | add more models from a provider that is already connected |
@@ -1195,7 +1203,7 @@ What a plugin contributes, and how it is wired in:
 
 ## Extensions catalog
 
-`src/kova/catalog.py` reads a JSON index of plugins and skills from
+`src/kova/catalog.py` reads a JSON index of plugins, skills and bots from
 `[catalog] url` (an https URL or a local file) and falls back to the index
 bundled in `src/kova/catalog_data/`, which also holds the first-party
 extensions. Every available entry pins one `version` and a `source` with a
@@ -1210,8 +1218,12 @@ with regular files only. The CLI then prints the same screen as
 `POST /extensions/catalog/{name}/preview` with a one-use ticket and only
 `POST /extensions/install` writes. Plugins are installed through
 `plugins.install` with the source recorded as `catalog:<name>`; skills land in
-`skills/catalog/`. `kova catalog search|show|install` and `kova plugin install
-<name>` use it.
+`skills/catalog/`. A bot (#419) is validated by `bots.load_bot` after the
+download is trimmed to `bot.toml`, `persona.md` and the avatar it names; its
+ceiling is capped at `manual` and `permissions.folder` dropped before the
+preview, and `bots.save_bot` writes it to `bots/<id>/`, refusing a taken id or
+handle. Bot versions are kept in `bots/.catalog.json`. `kova catalog
+search|show|install` and `kova plugin install <name>` use it.
 
 `src/kova/extensions.py` lists every skill the model sees with its origin:
 `learned` (Kova wrote it, `skills/Kova/`), `catalog`, `yours` (a file you put

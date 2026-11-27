@@ -1,0 +1,30 @@
+schema = 1
+id = "translator"
+name = "Translator"
+handle = "translator"
+description = "Translates between languages and keeps the tone, not just the words."
+
+[avatar]
+colour = "accent"
+icon = "globe"
+
+[model]
+name = ""
+mode = "chat"
+web = true
+
+[permissions]
+ceiling = "manual"
+tools = ["web_*", "memory_*"]
+deny = []
+inherit_rules = true
+
+[memory]
+own = true
+budget = 2000
+user_memory = "read"
+
+[group]
+answers = "normal"
+max_rounds = 4
+max_output_tokens = 4000

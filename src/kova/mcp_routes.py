@@ -64,7 +64,11 @@ def install_mcp_routes(app: FastAPI, config: Config, require_token) -> None:
             await asyncio.to_thread(manager.reload, servers, restart=restart)
             # No await between rebuilding and assigning: a turn sees the old
             # registry or the new one, never half of each.
-            app.state.agent.tools = build_tools(app.state.tool_context)
+            tools = build_tools(app.state.tool_context)
+            from kova import image_routes
+            if image_routes.enabled(config):
+                tools[image_routes.TOOL] = image_routes.image_tool(app)
+            app.state.agent.tools = tools
 
     app.state.mcp_reload = reload
 

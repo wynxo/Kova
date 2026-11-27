@@ -1,4 +1,4 @@
-"""HTTP routes for the Extensions page: catalog, installed plugins and skills.
+"""HTTP routes for the Extensions page: catalog, installed plugins, skills and bots.
 
 Installing from the catalog is two requests so nothing runs unconfirmed:
 ``POST /extensions/catalog/{name}/preview`` downloads and verifies the source
@@ -86,6 +86,8 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
                 saved = None
             if saved is not None:
                 approvals.rules = saved + [rule for rule in approvals.rules if rule.scope != "always"]
+        from kova import image_routes
+        image_routes.sync_tool(app)
         reload = getattr(app.state, "mcp_reload", None)
         if reload is not None:
             try:
@@ -110,7 +112,7 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
     async def catalog_list(q: str = "", kind: str | None = None,
                            refresh: bool = Query(False)) -> dict:
         if kind is not None and kind not in catalog.KINDS:
-            raise HTTPException(422, "kind must be plugin or skill")
+            raise HTTPException(422, "kind must be plugin, skill or bot")
         loaded = await load_catalog(refresh)
         return {"source": loaded.source, "bundled": loaded.bundled, "warning": loaded.warning,
                 "entries": [entry_row(entry) for entry in loaded.search(q, kind)]}

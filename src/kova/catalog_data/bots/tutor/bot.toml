@@ -1,0 +1,30 @@
+schema = 1
+id = "tutor"
+name = "Tutor"
+handle = "tutor"
+description = "Teaches a topic step by step, checks you understood, and plans practice."
+
+[avatar]
+colour = "success"
+icon = "brain"
+
+[model]
+name = ""
+mode = "work"
+web = true
+
+[permissions]
+ceiling = "manual"
+tools = ["web_*", "memory_*", "reminder_*"]
+deny = []
+inherit_rules = true
+
+[memory]
+own = true
+budget = 4000
+user_memory = "read"
+
+[group]
+answers = "normal"
+max_rounds = 6
+max_output_tokens = 4000

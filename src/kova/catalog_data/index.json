@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "Kova extensions",
-  "updated": "2026-11-14",
+  "updated": "2026-11-27",
   "extensions": [
     {
       "name": "clipboard",
@@ -75,6 +75,78 @@
       },
       "permissions": ["Offers to save a memory note and set reminders; only does either after you agree."],
       "tags": ["planning", "productivity", "first-party"]
+    },
+    {
+      "name": "translator",
+      "kind": "bot",
+      "version": "0.1.0",
+      "description": "Translates between languages and keeps the tone, not just the words. Chat with @translator.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/bots/translator",
+      "source": {
+        "url": "bundled:bots/translator",
+        "sha256": "febfae19e7cc40443001d61f04b30a90ed96f5abde876f606d4e0cf15b3546d7"
+      },
+      "permissions": [
+        "Searches the web and reads pages to check a term.",
+        "Keeps its own notes and reads your memory; changes nothing on your computer."
+      ],
+      "tags": ["translation", "language", "writing", "first-party"],
+      "issue": 419
+    },
+    {
+      "name": "tutor",
+      "kind": "bot",
+      "version": "0.1.0",
+      "description": "Teaches a topic step by step, checks you understood, and can set practice reminders. Chat with @tutor.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/bots/tutor",
+      "source": {
+        "url": "bundled:bots/tutor",
+        "sha256": "b71f0c443b0939bb86acb7d4213e50b182aa34593f330b27ec678da641a361d5"
+      },
+      "permissions": [
+        "Searches the web and reads pages.",
+        "Keeps its own notes, reads your memory and can add reminders; Kova asks first."
+      ],
+      "tags": ["learning", "study", "education", "first-party"],
+      "issue": 419
+    },
+    {
+      "name": "critic",
+      "kind": "bot",
+      "version": "0.1.0",
+      "description": "Finds the weak spots in a plan, draft or argument before someone else does. Good in group chats. Chat with @critic.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/bots/critic",
+      "source": {
+        "url": "bundled:bots/critic",
+        "sha256": "9e584dc4c4e33727aa26cfd80483586cd0d53ea5498a83d38f83cfb20ac0984b"
+      },
+      "permissions": [
+        "Searches the web and reads files in its working folder; never writes or runs anything.",
+        "Keeps its own notes and reads your memory."
+      ],
+      "tags": ["review", "feedback", "writing", "first-party"],
+      "issue": 419
+    },
+    {
+      "name": "images",
+      "kind": "plugin",
+      "version": "0.1.0",
+      "description": "Draw pictures on your own computer. Kova checks your hardware, recommends the best image model for it, and generates in chat. Adds /imagine.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/plugins/images",
+      "source": {
+        "url": "bundled:plugins/images",
+        "sha256": "98ad1ba6b1dc0f0579a1c66cd6038887ce2e91248eca91c5b52aace3d23ec7c2"
+      },
+      "permissions": [
+        "Adds the generate_image tool, which runs the local image engine (stable-diffusion.cpp); Kova asks before each picture.",
+        "Pictures and prompts stay on this computer, in Kova Files/Images. Models download only when you pick one."
+      ],
+      "tags": ["images", "art", "creative", "first-party"],
+      "issue": 421
     }
   ]
 }

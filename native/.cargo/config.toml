@@ -1,0 +1,3 @@
+[net]
+# Fetch Rune with the git CLI, which honours the system's proxy and CA setup.
+git-fetch-with-cli = true
