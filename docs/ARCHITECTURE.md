@@ -205,6 +205,14 @@ cookie, so a route added to the router is authenticated by construction.
 | `GET /local-models` | token or session | opt-in hardware/backend check and rated local-model catalog |
 | `POST /local-models/install` | token or session | pull and warm up a local model, stream SSE, then register it |
 | `DELETE /local-models/{provider_id}` | token or session | remove a managed local model and its connection |
+| `GET /images` | token or session | this PC's hardware, every image model rated for it with the recommended one, the engine and the active model |
+| `POST /images/models/{model_id}/install` | token or session | download and verify an image model (and a pinned engine, when one exists), stream SSE |
+| `DELETE /images/models/{model_id}` | token or session | delete an image model's files, keeping files another model shares |
+| `PUT /images/active` | token or session | choose which installed image model draws |
+| `POST /images/generate` | token or session | draw one picture locally and save it in Kova Files/Images |
+| `GET /images/gallery` | token or session | saved pictures, newest first, with their prompts and settings |
+| `GET /images/files/{name}` | token or session | one saved picture, confined to the Images folder |
+| `DELETE /images/files/{name}` | token or session | delete one saved picture and its settings file |
 | `POST /providers/validate` | token or session | check a provider's address and credentials before saving |
 | `GET /providers/{identifier}/models` | token or session | the models a connected provider offers (cached for a minute) |
 | `POST /providers/{identifier}/models` | token or session | add more models from a provider that is already connected |

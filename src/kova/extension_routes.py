@@ -86,6 +86,8 @@ def install_extension_routes(app: FastAPI, config: Config, require_token) -> Non
                 saved = None
             if saved is not None:
                 approvals.rules = saved + [rule for rule in approvals.rules if rule.scope != "always"]
+        from kova import image_routes
+        image_routes.sync_tool(app)
         reload = getattr(app.state, "mcp_reload", None)
         if reload is not None:
             try:

@@ -3474,6 +3474,8 @@ _CONFIG_FIELDS: dict[str, _ConfigField] = {
         _ConfigField("catalog.url", "catalog_url", "catalog"),
         _ConfigField("compact_threshold", "compact_threshold", "float", minimum=0.1, maximum=0.99),
         _ConfigField("files_path", "files_path", "path"),
+        _ConfigField("images.engine", "images_engine", "program"),
+        _ConfigField("images.server", "images_server", "server"),
         _ConfigField("local.idle_unload_minutes", "local_idle_unload_minutes", "int", minimum=0),
         _ConfigField("memory.budget", "memory_budget", "int", minimum=0),
         _ConfigField("memory.consolidate", "memory_consolidate", "bool"),
@@ -3588,6 +3590,19 @@ def _parse_config_value(field: _ConfigField, raw: str, cfg) -> object:
                 raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must use https.')
             return text
         return str(_config_path_value(key, text))
+    if field.kind == "program":
+        if not text:
+            return ""
+        program = Path(_config_path_value(key, text))
+        if not program.is_file():
+            raise _ConfigValueError(f'Invalid value for {key}: "{raw}" is not a file.')
+        return str(program)
+    if field.kind == "server":
+        if not text:
+            return ""
+        if not text.startswith(("http://", "https://")) or any(ch.isspace() for ch in text) or "\0" in text:
+            raise _ConfigValueError(f'Invalid value for {key}: "{raw}" must be an http:// or https:// address.')
+        return text.rstrip("/")
     if field.kind == "str":
         if not text:
             return None

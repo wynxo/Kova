@@ -129,6 +129,24 @@
       ],
       "tags": ["review", "feedback", "writing", "first-party"],
       "issue": 419
+    },
+    {
+      "name": "images",
+      "kind": "plugin",
+      "version": "0.1.0",
+      "description": "Draw pictures on your own computer. Kova checks your hardware, recommends the best image model for it, and generates in chat. Adds /imagine.",
+      "author": "Kova",
+      "homepage": "https://github.com/wynxo/Kova/tree/main/src/kova/catalog_data/plugins/images",
+      "source": {
+        "url": "bundled:plugins/images",
+        "sha256": "98ad1ba6b1dc0f0579a1c66cd6038887ce2e91248eca91c5b52aace3d23ec7c2"
+      },
+      "permissions": [
+        "Adds the generate_image tool, which runs the local image engine (stable-diffusion.cpp); Kova asks before each picture.",
+        "Pictures and prompts stay on this computer, in Kova Files/Images. Models download only when you pick one."
+      ],
+      "tags": ["images", "art", "creative", "first-party"],
+      "issue": 421
     }
   ]
 }

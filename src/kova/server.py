@@ -598,6 +598,8 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = memory
     app.state.tool_context = tool_context
     app.state.agent = agent
+    from kova import image_routes
+    image_routes.sync_tool(app)
     app.state.group_runner = GroupRunner(
         agent, config, lambda bot_id: bots.get_bot(
             config.home, bot_id, models=[entry.name for entry in config.models]))
@@ -692,6 +694,8 @@ async def _scoped_lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError):
                 await task
         await engine.stop()
+        if getattr(app.state, "image_engine", None) is not None:
+            app.state.image_engine.stop()
         await app.state.model_health.close()
         store.drop_ephemeral()
 
@@ -761,6 +765,8 @@ def create_app(
     install_local_model_routes(app, config, _require_token)
     from kova.extension_routes import install_extension_routes
     install_extension_routes(app, config, _require_token)
+    from kova.image_routes import install_image_routes
+    install_image_routes(app, config, _require_token)
     install_bot_routes(app, config, _require_token)
 
     def chat_lock(chat_id: str) -> asyncio.Lock:
@@ -980,6 +986,8 @@ def create_app(
                 app.state.mcp = McpManager(config.home)
                 app.state.tool_context.mcp = app.state.mcp
                 app.state.agent.tools = build_tools(app.state.tool_context)
+                from kova import image_routes
+                image_routes.sync_tool(app)
             return {'local_only': config.privacy_local_only}
 
     def autostart_result(action: str) -> dict:
