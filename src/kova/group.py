@@ -36,6 +36,7 @@ from uuid import uuid4
 
 from kova import group_settings, mentions
 from kova.actors import DEFAULT_ACTOR_ID, Actor
+from kova.group_context import is_pass
 
 PASS = "(pass)"
 
@@ -67,10 +68,6 @@ def resolved_settings(stored: Mapping | None) -> dict:
 
 def _normalised(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
-
-
-def _is_pass(text: str) -> bool:
-    return _normalised(text).strip(".!") in {"(pass)", "pass"}
 
 
 def _add_usage(total: dict, usage: Mapping | None) -> None:
@@ -263,7 +260,7 @@ class GroupRunner:
                 yield event
             record_user = record_user and not self.store.turn_has_user_message(chat_id, turn_id)
             final = "".join(reply).strip()
-            passed = status == "done" and _is_pass(final)
+            passed = status == "done" and is_pass(final)
             if passed:
                 status = "passed"
             _add_usage(total, usage)

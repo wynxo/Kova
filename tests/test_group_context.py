@@ -143,3 +143,12 @@ def test_trimming_does_not_charge_separators_for_dropped_rows():
     rows = [user("Very old") for _ in range(100)] + [user("Keep this"), user("Latest")]
     [merged] = view_for("kova", rows, {}, context_tokens=11)
     assert merged == user("@you: Keep this\n\n@you: Latest")
+
+
+@pytest.mark.parametrize("marker", ["(pass)", "Pass", "PASS.", "(pass)!"])
+def test_a_pass_is_hidden_however_the_runner_accepts_it(marker):
+    # group.is_pass counts every one of these as a pass, so the other members
+    # must not read it as a reply that had something to say.
+    rows = [user("Ask"), reply("critic", marker), reply("coder", "My answer")]
+    assert view_for("coder", rows, {}) == [
+        user("@you: Ask"), {"role": "assistant", "content": "My answer"}]
