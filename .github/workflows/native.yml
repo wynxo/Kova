@@ -1,0 +1,54 @@
+name: Native app
+
+on:
+  push:
+    branches: [main]
+    paths: ["native/**", "src/kova/catalog_data/**", ".github/workflows/native.yml"]
+  pull_request:
+    paths: ["native/**", "src/kova/catalog_data/**", ".github/workflows/native.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (Linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev libfontconfig1-dev mesa-vulkan-drivers
+
+      - name: Toolchain (from native/rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: native-${{ hashFiles('native/Cargo.lock') }}
+
+      - name: Unit tests
+        run: cargo test --release --features snap
+
+      - name: Render every scene headless
+        run: |
+          mkdir -p snaps
+          for scene in market hover detail confirm bots offline; do
+            ./target/release/kova-app --scene "$scene" --snap "snaps/$scene.png" --size 1440x900 --at 1
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-snapshots
+          path: native/snaps/

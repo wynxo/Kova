@@ -1,0 +1,50 @@
+# Kova's native desktop app (#420, #421): a GPU-rendered Rune client of the
+# local Kova server. Every Rune line must use the same URL and rev (see Rune's
+# crates/rune/README.md, "Depending on Rune"); bump them together.
+[workspace]
+
+[package]
+name = "kova-app"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Kova's native desktop app, rendered on the GPU with Rune."
+
+[features]
+default = []
+# Rune's headless CLI (--snap, --tree, --scene, --script) in release builds.
+snap = ["rune/tooling"]
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+rune-theme-opencode = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", default-features = false }
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["metal"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["dx12"] }
+
+[target.'cfg(all(not(target_vendor = "apple"), not(target_os = "windows")))'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["vulkan"] }
+
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "dacf5d89ba56939c5ff2565c7e6a2983f7f7e276" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

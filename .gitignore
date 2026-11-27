@@ -20,3 +20,4 @@ Kova Files/
 .agents/
 .codex/
 .aws/
+native/target/
