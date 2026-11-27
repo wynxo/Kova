@@ -1,9 +1,9 @@
 'use strict';
-const {app, BrowserWindow, Menu, Tray, shell, ipcMain, screen, globalShortcut, clipboard} = require('electron');
+const {app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, screen, globalShortcut, clipboard} = require('electron');
 const {execFile, spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const {settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId} = require('./core');
+const {trayPoints, settings, serverCommand, external, panelWindow, permissionAllowed, windowState, isAction, trayStatus, quickAsk, titleBar, titleBarColours, quickChatId} = require('./core');
 let win, tray, child, quick, quitting = false, starting = false, origin, home;
 let appName = 'Kova', trayState = 'idle', chrome = 'native';
 const icon = path.join(__dirname, 'assets/icon.png');
@@ -21,6 +21,20 @@ const TRAY_ASSETS = {
   working: path.join(__dirname, 'assets/tray-working.png'),
   waiting: path.join(__dirname, 'assets/tray-waiting.png'),
 };
+// The tray image for an asset: on macOS sized to the menu bar, with a 2x
+// representation so it stays sharp on Retina displays; elsewhere as it is.
+function trayImage(file) {
+  const points = trayPoints(process.platform);
+  const source = nativeImage.createFromPath(file);
+  if (!points || source.isEmpty()) return source;
+  const image = nativeImage.createEmpty();
+  for (const scale of [1, 2]) {
+    const size = points * scale;
+    image.addRepresentation({scaleFactor: scale, width: size, height: size,
+      buffer: source.resize({width: size, height: size, quality: 'best'}).toPNG()});
+  }
+  return image;
+}
 function diagnostic(error) {
   // Electron loadURL errors can include the single-use session fragment.
   return String(error?.message ?? error).replace(/#ticket=[^\s'"]+/g, '#ticket=<redacted>');
@@ -127,7 +141,7 @@ function sendAction(id) {
 }
 function refreshTray() {
   if (!tray) return;
-  tray.setImage(TRAY_ASSETS[trayState] || trayIcon);
+  tray.setImage(trayImage(TRAY_ASSETS[trayState] || trayIcon));
   const status = trayStatus(appName, trayState);
   tray.setToolTip(status.tooltip);
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -249,7 +263,7 @@ async function create(config) {
     if (input.key === 'F11') win.setFullScreen(!win.isFullScreen());
   });
   try {
-    tray = new Tray(trayIcon); tray.on('click', show); refreshTray();
+    tray = new Tray(trayImage(trayIcon)); tray.on('click', show); refreshTray();
   } catch (e) { console.error('Tray unavailable:', e.message); }
   ipcMain.handle('retry', event => {
     if (event.sender === win.webContents && event.senderFrame.url.startsWith('file:')) start();
