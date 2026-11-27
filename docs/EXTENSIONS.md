@@ -25,8 +25,12 @@ kova skills show "Explain an error"
 kova skills rm explain-error
 ```
 
-In the desktop and web app, **Settings → Extensions and MCP → Extensions and skills** has these tabs:
+In the desktop and web app, open **Marketplace** at the bottom of the sidebar
+(or *Marketplace* in the command palette). **Settings → Extensions and MCP →
+Extensions and skills** opens the same window on Installed. Its tabs:
 
+- **Discover**: everything in the catalog, grouped as Bots, Plugins and
+  Skills, each card saying what kind it is and whether it is installed.
 - **Installed**: your plugins (switch on/off, see what each adds, remove) and
   every skill with its origin. Skills Kova learned, catalog skills and skills
   you put in the skills folder can be read, edited and deleted. Plugin skills

@@ -984,6 +984,7 @@ dialog .panel-form { display:grid; gap:8px; padding-top:12px; border-top:1px sol
 /* ---------- MCP servers ---------- */
 dialog.mcp-dialog { width:min(600px, calc(100vw - 24px)); }
 .mcp-actions { display:flex; align-items:center; gap:4px; flex:none; }
+.panel-item > .mcp-actions { flex:none; }
 .mcp-actions .btn { padding:4px 10px; font-size:12.5px; }
 .panel-item .mcp-error { color:var(--status-danger); }
 .mcp-switch { display:inline-flex; align-items:center; gap:6px; margin:6px 14px 0 0; color:var(--fg-muted); font-size:12.5px; font-weight:400; cursor:pointer; }
@@ -994,9 +995,11 @@ dialog.mcp-dialog { width:min(600px, calc(100vw - 24px)); }
 .mcp-tool code { font:12.5px/1.4 var(--mono); overflow-wrap:anywhere; }
 .mcp-tool .mcp-switch { margin-top:0; }
 dialog.ext-dialog { width:min(640px, calc(100vw - 24px)); }
-.ext-tabs { align-self:flex-start; }
+.ext-tabs { align-self:flex-start; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+.ext-tabs button { flex:none; }
 .segmented button[aria-selected="true"] { background:var(--bg-raised); color:var(--fg-default); box-shadow:inset 0 0 0 1px var(--border-subtle); }
 .ext-list { max-height:52vh; }
+.ext-source { overflow-wrap:anywhere; }
 .ext-heading { margin:6px 0 0; color:var(--fg-faint); font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
 .panel-item .ext-label { margin-top:8px; color:var(--fg-muted); font-size:12.5px; font-weight:550; }
 .ext-lines { margin:2px 0 0; padding-left:18px; color:var(--fg-muted); font-size:12.5px; line-height:1.5; overflow-wrap:anywhere; }

@@ -518,6 +518,7 @@
       search?.select?.();
     }),
     el('span', 'sidebar-rail-spacer', { 'aria-hidden': 'true' }),
+    railButton('i-puzzle', 'Marketplace', () => clickId('open-marketplace')),
     railButton('i-settings', 'Settings', () => clickId('open-settings')),
   );
 
