@@ -60,9 +60,13 @@ def root(home: Path) -> Path:
 def binary(home: Path) -> Path | None:
     """The installed app, if a complete install is present."""
     folder = root(home) / "current"
-    name = "kova-app.exe" if os.name == "nt" else "kova-app"
-    path = folder / name
-    return path if (folder / ".complete").is_file() and path.is_file() else None
+    if not (folder / ".complete").is_file():
+        return None
+    # The name follows the build that was installed, as install() chose it.
+    for name in ("kova-app.exe", "kova-app") if os.name == "nt" else ("kova-app", "kova-app.exe"):
+        if (folder / name).is_file():
+            return folder / name
+    return None
 
 
 def installed_sha(home: Path) -> str | None:
