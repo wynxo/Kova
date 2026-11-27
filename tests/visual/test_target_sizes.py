@@ -204,7 +204,35 @@ SCAN = r"""
 """
 
 
+SETTLE = """() => new Promise(resolve => {
+  // One CI run measured a tool-card title at 324x44 against a 44px minimum while
+  // its status text was still changing, and the rerun passed. Wait until the
+  // interactive boxes repeat across frames before the scan reads them. It gives
+  // up after 30 frames, about half a second, so a page that really keeps moving
+  // is still measured and reported, not hidden.
+  const targets = () => document.querySelectorAll(
+    'a[href],button,input,select,textarea,summary,[role],[tabindex]');
+  const boxes = () => Array.from(targets()).map(el => {
+    const rect = el.getBoundingClientRect();
+    return [rect.x, rect.y, rect.width, rect.height].join();
+  }).join('|');
+  let previous = '';
+  let stable = 0;
+  let frames = 0;
+  const step = () => {
+    const current = boxes();
+    stable = current === previous ? stable + 1 : 0;
+    previous = current;
+    frames += 1;
+    if (stable >= 2 || frames >= 30) resolve(frames);
+    else requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+})"""
+
+
 def scan(page, minimum, surface):
+    page.evaluate(SETTLE)
     found = page.evaluate(SCAN, minimum)
     problems = []
     for item in found:
