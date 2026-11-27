@@ -124,7 +124,9 @@
     const on = read(RING_KEY, 'on') !== 'off';
     ring.hidden = !on || !(windowSize > 0);
     if (ring.hidden) return;
-    const percent = Math.min(100, Math.floor(used / windowSize * 100));
+    // Multiply before dividing: used / windowSize * 100 turns 29 of 100 into
+    // 28.999999999999996, which floors to 28%.
+    const percent = Math.min(100, Math.floor(used * 100 / windowSize));
     $('context-ring-fill').setAttribute('stroke-dasharray', `${percent} 100`);
     $('context-ring-text').textContent = `${percent}%`;
     ring.classList.toggle('is-high', percent >= 80);

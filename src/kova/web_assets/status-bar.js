@@ -168,7 +168,9 @@
     modelNode.textContent = name;
     if (windowSize > 0) {
       const ratio = used / windowSize;
-      const percent = Math.min(100, Math.floor(ratio * 100));
+      // Multiply before dividing: ratio * 100 turns 29 of 100 into
+      // 28.999999999999996, which floors to 28%.
+      const percent = Math.min(100, Math.floor(used * 100 / windowSize));
       contextNode.textContent = `${shortCount(used)} of ${shortCount(windowSize)} · ${percent}%`;
       fill.style.width = `${percent}%`;
       bar.classList.toggle('is-high', ratio >= HIGH_RATIO);
