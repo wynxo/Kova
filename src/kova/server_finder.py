@@ -97,7 +97,12 @@ def tidy(text: str) -> str:
 
 
 def normalize_base(url: str) -> str:
-    """Turn what a user types into the ``.../v1`` base URL Kova stores."""
+    """Turn what a user types into the base URL Kova stores (the parent of ``/models``).
+
+    A bare host:port gets the usual ``/v1`` added. A URL that already carries an
+    API path (``http://host:8080/polystrata``) already names the models root, so
+    ``/v1`` is not added on top of that path.
+    """
     url = url.strip().rstrip("/")
     if not url:
         return ""
@@ -105,8 +110,9 @@ def normalize_base(url: str) -> str:
         url = "http://" + url
     if url.endswith("/models"):
         url = url[: -len("/models")].rstrip("/")
-    if not url.endswith("/v1"):
-        url += "/v1"
+    if httpx.URL(url).path in ("", "/"):
+        if not url.endswith("/v1"):
+            url += "/v1"
     return url
 
 
@@ -121,15 +127,20 @@ def expand(text: str) -> list[str]:
     if lowered in ALIASES:
         return [ALIASES[lowered]]
     if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
-        return [normalize_base(text)]
-    host_port, _, path = text.partition("/")
-    bracketed = re.fullmatch(r"\[([0-9a-fA-F:.]+)\](?::(\d{1,5}))?", host_port)
+        base = normalize_base(text)
+        # A bare host:port could serve /v1/models or /models, so try both (likeliest
+        # first); a URL that already names an API path has a single interpretation.
+        if httpx.URL(text).path in ("", "/"):
+            return [base, f"http://{host_port(base)}"]
+        return [base]
+    addr, _, path = text.partition("/")
+    bracketed = re.fullmatch(r"\[([0-9a-fA-F:.]+)\](?::(\d{1,5}))?", addr)
     if bracketed:
         host, port = bracketed.group(1), bracketed.group(2)
-    elif host_port.count(":") > 1:
-        host, port = host_port, None  # a bare IPv6 address
+    elif addr.count(":") > 1:
+        host, port = addr, None  # a bare IPv6 address
     else:
-        host, _, port = host_port.partition(":")
+        host, _, port = addr.partition(":")
         port = port or None
     if not host or (port is not None and not port.isdigit()):
         raise ValueError(f"{text!r} doesn't look like a server address")

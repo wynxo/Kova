@@ -33,6 +33,42 @@ def test_expand_tries_the_usual_ports_without_one():
     assert sf.expand("pc") == [f"http://pc:{p}/v1" for p in (11434, 8080, 1234, 8000)]
 
 
+@pytest.mark.parametrize("typed, first", [
+    ("http://192.168.1.50:8080", "http://192.168.1.50:8080/v1"),
+    ("http://polystrata:8080", "http://polystrata:8080/v1"),
+    ("http://homelab:8080/api", "http://homelab:8080/api"),
+    ("http://box:1234", "http://box:1234/v1"),
+])
+def test_expand_urls_try_the_usual_base_then_the_bare_origin(typed, first):
+    assert sf.expand(typed)[0] == first
+
+
+def test_connect_a_server_that_serves_models_without_a_v1_path():
+    """A typed OpenAI-compatible URL with no /v1 (e.g. PolyStrata at /models) connects.
+
+    The URL already names the API path, so it is stored and probed as given.
+    """
+    t = _transport({"http://polystrata:8080": ["poly-model"]})
+    found = sf.connect("http://polystrata:8080", transport=t)
+    assert found.ok and found.base_url == "http://polystrata:8080"
+    assert found.models == ["poly-model"]
+
+
+def test_connect_a_server_under_a_custom_api_path():
+    """A typed API path (http://host:8080/api) is probed and stored as given."""
+    t = _transport({"http://127.0.0.1:8080/api": ["poly-model"]})
+    found = sf.connect("http://127.0.0.1:8080/api", transport=t)
+    assert found.ok and found.base_url == "http://127.0.0.1:8080/api"
+    assert found.models == ["poly-model"]
+
+
+def test_normalize_base_adds_v1_only_to_a_bare_host():
+    """A bare host:port gets /v1; a URL with an API path keeps its single path."""
+    assert sf.normalize_base("192.168.1.50:8080") == "http://192.168.1.50:8080/v1"
+    assert sf.normalize_base("http://polystrata:8080") == "http://polystrata:8080/v1"
+    assert sf.normalize_base("http://homelab:8080/api") == "http://homelab:8080/api"
+
+
 def test_expand_rejects_nonsense():
     with pytest.raises(ValueError):
         sf.expand("   ")
